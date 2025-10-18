@@ -69,7 +69,10 @@ class afcUnit:
         self.timer_delay            = config.getfloat("timer_delay",            5)
         # Setting to True enables full speed espoolers for kick_start_time amount
         self.enable_kick_start      = config.getboolean("enable_kick_start",    True)
-
+        self.spool_ratio            = config.getfloat("spool_ratio",2) #gear ratio for printed gearbox between N20 and spooler wheels
+        self.full_weight	        = config.getfloat("full_weight",1000)           # full weight of filament spill (no counting spool itself)
+        self.espool_rot_dist        = config.getfloat("espool_rot_dist",132.9)
+        
         # Time in seconds to enable spooler at full speed to help with getting the spool to spin
         self.kick_start_time        = config.getfloat("kick_start_time",        0.070)
         # Cycles per rotation in milliseconds
