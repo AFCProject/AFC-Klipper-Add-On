@@ -264,7 +264,7 @@ class Espooler_values:
         self._spool_outer_diameter   = config.getfloat("spool_outer_diameter",  None)
         # Current spools outer diameter
         self._spool_inner_diameter   = config.getfloat("spool_inner_diameter",  None)
-        # Current spools outer diameter
+        # Max RPM of spooler motor
         self._max_motor_rpm          = config.getfloat("max_motor_rpm",         None)
         # Delta amount in mm from last move to trigger assist. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self._delta_movement         = config.getfloat("delta_movement",        None)
@@ -279,18 +279,19 @@ class Espooler_values:
         # rotation distance estimation of espooler wheels
         self._espool_rot_dist        = config.getfloat("espool_rot_dist",       None)
 
-    def calculate_cruise_time(self, weight):
+    def calculate_cruise_time(self, weight: int) -> float:
         """
-        This function calculates cruise time which is the amount of time to enable motors to rotate spool mm movement amount
+        This function calculates cruise time which is the amount of time to enable
+        motors to rotate spool mm movement amount
 
-        :param mm_movement: Amount to move spool in mm
+        :param weight: Current spool weight
         :return float: Amount of time to be enabled to move mm amount
         """
         #rotations = mm_movement / self.spool_circum
         #correction_factor = 1.0 + ( 1.68 * math.exp(-rotations * 5.0) )
         #cruise_time = rotations * self.cycles_per_rotation * correction_factor
-        spool_rot_s=(self.espool_rot_dist*((self.max_motor_rpm/60)/self.spool_ratio)) / (self._spool_outer_diameter*math.pi)
-        w_r=(weight/self.full_weight+1)*((self._spool_outer_diameter-self._spool_inner_diameter)*math.pi)
+        spool_rot_s=(self.espool_rot_dist*((self.max_motor_rpm/60)/self.spool_ratio)) / (self.outer_circ())
+        w_r=(weight/self.full_weight+1)*self.delta_circ()
         self._cruise_time=self.delta_movement/w_r/spool_rot_s
         return self._cruise_time #*1000
 
@@ -309,47 +310,63 @@ class Espooler_values:
         if self._spool_ratio          is None: self.spool_ratio          = lane_obj.unit_obj.spool_ratio
         if self._full_weight          is None: self.full_weight          = lane_obj.unit_obj.full_weight
 
-        # Since cruise time is always going to be the same, calculate it now instead of everytime inside the timer callback
-        self._cruise_time            = self.calculate_cruise_time(self.full_weight)
+        self._cruise_time   = self.calculate_cruise_time(self.full_weight)
 
     @property
-    def cruise_time(self):
+    def cruise_time(self) -> float:
         """
         Returns calculated cruise time
         """
         return self._cruise_time
     @cruise_time.setter
-    def cruise_time(self, value):
+    def cruise_time(self, value: float):
         self._cruise_time = value
 
     @property
-    def kick_start_time(self):
+    def kick_start_time(self) -> float:
         """
         Returns software kick start time, this value is scaled by scaling factor
         """
         return self._kick_start_time * self._scaling
+
     @kick_start_time.setter
-    def kick_start_time(self, value):
+    def kick_start_time(self, value: float):
         self._kick_start_time = value
 
     @property
-    def delta_movement(self):
+    def delta_movement(self) -> float:
         """
         Returns delta movement, this value is scaled by scaling factor
         """
         return self._delta_movement * self._scaling
+
     @delta_movement.setter
-    def delta_movement(self, value):
+    def delta_movement(self, value: float):
         self._delta_movement = value
+    
+    @property
+    def outer_circ(self) -> float:
+        """
+        Returns circumference for outer diameter
+        """
+        return self._spool_outer_diameter * math.pi()
 
     @property
-    def scaling(self):
+    def delta_circ(self) -> float:
+        """
+        Returns circumference for outer spool diameter - inner spool diameter
+        """
+        return (self._spool_outer_diameter - self._spool_inner_diameter)*math.pi()
+
+    @property
+    def scaling(self) -> float:
         """
         Return scaling factor
         """
         return self._scaling
+
     @scaling.setter
-    def scaling(self, value):
+    def scaling(self, value: float):
         self._scaling = value
 
 class Espooler:
