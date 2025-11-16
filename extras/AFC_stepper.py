@@ -31,8 +31,6 @@ class AFCExtruderStepper(AFCLane):
         except Exception:
             self.motion_queuing = None
 
-        # self.next_cmd_time = 0.
-
         ffi_main, ffi_lib = chelper.get_ffi()
         self.stepper_kinematics = ffi_main.gc(
             ffi_lib.cartesian_stepper_alloc(b'x'), ffi_lib.free)
@@ -142,27 +140,6 @@ class AFCExtruderStepper(AFCLane):
         :param enable: Enables/disables stepper motor
         """
         self.function.do_enable(enable, f"AFC_stepper {self.name}")
-        # self.sync_print_time()
-        # stepper_enable = self.printer.lookup_object('stepper_enable')
-        # se = stepper_enable.lookup_enable('AFC_stepper {}'.format(self.name))
-        # if enable:
-        #     se.motor_enable(self.next_cmd_time)
-        # else:
-        #     se.motor_disable(self.next_cmd_time)
-        # self.sync_print_time()
-
-    # def sync_print_time(self):
-    #     """
-    #     Helper function to get current print time that compares to previous synced time
-    #     If last print time is greater than current print time, calls a toolhead dwell
-    #     If print time is greater than last, self.new_cmd_time gets updated
-    #     """
-    #     toolhead = self.printer.lookup_object('toolhead')
-    #     print_time = toolhead.get_last_move_time()
-    #     if self.next_cmd_time > print_time:
-    #         toolhead.dwell(self.next_cmd_time - print_time)
-    #     else:
-    #         self.next_cmd_time = print_time
 
     def sync_to_extruder(self, update_current=True, extruder_name=None):
         """

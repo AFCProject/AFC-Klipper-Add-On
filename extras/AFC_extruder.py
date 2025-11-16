@@ -114,6 +114,7 @@ class AFCExtruder:
             self.tc_lane = AFCLane(config)
             self.printer.objects[f"AFC_lane {self.name}"] = self.tc_lane
             # TODO: Once homing is in create common function for this and AFC_stepper
+
             # Check for Klipper new motion queuing update
             try:
                 self.motion_queuing = self.printer.load_object(config, "motion_queuing")
@@ -146,7 +147,7 @@ class AFCExtruder:
         return self.name
 
     def check_lanes(self):
-        # Check to see if there are multiple lanes per toolhead, remove self created lane if 
+        # Checks to see if there are multiple lanes per toolhead, remove self created lane if 
         # there are more than 1 lanes registered
         if len(self.lanes) > 1 and self.lanes.get(self.tc_lane.name):
             self.tc_lane.unit_obj.lanes.pop(self.tc_lane.name)
