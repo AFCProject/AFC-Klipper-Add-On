@@ -600,7 +600,7 @@ class afcFunction:
             return last_extruder_position
         else:
             return past_extruder_position
-    
+
     def sync_print_time(self):
         """
         Helper function to get current print time that compares to previous synced time
@@ -613,7 +613,7 @@ class afcFunction:
             toolhead.dwell(self.next_cmd_time - print_time)
         else:
             self.next_cmd_time = print_time
-        
+
     def do_enable(self, enable: bool, stepper_name: str):
         """
         Helper function to enable/disable stepper motor

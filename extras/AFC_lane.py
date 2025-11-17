@@ -71,10 +71,10 @@ class AFCLane:
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.cb_update_weight   = self.reactor.register_timer( self.update_weight_callback )
 
-        self.unit_obj: Optional[afcUnit]         = None
-        self.hub_obj: Optional[afc_hub]          = None
-        self.buffer_obj: Optional[AFCTrigger]    = None
-        self.extruder_obj: Optional[AFCExtruder] = None
+        self.unit_obj: afcUnit         = None
+        self.hub_obj: afc_hub          = None
+        self.buffer_obj: AFCTrigger    = None
+        self.extruder_obj: AFCExtruder = None
 
         #stored status variables
         self.fullname           = config.get_name()
@@ -939,7 +939,7 @@ class AFCLane:
         # Weight cannot be negative, force back to zero if it's below zero
         if self.weight < 0:
             self.weight = 0
-    
+
     def set_loaded(self):
         """
         Helper function for setting multiple variables when filament in loaded into lane
@@ -947,7 +947,7 @@ class AFCLane:
         self.status = AFCLaneState.LOADED
         self.unit_obj.lane_loaded(self)
         self.afc.spool._set_values(self)
-    
+
     def set_unloaded(self):
         """
         Helper function for setting multiple variables when filament is unloaded from lane
@@ -1109,7 +1109,7 @@ class AFCLane:
     def tool_swap(self):
         if self.extruder_obj.tc_unit_obj is not None:
             self.extruder_obj.tc_unit_obj.tool_swap(self)
-    
+
 
     def send_lane_data(self):
         """

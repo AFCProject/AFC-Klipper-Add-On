@@ -10,10 +10,12 @@ import traceback
 from configfile import error
 from datetime import datetime, timedelta
 
-from typing import TYPE_CHECKING
+from typing import Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from configfile import ConfigWrapper
     from extras.AFC import afc
+    from extras.AFC_lane import AFCLane
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -22,7 +24,7 @@ try: from extras.AFC_respond import AFCprompt
 except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
 
 class afcUnit:
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper) -> None:
         self.printer        = config.get_printer()
         self.gcode          = self.printer.lookup_object('gcode')
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
@@ -30,7 +32,7 @@ class afcUnit:
         self.afc: afc       = self.printer.lookup_object('AFC')
         self.logger         = self.afc.logger
 
-        self.lanes      = {}
+        self.lanes: Dict[str, AFCLane]      = {}
         self.logo       = '<span class=success--text>Ready\n</span>'
         self.logo_error = '<span class=error--text>Not Ready</span>\n'
 

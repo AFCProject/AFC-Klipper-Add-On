@@ -17,16 +17,16 @@ from configparser import Error as error
 from math import ceil
 
 from typing import TYPE_CHECKING, Optional, Union, Dict
-from extras.AFC_lane import *
+from extras.AFC_lane import AFCLane
 
 if TYPE_CHECKING:
-    from klippy import *
+    from klippy import Printer
     from reactor import PollReactor, SelectReactor
     from configfile import ConfigWrapper
     from kinematics.extruder import PrinterExtruder
     from toolhead import ToolHead
     from extras.heaters import Heater
-    from extras.AFC import *
+    from extras.AFC import afc, AFCLaneState
     from extras.AFC_Toolchanger import AfcToolchanger
     from extras.AFC_functions import afcFunction
 
@@ -39,7 +39,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 LARGE_TIME_OFFSET = 99999.9
 
 class AFCExtruder:
-    def __init__(self, config: ConfigWrapper):
+    def __init__(self, config: ConfigWrapper) -> None:
         self.printer:Printer = config.get_printer()
         buttons         = self.printer.load_object(config, "buttons")
         self.afc: afc   = self.printer.lookup_object('AFC')
@@ -52,7 +52,7 @@ class AFCExtruder:
         self.extruder_move_timer= self.reactor.register_timer(self.extruder_move_cb)
         self.temp_check_timer   = self.reactor.register_timer(self.temp_check_cb)
 
-        self.toolhead_extruder: Optional[PrinterExtruder] = None
+        self.toolhead_extruder: PrinterExtruder = None
         self.fullname                   = config.get_name()
         self.mutex                      = self.reactor.mutex()
 
@@ -69,10 +69,10 @@ class AFCExtruder:
         self.enable_runout              = config.getboolean("enable_tool_runout",       self.afc.enable_tool_runout)
         self.debounce_delay             = config.getfloat("debounce_delay",             self.afc.debounce_delay)
         self.deadband                   = config.getfloat("deadband", 2)                                                # Deadband for extruder heater, default is 2 degrees Celsius
-        
+
         self.tc_unit_name: Optional[str] = config.get("toolchanger_unit", None)
-        self.tc_unit_obj: Optional[AfcToolchanger] = None
-        self.tc_lane: Optional[AFCLane] = None
+        self.tc_unit_obj: AfcToolchanger = None
+        self.tc_lane: AFCLane           = None
         self.tool: str                  = config.get('tool', None)
         self.tool_ob                    = None
         self.map : Optional[str]        = config.get('map', None)
@@ -121,7 +121,7 @@ class AFCExtruder:
                 self.motion_queuing = self.printer.load_object(config, "motion_queuing")
             except Exception:
                 self.motion_queuing = None
-            
+
             ffi_main, ffi_lib = chelper.get_ffi()
             self.stepper_kinematics = ffi_main.gc(
                 ffi_lib.cartesian_stepper_alloc(b'x'), ffi_lib.free)
@@ -142,13 +142,13 @@ class AFCExtruder:
                                            self.cmd_UPDATE_TOOLHEAD_SENSORS_options)
         self.function.register_mux_command(self.show_macros, 'SAVE_EXTRUDER_VALUES', "EXTRUDER", self.name,
                                            self.cmd_SAVE_EXTRUDER_VALUES, self.cmd_SAVE_EXTRUDER_VALUES_help,
-                                           self.cmd_SAVE_EXTRUDER_VALUES_options)       
+                                           self.cmd_SAVE_EXTRUDER_VALUES_options)
 
     def __str__(self):
         return self.name
 
     def check_lanes(self):
-        # Checks to see if there are multiple lanes per toolhead, remove self created lane if 
+        # Checks to see if there are multiple lanes per toolhead, remove self created lane if
         # there are more than 1 lanes registered
         if len(self.lanes) > 1 and self.lanes.get(self.tc_lane.name):
             self.tc_lane.unit_obj.lanes.pop(self.tc_lane.name)
@@ -187,7 +187,7 @@ class AFCExtruder:
                     f"AFC_Toolchanger {self.tc_unit_name}"
                 )
                 self.tc_lane.unit_obj = self.tc_unit_obj
-                
+
         except:
             raise error(
                 f'AFC_Toolchanger {self.tc_unit_name} not found in config file for {self.name}'
@@ -236,8 +236,8 @@ class AFCExtruder:
                 if self.tc_unit_name and self.no_lanes:
                     self.tc_lane.load_state = state
                     self.tc_lane.prep_state = state
-                
-                    if (self.printer.state_message == READY and 
+
+                    if (self.printer.state_message == READY and
                         self.tc_lane._afc_prep_done):
                         if state:
                             if not self.load_active:
@@ -245,7 +245,7 @@ class AFCExtruder:
                         else:
                             self.tc_lane.set_tool_unloaded()
                             self.tc_lane.set_unloaded()
-                        
+
                         self.afc.save_vars()
             else:
                 self.logger.info("Not loading State matches tool_start_state")
@@ -301,14 +301,14 @@ class AFCExtruder:
     def move_extruder(self, distance, sync=False):
         if distance == 0:
             return
-        
+
         # TODO: put a guard here as well to check if loading is active
         # TODO: make sync work correctly
-        
+
         self.load_active = True
         toolhead: ToolHead = self.printer.lookup_object("toolhead")
         stepper = self.toolhead_extruder.extruder_stepper.stepper
-        
+
         self.prev_sk = stepper.set_stepper_kinematics(self.stepper_kinematics)
         self.prev_trapq = stepper.set_trapq(self.trapq)
         stepper.set_position((0., 0., 0.))
@@ -328,8 +328,8 @@ class AFCExtruder:
             self.motion_queuing.note_mcu_movequeue_activity(print_time)
 
         dwell_time = accel_t + cruise_t + accel_t
-        
-        self.reactor.update_timer(self.extruder_move_timer, 
+
+        self.reactor.update_timer(self.extruder_move_timer,
                                   self.reactor.monotonic() + ceil(dwell_time))
 
     def extruder_move_cb(self, eventtime:float):
@@ -351,7 +351,7 @@ class AFCExtruder:
         heater = self.get_heater()
         current_temp, target_temp = heater.get_temp(eventtime)
 
-        if (current_temp >= target_temp - self.afc.temp_wait_tolerance 
+        if (current_temp >= target_temp - self.afc.temp_wait_tolerance
             and current_temp <= target_temp + self.afc.temp_wait_tolerance):
             if self.tool_start_state:
                 info_str = "loading to" if self.current_move_distance > 0 else "unloading from"
@@ -373,7 +373,7 @@ class AFCExtruder:
             return self.reactor.NEVER
         else:
             self.logger.debug(f"{self.name}: waiting for temp: {current_temp}")
-        
+
         return self.reactor.monotonic() + 1
 
     def _update_tool_stn(self, length):

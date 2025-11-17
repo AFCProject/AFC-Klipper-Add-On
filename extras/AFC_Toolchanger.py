@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from gcode import GCodeCommand
     from extras.AFC_lane import AFCLane
     from extras.AFC_functions import afcFunction
-    from extras.AFC_extruder import AFCExtruder
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -40,16 +39,16 @@ class AfcToolchanger(afcUnit):
         self.logo_error = '<span class=error--text>Toolchanger Not Ready</span>\n'
         self.functions: afcFunction = self.printer.load_object(config, 'AFC_functions')
 
-        self.functions.register_commands(self.afc.show_macros, "AFC_SELECT_TOOL", 
+        self.functions.register_commands(self.afc.show_macros, "AFC_SELECT_TOOL",
                                          self.cmd_AFC_SELECT_TOOL, self.cmd_AFC_SELECT_TOOL_help,
                                          self.cmd_AFC_SELECT_TOOL_options )
-        
-        self.functions.register_commands(self.afc.show_macros, "AFC_UNSELECT_TOOL", 
+
+        self.functions.register_commands(self.afc.show_macros, "AFC_UNSELECT_TOOL",
                                          self.cmd_AFC_UNSELECT_TOOL, self.cmd_AFC_UNSELECT_TOOL_help)
 
     # def handle_connect(self):
     #     return
-    
+
     def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: str, enable_movement: bool):
         if assignTcmd: self.afc.function.TcmdAssign(cur_lane)
         # Now that a T command is assigned, send lane data to moonraker
@@ -57,7 +56,7 @@ class AfcToolchanger(afcUnit):
         self.logger.info( '{lane_name} tool cmd: {tcmd:3} {msg}'.format(lane_name=cur_lane.name, tcmd=cur_lane.map, msg=""))
         cur_lane.set_afc_prep_done()
         return True
-    
+
     cmd_AFC_SELECT_TOOL_help = ""
     cmd_AFC_SELECT_TOOL_options = {
         "TOOL": {"type": "string", "default": "extruder"}
@@ -75,7 +74,7 @@ class AfcToolchanger(afcUnit):
     def cmd_AFC_UNSELECT_TOOL(self, gcmd:GCodeCommand):
 
         self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
-    
+
     def tool_swap(self, lane):
         """
         Perform a tool swap operation for the specified lane.
@@ -115,7 +114,7 @@ class AfcToolchanger(afcUnit):
             self.afc.last_gcode_position[i] += self.afc.gcode_move.base_position[i]
 
         self.afc.function.log_toolhead_pos("After toolswap: ")
-    
+
 def load_config_prefix(config: ConfigWrapper):
     return AfcToolchanger(config)
 

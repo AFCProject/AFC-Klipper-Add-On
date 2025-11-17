@@ -13,6 +13,7 @@ from typing import Any
 from typing import Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from configfile import ConfigWrapper
     from gcode import GCodeDispatch
     from extras.AFC_lane import AFCLane
     from extras.AFC_extruder import AFCExtruder
@@ -52,7 +53,7 @@ def load_config(config):
     return afc(config)
 
 class afc:
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper):
         self.config  = config
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
