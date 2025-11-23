@@ -13,7 +13,7 @@ from configfile import error
 from datetime import datetime
 from enum import Enum
 
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -61,7 +61,7 @@ VALID_DIRECT_HUB = ['direct', 'direct_load']
 
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
-    def __init__(self, config: ConfigWrapper):
+    def __init__(self, config: ConfigWrapper) -> None:
         self.printer            = config.get_printer()
         self.afc                = self.printer.lookup_object('AFC')
         self.gcode              = self.printer.lookup_object('gcode')
@@ -73,8 +73,8 @@ class AFCLane:
         self.cb_update_weight   = self.reactor.register_timer( self.update_weight_callback )
 
         self.unit_obj: afcUnit
-        self.hub_obj: afc_hub
-        self.buffer_obj: AFCTrigger
+        self.hub_obj: Optional[afc_hub|None] = None
+        self.buffer_obj: Optional[AFCTrigger|None] = None
         self.extruder_obj: AFCExtruder
 
         #stored status variables

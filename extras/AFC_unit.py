@@ -10,7 +10,7 @@ import traceback
 from configfile import error
 from datetime import datetime, timedelta
 
-from typing import Dict, TYPE_CHECKING
+from typing import Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -41,9 +41,9 @@ class afcUnit:
         self.logo_error = '<span class=error--text>Not Ready</span>\n'
 
         # Objects
-        self.buffer_obj: AFCTrigger
-        self.hub_obj: afc_hub
-        self.extruder_obj: AFCExtruder
+        self.buffer_obj: Optional[AFCTrigger|None]      = None
+        self.hub_obj: Optional[afc_hub|None]            = None
+        self.extruder_obj: Optional[AFCExtruder|None]   = None
 
         # Config get section
         self.full_name                   = config.get_name().split()

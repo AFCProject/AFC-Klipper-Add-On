@@ -32,7 +32,7 @@ try: from extras.AFC import State
 except: raise error(ERROR_STR.format(import_lib="AFC", trace=traceback.format_exc()))
 
 class AfcToolchanger(afcUnit):
-    def __init__(self, config: ConfigWrapper):
+    def __init__(self, config: ConfigWrapper) -> None:
         super().__init__(config)
         self.type = config.get("type", "Toolchanger")
         self.logo       = '<span class=success--text>Toolchanger Ready\n</span>'

@@ -11,7 +11,7 @@ from extras.force_move import calc_move_time
 
 try:
     from printer import message_ready as READY # type: ignore
-except:
+except ImportError:
     from klippy import message_ready as READY
 from configparser import Error as error
 from math import ceil
@@ -71,11 +71,11 @@ class AFCExtruder:
         self.deadband                   = config.getfloat("deadband", 2)                                                # Deadband for extruder heater, default is 2 degrees Celsius
 
         self.tc_unit_name: Optional[str] = config.get("toolchanger_unit", None)
-        self.tc_unit_obj: AfcToolchanger
-        self.tc_lane: AFCLane
-        self.tool: str                  = config.get('tool', None)
-        self.tool_ob                    = None
-        self.map : Optional[str]        = config.get('map', None)
+        self.tc_unit_obj: Optional[AfcToolchanger|None] = None
+        self.tc_lane: Optional[AFCLane|None]            = None
+        self.tool: Optional[str]        = config.get('tool', None)
+        self.tool_obj                   = None
+        self.map: Optional[str]         = config.get('map', None)
         self.no_lanes                   = False
 
         self.lane_loaded: Optional[str] = None
@@ -150,6 +150,9 @@ class AFCExtruder:
     def check_lanes(self):
         # Checks to see if there are multiple lanes per toolhead, remove self created lane if
         # there are more than 1 lanes registered
+        if self.tc_lane is None:
+            return
+
         if len(self.lanes) > 1 and self.lanes.get(self.tc_lane.name):
             self.tc_lane.unit_obj.lanes.pop(self.tc_lane.name)
             self.lanes.pop(self.tc_lane.name)
@@ -157,7 +160,9 @@ class AFCExtruder:
             self.printer.objects.pop(f"AFC_lane {self.name}")
 
     def handle_ready(self):
-        if( self.name in self.lanes ):
+        # Check to see if extruder name is currently in `self.lanes`, if it is then that means that
+        # no other lanes are setup for this extruder, and that this is a "standalone" toolhead
+        if self.name in self.lanes:
             self.no_lanes = True
             self.logger.info(f"{self.name} no lanes")
 
@@ -286,6 +291,7 @@ class AFCExtruder:
         """
         Helper function for returning extruders Heater object
         """
+        
         return self.toolhead_extruder.get_heater()
 
     def load_unload_sequence(self, distance: float) -> None:
@@ -302,12 +308,14 @@ class AFCExtruder:
         This sequence has been setup so that this can happen during a print without causing TTC's
 
         :param distance: distance to load filament, this is set to `self.current_move_distance` so
-                         that distance is saved and used in move_extruder function once extruer is
+                         that distance is saved and used in move_extruder function once extruder is
                          up to temperature
         """
         self.logger.info(f"Loading {self.name}")
         self.load_active = True
         self.current_move_distance = distance
+        # TODO: maybe make this so this same function can be called normally when lanes are assigned
+        # to extruders...
         if distance > 0:
             self.tc_lane.unit_obj.lane_loading(self.tc_lane)
             self.tc_lane.status = AFCLaneState.TOOL_LOADING
@@ -366,7 +374,7 @@ class AFCExtruder:
         this function put back extruder steppers motion queue and disables extruder stepper
 
         :param eventtime: Event time when callback function is called, currently not used
-        :param float: Always returns reactor NEVER to stop function from being called again
+        :return float: Always returns reactor NEVER to stop function from being called again
         """
         toolhead: ToolHead = self.printer.lookup_object("toolhead")
         stepper = self.toolhead_extruder.extruder_stepper.stepper
@@ -409,7 +417,7 @@ class AFCExtruder:
                 self.tc_lane.set_unloaded()
                 self.afc.save_vars()
                 self.logger.error(
-                    f"Filament is not longer detected at tool start sensor for {self.name}.\n"
+                    f"Filament is no longer detected at tool start sensor for {self.name}.\n"
                     "Not loading filament to nozzle."
                 )
             return self.reactor.NEVER
