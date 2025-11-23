@@ -465,7 +465,7 @@ class afc:
                     break
         return float(temp_value), using_min_value
 
-    def _check_extruder_temp(self, cur_lane: AFCLane, no_wait:bool=False):
+    def _check_extruder_temp(self, cur_lane: AFCLane, no_wait: bool=False):
         """
         Helper function that check to see if extruder needs to be heated, and wait for hotend to get to temp if needed
         """

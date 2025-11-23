@@ -291,7 +291,7 @@ class AFCExtruder:
         """
         Helper function for returning extruders Heater object
         """
-        
+
         return self.toolhead_extruder.get_heater()
 
     def load_unload_sequence(self, distance: float) -> None:

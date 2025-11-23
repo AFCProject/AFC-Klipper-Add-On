@@ -76,7 +76,10 @@ class AfcToolchanger(afcUnit):
         tool = self.afc.tools.get(tool_key)
 
         if tool:
-            self.tool_swap(tool.tc_lane)
+            if hasattr(tool, 'tc_lane') and tool.tc_lane is not None:
+                self.tool_swap(tool.tc_lane)
+            else:
+                self.logger.error(f"Tool '{tool_key}' does not have a valid 'tc_lane' attribute.")
         else:
             self.logger.error(f"Key:{tool_key} invalid for TOOL")
 
