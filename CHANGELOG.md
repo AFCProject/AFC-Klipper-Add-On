@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-11-23]
+### Added
+- Toolchanger: Adding ability to control/swap toolheads that do not have a unit(BoxTurtle, HTLF, etc) attached to the toolhead.
+
 ## [2025-11-09]
 ### Added
 - Add support in the `afc-install.sh` script to support OpenAMS units.
