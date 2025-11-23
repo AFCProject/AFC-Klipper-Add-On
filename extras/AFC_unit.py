@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
+    from extras.AFC_buffer import AFCTrigger
+    from extras.AFC_hub import afc_hub
+    from extras.AFC_extruder import AFCExtruder
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -31,15 +34,16 @@ class afcUnit:
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.afc: afc       = self.printer.lookup_object('AFC')
         self.logger         = self.afc.logger
+        self.type           = None
 
         self.lanes: Dict[str, AFCLane]      = {}
         self.logo       = '<span class=success--text>Ready\n</span>'
         self.logo_error = '<span class=error--text>Not Ready</span>\n'
 
         # Objects
-        self.buffer_obj     = None
-        self.hub_obj        = None
-        self.extruder_obj   = None
+        self.buffer_obj: AFCTrigger
+        self.hub_obj: afc_hub
+        self.extruder_obj: AFCExtruder
 
         # Config get section
         self.full_name                   = config.get_name().split()

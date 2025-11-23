@@ -1096,7 +1096,6 @@ class afc:
 
         # If the current extruder is not the one associated with the lane, switch to it.
         if self.function.get_current_extruder() != cur_lane.extruder_obj.name:
-            # self.tool_swap(cur_lane)
             cur_lane.tool_swap()
 
         if cur_lane.name != self.current:
@@ -1401,7 +1400,6 @@ class afc:
 
         # If the next extruder is specified and it is not the current extruder, perform a tool swap.
         if next_extruder is not None and self.function.get_current_extruder() != next_extruder:
-            # self.tool_swap( next_lane )
             next_lane.tool_swap()
 
             # Lookup the current extruder and lane objects based on the next lane to load.

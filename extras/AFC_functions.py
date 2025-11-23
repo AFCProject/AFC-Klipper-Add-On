@@ -619,6 +619,7 @@ class afcFunction:
         Helper function to enable/disable stepper motor
 
         :param enable: Enables/disables stepper motor
+        :param stepper_name: Stepper name to enable/disable
         """
         self.sync_print_time()
         stepper_enable = self.printer.lookup_object('stepper_enable')

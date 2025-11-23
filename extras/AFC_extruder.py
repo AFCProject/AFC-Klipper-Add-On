@@ -10,7 +10,7 @@ import chelper
 from extras.force_move import calc_move_time
 
 try:
-    from printer import message_ready as READY
+    from printer import message_ready as READY # type: ignore
 except:
     from klippy import message_ready as READY
 from configparser import Error as error
@@ -52,11 +52,11 @@ class AFCExtruder:
         self.extruder_move_timer= self.reactor.register_timer(self.extruder_move_cb)
         self.temp_check_timer   = self.reactor.register_timer(self.temp_check_cb)
 
-        self.toolhead_extruder: PrinterExtruder = None
+        self.toolhead_extruder: PrinterExtruder
         self.fullname                   = config.get_name()
         self.mutex                      = self.reactor.mutex()
 
-        self.name                       = self.fullname.split(' ')[-1]
+        self.name: str                  = self.fullname.split(' ')[-1]
         self.tool_start                 = config.get('pin_tool_start', None)                                            # Pin for sensor before(pre) extruder gears
         self.tool_end                   = config.get('pin_tool_end', None)                                              # Pin for sensor after(post) extruder gears (optional)
         self.tool_stn                   = config.getfloat("tool_stn", 72)                                               # Distance in mm from the toolhead sensor to the tip of the nozzle in mm, if `tool_end` is defined then distance is from this sensor
@@ -71,8 +71,8 @@ class AFCExtruder:
         self.deadband                   = config.getfloat("deadband", 2)                                                # Deadband for extruder heater, default is 2 degrees Celsius
 
         self.tc_unit_name: Optional[str] = config.get("toolchanger_unit", None)
-        self.tc_unit_obj: AfcToolchanger = None
-        self.tc_lane: AFCLane           = None
+        self.tc_unit_obj: AfcToolchanger
+        self.tc_lane: AFCLane
         self.tool: str                  = config.get('tool', None)
         self.tool_ob                    = None
         self.map : Optional[str]        = config.get('map', None)
@@ -81,7 +81,7 @@ class AFCExtruder:
         self.lane_loaded: Optional[str] = None
         self.lanes: Dict                = {}
         self.load_active                = False
-        self.current_move_distance: int = 0
+        self.current_move_distance: float = 0
 
         self.tool_start_state = False
         if self.tool_start is not None:
@@ -225,7 +225,7 @@ class AFCExtruder:
         Callback for the tool_start (pre-extruder) filament sensor.
         Updates the sensor state and triggers runout handling if filament is missing.
 
-        If extruder is its own lane(no BoxTurtle, HTLF, etc connected to this lane) then a async
+        If extruder is its own lane(no BoxTurtle, HTLF, etc connected to this lane) then an async
         automatic load sequence is performed.
 
         :param eventtime: Event time from the button press
@@ -276,15 +276,35 @@ class AFCExtruder:
         """
         Callback for the tool_end (post-extruder) filament sensor.
         Updates the sensor state and triggers runout handling if filament is missing.
+
         :param eventtime: Event time from the button press
         :param state: Boolean indicating sensor state (True = filament present, False = runout)
         """
         self.tool_end_state = state
 
     def get_heater(self) -> Heater:
+        """
+        Helper function for returning extruders Heater object
+        """
         return self.toolhead_extruder.get_heater()
 
-    def load_unload_sequence(self, distance: float):
+    def load_unload_sequence(self, distance: float) -> None:
+        """
+        Starts unloading/loading sequence for extruders, currently only for toolheads without lanes
+        attached to a toolhead
+
+        Unloading/Loading sequence:
+        - Check extruder temp, starts heating if not up to temp
+        - Starts temperature callback timer
+        - Once up to temperature move_extruder function is called and callback timer is started for
+          the ceiling of the time it takes to move the specified distance.
+
+        This sequence has been setup so that this can happen during a print without causing TTC's
+
+        :param distance: distance to load filament, this is set to `self.current_move_distance` so
+                         that distance is saved and used in move_extruder function once extruer is
+                         up to temperature
+        """
         self.logger.info(f"Loading {self.name}")
         self.load_active = True
         self.current_move_distance = distance
@@ -298,7 +318,15 @@ class AFCExtruder:
         self.reactor.update_timer(self.temp_check_timer,
                                 self.reactor.monotonic() +1 )
 
-    def move_extruder(self, distance, sync=False):
+    def move_extruder(self, distance: float, sync: bool=False) -> None:
+        """
+        Moves toolhead extruder by specified distance
+
+        Once move is scheduled, timer is updated for extruder move callback for the ceiling of
+        the time it takes to move specified distance(dwell_time)
+
+        :param distance: Distance to move extruder, distance of zero will immediately return
+        """
         if distance == 0:
             return
 
@@ -323,7 +351,7 @@ class AFCExtruder:
             stepper.generate_steps(print_time)
             self.trapq_finalize_moves(self.trapq, print_time + LARGE_TIME_OFFSET,
                                     print_time + LARGE_TIME_OFFSET)
-            toolhead.note_mcu_movequeue_activity(print_time)
+            toolhead.note_mcu_movequeue_activity(print_time)            # type: ignore
         else:
             self.motion_queuing.note_mcu_movequeue_activity(print_time)
 
@@ -332,8 +360,14 @@ class AFCExtruder:
         self.reactor.update_timer(self.extruder_move_timer,
                                   self.reactor.monotonic() + ceil(dwell_time))
 
-    def extruder_move_cb(self, eventtime:float):
+    def extruder_move_cb(self, eventtime: float) -> float:
+        """
+        Extruder move callback that is called after scheduling moves in `move_extruder` function,
+        this function put back extruder steppers motion queue and disables extruder stepper
 
+        :param eventtime: Event time when callback function is called, currently not used
+        :param float: Always returns reactor NEVER to stop function from being called again
+        """
         toolhead: ToolHead = self.printer.lookup_object("toolhead")
         stepper = self.toolhead_extruder.extruder_stepper.stepper
         toolhead.flush_step_generation()
@@ -347,7 +381,15 @@ class AFCExtruder:
         self.current_move_distance = 0
         return self.reactor.NEVER
 
-    def temp_check_cb(self, eventtime:float):
+    def temp_check_cb(self, eventtime:float) -> float:
+        """
+        Callback timer to check if extruder is up to temperature, once up to temperature filament
+        is moved by `self.current_move_distance` by calling `move_extruder` function
+
+        :param eventtime: Event time when callback function is called
+        :return float: Returns current time + 1s if extruder is not up to temperature, returns
+                       reactors NEVER if extruder is up to temperature to stop callback timer.
+        """
         heater = self.get_heater()
         current_temp, target_temp = heater.get_temp(eventtime)
 

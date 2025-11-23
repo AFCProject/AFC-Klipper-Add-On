@@ -46,9 +46,6 @@ class AfcToolchanger(afcUnit):
         self.functions.register_commands(self.afc.show_macros, "AFC_UNSELECT_TOOL",
                                          self.cmd_AFC_UNSELECT_TOOL, self.cmd_AFC_UNSELECT_TOOL_help)
 
-    # def handle_connect(self):
-    #     return
-
     def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: str, enable_movement: bool):
         if assignTcmd: self.afc.function.TcmdAssign(cur_lane)
         # Now that a T command is assigned, send lane data to moonraker
@@ -57,11 +54,24 @@ class AfcToolchanger(afcUnit):
         cur_lane.set_afc_prep_done()
         return True
 
-    cmd_AFC_SELECT_TOOL_help = ""
+    cmd_AFC_SELECT_TOOL_help = "Select specified tool"
     cmd_AFC_SELECT_TOOL_options = {
         "TOOL": {"type": "string", "default": "extruder"}
     }
     def cmd_AFC_SELECT_TOOL(self, gcmd:GCodeCommand):
+        """
+        Select's tool based off passed in extruder name
+
+        Usage
+        -----
+        `AFC_SELECT_TOOL TOOL=<extruder_name>`
+
+        Example
+        -----
+        ```
+        AFC_SELECT_TOOL TOOL=extruder1
+        ```
+        """
         tool_key = gcmd.get("TOOL")
         tool = self.afc.tools.get(tool_key)
 
@@ -70,9 +80,23 @@ class AfcToolchanger(afcUnit):
         else:
             self.logger.error(f"Key:{tool_key} invalid for TOOL")
 
-    cmd_AFC_UNSELECT_TOOL_help = ""
+    cmd_AFC_UNSELECT_TOOL_help = "Unselects and docks current tool on shuttle"
     def cmd_AFC_UNSELECT_TOOL(self, gcmd:GCodeCommand):
+        """
+        Unselects current tool loaded in shuttle by calling klipper-toolchanger UNSELECT_TOOL
 
+        TODO: Update text once moved away from KTC
+
+        Usage
+        -----
+        `AFC_UNSELECT_TOOL`
+
+        Example
+        -----
+        ```
+        AFC_UNSELECT_TOOL
+        ```
+        """
         self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
 
     def tool_swap(self, lane):

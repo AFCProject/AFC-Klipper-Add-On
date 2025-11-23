@@ -13,9 +13,10 @@ from configfile import error
 from datetime import datetime
 from enum import Enum
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from configfile import ConfigWrapper
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_hub import afc_hub
     from extras.AFC_buffer import AFCTrigger
@@ -60,7 +61,7 @@ VALID_DIRECT_HUB = ['direct', 'direct_load']
 
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper):
         self.printer            = config.get_printer()
         self.afc                = self.printer.lookup_object('AFC')
         self.gcode              = self.printer.lookup_object('gcode')
@@ -71,10 +72,10 @@ class AFCLane:
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.cb_update_weight   = self.reactor.register_timer( self.update_weight_callback )
 
-        self.unit_obj: afcUnit         = None
-        self.hub_obj: afc_hub          = None
-        self.buffer_obj: AFCTrigger    = None
-        self.extruder_obj: AFCExtruder = None
+        self.unit_obj: afcUnit
+        self.hub_obj: afc_hub
+        self.buffer_obj: AFCTrigger
+        self.extruder_obj: AFCExtruder
 
         #stored status variables
         self.fullname           = config.get_name()
@@ -283,7 +284,7 @@ class AFCLane:
             # Update boolean and check to make sure a TD-1 device is detected
             self.td1_when_loaded = self.td1_when_loaded and self.afc.td1_defined
 
-    def handle_unit_connect(self, unit_obj:afcUnit):
+    def handle_unit_connect(self, unit_obj: afcUnit):
         """
         Callback from <unit_name>:connect to verify units/hub/buffer/extruder object. Errors out if user specified names and they do not exist in their configuration
         """
@@ -1107,6 +1108,9 @@ class AFCLane:
 
     # Toolchanger functions
     def tool_swap(self):
+        """
+        Helper function for calling extruder's tool_swap function
+        """
         if self.extruder_obj.tc_unit_obj is not None:
             self.extruder_obj.tc_unit_obj.tool_swap(self)
 
