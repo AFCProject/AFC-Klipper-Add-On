@@ -376,6 +376,8 @@ class AFCExtruder:
         :param eventtime: Event time when callback function is called, currently not used
         :return float: Always returns reactor NEVER to stop function from being called again
         """
+        # TODO: set a flag so that AFC knows to purge properly when switched to a toolhead that 
+        # was asynchronously loaded
         toolhead: ToolHead = self.printer.lookup_object("toolhead")
         stepper = self.toolhead_extruder.extruder_stepper.stepper
         toolhead.flush_step_generation()

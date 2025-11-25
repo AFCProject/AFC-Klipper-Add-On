@@ -449,7 +449,7 @@ class afcUnit:
 
     # Functions are below are placeholders so the function exists for all units, override these function in your unit files
     def _print_function_not_defined(self, name):
-        self.afc.gcode("{} function not defined for {}".format(name, self.name))
+        self.afc.logger.error("{} function not defined for {}".format(name, self.name))
 
     # Function that other units can create so that they are specific to the unit
     def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
