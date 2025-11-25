@@ -18,6 +18,7 @@ from math import ceil
 
 from typing import TYPE_CHECKING, Optional, Union, Dict
 from extras.AFC_lane import AFCLane
+from extras.AFC import AFCLaneState
 
 if TYPE_CHECKING:
     from klippy import Printer
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from kinematics.extruder import PrinterExtruder
     from toolhead import ToolHead
     from extras.heaters import Heater
-    from extras.AFC import afc, AFCLaneState
+    from extras.AFC import afc
     from extras.AFC_Toolchanger import AfcToolchanger
     from extras.AFC_functions import afcFunction
 
@@ -376,7 +377,7 @@ class AFCExtruder:
         :param eventtime: Event time when callback function is called, currently not used
         :return float: Always returns reactor NEVER to stop function from being called again
         """
-        # TODO: set a flag so that AFC knows to purge properly when switched to a toolhead that 
+        # TODO: set a flag so that AFC knows to purge properly when switched to a toolhead that
         # was asynchronously loaded
         toolhead: ToolHead = self.printer.lookup_object("toolhead")
         stepper = self.toolhead_extruder.extruder_stepper.stepper
@@ -388,6 +389,9 @@ class AFCExtruder:
 
         self.function.do_enable(False, self.name)
         self.load_active = False
+        info_str = "loading" if self.current_move_distance > 0 else "unloading"
+        self.logger.info(f"{self.name} {info_str} done")
+        self.tc_lane.status = AFCLaneState.NONE
         self.current_move_distance = 0
         return self.reactor.NEVER
 
