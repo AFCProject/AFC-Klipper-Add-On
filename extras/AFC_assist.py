@@ -290,8 +290,8 @@ class Espooler_values:
         #rotations = mm_movement / self.spool_circum
         #correction_factor = 1.0 + ( 1.68 * math.exp(-rotations * 5.0) )
         #cruise_time = rotations * self.cycles_per_rotation * correction_factor
-        spool_rot_s=(self.espool_rot_dist*((self.max_motor_rpm/60)/self.spool_ratio)) / (self.outer_circ())
-        w_r=(weight/self.full_weight+1)*self.delta_circ()
+        spool_rot_s=(self.espool_rot_dist*((self.max_motor_rpm/60)/self.spool_ratio)) / self.outer_circ
+        w_r=(weight/self.full_weight+1)*self.delta_circ
         self._cruise_time=self.delta_movement/w_r/spool_rot_s
         return self._cruise_time #*1000
 
@@ -349,14 +349,14 @@ class Espooler_values:
         """
         Returns circumference for outer diameter
         """
-        return self._spool_outer_diameter * math.pi()
+        return self._spool_outer_diameter * math.pi
 
     @property
     def delta_circ(self) -> float:
         """
         Returns circumference for outer spool diameter - inner spool diameter
         """
-        return (self._spool_outer_diameter - self._spool_inner_diameter)*math.pi()
+        return (self._spool_outer_diameter - self._spool_inner_diameter)*math.pi
 
     @property
     def scaling(self) -> float:
