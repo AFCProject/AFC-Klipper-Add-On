@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixes bug where print current is not correctly set back to correct value after using LANE_MOVE macro.
 
+## [2025-11-26]
+### Added
+- Added `spool_id` field to `lane_data` namespace for Spoolman integration (#575)
+
 ## [2025-11-25]
 ### Added
 - **Buffer Fault Detection System**: New filament fault detection feature for AFC buffers to detect clogs, and feeding issues.

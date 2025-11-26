@@ -1073,7 +1073,8 @@ class AFCLane:
                     "nozzle_temp"   : self.extruder_temp,
                     "scan_time"     : scan_time,
                     "td"            : td,
-                    "lane"          : lane_number
+                    "lane"          : lane_number,
+                    "spool_id"      : self.spool_id
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
