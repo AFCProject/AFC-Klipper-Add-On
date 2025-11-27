@@ -1095,7 +1095,8 @@ class AFCLane:
                     "nozzle_temp"   : "",
                     "scan_time"     : "",
                     "td"            : "",
-                    "lane"          : lane_number
+                    "lane"          : lane_number,
+                    "spool_id"      : ""
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
