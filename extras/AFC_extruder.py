@@ -17,8 +17,6 @@ from configparser import Error as error
 from math import ceil
 
 from typing import TYPE_CHECKING, Optional, Union, Dict
-from extras.AFC_lane import AFCLane
-from extras.AFC import AFCLaneState
 
 if TYPE_CHECKING:
     from klippy import Printer
@@ -36,6 +34,12 @@ except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".f
 
 try: from extras.AFC_utils import add_filament_switch
 except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.format_exc()))
+
+try: from extras.AFC_lane import AFCLane
+except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
+
+try: from extras.AFC import AFCLaneState
+except: raise error(ERROR_STR.format(import_lib="AFC", trace=traceback.format_exc()))
 
 LARGE_TIME_OFFSET = 99999.9
 
