@@ -375,12 +375,12 @@ class AFCTrigger:
 
         Usage
         -----
-        `SET_ERROR_SENSITIVITY BUFFER=<buffer_name> SENSITIVITY=<0-10>`
+        `AFC_SET_ERROR_SENSITIVITY BUFFER=<buffer_name> SENSITIVITY=<0-10>`
 
         Example
         -----
         ```
-        SET_ERROR_SENSITIVITY BUFFER=TN SENSITIVITY=5.0
+        AFC_SET_ERROR_SENSITIVITY BUFFER=TN SENSITIVITY=5.0
         ```
         """
         sensitivity = gcmd.get_float('SENSITIVITY', minval=0, maxval=10)
