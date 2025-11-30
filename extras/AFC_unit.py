@@ -72,18 +72,12 @@ class afcUnit:
         self.spool_ratio            = config.getfloat("spool_ratio",2) #gear ratio for printed gearbox between N20 and spooler wheels
         self.full_weight	        = config.getfloat("full_weight",1000)           # full weight of filament spill (no counting spool itself)
         self.espool_rot_dist        = config.getfloat("espool_rot_dist",132.9)
-        
+
         # Time in seconds to enable spooler at full speed to help with getting the spool to spin
         self.kick_start_time        = config.getfloat("kick_start_time",        0.070)
-        # Cycles per rotation in milliseconds
-        self.cycles_per_rotation    = config.getfloat("cycles_per_rotation",    800)
-        # PWM cycle time
-        self.pwm_value              = config.getfloat("pwm_value",              0.6706)
         # Delta amount in mm from last move to trigger assist
         self.delta_movement         = config.getfloat("delta_movement",         150)
-        # Amount to move in mm once filament has moved by delta movement amount
-        self.mm_movement            = config.getfloat("mm_movement",            150)
-        # Scaling factor for the following variables: kick_start_time, spool_outer_diameter, cycles_per_rotation, pwm_value, delta_movement, mm_movement
+        # Scaling factor for the following variables: kick_start_time, spool_outer_diameter, delta_movement
         self.scaling                = config.getfloat("spoolrate",              1.0)
 
         # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool. Setting value here overrides values set in AFC.cfg file

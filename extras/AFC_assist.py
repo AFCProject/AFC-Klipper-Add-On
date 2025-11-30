@@ -21,6 +21,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.for
 PIN_MIN_TIME = 0.100
 RESEND_HOST_TIME = 0.300 + PIN_MIN_TIME
 MAX_SCHEDULE_TIME = 5.0
+RPM_TO_RPS = 60
 
 class AFCassistMotor:
     def __init__(self, config, type):
@@ -268,9 +269,7 @@ class Espooler_values:
         self._max_motor_rpm          = config.getfloat("max_motor_rpm",         None)
         # Delta amount in mm from last move to trigger assist. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self._delta_movement         = config.getfloat("delta_movement",        None)
-        # Amount to move in mm once filament has moved by delta movement amount. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self._mm_movement            = config.getfloat("mm_movement",           None)
-        # Scaling factor for the following variables: kick_start_time, spool_outer_diameter, cycles_per_rotation, pwm_value, delta_movement, mm_movement. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        # Scaling factor for the following variables: kick_start_time, spool_outer_diameter, delta_movement. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self._scaling                = config.getfloat("spoolrate",             None)
         # Gear ratio of spooler printed drivetrain
         self._spool_ratio            = config.getfloat("spool_ratio",           None)
@@ -287,13 +286,11 @@ class Espooler_values:
         :param weight: Current spool weight
         :return float: Amount of time to be enabled to move mm amount
         """
-        #rotations = mm_movement / self.spool_circum
-        #correction_factor = 1.0 + ( 1.68 * math.exp(-rotations * 5.0) )
-        #cruise_time = rotations * self.cycles_per_rotation * correction_factor
-        spool_rot_s=(self.espool_rot_dist*((self.max_motor_rpm/60)/self.spool_ratio)) / self.outer_circ
-        w_r=(weight/self.full_weight+1)*self.delta_circ
-        self._cruise_time=self.delta_movement/w_r/spool_rot_s
-        return self._cruise_time #*1000
+        rps = self.max_motor_rpm / RPM_TO_RPS
+        spool_rot_s = (self.espool_rot_dist * (rps / self.spool_ratio)) / self.outer_circ
+        w_r = (weight / self.full_weight+1) * self.delta_circ
+        self.cruise_time = self.delta_movement / w_r / spool_rot_s
+        return self.cruise_time
 
     def handle_connect(self, lane_obj):
         """
@@ -301,8 +298,8 @@ class Espooler_values:
         lane this function will update values from their unit.
         """
         if self._kick_start_time      is None: self.kick_start_time      = lane_obj.unit_obj.kick_start_time
-        if self._spool_outer_diameter is None: self._spool_outer_diameter= lane_obj.outer_diameter
-        if self._spool_inner_diameter is None: self._spool_inner_diameter= lane_obj.inner_diameter
+        if self._spool_outer_diameter is None: self.spool_outer_diameter = lane_obj.outer_diameter
+        if self._spool_inner_diameter is None: self.spool_inner_diameter = lane_obj.inner_diameter
         if self._max_motor_rpm        is None: self.max_motor_rpm        = lane_obj.max_motor_rpm
         if self._espool_rot_dist      is None: self.espool_rot_dist      = lane_obj.unit_obj.espool_rot_dist
         if self._delta_movement       is None: self.delta_movement       = lane_obj.unit_obj.delta_movement
@@ -328,7 +325,6 @@ class Espooler_values:
         Returns software kick start time, this value is scaled by scaling factor
         """
         return self._kick_start_time * self._scaling
-
     @kick_start_time.setter
     def kick_start_time(self, value: float):
         self._kick_start_time = value
@@ -339,24 +335,22 @@ class Espooler_values:
         Returns delta movement, this value is scaled by scaling factor
         """
         return self._delta_movement * self._scaling
-
     @delta_movement.setter
     def delta_movement(self, value: float):
         self._delta_movement = value
-    
+
     @property
     def outer_circ(self) -> float:
         """
         Returns circumference for outer diameter
         """
-        return self._spool_outer_diameter * math.pi
-
+        return self.spool_outer_diameter * math.pi
     @property
     def delta_circ(self) -> float:
         """
         Returns circumference for outer spool diameter - inner spool diameter
         """
-        return (self._spool_outer_diameter - self._spool_inner_diameter)*math.pi
+        return (self.spool_outer_diameter - self.spool_inner_diameter)*math.pi
 
     @property
     def scaling(self) -> float:
@@ -364,10 +358,51 @@ class Espooler_values:
         Return scaling factor
         """
         return self._scaling
-
     @scaling.setter
     def scaling(self, value: float):
         self._scaling = value
+
+    @property
+    def full_weight(self) -> float:
+        return self._full_weight
+    @full_weight.setter
+    def full_weight(self, value: float) -> None:
+        self._full_weight = value
+
+    @property
+    def spool_ratio(self) -> float:
+        return self._spool_ratio
+    @spool_ratio.setter
+    def spool_ratio(self, value: float) -> None:
+        self._spool_ratio = value
+
+    @property
+    def max_motor_rpm(self) -> float:
+        return self._max_motor_rpm
+    @max_motor_rpm.setter
+    def max_motor_rpm(self, value: float) -> None:
+        self._max_motor_rpm = value
+
+    @property
+    def espool_rot_dist(self) -> float:
+        return self._espool_rot_dist
+    @espool_rot_dist.setter
+    def espool_rot_dist(self, value: float) -> None:
+        self._espool_rot_dist = value
+
+    @property
+    def spool_outer_diameter(self) -> float:
+        return self._spool_outer_diameter
+    @spool_outer_diameter.setter
+    def spool_outer_diameter(self, value: float) -> None:
+        self._spool_outer_diameter = value
+
+    @property
+    def spool_inner_diameter(self) -> float:
+        return self._spool_inner_diameter
+    @spool_inner_diameter.setter
+    def spool_inner_diameter(self, value: float) -> None:
+        self._spool_inner_diameter = value
 
 class Espooler:
     """
@@ -771,11 +806,13 @@ class Espooler:
         BREAK_DELAY - Time in seconds to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting.<br>
         KICK_START_TIME - Time in seconds to enable spooler at full speed to help with getting the spool to spin<br>
         SPOOL_OUTER_DIAMETER - Current spools outer diameter<br>
-        CYCLES_PER_ROTATION - Time it takes to in milliseconds to turn a spool a full rotation<br>
-        PWM_VALUE - PWM cycle time<br>
-        MM_MOVEMENT - Amount to move during the assist in mm once filament has moved by `delta_movement` amount<br>
+        SPOOL_INNER_DIAMETER - Current spools inner diameter<br>
+        FULL_WEIGHT - Weight of filament on new spool<br>
+        SPOOL_RATIO - Gear ratio of spooler printed drivetrain<br>
+        MAX_MOTOR_RPM - Max RPM of spooler motor<br>
+        ESPOOL_ROT_DIST - Rotation distance estimation of espooler wheels<br>
         DELTA_MOVEMENT - Delta amount in mm to move from last assist to trigger another assist move<br>
-        SPOOLRATE - Scaling factor for the following variables: kick_start_time, spool_outer_diameter, cycles_per_rotation, pwm_value, delta_movement, mm_movement<br>
+        SPOOLRATE - Scaling factor for the following variables: kick_start_time, spool_outer_diameter, delta_movement<br>
         TIMER_DELAY - Number of seconds to wait before checking filament movement for espooler assist<br>
         ASSIST_WEIGHT - Weight spool has to be below to activate print assist<br>
         ENABLE_ASSIST - Setting to 1 enables espooler assist while printing<br>
@@ -796,8 +833,18 @@ class Espooler:
                                                                                     "BREAK_DELAY", self.lane_obj.fullname, "n20_break_delay_time")
         self.espooler_values.kick_start_time        = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.kick_start_time,
                                                                                     "KICK_START_TIME", self.lane_obj.fullname)
-        self.espooler_values._spool_outer_diameter  = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values._spool_outer_diameter,
+        self.espooler_values.spool_outer_diameter   = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.spool_outer_diameter,
                                                                                     "SPOOL_OUTER_DIAMETER", self.lane_obj.fullname)
+        self.espooler_values.spool_inner_diameter   = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.spool_inner_diameter,
+                                                                                    "SPOOL_INNER_DIAMETER", self.lane_obj.fullname)
+        self.espooler_values.full_weight            = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.full_weight,
+                                                                                    "FULL_WEIGHT", self.lane_obj.fullname)
+        self.espooler_values.spool_ratio            = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.spool_ratio,
+                                                                                    "SPOOL_RATIO", self.lane_obj.fullname)
+        self.espooler_values.max_motor_rpm          = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.max_motor_rpm,
+                                                                                    "MAX_MOTOR_RPM", self.lane_obj.fullname)
+        self.espooler_values.espool_rot_dist        = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.espool_rot_dist,
+                                                                                    "ESPOOL_ROT_DIST", self.lane_obj.fullname)
         self.espooler_values.delta_movement         = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.delta_movement,
                                                                                     "DELTA_MOVEMENT", self.lane_obj.fullname)
         self.espooler_values.scaling                = self.function.gcode_get_value(gcmd, "get_float", self.espooler_values.scaling,
