@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2025-12-03]
+### Fixed
+- Fixes bug where print current is not correctly set back to correct value after using LANE_MOVE macro.
+
 ## [2025-11-25]
 ### Added
 - **Buffer Fault Detection System**: New filament fault detection feature for AFC buffers to detect clogs, and feeding issues.
