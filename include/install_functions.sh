@@ -88,8 +88,8 @@ copy_unit_files() {
     ;;
 
   "HTLF")
+    cp "${afc_path}/config/mcu/HTLF_${htlf_board_type}.cfg" "${afc_config_dir}/mcu/"
     [[ "$htlf_board_type" == "MMB_1.0" || "$htlf_board_type" == "MMB_1.1" ]] && htlf_board_type="MMB"
-    cp "${afc_path}/config/mcu/HTLF_ERB.cfg" "${afc_path}/config/mcu/HTLF_MMB_1.0.cfg" "${afc_path}/config/mcu/HTLF_MMB_1.1.cfg" "${afc_config_dir}/mcu/"
     cp "${afc_path}/templates/AFC_HTLF_1-${htlf_board_type}.cfg" "${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}.cfg"
     cp "${afc_path}/templates/AFC_Hardware-HTLF.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
     ;;
@@ -192,8 +192,10 @@ elif [ "$installation_type" == "NightOwl" ]; then
 elif [ "$installation_type" == "HTLF" ]; then
   message+="""
 - Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}_1.cfg file.
+
 - Ensure you modify the ${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}_1.cfg file to select the proper rotation distance
   and gear ratio for your stepper motors.
+
 - Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_Hardware.cfg file
   """
 elif [ "$installation_type" == "QuattroBox" ]; then

@@ -150,7 +150,12 @@ restart_klipper() {
 
 exit_afc_install() {
   if [ "$files_updated_or_installed" == "True" ]; then
-    restart_klipper
+    if [ "$test_mode" == "False" ]; then
+      print_msg INFO "Restarting Klipper service to apply changes..."
+      restart_klipper
+    else
+      print_msg INFO "Test mode enabled; skipping Klipper restart."
+    fi
   fi
   remove_vars_tool_file
   exit 0
