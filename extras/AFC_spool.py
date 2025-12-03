@@ -4,19 +4,14 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
-import json
-try:
-    from urllib.request import urlopen
-    import urllib.parse as urlparse
-except:
-    # Python 2.7 support
-    from urllib2 import urlopen
-    import urlparse
 
 class AFCSpool:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
+
+        # Temporary status variables
+        self.next_spool_id      = ''
 
     def handle_connect(self):
         """
@@ -24,16 +19,19 @@ class AFCSpool:
         This function is called when the printer connects. It looks up the AFC object
         and assigns it to the instance variable `self.AFC`.
         """
-        self.AFC        = self.printer.lookup_object('AFC')
-        self.ERROR      = self.AFC.ERROR
-        self.reactor    = self.AFC.reactor
-        self.gcode      = self.AFC.gcode
-        self.logger     = self.AFC.logger
+        self.afc        = self.printer.lookup_object('AFC')
+        self.error      = self.afc.error
+        self.reactor    = self.afc.reactor
+        self.gcode      = self.afc.gcode
+        self.logger     = self.afc.logger
+
+        self.disable_weight_check = self.afc.disable_weight_check
 
         # Registering stepper callback so that mux macro can be set properly with valid lane names
         self.printer.register_event_handler("afc_stepper:register_macros",self.register_lane_macros)
 
         self.gcode.register_command("RESET_AFC_MAPPING", self.cmd_RESET_AFC_MAPPING, desc=self.cmd_RESET_AFC_MAPPING_help)
+        self.gcode.register_command("SET_NEXT_SPOOL_ID", self.cmd_SET_NEXT_SPOOL_ID, desc=self.cmd_SET_NEXT_SPOOL_ID_help)
 
     def register_lane_macros(self, lane_obj):
         """
@@ -65,24 +63,38 @@ class AFCSpool:
         ```
         """
         lane = gcmd.get('LANE', None)
-        if lane == None:
-            self.logger.info("No LANE Defined")
+        if lane is None:
+            self.logger.info("No LANE parameter provided, please specify a valid LANE parameter.")
             return
+
         map_cmd = gcmd.get('MAP', None)
-        lane_switch=self.AFC.tool_cmds[map_cmd]
-        self.logger.debug("lane to switch is " + lane_switch)
-        if lane not in self.AFC.lanes:
+
+        if map_cmd is None:
+            self.logger.info("No MAP parameter provided, please specify a valid MAP parameter.")
+            return
+
+        map_cmd = map_cmd.upper()
+
+        if map_cmd not in self.afc.tool_cmds:
+            self.logger.error("Invalid map command: {}".format(map_cmd))
+            return
+
+        lane_switch = self.afc.tool_cmds[map_cmd]
+        self.logger.debug("lane to switch is {}".format(lane_switch))
+        if lane not in self.afc.lanes:
             self.logger.info('{} Unknown'.format(lane))
             return
-        CUR_LANE = self.AFC.lanes[lane]
-        self.AFC.tool_cmds[map_cmd]=lane
-        map_switch=CUR_LANE.map
-        CUR_LANE.map=map_cmd
+        cur_lane = self.afc.lanes[lane]
+        self.afc.tool_cmds[map_cmd]=lane
+        map_switch = cur_lane.map
+        cur_lane.map = map_cmd
+        cur_lane.send_lane_data()
 
-        SW_LANE = self.AFC.lanes[lane_switch]
-        self.AFC.tool_cmds[map_switch]=lane_switch
-        SW_LANE.map=map_switch
-        self.AFC.save_vars()
+        sw_lane = self.afc.lanes[lane_switch]
+        self.afc.tool_cmds[map_switch] = lane_switch
+        sw_lane.map = map_switch
+        sw_lane.send_lane_data()
+        self.afc.save_vars()
 
     cmd_SET_COLOR_help = "Set filaments color for a lane"
     def cmd_SET_COLOR(self, gcmd):
@@ -102,16 +114,17 @@ class AFCSpool:
         ```
         """
         lane = gcmd.get('LANE', None)
-        if lane == None:
+        if lane is None:
             self.logger.info("No LANE Defined")
             return
         color = gcmd.get('COLOR', '#000000')
-        if lane not in self.AFC.lanes:
+        if lane not in self.afc.lanes:
             self.logger.info('{} Unknown'.format(lane))
             return
-        CUR_LANE = self.AFC.lanes[lane]
-        CUR_LANE.color = '#' + color.replace('#','')
-        self.AFC.save_vars()
+        cur_lane = self.afc.lanes[lane]
+        cur_lane.color = '#{}'.format(color.replace('#',''))
+        cur_lane.send_lane_data()
+        self.afc.save_vars()
 
     cmd_SET_WEIGHT_help = "Sets filaments weight for a lane"
     def cmd_SET_WEIGHT(self, gcmd):
@@ -130,22 +143,33 @@ class AFCSpool:
         ```
         """
         lane = gcmd.get('LANE', None)
-        if lane == None:
+        if lane is None:
             self.logger.info("No LANE Defined")
             return
-        weight = gcmd.get('WEIGHT', '')
-        if lane not in self.AFC.lanes:
+        weight = gcmd.get_float('WEIGHT', 1000.0)
+        if lane not in self.afc.lanes:
             self.logger.info('{} Unknown'.format(lane))
             return
-        CUR_LANE = self.AFC.lanes[lane]
-        CUR_LANE.weight = weight
-        self.AFC.save_vars()
+        cur_lane = self.afc.lanes[lane]
+        cur_lane.weight = weight
+        self.afc.save_vars()
 
     cmd_SET_MATERIAL_help = "Sets filaments material for a lane"
     def cmd_SET_MATERIAL(self, gcmd):
         """
         This function handles changing the material of a specified lane. It retrieves the lane
         specified by the 'LANE' parameter and sets its material to the value provided by the 'MATERIAL' parameter.
+
+        Values
+        ----
+        MATERIAL - Material type to set to lane. eg. PLA, ASA, ABS, PETG etc.
+
+        Optional Values
+        ----
+        DENSITY - Density value to assign to lane. If this is not provided then a default value will be selected based
+                   of material. Current default values: PLA: 1.24, PETG:1.23, ABS:1.04, ASA:1.07
+        DIAMETER - Diameter of filament, defaults to 1.75
+        EMPTY_SPOOL_WEIGHT - Weight of spool once its empty. Defaults to 190.
 
         Usage
         -----
@@ -158,19 +182,30 @@ class AFCSpool:
         ```
         """
         lane = gcmd.get('LANE', None)
-        if lane == None:
+        if lane is None:
             self.logger.info("No LANE Defined")
             return
-        material = gcmd.get('MATERIAL', '')
-        if lane not in self.AFC.lanes:
+        if lane not in self.afc.lanes:
             self.logger.info('{} Unknown'.format(lane))
             return
-        CUR_LANE = self.AFC.lanes[lane]
-        CUR_LANE.material = material
-        self.AFC.save_vars()
+        cur_lane = self.afc.lanes[lane]
+        density = gcmd.get_float('DENSITY', None)
+
+        cur_lane.material = gcmd.get('MATERIAL')
+        cur_lane.filament_diameter = gcmd.get('DIAMETER', cur_lane.filament_diameter)
+        cur_lane.empty_spool_weight = gcmd.get('EMPTY_SPOOL_WEIGHT', cur_lane.empty_spool_weight)
+
+        # Setting density if its not none, doing this after setting material as material setter
+        # automatically sets density based on material name
+        if density is not None:
+            cur_lane.filament_density = density
+
+        cur_lane.send_lane_data()
+        self.afc.save_vars()
+
     def set_active_spool(self, ID):
         webhooks = self.printer.lookup_object('webhooks')
-        if self.AFC.spoolman != None:
+        if self.afc.spoolman is not None:
             if ID and ID is not None:
                 id = int(ID)
             else:
@@ -199,70 +234,112 @@ class AFCSpool:
         SET_SPOOL_ID LANE=lane1 SPOOL_ID=12345
         ```
         """
-        if self.AFC.spoolman !=None:
+        if self.afc.spoolman is not None:
             lane = gcmd.get('LANE', None)
-            if lane == None:
+            if lane is None:
                 self.logger.info("No LANE Defined")
                 return
             SpoolID = gcmd.get('SPOOL_ID', '')
-            if lane not in self.AFC.lanes:
+            if lane not in self.afc.lanes:
                 self.logger.info('{} Unknown'.format(lane))
                 return
-            CUR_LANE = self.AFC.lanes[lane]
-            self.set_spoolID(CUR_LANE, SpoolID)
 
-    def _get_filament_values( self, filament, field):
+            cur_lane = self.afc.lanes[lane]
+            # Check if spool id is already assigned to a different lane, don't assign to current lane if id
+            # is already assigned
+            if SpoolID != '':
+                SpoolID = int(SpoolID)
+                if cur_lane.spool_id != SpoolID and any( SpoolID == lane.spool_id for lane in self.afc.lanes.values()):
+                    self.logger.error(f"SpoolId {SpoolID} already assigned to a lane, cannot assign to {lane}.")
+                    return
+
+            self.set_spoolID(cur_lane, SpoolID)
+
+    def _get_filament_values( self, filament, field, default=None):
         '''
         Helper function for checking if field is set and returns value if it exists,
-        otherwise retruns None
+        otherwise returns None
 
         :param filament: Dictionary for filament values
         :param field:    Field name to check for in dictionary
         :return:         Returns value if field exists or None if field does not exist
         '''
-        value = None
+        value = default
         if field in filament:
             value = filament[field]
         return value
 
-    def _clear_values( self, CUR_LANE ):
+    def _set_values(self, cur_lane):
+        """
+        Helper function for setting lane spool values
+        """
+        # set defaults if there's no spool id, or the spoolman lookup fails
+        cur_lane.material = self.afc.default_material_type
+        cur_lane.weight = 1000 # Defaulting weight to 1000 upon load
+
+        if self.afc.spoolman is not None and self.next_spool_id != '':
+            spool_id = self.next_spool_id
+            self.next_spool_id = ''
+            self.set_spoolID(cur_lane, spool_id)
+
+    def clear_values(self, cur_lane):
         """
         Helper function for clearing out lane spool values
         """
-        CUR_LANE.spool_id = ''
-        CUR_LANE.material = ''
-        CUR_LANE.color = ''
-        CUR_LANE.weight = ''
-        CUR_LANE.extruder_temp = None
-        CUR_LANE.material = None
+        cur_lane.spool_id = ''
+        cur_lane.material = ''
+        cur_lane.color = ''
+        cur_lane.weight = 0
+        cur_lane.extruder_temp = None
+        cur_lane.bed_temp = None
+        cur_lane.clear_lane_data()
 
-    def set_spoolID(self, CUR_LANE, SpoolID, save_vars=True):
-        if self.AFC.spoolman !=None:
+    def set_spoolID(self, cur_lane, SpoolID, save_vars=True):
+        if self.afc.spoolman is not None:
             if SpoolID !='':
                 try:
-                    url =  urlparse.urljoin(self.AFC.spoolman, '/api/v1/spool/{}'.format(SpoolID))
-                    result = json.load(urlopen(url))
-                    CUR_LANE.spool_id = SpoolID
+                    result = self.afc.moonraker.get_spool(SpoolID)
+                    cur_lane.spool_id = SpoolID
 
-                    CUR_LANE.material       = self._get_filament_values( result['filament'], 'material')
-                    CUR_LANE.extruder_temp  = self._get_filament_values( result['filament'], 'settings_extruder_temp')
-                    CUR_LANE.weight         = self._get_filament_values( result,             'remaining_weight')
-                    # Check to see if filament is defined as multi color and take the first color for now
+                    cur_lane.material           = self._get_filament_values(result['filament'], 'material')
+                    cur_lane.extruder_temp      = self._get_filament_values(result['filament'], 'settings_extruder_temp')
+                    cur_lane.bed_temp           = self._get_filament_values(result['filament'], 'settings_bed_temp')
+                    cur_lane.filament_density   = self._get_filament_values(result['filament'], 'density')
+                    cur_lane.filament_diameter  = self._get_filament_values(result['filament'], 'diameter')
+                    cur_lane.empty_spool_weight = self._get_filament_values(result, 'spool_weight', default=190)
+                    cur_lane.weight             = self._get_filament_values(result, 'remaining_weight')
+
+                    weight_check = self.disable_weight_check
+
+                    self.afc.logger.info('Weight remaining for SpoolID {}: {}'.format(SpoolID, cur_lane.weight))
+
+                    if not weight_check:
+                        if (
+                            cur_lane.weight is None or
+                            cur_lane.weight <= 0
+                        ):
+                            self.afc.error.AFC_error("Invalid weight for spoolID: {}. Please check remaining weight before assigning.".format(SpoolID), False)
+                            self.clear_values(cur_lane)
+                            return
+
+                    # Check to see if filament is defined as multi-color and take the first color for now
                     # Once support for multicolor is added this needs to be updated
                     if "multi_color_hexes" in result['filament']:
-                        CUR_LANE.color = '#{}'.format( self._get_filament_values( result['filament'], 'multi_color_hexes').split(",")[0] )
+                        cur_lane.color = '#{}'.format(self._get_filament_values(result['filament'], 'multi_color_hexes').split(",")[0])
                     else:
-                        CUR_LANE.color = '#{}'.format( self._get_filament_values( result['filament'], 'color_hex') )
+                        cur_lane.color = '#{}'.format(self._get_filament_values(result['filament'], 'color_hex'))
+
+                    cur_lane.send_lane_data()
 
                 except Exception as e:
-                    self.AFC.ERROR.AFC_error("Error when trying to get Spoolman data for ID:{}, Error: {}".format(SpoolID, e), False)
+                    self.afc.error.AFC_error("Error when trying to get Spoolman data for ID:{}, Error: {}".format(SpoolID, e), False)
             else:
-                self._clear_values(CUR_LANE)
+                self.clear_values(cur_lane)
         else:
             # Clears out values if users are not using spoolman, this is to cover this function being called from LANE UNLOAD and clearing out
             # Manually entered information
-            self._clear_values(CUR_LANE)
-        if save_vars: self.AFC.save_vars()
+            self.clear_values(cur_lane)
+        if save_vars: self.afc.save_vars()
 
     cmd_SET_RUNOUT_help = "Set runout lane"
     def cmd_SET_RUNOUT(self, gcmd):
@@ -281,53 +358,108 @@ class AFCSpool:
         ```
         """
         lane = gcmd.get('LANE', None)
-        if lane == None:
+        if lane is None:
             self.logger.info("No LANE Defined")
             return
 
-        runout = gcmd.get('RUNOUT', '')
+        runout = gcmd.get('RUNOUT', 'NONE')
         # Check to make sure runout does not equal lane
         if lane == runout:
             self.logger.error("Lane({}) and runout({}) cannot be the same".format(lane, runout))
             return
         # Check to make sure specified lane exists
-        if lane not in self.AFC.lanes:
+        if lane not in self.afc.lanes:
             self.logger.error('Unknown lane: {}'.format(lane))
             return
         # Check to make sure specified runout lane exists as long as runout is not set as 'NONE'
-        if runout != 'NONE' and runout not in self.AFC.lanes:
+        if runout != 'NONE' and runout not in self.afc.lanes:
             self.logger.error('Unknown runout lane: {}'.format(runout))
             return
 
-        CUR_LANE = self.AFC.lanes[lane]
-        CUR_LANE.runout_lane = runout
-        self.AFC.save_vars()
+        cur_lane = self.afc.lanes[lane]
+        cur_lane.runout_lane = None if runout == 'NONE' else runout
+        self.afc.save_vars()
 
     cmd_RESET_AFC_MAPPING_help = "Resets all lane mapping in AFC"
     def cmd_RESET_AFC_MAPPING(self, gcmd):
         """
-        This commands resets all tool lane mapping to the order that is setup in configuration. Useful to put in your PRINT_END macro to reset mapping
+        Resets all tool lane mapping to the order set up in the configuration.
+        Optionally resets runout lanes unless RUNOUT=no is specified.
+
+        Useful to put in your PRINT_END macro to reset mapping
 
         Usage
         -----
-        `RESET_AFC_MAPPING`
+        `RESET_AFC_MAPPING [RUNOUT=yes|no]`
 
         Example
         -----
         ```
-        RESET_AFC_MAPPING
+        RESET_AFC_MAPPING RUNOUT=no
         ```
         """
-        t_index = 0
-        for key, unit in self.AFC.units.items():
-            for lane in unit.lanes:
-                map_cmd = "T{}".format(t_index)
-                self.AFC.tool_cmds[map_cmd] = lane
-                self.AFC.lanes[lane].map = map_cmd
-                t_index += 1
 
-        self.AFC.save_vars()
-        self.logger.info("Tool mappings reset")
+        # Gathering existing lane mapping and add to list
+        existing_cmds = [lane.map for lane in self.afc.lanes.values()]
+        # Gather manually assigned mappings and add to list
+        manually_assigned = [ lane._map for lane in self.afc.lanes.values()]
+        # Remove manually assigned mappings from auto assigned mappings
+        existing_cmds = list(set(existing_cmds) - set(manually_assigned))
+        # Sort list in numerical order
+        existing_cmds = sorted(existing_cmds, key=lambda x: int("".join([i for i in x if i.isdigit()])))
+        for key, unit in self.afc.units.items():
+            for lane in unit.lanes.values():
+                # Reassigning manually assigned mapping to lane
+                if lane._map is not None:
+                    map_cmd = lane._map
+                else:
+                    map_cmd = existing_cmds.pop(0)
+
+                self.afc.tool_cmds[map_cmd] = lane.name
+                self.afc.lanes[lane.name].map = map_cmd
+
+        # Resetting runout lanes to None
+        runout_opt = gcmd.get('RUNOUT', 'yes').lower()
+        if runout_opt != 'no':
+            for lane in self.afc.lanes.values():
+                lane.runout_lane = None
+
+        self.afc.save_vars()
+        self.logger.info("Tool mappings reset" + ("" if runout_opt == "no" else " and runout lanes reset"))
+
+    cmd_SET_NEXT_SPOOL_ID_help = "Set the spool id to be loaded next into AFC"
+    def cmd_SET_NEXT_SPOOL_ID(self, gcmd):
+        """
+        Sets the spool ID to be loaded next into the AFC.
+
+        This can be used in a scanning macro to prepare the AFC for the next spool to be loaded.
+
+        Omit the SPOOL_ID parameter to clear the next spool ID.
+
+        Usage
+        -----
+        `SET_NEXT_SPOOL_ID SPOOL_ID=<spool_id>`
+
+        Example
+        -----
+        ```
+        SET_NEXT_SPOOL_ID SPOOL_ID=12345
+        ```
+        """
+        SpoolID = gcmd.get('SPOOL_ID', '')
+        previous_id = self.next_spool_id
+        if SpoolID != '':
+            try:
+                self.next_spool_id = str(int(SpoolID)) # make sure spool ID will round trip later
+            except ValueError:
+                self.logger.error("Invalid spool ID: {}".format(SpoolID))
+                self.next_spool_id = ''
+        else:
+            self.next_spool_id = ''
+        if previous_id:
+            self.logger.info(f"Spool ID '{previous_id}' being overwritten for next load: '{self.next_spool_id}'")
+        else:
+            self.logger.info(f"Spool ID set for next load: '{self.next_spool_id}'")
 
 def load_config(config):
     return AFCSpool(config)

@@ -32,39 +32,60 @@ function show_help() {
 }
 
 function copy_config() {
-  if [ -d "${afc_config_dir}" ]; then
-    mkdir -p "${afc_config_dir}"
-  fi
-  cp -R "${afc_path}/config" "${afc_config_dir}"
+  mkdir -p "${afc_config_dir}"
+  cp ${afc_path}/config/AFC.cfg "${afc_config_dir}/"
+  cp ${afc_path}/config/AFC_Macro_Vars.cfg "${afc_config_dir}/"
+  mkdir -p "${afc_config_dir}/mcu"
+  cp -R ${afc_path}/config/macros "${afc_config_dir}/"
 }
 
-function clone_repo() {
-  # Function to clone the AFC Klipper Add-On repository if it is not already cloned.
-  # Uses the global variables:
-  #   - afc_path: The path where the repository should be cloned.
-  #   - gitrepo: The URL of the repository to clone.
-  #   - branch: The branch to check out after cloning or pulling the repository.
+get_git_version() {
+  cd "$afc_path"
+	git_hash=$(git -C . rev-parse --short HEAD)
+	afc_py_version=$(grep "AFC_VERSION=" "${afc_path}/extras/AFC.py" | cut -d '=' -f2 | tr -d ' "')
+	afc_version="${afc_py_version}-${git_hash}"
+	cd - > /dev/null
+}
 
-  local afc_dir_name afc_base_name
-  afc_dir_name="$(dirname "${afc_path}")"
-  afc_base_name="$(basename "${afc_path}")"
+clone_and_maybe_restart() {
+  if [[ ! -d "${afc_path}/.git" ]]; then
+    echo "→ Cloning ${branch} from ${gitrepo} into ${afc_path}…"
+    git clone \
+      --branch "${branch}" \
+      --single-branch \
+      --depth 1 \
+      "${gitrepo}" \
+      "${afc_path}"
+    echo "✓ Clone complete."
+  else
+    echo "→ Switching to branch '${branch}'…"
+    git -C "${afc_path}" checkout --quiet "${branch}"
 
-  if [ ! -d "${afc_path}" ]; then
-    echo "Cloning AFC Klipper Add-On repo..."
-    if git -C $afc_dir_name clone --quiet $gitrepo $afc_base_name; then
-      print_msg INFO "AFC Klipper Add-On repo cloned successfully"
-      pushd "${afc_path}" || exit
-      git checkout --quiet "${branch}"
-      popd || exit
-    else
-      print_msg ERROR "Failed to clone AFC Klipper Add-On repo"
+    echo "→ Checking for uncommitted changes…"
+    if ! git -C "${afc_path}" diff --quiet || \
+       ! git -C "${afc_path}" diff --quiet --cached; then
+      echo "❌ You have uncommitted changes in ${afc_path}."
+      echo "   Please commit or stash them before running this script."
+      echo ""
+      echo "💡 To discard your changes and reset the branch:"
+      echo "   cd \"${afc_path}\""
+      echo "   git checkout ${branch}"
+      echo "   git reset --hard origin/${branch}"
+      echo "   git clean -fd"
       exit 1
     fi
-  else
-    pushd "${afc_path}" || exit
-    git pull --quiet
-    git checkout --quiet "${branch}"
-    popd || exit
+
+    echo "→ Fetching updates in ${afc_path}…"
+    git -C "${afc_path}" fetch --prune --quiet
+
+    if git -C "${afc_path}" status --porcelain --branch | grep -q 'behind'; then
+      echo "→ New commits detected; rebasing…"
+      git -C "${afc_path}" pull --rebase --quiet
+      echo "✓ Update applied. Restarting script…"
+      exec "$0" "${original_args[@]}"
+    else
+      echo "✓ Already up to date."
+    fi
   fi
 }
 
@@ -129,7 +150,6 @@ restart_klipper() {
 
 exit_afc_install() {
   if [ "$files_updated_or_installed" == "True" ]; then
-    update_afc_version "$current_install_version"
     restart_klipper
   fi
   remove_vars_tool_file
@@ -144,25 +164,6 @@ function auto_update() {
   # mv "${AFC_CONFIG_PATH}/AFC_Hardware-temp.cfg" "${AFC_CONFIG_PATH}/AFC_Hardware.cfg"
 }
 
-check_version_and_set_force_update() {
-  local current_version
-  current_version=$(curl -s "$moonraker/server/database/item?namespace=afc-install&key=version" | jq -r .result.value)
-  if [[ -z "$current_version" || "$current_version" == "null" || "$current_version" < "$min_version" ]]; then
-    force_update=True
-  else
-    force_update=False
-  fi
-}
-
-update_afc_version() {
-  local version_update
-  version_update=$1
-  curl -s -XPOST "$moonraker/server/database/item?namespace=afc-install&key=version&value=$version_update" > /dev/null
-}
-
-remove_afc_version() {
-  curl -s -XDELETE "$moonraker/server/database/item?namespace=afc-install&key=version" > /dev/null
-}
 
 remove_vars_tool_file() {
   if [ -f "${afc_config_dir}/*.tool" ]; then
@@ -194,4 +195,23 @@ start_service() {
   else
     sudo service "${service_name}" start
   fi
+}
+
+del_var_file() {
+  local confirm
+  # Function to remove the user's AFC.var.unit file in a simple fashion.
+  echo "This is generally a troubleshooting step and should not be needed during normal operation."
+  read -p "Do you want to proceed? (y/n): " confirm
+  confirm="${confirm,,}"
+  if [[ "$confirm" != "y" ]]; then
+    unit_message="Operation cancelled by user.\n"
+  else
+    if [ -f "${afc_config_dir}/AFC.var.unit" ]; then
+      rm "${afc_config_dir}/AFC.var.unit"
+      unit_message="Removed old AFC.var.unit file.\n"
+    else
+      unit_message="No AFC.var.unit file found to remove.\n"
+    fi
+  fi
+  export unit_message
 }

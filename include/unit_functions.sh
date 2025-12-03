@@ -43,6 +43,17 @@ name_additional_unit() {
         echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
       fi
     done
+  elif [ "$installation_type" == "QuattroBox" ]; then
+    while true; do
+      read -p "Enter name for unit (Default: QuattroBox_1): " boxturtle_name
+      boxturtle_name=${boxturtle_name:-QuattroBox_1}
+
+      if [[ "$boxturtle_name" =~ ^[a-zA-Z0-9_-]+$ ]] && [[ ${#boxturtle_name} -le 24 ]]; then
+        break
+      else
+        echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
+      fi
+    done
   fi
   export turtle_renamed="True"
   export boxturtle_name
@@ -115,5 +126,42 @@ install_additional_unit() {
       htlf_board_type="MMB"
     fi
     cp "${afc_path}/templates/AFC_HTLF_1-${htlf_board_type}.cfg" "${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}.cfg"
+  elif [ "$installation_type" == "QuattroBox" ]; then
+    mkdir -p "${afc_config_dir}/macros"
+    mkdir -p "${afc_config_dir}/mcu"
+    cp "${afc_path}/templates/qb_macros/Eject_buttons.cfg" "${afc_config_dir}/macros/Eject_buttons.cfg"
+    sed -i "s/QuattroBox_1/${boxturtle_name}/g" "${afc_config_dir}/macros/Eject_buttons.cfg"
+    if [ "${qb_motor_type}" == "NEMA_14" ]; then
+      cp "${afc_path}/templates/AFC_QuattroBox_14.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+      if [ "${qb_board_type}" == "MMB_1.0" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+        cp "${afc_path}/config/mcu/MMB_1.0_QB.cfg" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
+        sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
+      elif [ "${qb_board_type}" == "MMB_1.1" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.1_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+        cp "${afc_path}/config/mcu/MMB_1.1_QB.cfg" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
+        sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
+      elif [ "${qb_board_type}" == "MMB_2.0" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_2.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+        cp "${afc_path}/config/mcu/MMB_2.0_QB.cfg" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
+        sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
+      fi
+    elif [ "${qb_motor_type}" == "NEMA_17" ]; then
+      cp "${afc_path}/templates/AFC_QuattroBox_17.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+      if [ "${qb_board_type}" == "MMB_1.0" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+        cp "${afc_path}/config/mcu/MMB_1.0_QB.cfg" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
+        sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
+      elif [ "${qb_board_type}" == "MMB_1.1" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.1_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+        cp "${afc_path}/config/mcu/MMB_1.1_QB.cfg" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
+        sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
+      elif [ "${qb_board_type}" == "MMB_2.0" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_2.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+        cp "${afc_path}/config/mcu/MMB_2.0_QB.cfg" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
+        sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
+      fi
+    fi
+    find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/QuattroBox_1/$boxturtle_name/g" {} +
   fi
 }

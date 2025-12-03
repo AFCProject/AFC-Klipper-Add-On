@@ -8,9 +8,9 @@ class afc_tip_form:
     def __init__(self, config):
         self.printer        = config.get_printer()
         self.reactor        = self.printer.get_reactor()
-        self.AFC            = self.printer.lookup_object('AFC')
+        self.afc            = self.printer.lookup_object('AFC')
         self.gcode          = self.printer.lookup_object('gcode')
-        self.logger         = self.AFC.logger
+        self.logger         = self.afc.logger
 
          # TIP FORMING
         self.ramming_volume         = config.getfloat("ramming_volume", 0)
@@ -34,10 +34,7 @@ class afc_tip_form:
 
 
     def afc_extrude(self, distance, speed):
-        pos = self.AFC.toolhead.get_position()
-        pos[3] += distance
-        self.AFC.toolhead.manual_move(pos, speed)
-        self.AFC.toolhead.wait_moves()
+        self.afc.move_e_pos( distance, speed, "form tip")
 
     cmd_TEST_AFC_TIP_FORMING_help = "Gives ability to test AFC tip forming without doing a tool change"
     def cmd_TEST_AFC_TIP_FORMING(self, gcmd):
@@ -133,11 +130,11 @@ class afc_tip_form:
 
     def tip_form(self):
         step = 1
-        extruder = self.AFC.toolhead.get_extruder()
+        extruder = self.afc.toolhead.get_extruder()
         pheaters = self.printer.lookup_object('heaters')
         current_temp = extruder.get_heater().target_temp     # Saving current temp so it can be set back when done if toolchange_temp is not zero
         if self.ramming_volume > 0:
-            self.logger.info('AFC-TIP-FORM: Step ' + str(step) + ': Ramming')
+            self.logger.info('AFC-TIP-FORM: Step {}: Ramming'.format(step))
             ratio = self.ramming_volume / 23
             self.afc_extrude(0.5784 * ratio, 299 / 60)
             self.afc_extrude(0.5834 * ratio, 302 / 60)
@@ -154,7 +151,7 @@ class afc_tip_form:
             self.afc_extrude(0.5956 * ratio, 544 / 60)
             self.afc_extrude(1.0662 * ratio, 552 / 60)
             step +=1
-        self.logger.info('AFC-TIP-FORM: Step ' + str(step) + ': Retraction & Nozzle Separation')
+        self.logger.info('AFC-TIP-FORM: Step {}: Retraction & Nozzle Separation'.format(step))
         total_retraction_distance = self.cooling_tube_position + self.cooling_tube_length - 15
         self.afc_extrude(-15, self.unloading_speed_start)
         if total_retraction_distance > 0:
@@ -170,7 +167,7 @@ class afc_tip_form:
             self.logger.info("AFC-TIP-FORM: Waiting for temperature to get to {}".format(self.toolchange_temp))
             pheaters.set_temperature(extruder.get_heater(), self.toolchange_temp, wait)
         step +=1
-        self.logger.info('AFC-TIP-FORM: Step ' + str(step) + ': Cooling Moves')
+        self.logger.info('AFC-TIP-FORM: Step {}: Cooling Moves'.format(step))
         speed_inc = (self.final_cooling_speed - self.initial_cooling_speed) / (2 * self.cooling_moves - 1)
         for move in range(self.cooling_moves):
             speed = self.initial_cooling_speed + speed_inc * move * 2
@@ -178,7 +175,7 @@ class afc_tip_form:
             self.afc_extrude(self.cooling_tube_length * -1, (speed + speed_inc))
         step += 1
         if self.use_skinnydip:
-            self.logger.info('AFC-TIP-FORM: Step ' + str(step) + ': Skinny Dipping')
+            self.logger.info('AFC-TIP-FORM: Step {}: Skinny Dipping'.format(step))
             self.afc_extrude(self.skinnydip_distance, self.dip_insertion_speed)
             self.reactor.pause(self.reactor.monotonic() + self.melt_zone_pause)
             self.afc_extrude(self.skinnydip_distance * -1, self.dip_extraction_speed)

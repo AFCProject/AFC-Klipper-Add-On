@@ -29,6 +29,7 @@ update_menu() {
 
     case $choice in
       U)
+        get_git_version
         update_afc ;;
       M)
         main_menu ;;

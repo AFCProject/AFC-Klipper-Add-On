@@ -20,7 +20,6 @@ advance_pin: ${tn_advance_pin}    # set advance pin
 trailing_pin: ${tn_trailing_pin}  # set trailing pin
 multiplier_high: 1.05   # default 1.05, factor to feed more filament
 multiplier_low:  0.95   # default 0.95, factor to feed less filament
-velocity: 0
 EOF
 )
       buffer_name="Turtle_1"
@@ -33,7 +32,6 @@ trailing_pin: !turtleneck:TRAILING
 multiplier_high: 1.05   # default 1.05, factor to feed more filament
 multiplier_low:  0.95   # default 0.95, factor to feed less filament
 led_index: Buffer_Indicator:1
-velocity: 0
 
 [AFC_led Buffer_Indicator]
 pin: turtleneck:RGB
@@ -61,6 +59,7 @@ EOF
 
   # Add [include mcu/TurtleNeckv2.cfg] to AFC_Hardware.cfg if buffer_type is TurtleNeckV2 and not already present
   if [ "$buffer_type" == "TurtleNeckV2" ]; then
+    cp "${afc_path}/config/mcu/TurtleNeckv2.cfg" "$afc_config_dir/mcu/"
     if ! grep -qF "[include mcu/TurtleNeckv2.cfg]" "$afc_config_dir/AFC_Hardware.cfg"; then
       echo -e "\n[include mcu/TurtleNeckv2.cfg]" >> "$afc_config_dir/AFC_Hardware.cfg"
     fi

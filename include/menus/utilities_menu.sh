@@ -43,6 +43,7 @@ printf "\e[49m           \e[38;5;239;49m▄\e[38;5;101;49m▄\e[38;5;242;49m▄\
     printf "█%b        Use the provided option selection to cycle through available choices%b         █\n" "$RESET" "$MENU_GREEN"
     printf "%b▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀%b \n" "$MENU_GREEN" "$RESET"
     echo ""
+    printf "1. Remove AFC.var.unit file\n"
     printf "R. Rename existing unit\n"
     echo ""
     printf "M. Return to Main Menu\n"
@@ -53,6 +54,8 @@ printf "\e[49m           \e[38;5;239;49m▄\e[38;5;101;49m▄\e[38;5;242;49m▄\
     choice="${choice^^}"
 
     case $choice in
+      1)
+        del_var_file ;;
       R)
         rename_unit_prompt ;;
       M)

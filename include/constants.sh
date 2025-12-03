@@ -10,7 +10,7 @@
 printer_config_dir="$HOME/printer_data/config"
 klipper_dir="$HOME/klipper"
 afc_path="$HOME/AFC-Klipper-Add-On"
-afc_config_dir="$printer_config_dir/AFC"
+afc_config_dir="${printer_config_dir}/AFC"
 afc_file="$afc_config_dir/AFC.cfg"
 moonraker_config_file="$printer_config_dir/moonraker.conf"
 klipper_venv="$HOME/klippy-env/bin"
@@ -30,13 +30,10 @@ branch="main"
 prior_installation="False"
 installation_type="BoxTurtle (4-Lane)"
 uninstall="False"
-force_update="True"
 backup_date=$(date +%Y%m%d%H%M%S)
-current_install_version="1.0.0"
-min_version="1.0.0"
 files_updated_or_installed="False"
 test_mode="False"
-installation_options=("BoxTurtle (4-Lane)" "NightOwl" "HTLF")
+installation_options=("BoxTurtle (4-Lane)" "BoxTurtle (8-Lane)" "NightOwl" "HTLF" "QuattroBox")
 invalid_name="False"
 minimum_python_major="3"
 minimum_python_minor="8"
@@ -56,6 +53,10 @@ buffer_type="TurtleNeck"
 boxturtle_name="Turtle_1"
 htlf_board_types=("ERB" "MMB_1.1" "MMB_1.0")
 htlf_board_type="ERB"
+qb_board_types=("MMB_1.0" "MMB_1.1" "MMB_2.0")
+qb_board_type="MMB_2.0"
+qb_motor_types=("NEMA_17" "NEMA_14")
+qb_motor_type="NEMA_14"
 
 # Moonraker Config
 moonraker_update_config="""

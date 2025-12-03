@@ -50,23 +50,77 @@ unlink_extensions() {
   fi
 }
 
+template_unit_files() {
+  local input_file="$1"
+  local output_file="$2"
+
+  case "${installation_type}" in
+    "HTLF") MCU="${htlf_board_type}" ;;
+    "BoxTurtle (4-Lane)") MCU="AFC" ;;
+    "NightOwl") MCU="ERB" ;;
+    *) MCU="UNKNOWN" ;;  # Optional: fallback
+  esac
+
+  export INSTALL_TYPE="${installation_type}"
+  export MCU
+
+  envsubst < "${input_file}" > "${output_file}"
+}
+
 copy_unit_files() {
-  # If we are installing a BoxTurtle, then copy these files over.
-  if [ "$installation_type" == "BoxTurtle (4-Lane)" ]; then
+  case "$installation_type" in
+  "BoxTurtle (4-Lane)")
+    cp "${afc_path}/config/mcu/AFC_Lite.cfg" "${afc_config_dir}/mcu/AFC_Lite.cfg"
     cp "${afc_path}/templates/AFC_Hardware-AFC.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
     cp "${afc_path}/templates/AFC_Turtle_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-    # If we are installing a NightOwl, then copy these files over.
-  elif [ "$installation_type" == "NightOwl" ]; then
+    ;;
+
+  "BoxTurtle (8-Lane)")
+    cp "${afc_path}/config/mcu/AFC_Pro.cfg" "${afc_config_dir}/mcu/AFC_Pro.cfg"
+    cp "${afc_path}/templates/AFC_Hardware-AFC.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
+    cp "${afc_path}/templates/AFC_Pro_Turtle_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    ;;
+
+  "NightOwl")
+    cp "${afc_path}/config/mcu/ERB_2.0.cfg" "${afc_config_dir}/mcu/ERB_2.0.cfg"
     cp "${afc_path}/templates/AFC_Hardware-NightOwl.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
     cp "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_NightOwl_1.cfg"
-    # If we are installing a HTLF, then copy these files over.
-  elif [ "$installation_type" == "HTLF" ]; then
-    if [ "$htlf_board_type" == "MMB_1.0" ] || [ "$htlf_board_type" == "MMB_1.1" ]; then
-      htlf_board_type="MMB"
-    fi
+    ;;
+
+  "HTLF")
+    [[ "$htlf_board_type" == "MMB_1.0" || "$htlf_board_type" == "MMB_1.1" ]] && htlf_board_type="MMB"
+    cp "${afc_path}/config/mcu/HTLF_ERB.cfg" "${afc_path}/config/mcu/HTLF_MMB_1.0.cfg" "${afc_path}/config/mcu/HTLF_MMB_1.1.cfg" "${afc_config_dir}/mcu/"
     cp "${afc_path}/templates/AFC_HTLF_1-${htlf_board_type}.cfg" "${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}.cfg"
     cp "${afc_path}/templates/AFC_Hardware-HTLF.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
-  fi
+    ;;
+
+  "QuattroBox")
+    cp "${afc_path}/templates/AFC_Hardware-QuattroBox.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
+    cp "${afc_path}/templates/qb_macros/Eject_buttons.cfg" "${afc_config_dir}/macros/Eject_buttons.cfg"
+    if [ "${qb_motor_type}" == "NEMA_14" ]; then
+      cp "${afc_path}/templates/AFC_QuattroBox_14.cfg" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      if [ "${qb_board_type}" == "MMB_1.0" ]; then
+        cp "${afc_path}/config/mcu/MMB_1.0_QB.cfg" "${afc_config_dir}/mcu/"
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.0_QB.cfg/g" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      elif [ "${qb_board_type}" == "MMB_1.1" ]; then
+        cp "${afc_path}/config/mcu/MMB_1.1_QB.cfg" "${afc_config_dir}/mcu/"
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.1_QB.cfg/g" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      elif [ "${qb_board_type}" == "MMB_2.0" ]; then
+        cp "${afc_path}/config/mcu/MMB_2.0_QB.cfg" "${afc_config_dir}/mcu/"
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_2.0_QB.cfg/g" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      fi
+    elif [ "${qb_motor_type}" == "NEMA_17" ]; then
+      cp "${afc_path}/templates/AFC_QuattroBox_17.cfg" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      if [ "${qb_board_type}" == "MMB_1.0" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.0_QB.cfg/g" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      elif [ "${qb_board_type}" == "MMB_1.1" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.1_QB.cfg/g" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      elif [ "${qb_board_type}" == "MMB_2.0" ]; then
+        sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_2.0_QB.cfg/g" "${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      fi
+    fi
+    ;;
+esac
 }
 
 install_afc() {
@@ -75,13 +129,14 @@ install_afc() {
   copy_config
   copy_unit_files
   # Add our extensions to the klipper gitignore
-  exclude_from_klipper_git
+  if [ "$test_mode" != "True" ]; then
+    exclude_from_klipper_git
+  fi
   # Include the AFC configuration files if selected
   if [ "$afc_includes" == True ]; then
     manage_include "${printer_config_dir}/printer.cfg" "add"
   fi
   # Update selected configuration values
-  update_config_value "${afc_file}" "Type" "${installation_type}"
   update_config_value "${afc_file}" "park" "${park_macro}"
   update_config_value "${afc_file}" "poop" "${poop_macro}"
   update_config_value "${afc_file}" "form_tip" "${tip_forming}"
@@ -89,6 +144,7 @@ install_afc() {
   update_config_value "${afc_file}" "hub_cut" "${hub_cutter}"
   update_config_value "${afc_file}" "kick" "${kick_macro}"
   update_config_value "${afc_file}" "wipe" "${wipe_macro}"
+
   if [ "$toolhead_sensor" == "Sensor" ]; then
     update_switch_pin "${afc_config_dir}/AFC_Hardware.cfg" "${toolhead_sensor_pin}"
   elif [ "$toolhead_sensor" == "Ramming" ]; then
@@ -117,9 +173,7 @@ install_afc() {
 
   export message
   export files_updated_or_installed="True"
-  if [ $test_mode != "True" ]; then
-    update_afc_version "$current_install_version"
-  fi
+
   # Final step should be displaying any messages and exit cleanly.
   message="""
 - AFC Configuration updated with selected options at ${afc_file}
@@ -141,6 +195,12 @@ elif [ "$installation_type" == "HTLF" ]; then
 - Ensure you modify the ${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}_1.cfg file to select the proper rotation distance
   and gear ratio for your stepper motors.
 - Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_Hardware.cfg file
+  """
+elif [ "$installation_type" == "QuattroBox" ]; then
+  message+="""
+- You must update the ${afc_config_dir}/AFC_Hardware.cfg file to reference the proper buffer configuration and pins.
+
+- Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_QuattroBox_1.cfg file
   """
 fi
 

@@ -15,17 +15,19 @@ afc_path="$HOME/AFC-Klipper-Add-On"
 afc_config_dir="$printer_config_dir/AFC"
 afc_file="$afc_config_dir/AFC.cfg"
 klipper_venv="$HOME/klippy-env/bin"
+moonraker_config="$printer_config_dir/moonraker.conf"
 
 # Global vars
 temp_log=""
 afc_version="Unknown"
 klipper_version="Unknown"
+NO_NC=false
 
 ALL_CAN_IDS=()
 
 log_can_interfaces() {
     local interfaces
-    interfaces=$(ip -br link show | awk '{print $1}' ) # Lets get all the network interfaces in case someone named a CAN interface something weird
+    interfaces=$(ip -br link show | awk '{print $1}' ) # Let's get all the network interfaces in case someone named a CAN interface something weird
     if [[ -z "$interfaces" ]]; then
         echo "No CAN interfaces found."
         return
@@ -99,7 +101,9 @@ start_klipper() {
 checknc() {
 	if ! command -v nc > /dev/null 2>&1 ; then
 		echo "NetCat not found, installing..."
-		sudo apt-get install netcat-openbsd -qq > /dev/null
+		if ! sudo apt-get install netcat-openbsd -qq > /dev/null; then
+			NO_NC=true
+		fi
 	fi
 }
 
@@ -267,38 +271,52 @@ find "$afc_config_dir" -type f | while read -r file; do
     append_file_to_log "$file_name" "$file"
 done
 
+# Add the moonraker config if it exists
+if [ -f "$moonraker_config" ]; then
+    append_file_to_log "$moonraker_config" "$moonraker_config"
+else
+    echo "File not found: $moonraker_config" >> "$temp_log"
+fi
 
 uploaded_files=()
 
-for file in "$temp_dir"/*; do
-	if [[ "$file" == *config* || "$file" == *shutdown* || "$file" == *AFC* || "$file" == *klippy.log ]]; then
-		file_name=$(basename "$file")
-
-		# Inform the user in the terminal (colored)
-		echo "Uploading \"$file_name\" to termbin..."
-
-		# Log-friendly plain text URL (no colors)
-		uploaded_files+=("$(upload_file_to_termbin "$file")")
-	fi
-done
-
-if [ ${#uploaded_files[@]} -gt 0 ]; then
-	{
-		prepout "Uploaded Extracted Klippy Configuration and Shutdown Logs"
-		for entry in "${uploaded_files[@]}"; do
-			printf "%s\n" "$entry"
-		done
-	} >> "$temp_log"
-fi
-
-if nc -z -w 3 termbin.com 9999; then
-	echo "Uploading logs to termbin.com..."
-	tr -d '\0' < "$temp_log" | nc termbin.com 9999 > /tmp/afc_upload_url
-	OUTPUTURL=$(tr -d '\0' < /tmp/afc_upload_url)
-	echo "Logs are available at ${OUTPUTURL}"
-	echo "Please share this URL with the Armored Turtle support team."
+if [ "$NO_NC" = true ]; then
+    echo "NetCat is unavailable. Creating a zip archive of logs instead."
+    zipfile="$HOME/afc_debug_logs_$(date +%Y%m%d_%H%M%S).zip"
+    zip -j "$zipfile" "$temp_log" "$temp_dir"/* > /dev/null
+    echo "Logs have been saved to $zipfile"
+    echo "Please share this file with the Armored Turtle support team."
 else
-	echo "Failed to connect to termbin.com"
+  for file in "$temp_dir"/*; do
+    if [[ "$file" == *config* || "$file" == *shutdown* || "$file" == *AFC* || "$file" == *klippy.log ]]; then
+      file_name=$(basename "$file")
+
+      # Inform the user in the terminal (colored)
+      echo "Uploading \"$file_name\" to termbin..."
+
+      # Log-friendly plain text URL (no colors)
+      uploaded_files+=("$(upload_file_to_termbin "$file")")
+    fi
+  done
+
+  if [ ${#uploaded_files[@]} -gt 0 ]; then
+    {
+      prepout "Uploaded Extracted Klippy Configuration and Shutdown Logs"
+      for entry in "${uploaded_files[@]}"; do
+        printf "%s\n" "$entry"
+      done
+    } >> "$temp_log"
+  fi
+
+  if nc -z -w 3 termbin.com 9999; then
+    echo "Uploading logs to termbin.com..."
+    tr -d '\0' < "$temp_log" | nc termbin.com 9999 > /tmp/afc_upload_url
+    OUTPUTURL=$(tr -d '\0' < /tmp/afc_upload_url)
+    echo "Logs are available at ${OUTPUTURL}"
+    echo "Please share this URL with the Armored Turtle support team."
+  else
+    echo "Failed to connect to termbin.com"
+  fi
 fi
 
 start_klipper

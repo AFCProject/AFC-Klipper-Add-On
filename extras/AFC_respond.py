@@ -54,11 +54,11 @@ class AFCprompt:
     def create_custom_p(self, prompt_name, text=None, buttons=None, cancel=False, groups=None, footer_buttons=None):
         self.p_begin(prompt_name)
 
-        if text != None:
+        if text is not None:
             self.p_text(text)
 
-        # Add group bottons
-        if groups != None:
+        # Add group buttons
+        if groups is not None:
             for group in groups:
                 self.p_button_group_start()
                 for button in group:
@@ -67,13 +67,13 @@ class AFCprompt:
                 self.p_button_group_end()
 
         # Add main buttons
-        if buttons != None:
+        if buttons is not None:
             for button in buttons:
                 label, command, style = button
                 self.p_button(label, command, style)
 
         # Add footer buttons (if any)
-        if footer_buttons != None:
+        if footer_buttons is not None:
             for footer_button in footer_buttons:
                 label, command, style = footer_button
                 self.p_footer_button(label, command, style)

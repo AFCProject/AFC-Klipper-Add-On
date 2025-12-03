@@ -27,19 +27,6 @@ main_menu() {
     elif [ "$prior_installation" == "False" ]; then
       printf "\e[48;5;143m \e[49m \e[48;5;29m    \e[49m        \e[48;5;29m     \e[49m        \e[48;5;29m    \e[49m \e[48;5;143m \e[m  Prior AFC-Klipper-Add-On installation detected: $RED%s$RESET\n" $prior_installation
     fi
-    if [ "$force_update" == "True" ] && [ "$prior_installation" == "True" ]; then
-      printf "\e[48;5;143m \e[49m \e[48;5;29m    \e[49m        \e[48;5;29m     \e[49m        \e[48;5;29m    \e[49m \e[48;5;143m \e[m  Force Update Required: $RED%s$RESET\n" $force_update
-      export message="""
-${RED}Due to significant configuration changes, your system must be updated. This will require
-the complete installation/re-installation of your configuration files. Your existing
-configuration (if present) will be backed up and new configuration files will be written.
-
-If you do not want to proceed, please exit the script. However, until this process is
-completed you will not be able to use this assisted process for any future updates.
-      """
-    else
-      printf "\e[48;5;143m \e[49m \e[48;5;29m    \e[49m        \e[48;5;29m     \e[49m        \e[48;5;29m    \e[49m \e[48;5;143m \e[m  Force Update Required: $GREEN%s$RESET\n" $force_update
-    fi
     printf "\e[48;5;143m \e[49m \e[48;5;29m    \e[49m        \e[48;5;29m     \e[49m        \e[48;5;29m    \e[49m \e[48;5;143m \e[m  \n"
     printf "\e[48;5;143m \e[49m \e[48;5;29m    \e[49m        \e[48;5;29m     \e[49m        \e[48;5;29m    \e[49m \e[48;5;143m \e[m  \n"
     printf "\e[48;5;143m \e[49m \e[48;5;29m    \e[49m        \e[48;5;29m     \e[49m        \e[48;5;29m    \e[49m \e[48;5;143m \e[m  1. Printer Config Directory : %s \n" $printer_config_dir
@@ -59,12 +46,10 @@ completed you will not be able to use this assisted process for any future updat
     printf "█%b           Type a number or letter and press Enter/Return to toggle choice%b           █\n" "$RESET" "$MENU_GREEN"
     printf "${MENU_GREEN}▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀${RESET} \n"
     echo ""
-    if [ "$force_update" == "True" ] && [ "$prior_installation" == "True" ]; then
-      printf "I. Install New System\n"
-    elif [ "$prior_installation" == "False" ] && [ "$files_updated_or_installed" == "False" ]; then
+    if [ "$prior_installation" == "False" ] && [ "$files_updated_or_installed" == "False" ]; then
       printf "I. Install New System\n"
     fi
-    if [ "$prior_installation" == "True" ] && [ "$force_update" == "False" ]; then
+    if [ "$prior_installation" == "True" ]; then
       printf "U. Update AFC Klipper Add-On\n"
     fi
     printf "A. Install Additional System\n"
@@ -76,36 +61,20 @@ completed you will not be able to use this assisted process for any future updat
 
     choice="${choice^^}"
     case $choice in
-      1)
-        export message="To change the printer config directory, please re-run this script with a '-m <path>' option." ;;
-      2)
-        export message="To change the klipper directory, please re-run this script with a '-k <path>' option." ;;
-      3)
-        export message="To change the moonraker config file, please re-run this script with a '-m <path>' option." ;;
-      4)
-        export message="To change the klipper service name, please re-run this script with a '-s <name>' option." ;;
-      5)
-        export message="To change the branch, please re-run this script with a '-b <branch>' option." ;;
-      6)
-        export message="To change the moonraker address, please re-run this script with a '-a <address>' option.\n"
-        export message+="To change the moonraker port, please re-run this script with a '-n <moonraker port>' option." ;;
-      I)
-        if [ "$force_update" == "True" ] && [ "$prior_installation" == "True" ]; then
-          backup_afc_config
-        fi
-        install_menu ;;
-      U)
-        update_menu ;;
-      R)
-        uninstall_afc ;;
-      C)
-        utilities_menu ;;
-      A)
-        additional_system_menu ;;
-      Q)
-        exit_afc_install ;;
-      *)
-        echo "Invalid choice" ;;
+      1) export message="To change the printer config directory, please re-run this script with a '-m <path>' option." ;;
+      2) export message="To change the klipper directory, please re-run this script with a '-k <path>' option." ;;
+      3) export message="To change the moonraker config file, please re-run this script with a '-m <path>' option." ;;
+      4) export message="To change the klipper service name, please re-run this script with a '-s <name>' option." ;;
+      5) export message="To change the branch, please re-run this script with a '-b <branch>' option." ;;
+      6) export message="To change the moonraker address, please re-run this script with a '-a <address>' option.\n"
+         message+="To change the moonraker port, please re-run this script with a '-n <moonraker port>' option." ;;
+      I) install_menu ;;
+      U) update_menu ;;
+      R) uninstall_afc ;;
+      C) utilities_menu ;;
+      A) additional_system_menu ;;
+      Q) exit_afc_install ;;
+      *) echo "Invalid choice" ;;
     esac
   done
 }

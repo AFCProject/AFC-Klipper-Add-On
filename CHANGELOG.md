@@ -5,6 +5,339 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-11-04]
+### Changed
+- Updated error message when using the SET_LANE_LOADED command to be more descriptive.
+
+## [2025-11-03]
+### Fixes
+- Clarified fix message if during AFC calibration, the filament fails to reach to hub sensor.
+
+## [2025-11-01]
+### Changed
+- Removed code for Belay.
+- Cleanup terminology around compressing/expanding of the buffer to make it easier to understand for users.
+
+## [2025-10-29]
+### Fixes
+- Fixed klipper crashing when commanding distance of zero for LANE_MOVE macro.
+
+## [2025-10-25]
+### Fixes
+- Resolved a bug where runout logic could potentially be triggered during a toolchange.
+- Resolved a bug where AFC_STATUS would crash klipper when using buffer as toolhead sensor and last lane was loaded into toolhead.
+
+## [2025-10-18]
+### Fixes
+- On startup, or when assigning a spool to a lane, AFC will now check the weight of the spool to check if it is either zero, null,
+  or a negative value. If any of these conditions are met, AFC will not assign the spool. This check can be disabled by 
+  setting `disable_weight_check: True` in the `[AFC]` section of the `AFC.cfg` file.
+
+## [2025-10-16]
+### Fixes
+- Fixed issue with debounce logic on latest version of Kalico.
+
+## [2025-10-12]
+### Fixes
+- Capitalized AFC_CALIBRATION help text
+- Removing returning TD-1 color as color in api endpoint, TD-1 color is still returned in td1_color variable per lane
+- Current toolchange will return zero if current toolchange is below zero(starts at -1 when first starting a print)
+- Added additional logic when parsing TD-1 scan_time to work with updated format in moonraker
+
+## [2025-10-10]
+### Added
+- Created a new folder for community-contributed mods and configurations at ``/community_mods/``
+- Added Blurolls AFC-X mcu board with a path of ``/community_mods/mcu/AFC-X.cfg``. [Customer image of board](https://ae-pic-a1.aliexpress-media.com/kf/A030fad34724c426ba8564ca98bb570dfQ.jpg_.webp) Colors do **NOT** match the product description on online retailers.
+
+## [2025-09-30]
+### Added
+- Allow `tool_stn_unload` to be `0` for toolheads with cutter above extruder.
+
+## [2025-09-26]
+### Added
+- Support to move filament to TD-1 device that is inline with PTFE tube to gather TD and color
+
+## [2025-09-27]
+### Fixes
+- Logging the same information multiple times to AFC.log file
+
+## [2025-09-07]
+### Added
+- Support to push lane information to moonrakers `machine/lane_data` endpoint so that third-parties can pull this information easily(eg. orcaslicer)
+
+### Fixes
+- The `AFC_LANE_RESET` macro will properly check for input instead of crashing Klipper.
+### Added
+- Added ability to auto level when `auto_level_macro` is defined with a valid leveling macro.
+
+## [2025-09-05]
+### Added
+- Check to verify that pin_tool_start/end is not set to `Unknown`, throws error if pins are set to `Unknown`.
+### Fixes
+- Compatibility issue with klipper after version v0.13.0-190-g5eb07966
+
+## [2025-09-01]
+### Fixes
+- Issue with older klipper version before debounce button was added
+
+## [2025-08-30]
+### Added
+- Catch for JSON decode error when trying to read and load AFC.var.unit file
+
+### Fixes
+- Issue where TMC section search would error out if not defined. Search is now gated behind user enabling print_current variable. If a user is using a different driver, like a4988 for example, AFC will not error out as long as print_current variable is not defined.
+
+## [2025-08-24]
+### Added
+- You can now use the `install-afc.sh` script to delete the `AFC.var.unit` file if necessary. This option is located under
+  the `Utilities` menu.
+
+### Fixed
+- Issue where HTLF unit would not select lane and sync with extruder when running prep
+
+## [2025-08-22]
+### Added
+- Added a new command to test lane loading and unloading in an automated and random fashion (`AFC_TEST_LANES`). Please
+  see the documentation for more information on how to use this command and it's various options.
+- Option to delay/debounce switches. Debounce delay is defaulted to zero but can be updated globally by adding `debounce_delay: <delay_value>`
+  to AFC config section. Or this value can be added per AFC_extruder, AFC_hub, AFC_stepper/AFC_lane configs. Runout can be also disabled by
+  turning off filament switch in gui, if PREP sensor is disabled this will also disable infinite spool rollover. When klipper is restarted
+  all switches will be enabled again.
+
+## [2025-08-17]
+### Added
+- Servo option to brush macro.
+
+## [2025-08-10]
+### Fixed
+- A negative `afc_unload_bowden_length` is no longer able to be set by the calibration routine. 
+
+## [2025-08-06]
+### Fixed
+- The `install-afc.sh` script will no longer tell you it removed the `velocity` setting if it didn't exist.
+
+## [2025-07-30]
+### Fixed
+- Updated the `SET_MAP` command to correctly handle `MAP` parameters in either upper or lower case text. 
+
+## [2025-07-27]
+### Updated
+- The `install-afc.sh` script will now only copy relevant MCU files when installing a new unit. 
+
+## [2025-07-20]
+### Added
+- Software defined physical buttons are now available and supported. See documentation for more information on how to set them up.
+- New command `SET_NEXT_SPOOL_ID` to be used with a QR scanner tool or macro that automatically sets the id of the next spool loaded.
+- Support setting tool_max_unload_attempts to zero to bypass buffer unloading checks
+
+## [2025-07-19]
+### Fixes
+- Error with infinite spool where klipper would crash if runout was set to `None` instead of `"NONE"`
+- Added a check when enabling virtual bypass to make sure a lane is not loaded when enabling.
+- Issue where localhost and http were hardcoded, allows user to specify custom url. Fixes issue 484.
+- Updated code to inform users when trying to assign spoolman ID to a lane and that same spool ID is already assigned to another lane.
+
+## [2025-07-06]
+### Fixes
+- Race condition between klipper and moonraker when trying to get stats from moonraker database
+
+## [2025-06-30]
+### Fixes
+- Issue #476 where turn off led macro didn't turn off LEDs while printing
+- TTC's that some users were having that was induced by commit `1201bcc`
+
+## [2025-06-28]
+### Updated
+- The `install-afc.sh` script will now display the version when an update is completed.
+
+## [2025-06-23]
+### Added
+- Runout/break/jam detection for hub and toolhead sensors:
+- If the toolhead or hub sensor detects runout but upstream sensors still detect filament, the print is paused and the user is notified of a possible break/jam (no eject or endless spool mode is attempted).
+- Runout/pause logic only triggers during normal printing states, preventing false positives during lane load/unload or filament swaps.
+- `handle_toolhead_runout` and `handle_hub_runout` methods added to `AFCLane` for special handling of break/jam scenarios at the toolhead and hub.
+- Hub sensor callback now calls `handle_hub_runout` on all associated lanes when runout is detected.
+
+### Changed
+- Enhanced runout logic in `AFC_lane.py`, `AFC_extruder.py`, and `AFC_hub.py` to support multi-sensor and break/jam detection.
+
+### Fixed
+- Addresses issue [#389](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On/issues/389) and [#387](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On/issues/387)
+- Added cutting direction check to _MOVE_TO_CUTTER_PIN. This prevents crashes when using front/back cutting motion.
+
+## [2025-06-21]
+### Fixed
+- Ensure `default_material_temps` name matching in temperature selection logic is case-insensitive.
+
+## [2025-06-19]
+## Updated
+- The `afc-debug.sh` script will now also include the `moonraker.conf` file if it is present.
+
+### Added
+- Added an option to disable skew_correction for kinematic moves.
+- AFC now errors out when using buffer as toolhead sensor and it fails to decompress when loading/unloading.
+
+## [2025-06-18]
+## Updated
+- RESET_AFC_MAPPING function to reset manually set lane mapping in config to correct lane
+
+## Fixed
+- Fixed function that auto assigns T(n) commands to check and verify that other T(n) commands are not already registered outside of AFC
+
+## [2025-06-17]
+### Fixed
+- Updated `cycles_per_rotation` value to be less aggressive at 800 for print assist
+- Updated `enable_assist_weight` value to be 500 so print assist start once weight gets below 500 grams
+
+## [2025-06-16]
+### Removed
+- Removed the version checking functionality for force updates from the `install-afc.sh` script. 
+
+### Fixed
+- Issue where espoolers would move way faster than normal when weight was below empty spool weight.
+
+## [2025-06-15]
+### Added
+- Added support for the AFC-Pro board in the installer to install an 8-Lane Boxturtle.
+- The `RESET_AFC_MAPPING` macro will now also reset any runout lane configurations.
+
+## [2025-06-10]
+### Added
+- Ability to turn on print assist if spool falls below a certain weight
+- Weight defaults to 1kg when first inserting spool
+- `AFC_CLEAR_MESSAGE` macro to clear current message that would be displayed in gui's
+- When saving variables and key is not found in current AFC files, a new file `AFC_auto_vars.cfg` will be created and variables will be added to that file
+
+## [2025-06-08]
+### Added
+- Support for [QuattroBox](https://github.com/Batalhoti/QuattroBox) filament changer. QuattroBox can be chosen in install script for new or additional units to add to your printer
+
+## [2025-06-07]
+### Fixed
+- `unknown command: Prompt_end` error will no longer show when users try to exit out of Happy Printing popup after AFC_CALIBRATION is done
+- Lanes are now marked a loaded_to_hub when bowden calibration happens
+- Fixed issue where HTLF might error out when first homing during PREP
+
+## [2025-06-06]
+### Added
+- There is now a configurable option `error_timeout` in the `[AFC]` section of the `AFC.cfg` file. This option allows 
+users to set a timeout for how long the printer will stay in a paused state when an error occurs. The default value is 
+`36000` seconds (10 hours). When a `PAUSE` action is triggered, AFC will now compare the value of the `error_timeout` and
+the `idle_timeout` value (if defined) and choose the larger of the two values. 
+
+### Changed
+- The `afc-debug.sh` script will now create a zip file of the logs if the `nc` utility is not available. 
+
+
+## [2025-05-30]
+### Added
+- Updated park to allow moving to an absolute z height after the x,y move. This is intended to reduce oozing during unload and load prior to using the poop command.
+
+## [2025-05-29]
+### Fixed
+- HTLF infinite runout now works correctly
+
+## [2025-05-27]
+### Added
+- Some AFC macros are now exposed in Mainsail/Fluidd. 
+
+## [2025-05-25]
+### Fixed
+- Exclude object bug where klipper would error out with max extrude error after excluding an object and 
+  trying to do a lane swap or doing TOOL_UNLOAD in PRINT_END function. Fixes issue [#364](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On/issues/364)
+- Fixing issue [#348](https://github.com/ArmoredTurtle/AFC-Klipper-Add-On/issues/348)
+
+## [2025-05-24]
+### Fixed
+- The calibration routines will now not allow a negative bowden length value to be set. If a negative value is detected, 
+an error message will be displayed and the value will not be set.
+
+## [2025-05-23]
+### Updated
+- The `PREP` sequence will now check to ensure the trailing and advance buffer switches are not both triggered. If 
+  both switches are triggered, a warning message will be displayed.
+
+## [2025-05-22]
+### Added
+- Added `auto_home` support,
+
+## [2025-05-22]
+### Added
+- Added statistics tracking for tool load/unload/total change, n20 runtime, number of cuts,
+  average load/unload/full toolchange times, and number of load per lane.
+- Added ability to track when last blade was changed and how many cuts since last changed
+- `AFC_STATS` macro added to print statistics out. Set `SHORT=1` to print out a skinny version
+- `AFC_CHANGE_BLADE` macro added for when users change blade as this reset count and updates date changed
+- `AFC_RESET_MOTOR_TIME` macro added to allow users to reset N20 active time if motor was replaced in a lane
+- Added common class for easily interacting with moonraker api
+- Updated to use moonrakers proxy when fetching spoolmans data
+- Added getting toolchange count from moonrakers file metadata, `SET_AFC_TOOLCHANGES` will be deprecated
+  Moonrakers version needs to be at least v0.9.3-64
+- Updated import error message to pull from a common error string in AFC_utils.py file
+- Clearing pause in klipper when starting a print
+- Warning message is outputted when number of cuts is within 1K of tool_cut_threshold value
+- Error message is outputted when number of cuts is over tool_cut_threshold
+
+### Fixed
+- Issue where virtual bypass was being set for newly installed instances of AFC
+
+## [2025-05-21]
+### Added
+- new macro `AFC_TOGGLE_MACRO` to enable disable other macros.
+
+## [2025-05-15]
+### Added
+- added quiet mode support. `quiet_moves_speed` on `AFC.cfg` dictates the max speed when quiet mode is enabled.
+- new macro `AFC_QUIET_MODE ENABLE=1/0 SPEED=<max_speed>` to allow modifying `quiet_moves_speed` and enable/disable quiet mode.
+
+## [2025-05-12]
+### Added
+- new variable `tool_homing_distance` in `[AFC]` to make the distance over which toolhead homing is attempted.
+- new variable `rev_long_moves_speed_factor` added to `AFC_lane` to allow per lane reverse speed for long moves. i.e. long move speeds will now be `rev_long_moves_speed_factor * long_move_speed`.
+- new macro `SET_LONG_MOVE_SPEED LANE=<lane_name> FWD_SPEED=<fwd_speed> RWD_FACTOR=<rwd_multiplier> SAVE=1/0` to allow modifying `rev_long_moves_speed_factor` and `long_move_speed`
+
+
+## [2025-05-11]
+### Changed
+- The `install-afc.sh` script will remove any `velocity` settings present in the `[AFC_buffer <buffer_name>]` 
+  section of the configuration files as they are no longer needed.
+
+## [2025-05-01]
+### Added
+- Print assist is now filament usage based and will activate spool after a specified amount of filament is used. This is enabled by default.
+
+### Removed
+- Removed velocity from AFC_buffer code and install code, please remove `velocity`  variable from AFC_buffer configuration
+
+## [2025-04-27]
+
+### Removed
+- Removed deprecated belay code.
+
+## [2025-04-25]
+### Added
+- The AFC_CUT macro now supports a servo-activated pin. Set values for ``[servo tool_cut]`` in ``AFC_Hardware.cfg`` and enable ``tool_servo_enable`` in ``AFC_Macro_Vars.cfg``
+
+## [2025-04-23]
+
+### Added
+- The `install-afc.sh` script will now prompt you if you want to update the AFC provided macros when updating the 
+  software. **WARNING** This will overwrite any existing macros present. 
+
+## [2025-04-20]
+
+### Changed
+- Updated poop to do z lift based off last position so that toolhead does not smash into large poops.
+- Updated kick to move xy first and then move z so toolhead does not smash into poop.
+
+## [2025-04-19]
+
+### Changed
+- The `Type` parameter in the `AFC_<unit_type>.cfg` file is no longer required.
+
+- The `install-afc.sh` script will now check for updates, and if new updates are present, it will sync and git changes
+and re-run the script automatically.
+
 ## [2025-04-12]
 
 ### Added
@@ -662,8 +995,6 @@ gcode:
   - `BT_TOOL_UNLOAD` - This macro will unload a specified box turtle tool.
 
 - Sample configuration files for the most popular boards are located in the `Klipper_cfg_example/AFC` directory.
-
-
 
 
 
