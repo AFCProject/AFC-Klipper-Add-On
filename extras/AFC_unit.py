@@ -194,6 +194,10 @@ class afcUnit:
         UNIT_CALIBRATION UNIT=Turtle_1
         ```
         """
+        if len(self.lanes) == 0:
+            self.logger.warning(f"No lanes to calibrate for {self.name}")
+            return
+
         prompt = AFCprompt(gcmd, self.logger)
         buttons = []
         title = '{} Calibration'.format(self.name)

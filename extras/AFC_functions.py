@@ -970,6 +970,14 @@ class afcFunction:
                 ' First, select a unit to calibrate.'
                 ' *All values will be automatically updated in the appropriate config sections.')
         for index, (key, item) in enumerate(self.afc.units.items()):
+            # Only showing calibrations for units that have lanes
+            if len(self.afc.units.get(key).lanes) == 0:
+                continue
+
+            # Filtering out units that only have standalone lanes(toolchanger extruders without assist)
+            if not any( not l.extruder_obj.no_lanes for l in self.afc.units.get(key).lanes.values() ):
+                continue
+
             # Create a button for each unit
             button_label = "{}".format(key)
             button_command = 'UNIT_CALIBRATION UNIT={}'.format(key)
@@ -1066,6 +1074,10 @@ class afcFunction:
 
         if afc_bl is not None and afc_bl not in self.afc.lanes:
             self.afc.error.AFC_error("'{}' is not a valid lane to calibrate bowden length".format(afc_bl), pause=False)
+            return
+
+        if len(self.afc.units.get(unit).lanes) == 0:
+            self.logger.warning(f"No lanes to calibrate for {self.name}")
             return
 
         if td1 is not None and not self.afc.td1_present:
