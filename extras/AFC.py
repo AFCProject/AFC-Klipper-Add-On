@@ -704,7 +704,6 @@ class afc:
         cur_lane.unit_obj.return_to_home()
         # Put CAM back to lane if it is loaded to the toolhead
         self.function.select_loaded_lane()
-        cur_lane.set_print_current() # Set current back to print current after lane move
 
     def _get_resume_speed(self):
         """

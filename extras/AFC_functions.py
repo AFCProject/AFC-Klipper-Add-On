@@ -457,6 +457,7 @@ class afcFunction:
         current_lane = self.get_current_lane_obj()
         if current_lane is not None:
             current_lane.unit_obj.select_lane(current_lane)
+            current_lane.set_print_current() # Set current back to print current after lane move
 
     def log_toolhead_pos(self, move_pre=""):
         """

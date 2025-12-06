@@ -191,7 +191,9 @@ class AFCExtruderStepper(AFCLane):
         :param current: Sets TMC current to specified value
         """
         if self.tmc_print_current is not None and current is not None:
-            self.gcode.run_script_from_command("SET_TMC_CURRENT STEPPER='{}' CURRENT={}".format(self.name, current))
+            command = "SET_TMC_CURRENT STEPPER='{}' CURRENT={}".format(self.name, current)
+            self.logger.debug(f"Running macro: {command}")
+            self.gcode.run_script_from_command(command)
 
     def set_load_current(self):
         """
