@@ -255,8 +255,6 @@ class afc:
                                         self.cmd_AFC_STATS_options)
         self.function.register_commands(self.show_macros, 'AFC_QUIET_MODE', self.cmd_AFC_QUIET_MODE,
                                         self.cmd_AFC_QUIET_MODE_help, self.cmd_AFC_QUIET_MODE_options)
-        self.function.register_commands(self.show_macros, 'AFC_STATUS', self.cmd_AFC_STATUS,
-                                        self.cmd_AFC_STATUS_help)
         self.function.register_commands(self.show_macros, 'TURN_ON_AFC_LED', self.cmd_TURN_ON_AFC_LED,
                                         self.cmd_TURN_ON_AFC_LED_help)
         self.function.register_commands(self.show_macros, 'TURN_OFF_AFC_LED', self.cmd_TURN_OFF_AFC_LED,
@@ -1849,7 +1847,8 @@ class afc:
         for UNIT in self.units.keys():
             CUR_UNIT=self.units[UNIT]
             type  =CUR_UNIT.type.replace(" ","_")
-            unitdisplay.append(type.replace("'","") + " " + CUR_UNIT.name)
+            if len(self.units[UNIT].lanes) > 0:
+                unitdisplay.append(type.replace("'","") + " " + CUR_UNIT.name)
         str['units'] = list(unitdisplay)
         str['lanes'] = list(self.lanes.keys())
         str["extruders"] = list(self.tools.keys())
@@ -2007,78 +2006,6 @@ class afc:
                 return
             self.logger.debug(f"{heater.get_name()} temp: {cur_temp:.2f}C (waiting for {min_temp:.1f}..{max_temp:.1f})")
             eventtime = reactor.pause(eventtime + 1.0)
-
-
-    cmd_AFC_STATUS_help = "Return current status of AFC"
-    def cmd_AFC_STATUS(self, gcmd):
-        """
-        This function generates a status message for each unit and lane, indicating the preparation,
-        loading, hub, and tool states. The status message is formatted with HTML tags for display.
-
-        Usage
-        -----
-        `AFC_STATUS`
-
-        Example
-        -----
-        ```
-        AFC_STATUS
-        ```
-        """
-        status_msg = ''
-
-        for unit in self.units.values():
-            # Find the maximum length of lane names to determine the column width
-            max_lane_length = max(len(lane) for lane in unit.lanes.keys())
-
-            status_msg += '<span class=info--text>{} Status</span>\n'.format(unit.name)
-
-            # Create a dynamic format string that adjusts based on lane name length
-            header_format = '{:<{}} | Prep | Load |\n'
-            status_msg += header_format.format("LANE", max_lane_length)
-
-            for cur_lane in unit.lanes.values():
-                lane_msg = ''
-                if self.current is not None:
-                    if self.current == cur_lane.name:
-                        if not cur_lane.get_toolhead_pre_sensor_state() or not cur_lane.hub_obj.state:
-                            lane_msg += '<span class=warning--text>{:<{}} </span>'.format(cur_lane.name, max_lane_length)
-                        else:
-                            lane_msg += '<span class=success--text>{:<{}} </span>'.format(cur_lane.name, max_lane_length)
-                    else:
-                        lane_msg += '{:<{}} '.format(cur_lane.name, max_lane_length)
-                else:
-                    lane_msg += '{:<{}} '.format(cur_lane.name, max_lane_length)
-
-                if cur_lane.prep_state:
-                    lane_msg += '| <span class=success--text><--></span> |'
-                else:
-                    lane_msg += '|  <span class=error--text>xx</span>  |'
-                if cur_lane.load_state:
-                    lane_msg += ' <span class=success--text><--></span> |\n'
-                else:
-                    lane_msg += '  <span class=error--text>xx</span>  |\n'
-                status_msg += lane_msg
-
-            if cur_lane.hub_obj.state:
-                status_msg += 'HUB: <span class=success--text><-></span>'
-            else:
-                status_msg += 'HUB: <span class=error--text>x</span>'
-
-            extruder_msg = '  Tool: <span class=error--text>x</span>'
-            if cur_lane.extruder_obj.tool_start != "buffer":
-                if cur_lane.extruder_obj.tool_start_state:
-                    extruder_msg = '  Tool: <span class=success--text><-></span>'
-            else:
-                if cur_lane.tool_loaded and cur_lane.extruder_obj.lane_loaded in self.units[unit]:
-                    if cur_lane.get_toolhead_pre_sensor_state():
-                        extruder_msg = '  Tool: <span class=success--text><-></span>'
-
-            status_msg += extruder_msg
-            if cur_lane.extruder_obj.tool_start == 'buffer':
-                status_msg += '\n<span class=info--text>Ram sensor enabled</span>\n'
-
-        self.logger.raw(status_msg)
 
     cmd_TURN_OFF_AFC_LED_help = "Turns off all LEDs for AFC_led configurations"
     def cmd_TURN_OFF_AFC_LED(self, gcmd: Any) -> None:
