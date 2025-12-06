@@ -132,6 +132,9 @@ class AFC_HTLF(afcBoxTurtle):
                 return False
 
         self.prep_homed = True
+        # Adding delay or disabling stepper motor will crash klipper with newest
+        # motion queuing changes
+        self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.1)
         self.selector_stepper_obj.do_enable(False)
         self.current_selected_lane = None
         return True
