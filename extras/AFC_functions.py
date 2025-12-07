@@ -975,7 +975,7 @@ class afcFunction:
                 continue
 
             # Filtering out units that only have standalone lanes(toolchanger extruders without assist)
-            if not any( not l.extruder_obj.no_lanes for l in self.afc.units.get(key).lanes.values() ):
+            if not any( not lane.extruder_obj.no_lanes for lane in self.afc.units.get(key).lanes.values() ):
                 continue
 
             # Create a button for each unit
