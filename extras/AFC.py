@@ -1160,7 +1160,7 @@ class afc:
                         msg += "Buffer did not become compressed after {} short moves.\n".format(self.tool_max_load_checks)
                         msg += "Setting and increasing 'tool_max_load_checks' in AFC.cfg may improve loading reliability.\n\n"
                         msg += "Check that the filament is properly loaded into the toolhead extruder. If filament is loaded\n"
-                        msg += "into toolhead extruders gears, then manually run SET_LANE_LOADED LANE={cur_lane.name} then\n"
+                        msg += f"into toolhead extruders gears, then manually run SET_LANE_LOADED LANE={cur_lane.name} then\n"
                         msg += "manually extrude filament and clean nozzle."
                         if self.function.in_print():
                             msg += '\nOnce issue is resolved click resume to continue printing'
