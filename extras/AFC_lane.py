@@ -1096,7 +1096,7 @@ class AFCLane:
                     "scan_time"     : "",
                     "td"            : "",
                     "lane"          : lane_number,
-                    "spool_id"      : ""
+                    "spool_id"      : None
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
