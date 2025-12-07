@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fix output of `AFC_TOGGLE_MACRO` to correctly report state of WIPE macro
 
+## [2025-12-07]
+### Added
+- Updated spool assist cruise time calculations to be more linear with spool weight
+
 ## [2025-12-06]
 ### Fixed
 - Fixes issue where klipper would crash for HTLF units when homing and moving lanes during prep
