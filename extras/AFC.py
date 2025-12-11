@@ -579,7 +579,7 @@ class afc:
 
         self.logger.info("Tool Cut {}, Park {}".format(self.tool_cut, self.park))
         self.logger.info("Kick {}, Poop {}".format(self.kick, self.poop))
-        self.logger.info("Wipe {}, Form tip {}".format(self.tool_cut, self.form_tip))
+        self.logger.info("Wipe {}, Form tip {}".format(self.wipe, self.form_tip))
 
     cmd_AFC_QUIET_MODE_help = "Set quiet mode speed and enable/disable quiet mode"
     cmd_AFC_QUIET_MODE_options = {"SPEED": {"type": "float", "default": 50},
