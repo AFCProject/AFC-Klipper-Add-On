@@ -974,8 +974,8 @@ class afcFunction:
             if len(self.afc.units.get(key).lanes) == 0:
                 continue
 
-            # Filtering out units that only have standalone lanes(toolchanger extruders without assist)
-            if not any( not lane.extruder_obj.no_lanes for lane in self.afc.units.get(key).lanes.values() ):
+            # Filtering out units that only have standalone lanes (toolchanger extruders without assist)
+            if all( lane.extruder_obj.no_lanes for lane in self.afc.units.get(key).lanes.values() ):
                 continue
 
             # Create a button for each unit
@@ -1076,7 +1076,8 @@ class afcFunction:
             self.afc.error.AFC_error("'{}' is not a valid lane to calibrate bowden length".format(afc_bl), pause=False)
             return
 
-        if len(self.afc.units.get(unit).lanes) == 0:
+        if (unit is not None
+            and len(self.afc.units.get(unit).lanes) == 0):
             self.logger.warning(f"No lanes to calibrate for {self.name}")
             return
 
