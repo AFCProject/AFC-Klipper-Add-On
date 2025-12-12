@@ -259,12 +259,13 @@ class Espooler_values:
 
     """
     def __init__(self, config):
+        self.printer = None
         # Time in seconds to enable spooler at full speed to help with getting the spool to spin. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self._kick_start_time        = config.getfloat("kick_start_time",       None)
         # Current spools outer diameter
-        self._spool_outer_diameter   = config.getfloat("spool_outer_diameter",  None)
+        self._spool_outer_diameter   = config.getfloat("spool_outer_diameter",  None, minval=100)
         # Current spools outer diameter
-        self._spool_inner_diameter   = config.getfloat("spool_inner_diameter",  None)
+        self._spool_inner_diameter   = config.getfloat("spool_inner_diameter",  None, minval=1)
         # Max RPM of spooler motor
         self._max_motor_rpm          = config.getfloat("max_motor_rpm",         None)
         # Delta amount in mm from last move to trigger assist. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
@@ -274,21 +275,21 @@ class Espooler_values:
         # Gear ratio of spooler printed drivetrain
         self._spool_ratio            = config.getfloat("spool_ratio",           None)
         # Weight of filament on new spool
-        self._full_weight            = config.getfloat("full_weight",           None)
+        self._full_weight            = config.getfloat("full_weight",           None, minval=1)
         # rotation distance estimation of espooler wheels
         self._espool_rot_dist        = config.getfloat("espool_rot_dist",       None)
 
     def calculate_cruise_time(self, weight: int) -> float:
         """
         This function calculates cruise time which is the amount of time to enable
-        motors to rotate spool mm movement amount
+        motors to rotate spool
 
         :param weight: Current spool weight
-        :return float: Amount of time to be enabled to move mm amount
+        :return float: Amount of time to be enabled
         """
         rps = self.max_motor_rpm / RPM_TO_RPS
         spool_rot_s = (self.espool_rot_dist * (rps / self.spool_ratio)) / self.outer_circ
-        w_r = (weight / self.full_weight+1) * self.delta_circ
+        w_r = ((weight / self.full_weight) + 1) * self.delta_circ
         self.cruise_time = self.delta_movement / w_r / spool_rot_s
         return self.cruise_time
 
@@ -308,6 +309,7 @@ class Espooler_values:
         if self._full_weight          is None: self.full_weight          = lane_obj.unit_obj.full_weight
 
         self._cruise_time   = self.calculate_cruise_time(self.full_weight)
+        self.printer = lane_obj.printer
 
     @property
     def cruise_time(self) -> float:
@@ -366,42 +368,42 @@ class Espooler_values:
     def full_weight(self) -> float:
         return self._full_weight
     @full_weight.setter
-    def full_weight(self, value: float) -> None:
+    def full_weight(self, value: float):
         self._full_weight = value
 
     @property
     def spool_ratio(self) -> float:
         return self._spool_ratio
     @spool_ratio.setter
-    def spool_ratio(self, value: float) -> None:
+    def spool_ratio(self, value: float):
         self._spool_ratio = value
 
     @property
     def max_motor_rpm(self) -> float:
         return self._max_motor_rpm
     @max_motor_rpm.setter
-    def max_motor_rpm(self, value: float) -> None:
+    def max_motor_rpm(self, value: float):
         self._max_motor_rpm = value
 
     @property
     def espool_rot_dist(self) -> float:
         return self._espool_rot_dist
     @espool_rot_dist.setter
-    def espool_rot_dist(self, value: float) -> None:
+    def espool_rot_dist(self, value: float):
         self._espool_rot_dist = value
 
     @property
     def spool_outer_diameter(self) -> float:
         return self._spool_outer_diameter
     @spool_outer_diameter.setter
-    def spool_outer_diameter(self, value: float) -> None:
+    def spool_outer_diameter(self, value: float):
         self._spool_outer_diameter = value
 
     @property
     def spool_inner_diameter(self) -> float:
         return self._spool_inner_diameter
     @spool_inner_diameter.setter
-    def spool_inner_diameter(self, value: float) -> None:
+    def spool_inner_diameter(self, value: float):
         self._spool_inner_diameter = value
 
 class Espooler:
@@ -584,7 +586,7 @@ class Espooler:
         """
         print_time = time = 0.0
         if self.lane_obj.weight < self.enable_assist_weight:
-            time=self.afc.toolhead.get_last_move_time()
+            time = self.afc.toolhead.get_last_move_time()
             print_time = self._kick_start()
 
             self.move_forwards( print_time, 1 )
