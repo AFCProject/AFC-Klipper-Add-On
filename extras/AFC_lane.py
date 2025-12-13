@@ -362,7 +362,9 @@ class AFCLane:
                 raise error(error_string)
 
         # Checking if buffer was defined in extruder if not defined in unit/stepper
-        elif self.buffer_obj is None and self.extruder_obj.tool_start == "buffer":
+        elif (self.buffer_obj is None
+              and self.extruder_obj.tool_start == "buffer"
+              and len(self.extruder_obj.lanes) > 1):
             if self.extruder_obj.buffer_name is not None:
                 self.buffer_obj = self.printer.lookup_object("AFC_buffer {}".format(self.extruder_obj.buffer_name))
             else:

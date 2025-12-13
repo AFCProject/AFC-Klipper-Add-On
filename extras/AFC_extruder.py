@@ -171,6 +171,12 @@ class AFCExtruder:
             self.no_lanes = True
             self.logger.info(f"{self.name} no lanes")
 
+            if self.tool_start == "buffer":
+                raise error(
+                    f"buffer is not valid config for pin_tool_start when using {self.name} as a standalone extruder"
+                )
+
+
 
     def handle_connect(self):
         """
