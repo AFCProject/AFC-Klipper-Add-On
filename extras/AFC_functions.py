@@ -1193,7 +1193,7 @@ class afcFunction:
             if (td1_lane.is_direct_hub()
                 and td1_lane.tool_loaded):
                 msg = textwrap.dedent(f"""\
-                    {self.name} loaded to toolhead, unload from toolhead before trying to calibrate
+                    {td1_lane.name} loaded to toolhead, unload from toolhead before trying to calibrate
                     td1_bowden_length."""
                 )
                 self.afc.error.AFC_error(msg, pause=False)

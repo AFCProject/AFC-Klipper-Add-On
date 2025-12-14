@@ -286,7 +286,7 @@ class afcBoxTurtle(afcUnit):
 
             cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
 
-        cal_msg = f"\n td1_bowden_length: New: {bow_pos} Old: {cur_hub.td1_bowden_length}"
+        cal_msg = f"\n td1_bowden_length: New: {bow_pos} Old: {cur_lane.td1_bowden_length}"
 
         if cur_lane.is_direct_hub():
             cur_lane.td1_bowden_length = bow_pos

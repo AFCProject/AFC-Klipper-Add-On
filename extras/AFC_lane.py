@@ -157,7 +157,7 @@ class AFCLane:
         self.assisted_unload    = config.getboolean("assisted_unload", None) # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.td1_when_loaded    = config.getboolean("capture_td1_when_loaded", None)
         self.td1_device_id      = config.get("td1_device_id", None)
-        self.td1_bowden_length  = config.get("td1_bowden_length", None)
+        self.td1_bowden_length  = config.getfloat("td1_bowden_length", None)
 
 
         self.printer.register_event_handler("AFC_unit_{}:connect".format(self.unit),self.handle_unit_connect)
@@ -402,9 +402,8 @@ class AFCLane:
         if self.td1_when_loaded             is None: self.td1_when_loaded   = self.unit_obj.td1_when_loaded
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
         if self.td1_bowden_length           is None:
-            if self.hub_obj:
+            if not self.is_direct_hub():
                 self.td1_bowden_length = self.hub_obj.td1_bowden_length
-
         if self.rev_long_moves_speed_factor < 0.5: self.rev_long_moves_speed_factor = 0.5
         if self.rev_long_moves_speed_factor > 1.2: self.rev_long_moves_speed_factor = 1.2
 
@@ -1186,7 +1185,7 @@ class AFCLane:
         msg = ""
         if self.td1_bowden_length is None:
             msg = textwrap.dedent(f"""\
-                td1_bowden_length is not set for lane '{self.name}'\n
+                td1_bowden_length is not set for {self.name}.
                 Please run AFC_CALIBRATION to calibrate TD1 length for lane before trying to
                 capture TD1 data."""
             )
