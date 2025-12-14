@@ -1172,7 +1172,7 @@ class AFCLane:
             valid = False
             if self.td1_device_id:
                 valid, _ = self.afc.function.check_for_td1_id(self.td1_device_id)
-            
+
             if valid:
                 self.unit_obj.get_td1_data(self, datetime.now(), ignore_time=True)
 
@@ -1184,7 +1184,7 @@ class AFCLane:
         max_move_tries = 0
         status = True
         msg = ""
-        
+
         if self.td1_device_id is None:
             msg = f"Cannot grab TD-1 data for {self.name}, td1_device_id is a required "
             msg += "field in AFC_hub or per AFC_lane"
