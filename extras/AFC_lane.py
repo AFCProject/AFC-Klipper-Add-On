@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import traceback
+import textwrap
 
 from contextlib import contextmanager
 from configfile import error
@@ -156,6 +157,7 @@ class AFCLane:
         self.assisted_unload    = config.getboolean("assisted_unload", None) # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.td1_when_loaded    = config.getboolean("capture_td1_when_loaded", None)
         self.td1_device_id      = config.get("td1_device_id", None)
+        self.td1_bowden_length  = config.get("td1_bowden_length", None)
 
 
         self.printer.register_event_handler("AFC_unit_{}:connect".format(self.unit),self.handle_unit_connect)
@@ -399,6 +401,9 @@ class AFCLane:
         if self.max_move_dis                is None: self.max_move_dis      = self.unit_obj.max_move_dis
         if self.td1_when_loaded             is None: self.td1_when_loaded   = self.unit_obj.td1_when_loaded
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
+        if self.td1_bowden_length           is None:
+            if self.hub_obj:
+                self.td1_bowden_length = self.hub_obj.td1_bowden_length
 
         if self.rev_long_moves_speed_factor < 0.5: self.rev_long_moves_speed_factor = 0.5
         if self.rev_long_moves_speed_factor > 1.2: self.rev_long_moves_speed_factor = 1.2
@@ -1170,6 +1175,15 @@ class AFCLane:
         max_move_tries = 0
         status = True
         msg = ""
+        if self.td1_bowden_length is None:
+            msg = textwrap.dedent(f"""\
+                td1_bowden_length is not set for lane '{self.name}'\n
+                Please run AFC_CALIBRATION to calibrate TD1 length for lane before trying to
+                capture TD1 data."""
+            )
+            self.afc.error.AFC_error(msg, pause=False)
+            return False, msg
+
         if not self.load_state and not self.prep_state:
             msg = f"{self.name} not loaded, cannot capture TD-1 data for lane"
             self.afc.error.AFC_error(msg, pause=False)
@@ -1177,6 +1191,15 @@ class AFCLane:
 
         if self.hub_obj.state:
             msg = f"Hub for {self.name} detects filament, cannot capture TD-1 data for lane"
+            self.afc.error.AFC_error(msg, pause=False)
+            return False, msg
+
+        if (self.is_direct_hub()
+            and self.tool_loaded):
+            msg = textwrap.dedent(f"""\
+                {self.name} loaded to toolhead, unload from toolhead before trying to capture
+                TD1 data."""
+            )
             self.afc.error.AFC_error(msg, pause=False)
             return False, msg
 
@@ -1198,50 +1221,52 @@ class AFCLane:
                 return False, msg
 
         if not self.hub_obj.state:
-            if not self.loaded_to_hub:
-                self.move_auto_speed(self.dist_hub)
+            if not self.is_direct_hub():
+                if not self.loaded_to_hub:
+                    self.move_auto_speed(self.dist_hub)
 
-            while not self.hub_obj.state:
-                if max_move_tries >= self.afc.max_move_tries:
-                    fail_message = f"Failed to trigger hub {self.hub_obj.name} for {self.name}\n"
-                    fail_message += "Cannot capture TD-1 data, verify that hub switch is properly working before continuing"
-                    self.afc.error.AFC_error(fail_message, pause=False)
-                    self.do_enable(False)
-                    return False, fail_message
+                while not self.hub_obj.state:
+                    if max_move_tries >= self.afc.max_move_tries:
+                        fail_message = f"Failed to trigger hub {self.hub_obj.name} for {self.name}\n"
+                        fail_message += "Cannot capture TD-1 data, verify that hub switch is properly working before continuing"
+                        self.afc.error.AFC_error(fail_message, pause=False)
+                        self.do_enable(False)
+                        return False, fail_message
 
-                if max_move_tries == 0:
-                    self.move_auto_speed(self.hub_obj.move_dis)
-                else:
-                    self.move_auto_speed(self.short_move_dis)
-                max_move_tries += 1
+                    if max_move_tries == 0:
+                        self.move_auto_speed(self.hub_obj.move_dis)
+                    else:
+                        self.move_auto_speed(self.short_move_dis)
+                    max_move_tries += 1
 
             compare_time = datetime.now()
-            self.move_auto_speed(self.hub_obj.td1_bowden_length)
+            self.move_auto_speed(self.td1_bowden_length)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
 
             success = self.unit_obj.get_td1_data(self, compare_time)
             if not success:
-                msg = f"Not able to gather TD-1 data after moving {self.hub_obj.td1_bowden_length}mm"
+                msg = f"Not able to gather TD-1 data after moving {self.td1_bowden_length}mm"
                 self.afc.error.AFC_error(msg, pause=False)
                 status = False
 
-            self.move_auto_speed(self.hub_obj.td1_bowden_length * -1)
+            self.move_auto_speed(self.td1_bowden_length * -1)
             if success:
                 self.send_lane_data()
 
-            max_move_tries = 0
-            while( self.hub_obj.state ):
-                if max_move_tries >= self.afc.max_move_tries:
-                    fail_message = f"Failed to un-trigger hub {self.hub_obj.name} for {self.name}\n"
-                    fail_message += "Verify that hub switch is properly working before continuing"
-                    self.afc.error.AFC_error(fail_message, pause=False)
-                    self.do_enable(False)
-                    return False, fail_message
+            if not self.is_direct_hub():
+                max_move_tries = 0
+                while( self.hub_obj.state ):
+                    if max_move_tries >= self.afc.max_move_tries:
+                        fail_message = f"Failed to un-trigger hub {self.hub_obj.name} for {self.name}\n"
+                        fail_message += "Verify that hub switch is properly working before continuing"
+                        self.afc.error.AFC_error(fail_message, pause=False)
+                        self.do_enable(False)
+                        return False, fail_message
 
-                self.move_auto_speed(self.short_move_dis * -1)
-                max_move_tries += 1
+                    self.move_auto_speed(self.short_move_dis * -1)
+                    max_move_tries += 1
 
-            self.move_auto_speed(self.hub_obj.hub_clear_move_dis * -1)
+                self.move_auto_speed(self.hub_obj.hub_clear_move_dis * -1)
             self.do_enable(False)
 
         else:

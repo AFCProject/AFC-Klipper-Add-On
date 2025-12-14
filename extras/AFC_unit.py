@@ -477,7 +477,7 @@ class afcUnit:
     def calibrate_lane(self, cur_lane, tol):
         self._print_function_not_defined(self.calibrate_lane.__name__)
 
-    def get_td1_data(self, cur_lane, compare_time):
+    def get_td1_data(self, cur_lane, compare_time, ignore_time=False):
         """
         Queries moonrakers endpoint to get td1 data and check to see if data is valid and time
         in data is greater than passed in time as this is how determination is made that filament
@@ -487,6 +487,8 @@ class afcUnit:
                          assigned to the lane.
         :param compare_time: Time to compare returned data to, which helps verify that the data is valid and
                              filament has reached TD-1 device
+        :parma ignore_time: Override to just capture TD-1 data anyways, useful when loading filament to toolhead
+                            and want to capture data once loaded.
 
         :return boolean: True once filament is detected in TD-1 device
         """
@@ -518,13 +520,14 @@ class afcUnit:
                 self.afc.logger.error("Error trying to format TD-1 scan time, check AFC.log for more information", f"{e}")
                 return False
 
-
             if scan_time > compare_time.astimezone():
                 valid_data = True
             elif ( compare_time.astimezone() - scan_time ) < t_delta:
                 valid_data = True
 
-            if valid_data and data['td'] is not None and data['color'] is not None:
+            if ( (valid_data or ignore_time)
+                 and data['td'] is not None
+                 and data['color'] is not None ):
                 cur_lane.td1_data = data
                 self.logger.info(f"{cur_lane.name} TD-1 data captured")
                 self.afc.save_vars()

@@ -14,6 +14,7 @@ import random
 import re
 import traceback
 import configparser
+import textwrap
 
 from configfile import error
 from datetime import datetime
@@ -1189,6 +1190,14 @@ class afcFunction:
         if td1 is not None:
             title = "TD-1 Calibration"
             td1_lane = self.afc.lanes[td1]
+            if (td1_lane.is_direct_hub()
+                and td1_lane.tool_loaded):
+                msg = textwrap.dedent(f"""\
+                    {self.name} loaded to toolhead, unload from toolhead before trying to calibrate
+                    td1_bowden_length."""
+                )
+                self.afc.error.AFC_error(msg, pause=False)
+                return
             if td1_lane.hub_obj.state:
                 msg = f"{td1_lane.hub_obj.name} hub is triggered, make sure hub is clear before trying to calibrate TD-1 bowden length"
                 self.afc.error.AFC_error(msg, pause=False)

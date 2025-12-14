@@ -231,7 +231,7 @@ class afcBoxTurtle(afcUnit):
         """
         bow_pos = 0
         cur_hub = cur_lane.hub_obj
-        #TODO: Add calibration support for direct loads
+        #TODO: Add calibration support for direct loads remove before completing pr
 
         # Verify TD-1 is still connected before trying to get data
         if not self.afc.td1_present:
@@ -244,18 +244,28 @@ class afcBoxTurtle(afcUnit):
                 return valid, msg, 0
 
         self.logger.raw(f"Calibrating bowden length to TD-1 device with {cur_lane.name}")
-        hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state, cur_hub.move_dis, tol,
-                                                             cur_lane.short_move_dis, 0, cur_lane.dist_hub + cur_lane.hub_obj.move_dis + 200, "Moving to hub")
+        if not cur_lane.is_direct_hub():
+            fault_dis = cur_lane.dist_hub + cur_lane.hub_obj.move_dis + 200
+            hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state,
+                                                                 cur_hub.move_dis, tol,
+                                                                 cur_lane.short_move_dis, 0,
+                                                                 fault_dis,
+                                                                 "Moving to hub")
 
-        if not success:
-            # if movement does not succeed fault and return values to calibration macro
-            msg = 'Failed {} after {}mm'.format(checkpoint, hub_pos)
-            cur_lane.do_enable(False)
-            return False, msg, hub_pos
+            if not success:
+                # if movement does not succeed fault and return values to calibration macro
+                msg = 'Failed {} after {}mm'.format(checkpoint, hub_pos)
+                cur_lane.do_enable(False)
+                return False, msg, hub_pos
 
         compare_time = datetime.now()
         while not self.get_td1_data(cur_lane, compare_time):
-            if bow_pos > cur_hub.afc_bowden_length:
+            max_bowden_length = 0
+            if cur_lane.is_direct_hub():
+                max_bowden_length = cur_lane.dist_hub
+            else:
+                max_bowden_length = cur_hub.afc_bowden_length
+            if bow_pos > max_bowden_length:
                 # fault if move to TD-1 is not detected
                 msg = 'TD-1 failed to detect filament after moving {}mm'.format(bow_pos)
                 cur_lane.do_enable(False)
@@ -269,19 +279,26 @@ class afcBoxTurtle(afcUnit):
 
         cur_lane.move(bow_pos * -1, cur_lane.long_moves_speed, cur_lane.long_moves_accel, True)
 
-        # Reset to hub
-        self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, 0,
-                           cur_lane.short_move_dis, tol, 200, checkpoint)
+        if not cur_lane.is_direct_hub():
+            # Reset to hub
+            self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, 0,
+                                cur_lane.short_move_dis, tol, 200, checkpoint)
 
-        cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+            cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
 
         cal_msg = f"\n td1_bowden_length: New: {bow_pos} Old: {cur_hub.td1_bowden_length}"
-        cur_hub.td1_bowden_length = bow_pos
-        self.afc.function.ConfigRewrite(cur_hub.fullname, "td1_bowden_length", bow_pos, cal_msg)
+
+        if cur_lane.is_direct_hub():
+            cur_lane.td1_bowden_length = bow_pos
+            fullname = cur_lane.fullname
+        else:
+            cur_hub.td1_bowden_length = bow_pos
+            fullname = cur_hub.fullname
+
+        self.afc.function.ConfigRewrite(fullname, "td1_bowden_length", bow_pos, cal_msg)
 
         cur_lane.do_enable(False)
         self.afc.save_vars()
-        # self.logger.info(f"td1_bowden_length: {bow_pos}")
         return True, "td1_bowden_length calibration successful", bow_pos
 
     # Helper functions for movement and calibration

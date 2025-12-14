@@ -177,7 +177,6 @@ class AFCExtruder:
                 )
 
 
-
     def handle_connect(self):
         """
         Handle the connection event.
