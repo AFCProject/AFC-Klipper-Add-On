@@ -4,7 +4,6 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import traceback
-import textwrap
 
 from configparser import Error as error
 from datetime import datetime
@@ -213,6 +212,7 @@ class afcBoxTurtle(afcUnit):
                 cur_lane.loaded_to_hub  = True
 
             cur_lane.do_enable(False)
+            cur_lane.unit_obj.return_to_home()
             self.afc.save_vars()
             return True, f"{variable_name} successful", bowden_dist
         else:
@@ -234,19 +234,15 @@ class afcBoxTurtle(afcUnit):
         cur_hub = cur_lane.hub_obj
 
         if cur_lane.td1_device_id is None:
-            msg = textwrap.dedent(f"""/
-                Cannot calibrate TD-1 for {cur_lane.name}, td1_device_id is a required 
-                field in AFC_hub or per AFC_lane"""
-            )
+            msg = f"Cannot calibrate TD-1 for {cur_lane.name}, td1_device_id is a required "
+            msg += "field in AFC_hub or per AFC_lane"
             return False, msg, 0
 
         # Verify TD-1 is still connected before trying to get data
         valid, msg = self.afc.function.check_for_td1_id(cur_lane.td1_device_id)
         if not valid:
-            msg = textwrap.dedent(f"""\
-                TD-1 device(SN: {cur_lane.td1_device_id}) not detected anymore, please check 
-                before continuing to calibrate TD-1 bowden length"""
-            )
+            msg = f"TD-1 device(SN: {cur_lane.td1_device_id}) not detected anymore, "
+            msg += "please check before continuing to calibrate TD-1 bowden length"
             return valid, msg, 0
 
         self.logger.raw(f"Calibrating bowden length to TD-1 device with {cur_lane.name}")
@@ -302,8 +298,8 @@ class afcBoxTurtle(afcUnit):
             fullname = cur_hub.fullname
 
         self.afc.function.ConfigRewrite(fullname, "td1_bowden_length", bow_pos, cal_msg)
-
         cur_lane.do_enable(False)
+        cur_lane.unit_obj.return_to_home()
         self.afc.save_vars()
         return True, "td1_bowden_length calibration successful", bow_pos
 

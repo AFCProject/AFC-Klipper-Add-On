@@ -207,12 +207,13 @@ class afcUnit:
 
         direct_hubs = any( lane.is_direct_hub() for lane in self.afc.lanes.values())
         lanes_loaded = any( lane.load_state and not lane.is_direct_hub() for lane in self.afc.lanes.values())
+        td1_ids = any( lane.td1_device_id for lane in self.afc.lanes.values())
 
         if not direct_hubs or lanes_loaded:
             buttons.append(("Calibrate afc_bowden_length", "UNIT_BOW_CALIBRATION UNIT={}".format(self.name), "secondary"))
 
         # Add button for TD-1 calibration if user has one connected and defined
-        if self.afc.td1_defined:
+        if self.afc.td1_defined and td1_ids:
             buttons.append(("Calibrate TD-1 Length", "AFC_UNIT_TD_ONE_CALIBRATION UNIT={}".format(self.name), "primary"))
 
         # Button back to previous step
@@ -357,7 +358,8 @@ class afcUnit:
                 'Config option: td1_bowden_length').format(self.name)
 
         for lane in self.lanes.values():
-            if lane.load_state:
+            if (lane.td1_device_id
+                and lane.load_state):
                 # Create a button for each lane
                 button_label = "{}".format(lane)
                 button_command = "CALIBRATE_AFC TD1={} DISTANCE=50".format(lane)
@@ -439,13 +441,13 @@ class afcUnit:
         """
         return
 
-    def return_to_home(self):
+    def return_to_home(self, prep=False):
         """
         Function to home unit if unit has homing sensor
         """
         return
 
-    def check_runout(self):
+    def check_runout(self, cur_lane):
         """
         Function to check if runout logic should be triggered, override in specific unit
         """

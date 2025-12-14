@@ -77,7 +77,8 @@ class afcPrep:
                 else:
                     self.logger.info("Capturing TD-1 data for all loaded lanes")
                     for lane in self.afc.lanes.values():
-                        if lane.load_state and lane.prep_state:
+                        if (lane.td1_device_id
+                            and lane.load_state and lane.prep_state):
                             return_status, msg = lane.get_td1_data()
                             if not return_status:
                                 break

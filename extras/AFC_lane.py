@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import math
 import traceback
-import textwrap
 
 from contextlib import contextmanager
 from configfile import error
@@ -656,7 +655,8 @@ class AFCLane:
                 self.set_loaded()
 
                 # Check if user wants to get TD-1 data when loading
-                if not self.tool_loaded:
+                if (self.td1_device_id
+                    and not self.tool_loaded):
                     self._prep_capture_td1()
 
                 if self.hub == 'direct_load':
@@ -749,7 +749,8 @@ class AFCLane:
                         self.loaded_to_hub = True
 
                     self.do_enable(False)
-                    if self.load_state == True and self.prep_state == True:
+                    if (self.td1_device_id
+                        and self.load_state == True and self.prep_state == True):
                         self.set_loaded()
                         # Check if user wants to get TD-1 data when loading
                         # TODO: When implementing multi-extruder this could still happen if a lane is loaded for a
@@ -1185,19 +1186,15 @@ class AFCLane:
         msg = ""
         
         if self.td1_device_id is None:
-            msg = textwrap.dedent(f"""/
-                Cannot grab TD-1 data for {self.name}, td1_device_id is a required 
-                field in AFC_hub or per AFC_lane"""
-            )
+            msg = f"Cannot grab TD-1 data for {self.name}, td1_device_id is a required "
+            msg += "field in AFC_hub or per AFC_lane"
             self.afc.error.AFC_error(msg, pause=False)
             return False, msg
 
         if self.td1_bowden_length is None:
-            msg = textwrap.dedent(f"""\
-                td1_bowden_length is not set for {self.name}.
-                Please run AFC_CALIBRATION to calibrate TD1 length for lane before trying to
-                capture TD1 data."""
-            )
+            msg = f"td1_bowden_length is not set for {self.name}. "
+            msg += "Please run AFC_CALIBRATION to calibrate TD1 length for "
+            msg += "lane before trying to capture TD1 data."
             self.afc.error.AFC_error(msg, pause=False)
             return False, msg
 
@@ -1213,10 +1210,8 @@ class AFCLane:
 
         if (self.is_direct_hub()
             and self.tool_loaded):
-            msg = textwrap.dedent(f"""\
-                {self.name} loaded to toolhead, unload from toolhead before trying to capture
-                TD1 data."""
-            )
+            msg = f"{self.name} loaded to toolhead, unload from toolhead before trying "
+            msg += "to capture TD1 data."
             self.afc.error.AFC_error(msg, pause=False)
             return False, msg
 
@@ -1277,6 +1272,7 @@ class AFCLane:
                     max_move_tries += 1
 
                 self.move_auto_speed(self.hub_obj.hub_clear_move_dis * -1)
+            self.unit_obj.return_to_home()
             self.do_enable(False)
 
         else:
