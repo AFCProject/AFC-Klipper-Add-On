@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2025-12-14]
+## Added
+- Ability to use TD-1 device on direct load lanes
+- td1_device_id is not required to scan filament
+
 ## [2025-11-23]
 ### Added
 - Toolchanger: Adding ability to control/swap toolheads that do not have a unit(BoxTurtle, HTLF, etc) attached to the toolhead.
