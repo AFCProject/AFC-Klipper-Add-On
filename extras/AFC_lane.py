@@ -1168,7 +1168,7 @@ class AFCLane:
 
     def get_td1_data_load(self):
         if self.afc.td1_present:
-            valid = True
+            valid = False
             if self.td1_device_id:
                 valid, _ = self.afc.function.check_for_td1_id(self.td1_device_id)
             
@@ -1183,6 +1183,15 @@ class AFCLane:
         max_move_tries = 0
         status = True
         msg = ""
+        
+        if self.td1_device_id is None:
+            msg = textwrap.dedent(f"""/
+                Cannot grab TD-1 data for {self.name}, td1_device_id is a required 
+                field in AFC_hub or per AFC_lane"""
+            )
+            self.afc.error.AFC_error(msg, pause=False)
+            return False, msg
+
         if self.td1_bowden_length is None:
             msg = textwrap.dedent(f"""\
                 td1_bowden_length is not set for {self.name}.
@@ -1212,17 +1221,10 @@ class AFCLane:
             return False, msg
 
         # Verify TD-1 is still connected before trying to get data
-        if not self.afc.td1_present:
-            msg = "TD-1 device not detected anymore, please check before continuing to capture TD-1 data"
+        valid, msg = self.afc.function.check_for_td1_id(self.td1_device_id)
+        if not valid:
             self.afc.error.AFC_error(msg, pause=False)
             return False, msg
-
-        # If user has specified a specific ID, verify that its connected and found
-        if self.td1_device_id:
-            valid, msg = self.afc.function.check_for_td1_id(self.td1_device_id)
-            if not valid:
-                self.afc.error.AFC_error(msg, pause=False)
-                return False, msg
         else:
             error, msg = self.afc.function.check_for_td1_error()
             if error:

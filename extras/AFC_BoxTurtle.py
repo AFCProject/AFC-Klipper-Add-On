@@ -4,6 +4,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import traceback
+import textwrap
 
 from configparser import Error as error
 from datetime import datetime
@@ -231,17 +232,22 @@ class afcBoxTurtle(afcUnit):
         """
         bow_pos = 0
         cur_hub = cur_lane.hub_obj
-        #TODO: Add calibration support for direct loads remove before completing pr
 
-        # Verify TD-1 is still connected before trying to get data
-        if not self.afc.td1_present:
-            msg = "TD-1 device not detected anymore, please check before continuing to calibrate TD-1 bowden length"
+        if cur_lane.td1_device_id is None:
+            msg = textwrap.dedent(f"""/
+                Cannot calibrate TD-1 for {cur_lane.name}, td1_device_id is a required 
+                field in AFC_hub or per AFC_lane"""
+            )
             return False, msg, 0
 
-        if cur_lane.td1_device_id:
-            valid, msg = self.afc.function.check_for_td1_id(cur_lane.td1_device_id)
-            if not valid:
-                return valid, msg, 0
+        # Verify TD-1 is still connected before trying to get data
+        valid, msg = self.afc.function.check_for_td1_id(cur_lane.td1_device_id)
+        if not valid:
+            msg = textwrap.dedent(f"""\
+                TD-1 device(SN: {cur_lane.td1_device_id}) not detected anymore, please check 
+                before continuing to calibrate TD-1 bowden length"""
+            )
+            return valid, msg, 0
 
         self.logger.raw(f"Calibrating bowden length to TD-1 device with {cur_lane.name}")
         if not cur_lane.is_direct_hub():

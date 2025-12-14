@@ -500,12 +500,11 @@ class afcUnit:
             self.logger.debug(f"Data: {td1_data}, Compare_time: {compare_time}")
             data = list(td1_data.values())[0]
 
-            if cur_lane.td1_device_id is not None:
-                if cur_lane.td1_device_id in td1_data:
-                    data = td1_data[cur_lane.td1_device_id]
-                else:
-                    self.afc.error.AFC_error(f"TD-1 Device ID ({cur_lane.td1_device_id}) supplied, but ID not found.", pause=False)
-                    return False
+            if cur_lane.td1_device_id in td1_data:
+                data = td1_data[cur_lane.td1_device_id]
+            else:
+                self.afc.error.AFC_error(f"TD-1 Device ID ({cur_lane.td1_device_id}) supplied, but ID not found.", pause=False)
+                return False
 
             if data["scan_time"] is None:
                 return False

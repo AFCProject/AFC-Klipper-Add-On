@@ -1495,7 +1495,7 @@ class afcFunction:
 
         # Create buttons for each lane and group every 4 lanes together
         for lane in self.afc.lanes.values():
-            if lane.load_state:
+            if lane.td1_device_id and lane.load_state:
                 button_label = "{}".format(lane)
                 button_command = "AFC_GET_TD_ONE_LANE_DATA LANE={}".format(lane)
                 button_style = "primary" if index % 2 == 0 else "secondary"
@@ -1546,7 +1546,9 @@ class afcFunction:
         if lane.lower() == "all":
             self.logger.info("Capturing TD-1 data for all lanes")
             for cur_lane in self.afc.lanes.values():
-                if cur_lane.load_state and cur_lane.prep_state:
+                if (cur_lane.td1_device_id
+                    and cur_lane.load_state
+                    and cur_lane.prep_state):
                     success, msg = cur_lane.get_td1_data()
                     if not success:
                         self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='Get TD-1 data Failed' FAIL={cur_lane} DISTANCE=0 msg='{msg}' RESET=0")
