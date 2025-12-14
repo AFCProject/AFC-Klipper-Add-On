@@ -479,7 +479,8 @@ class afcUnit:
     def calibrate_lane(self, cur_lane, tol):
         self._print_function_not_defined(self.calibrate_lane.__name__)
 
-    def get_td1_data(self, cur_lane, compare_time, ignore_time=False):
+    def get_td1_data(self, cur_lane: AFCLane, compare_time: datetime,
+                     ignore_time: bool=False) -> bool:
         """
         Queries moonrakers endpoint to get td1 data and check to see if data is valid and time
         in data is greater than passed in time as this is how determination is made that filament

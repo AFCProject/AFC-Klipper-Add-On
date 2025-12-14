@@ -1168,6 +1168,10 @@ class AFCLane:
             self.afc.moonraker.send_lane_data(lane_data)
 
     def get_td1_data_load(self):
+        """
+        Captures TD-1 data for a lane after being loaded into toolhead. When capturing
+        data scan time is ignored as its assumed its scanned when loaded into toolhead.
+        """
         if self.afc.td1_present:
             valid = False
             if self.td1_device_id:
