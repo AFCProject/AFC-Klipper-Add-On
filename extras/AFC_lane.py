@@ -1167,6 +1167,15 @@ class AFCLane:
             }
             self.afc.moonraker.send_lane_data(lane_data)
 
+    def get_td1_data_load(self):
+        if self.afc.td1_present:
+            valid = True
+            if self.td1_device_id:
+                valid, _ = self.afc.function.check_for_td1_id(self.td1_device_id)
+            
+            if valid:
+                self.unit_obj.get_td1_data(self, datetime.now(), ignore_time=True)
+
     def get_td1_data(self):
         """
         Captures TD-1 data for lane. Has error checking to verify that lane is loaded, hub is not blocked

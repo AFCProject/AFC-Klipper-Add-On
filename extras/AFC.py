@@ -1152,6 +1152,7 @@ class afc:
                 cur_lane.unit_obj.lane_tool_loaded( cur_lane )
                 self.save_vars()
                 self.current_state = State.IDLE
+                cur_lane.get_td1_data_load()
                 load_time = self.afcDeltaTime.log_major_delta("{} is now loaded in toolhead".format(cur_lane.name), False)
                 self.afc_stats.average_tool_load_time.average_time(load_time)
 
