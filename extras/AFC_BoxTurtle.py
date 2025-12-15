@@ -261,12 +261,12 @@ class afcBoxTurtle(afcUnit):
                 return False, msg, hub_pos
 
         compare_time = datetime.now()
+        max_bowden_length = 0
+        if cur_lane.is_direct_hub():
+            max_bowden_length = cur_lane.dist_hub
+        else:
+            max_bowden_length = cur_hub.afc_bowden_length
         while not self.get_td1_data(cur_lane, compare_time):
-            max_bowden_length = 0
-            if cur_lane.is_direct_hub():
-                max_bowden_length = cur_lane.dist_hub
-            else:
-                max_bowden_length = cur_hub.afc_bowden_length
             if bow_pos > max_bowden_length:
                 # fault if move to TD-1 is not detected
                 msg = 'TD-1 failed to detect filament after moving {}mm'.format(bow_pos)

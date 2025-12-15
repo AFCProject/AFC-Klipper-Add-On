@@ -207,13 +207,13 @@ class afcUnit:
 
         direct_hubs = any( lane.is_direct_hub() for lane in self.afc.lanes.values())
         lanes_loaded = any( lane.load_state and not lane.is_direct_hub() for lane in self.afc.lanes.values())
-        td1_ids = any( lane.td1_device_id for lane in self.afc.lanes.values())
+        any_lane_has_td1_ids = any( lane.td1_device_id for lane in self.afc.lanes.values())
 
         if not direct_hubs or lanes_loaded:
             buttons.append(("Calibrate afc_bowden_length", "UNIT_BOW_CALIBRATION UNIT={}".format(self.name), "secondary"))
 
         # Add button for TD-1 calibration if user has one connected and defined
-        if self.afc.td1_defined and td1_ids:
+        if self.afc.td1_defined and any_lane_has_td1_ids:
             buttons.append(("Calibrate TD-1 Length", "AFC_UNIT_TD_ONE_CALIBRATION UNIT={}".format(self.name), "primary"))
 
         # Button back to previous step
@@ -490,7 +490,7 @@ class afcUnit:
                          assigned to the lane.
         :param compare_time: Time to compare returned data to, which helps verify that the data is valid and
                              filament has reached TD-1 device
-        :parma ignore_time: Override to just capture TD-1 data anyways, useful when loading filament to toolhead
+        :param ignore_time: Override to just capture TD-1 data anyways, useful when loading filament to toolhead
                             and want to capture data once loaded.
 
         :return boolean: True once filament is detected in TD-1 device
@@ -501,7 +501,6 @@ class afcUnit:
 
         if len(td1_data) > 0:
             self.logger.debug(f"Data: {td1_data}, Compare_time: {compare_time}")
-            data = list(td1_data.values())[0]
 
             if cur_lane.td1_device_id in td1_data:
                 data = td1_data[cur_lane.td1_device_id]

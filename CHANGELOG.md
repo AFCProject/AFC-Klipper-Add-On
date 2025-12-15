@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2025-12-14]
 ## Added
 - Ability to use TD-1 device on direct load lanes
-- td1_device_id is not required to scan filament
+- td1_device_id is now required to scan filament
 
 ## [2025-11-23]
 ### Added
