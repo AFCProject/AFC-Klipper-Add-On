@@ -39,18 +39,22 @@ class AFC_logger:
         self.gcode   = printer.lookup_object('gcode')
         self.webhooks = printer.lookup_object('webhooks')
 
-        log_path = printer.start_args['log_file']
-        dirname = Path(log_path).parent
-        log_file = Path(dirname).joinpath("AFC.log")
-        logger_name = os.path.splitext(os.path.basename(log_file))[0]
+        log_path = printer.start_args.get('log_file', None)
+        if log_path:
+            dirname = Path(log_path).parent
+            log_file = Path(dirname).joinpath("AFC.log")
+            logger_name = os.path.splitext(os.path.basename(log_file))[0]
 
-        self.afc_ql = None
-        self.logger = logging.getLogger(logger_name)
-        if not any(isinstance(ql, QueueHandler) for ql in self.logger.handlers):
-            self.afc_ql = AFC_QueueListener(log_file)
-            self.afc_ql.setFormatter(logging.Formatter('%(asctime)s %(message)s', datefmt='%H:%M:%S'))
-            self.afc_queue_handler = QueueHandler(self.afc_ql.bg_queue)
-            self.logger.addHandler(self.afc_queue_handler)
+            self.afc_ql = None
+            self.logger = logging.getLogger(logger_name)
+
+            if not any(isinstance(ql, QueueHandler) for ql in self.logger.handlers):
+                self.afc_ql = AFC_QueueListener(log_file)
+                self.afc_ql.setFormatter(logging.Formatter('%(asctime)s %(message)s', datefmt='%H:%M:%S'))
+                self.afc_queue_handler = QueueHandler(self.afc_ql.bg_queue)
+                self.logger.addHandler(self.afc_queue_handler)
+        else:
+            self.logger =  logging.getLogger()
 
         self.logger.propagate = False               # Stops logs from going into klippy.log
         self.logger.setLevel(logging.DEBUG)
