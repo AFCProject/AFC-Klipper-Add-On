@@ -26,7 +26,7 @@ RPM_TO_RPS = 60
 class AFCassistMotor:
     def __init__(self, config, type):
         self.printer = config.get_printer()
-        ppins = self.printer.lookup_object("pins")
+        ppins = self.printer.load_object(config, "pins")
         # Determine pin type
         self.is_pwm = config.getboolean("pwm", False)
         if self.is_pwm and type != "enb":
@@ -421,7 +421,7 @@ class Espooler:
     def __init__(self, name, config):
         self.name                   = name
         self.printer                = config.get_printer()
-        self.afc                    = self.printer.lookup_object("AFC")
+        self.afc                    = self.printer.load_object(config, "AFC")
         self.logger                 = self.afc.logger
         self.reactor                = self.printer.get_reactor()
         self.callback_timer         = self.reactor.register_timer( self.timer_callback )    # Defaults to never trigger

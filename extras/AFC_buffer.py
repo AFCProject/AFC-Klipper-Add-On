@@ -18,7 +18,7 @@ class AFCTrigger:
 
     def __init__(self, config):
         self.printer    = config.get_printer()
-        self.afc        = self.printer.lookup_object('AFC')
+        self.afc        = self.printer.load_object(config, 'AFC')
         self.reactor    = self.afc.reactor
         self.gcode      = self.afc.gcode
         self.logger     = self.afc.logger

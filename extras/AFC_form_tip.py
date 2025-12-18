@@ -8,8 +8,8 @@ class afc_tip_form:
     def __init__(self, config):
         self.printer        = config.get_printer()
         self.reactor        = self.printer.get_reactor()
-        self.afc            = self.printer.lookup_object('AFC')
-        self.gcode          = self.printer.lookup_object('gcode')
+        self.afc            = self.printer.load_object(config, 'AFC')
+        self.gcode          = self.printer.load_object(config, 'gcode')
         self.logger         = self.afc.logger
 
          # TIP FORMING

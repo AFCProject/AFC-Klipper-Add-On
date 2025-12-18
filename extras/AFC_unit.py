@@ -17,10 +17,10 @@ except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.f
 class afcUnit:
     def __init__(self, config):
         self.printer        = config.get_printer()
-        self.gcode          = self.printer.lookup_object('gcode')
+        self.gcode          = self.printer.load_object(config, 'gcode')
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
-        self.afc            = self.printer.lookup_object('AFC')
+        self.afc            = self.printer.load_object(config, 'AFC')
         self.logger         = self.afc.logger
 
         self.lanes      = {}

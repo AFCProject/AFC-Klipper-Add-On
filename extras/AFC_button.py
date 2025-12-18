@@ -11,11 +11,11 @@ class AFCButton:
     """
     def __init__(self, config):
         self.printer = config.get_printer()
-        self.gcode = self.printer.lookup_object('gcode')
+        self.gcode = self.printer.load_object(config, 'gcode')
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
         self.reactor = self.printer.get_reactor()
 
-        self.afc = self.printer.lookup_object('AFC')
+        self.afc = self.printer.load_object(config, 'AFC')
         self.lane_id = config.get_name().split()[-1]
         self.lane_obj = None
         self.long_press_duration = config.getfloat('long_press_duration', 1.2)

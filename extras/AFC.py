@@ -48,7 +48,7 @@ class afc:
         self.config  = config
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
-        self.webhooks = self.printer.lookup_object('webhooks')
+        self.webhooks = self.printer.load_object(config, 'webhooks')
         self.printer.register_event_handler("klippy:connect",self.handle_connect)
         self.logger  = AFC_logger(self.printer, self)
 
@@ -56,7 +56,7 @@ class afc:
         self.error      = self.printer.load_object(config, 'AFC_error')
         self.function   = self.printer.load_object(config, 'AFC_functions')
         self.function.afc = self
-        self.gcode      = self.printer.lookup_object('gcode')
+        self.gcode      = self.printer.load_object(config, 'gcode')
 
         # Registering stepper callback so that mux macro can be set properly with valid lane names
         self.printer.register_event_handler("afc_stepper:register_macros",self.register_lane_macros)

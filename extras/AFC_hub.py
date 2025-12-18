@@ -17,7 +17,7 @@ class afc_hub:
     def __init__(self, config):
         self.printer    = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
-        self.afc        = self.printer.lookup_object('AFC')
+        self.afc        = self.printer.load_object(config, 'AFC')
         self.reactor    = self.printer.get_reactor()
 
         self.fullname   = config.get_name()

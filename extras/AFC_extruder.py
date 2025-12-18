@@ -16,9 +16,9 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 class AFCExtruder:
     def __init__(self, config):
         self.printer    = config.get_printer()
-        buttons         = self.printer.load_object(config, "buttons")
-        self.afc        = self.printer.lookup_object('AFC')
-        self.gcode      = self.printer.lookup_object('gcode')
+        buttons         = self.printer.load_object(config, 'buttons')
+        self.afc        = self.printer.load_object(config, 'AFC')
+        self.gcode      = self.printer.load_object(config, 'gcode')
         self.logger     = self.afc.logger
         self.reactor    = None
         self.printer.register_event_handler("klippy:connect", self.handle_connect)

@@ -16,10 +16,10 @@ class AFCled:
         self.mutex      = printer.get_reactor().mutex()
         self.fullname   = config.get_name()
         self.name       = self.fullname.split()[-1]
-        self.afc        = self.printer.lookup_object('AFC')
+        self.afc        = self.printer.load_object(config, 'AFC')
         self.afc.led_obj[self.name] = self
         # Configure neopixel
-        ppins = printer.lookup_object('pins')
+        ppins = printer.load_object(config, 'pins')
         pin_params = ppins.lookup_pin(config.get('pin'))
         self.mcu = pin_params['chip']
         self.oid = self.mcu.create_oid()
