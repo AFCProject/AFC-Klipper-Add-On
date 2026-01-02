@@ -410,7 +410,7 @@ class afcUnit:
         :param lane: Lane object to set led
         """
         self.afc.function.afc_led(lane.led_ready, lane.led_index)
-    
+
     def lane_unloading(self, lane):
         """
         Common function for setting a lanes led when lane is unloading
@@ -465,7 +465,7 @@ class afcUnit:
         """
         self.afc.function.afc_led(lane.led_tool_loaded_idle, lane.led_index)
         lane.extruder_obj.set_status_led(lane.led_tool_loaded_idle)
-    
+
     def lane_illuminate_spool(self, lane):
         """
         Common function for setting lane illumination leds

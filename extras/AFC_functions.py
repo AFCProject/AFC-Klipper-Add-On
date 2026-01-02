@@ -358,7 +358,7 @@ class afcFunction:
         """
         lane_obj: Optional[AFCLane] = None
         lane_name: str = self.afc.tool_cmds.get(map_name, None)
-    
+
         if lane_name is None:
             self.logger.info("Lane map {} not found".format(map_name))
         else:

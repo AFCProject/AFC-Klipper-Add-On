@@ -525,7 +525,7 @@ class AFCExtruder:
         """
         if self.toolhead_led_obj is None:
             return
-        
+
         if (self.set_status_color_fn is None
             or self.check_transmit_status_fn is None):
             return
@@ -533,7 +533,7 @@ class AFCExtruder:
         color = tuple(map(float, color.split(',')))
         for idx in self.toolhead_status_index:
             self.set_status_color_fn(idx, color)
-        
+
         self.check_transmit_status_fn(None)
 
     def set_print_leds(self, state: int=1):
@@ -547,7 +547,7 @@ class AFCExtruder:
             error_string = f"led_name variable not set in [{self.fullname}] config section"
             self.logger.error(error_string)
             return False, error_string
-        
+
         if (self.set_status_color_fn is None
             or self.check_transmit_status_fn is None):
             error_string = "Cannot set print leds as status or check_transmit function are None"
@@ -564,7 +564,7 @@ class AFCExtruder:
 
     def on_shuttle(self):
         """
-        Helper function to easily detect if a toolhead is on the shuttle or not. This function is 
+        Helper function to easily detect if a toolhead is on the shuttle or not. This function is
         for toolchangers and will return True for single toolhead printers.
 
         :return bool: True if toolheads optotap sensor is triggered. Always returns True for single
