@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from reactor import PollReactor, SelectReactor
     from configfile import ConfigWrapper
     from kinematics.extruder import PrinterExtruder
+    from gcode import GCodeCommand
     from toolhead import ToolHead
     from extras.heaters import Heater
     from extras.AFC import afc
@@ -158,6 +159,10 @@ class AFCExtruder:
         self.function.register_mux_command(self.show_macros, 'SAVE_EXTRUDER_VALUES', "EXTRUDER", self.name,
                                            self.cmd_SAVE_EXTRUDER_VALUES, self.cmd_SAVE_EXTRUDER_VALUES_help,
                                            self.cmd_SAVE_EXTRUDER_VALUES_options)
+        if self.toolhead_leds:
+            self.function.register_mux_command(self.show_macros, 'AFC_SET_EXTRUDER_LED', "EXTRUDER", self.name,
+                                            self.cmd_AFC_SET_EXTRUDER_LED, self.cmd_AFC_SET_EXTRUDER_LED_help,
+                                            self.cmd_AFC_SET_EXTRUDER_LED_options)
 
     def __str__(self):
         return self.name
@@ -643,6 +648,39 @@ class AFCExtruder:
         self.afc.function.ConfigRewrite(self.fullname, 'tool_stn', self.tool_stn, '')
         self.afc.function.ConfigRewrite(self.fullname, 'tool_stn_unload', self.tool_stn_unload, '')
         self.afc.function.ConfigRewrite(self.fullname, 'tool_sensor_after_extruder', self.tool_sensor_after_extruder, '')
+
+    cmd_AFC_SET_EXTRUDER_LED_help = "Turns on toolhead leds for specified extruder name, does not affect status led if status_led_idx variable is provided"
+    cmd_AFC_SET_EXTRUDER_LED_options = {
+        "EXTRUDER": {"type": "string", "default": "extruder"},
+        "TURN_ON": {"type": "int", "default": 1}
+    }
+    def cmd_AFC_SET_EXTRUDER_LED(self, gcmd: GCodeCommand):
+        """
+        Macro call to set print led in toolhead based on extruder name. Led config name needs to be
+        set to AFC_extruder `led_name` variable. Status led in toolhead will not be affected if `status_led_idx`
+        is set in AFC_extruder config. Macro only is enabled per toolhead if `led_name` variable is provided.
+
+        `EXTRUDER` - AFC_extruder config name to print leds. If single toolhead, this will always be `extruder`
+
+        `TURN_ON` - set to 1 to turn on leds, set to 0 to turn off leds. If not supplied, defaults to 1
+
+        Usage
+        -----
+        `AFC_SET_TOOLHEAD_LED EXTRUDER=<extruder name> TURN_ON=<0/1>`
+
+        Example
+        -----
+        ```
+        AFC_SET_TOOLHEAD_LED EXTRUDER=extruder TURN_ON=1
+        ```
+
+        """
+        state = gcmd.get_int("TURN_ON", 1)
+
+        success, error_string = self.set_print_leds(state)
+
+        if not success:
+            raise gcmd.error(error_string)
 
     def get_status(self, eventtime=None):
         self.response = {}
