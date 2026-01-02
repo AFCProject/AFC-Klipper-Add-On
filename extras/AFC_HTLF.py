@@ -147,11 +147,12 @@ class AFC_HTLF(afcBoxTurtle):
         self.logger.debug("HTLF: Lobe Movement angle : {}".format(angle_movement))
         return (self.mm_move_per_rotation/360)*angle_movement
 
-    def select_lane( self, lane ):
+    def select_lane( self, lane, disable_selector: bool=False ):
         """
         Moves lobe selector to specified lane based off lanes index
 
         :param lane: Lane object to move selector to
+        :param disable_selector: When True disables selectors motor after selecting a lane
         :return boolean: Returns True if movement of selector succeeded
         """
         self.failed_to_home = False
@@ -163,6 +164,9 @@ class AFC_HTLF(afcBoxTurtle):
                 self.current_selected_lane = lane
             else:
                 return False
+
+        if disable_selector:
+            self.selector_stepper_obj.do_enable(False)
 
     def check_runout(self, cur_lane):
         """
