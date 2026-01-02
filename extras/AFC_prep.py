@@ -116,14 +116,20 @@ class afcPrep:
 
         # check if Lane is supposed to be loaded in tool head from saved file
         for extruder in self.afc.tools.keys():
-            PrinterObject=self.afc.tools[extruder]
-            self.afc.tools[PrinterObject.name]=PrinterObject
+            extruder_obj=self.afc.tools[extruder]
+            extruder_obj.set_status_led( self.afc.led_tool_unloaded )
+            if extruder_obj.on_shuttle():
+                # Calls ACTIVATE_EXTRUDER if current toolhead on shuttle is not the active extruder
+                if self.afc.function.get_current_extruder() != extruder_obj.name:
+                    self.afc.gcode.run_script_from_command(
+                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.name}"
+                    )
             if 'system' in units and "extruders" in units["system"]:
                 # Check to see if lane_loaded is in dictionary and its not an empty string
-                if PrinterObject.name in units["system"]["extruders"] and \
-                  'lane_loaded' in units["system"]["extruders"][PrinterObject.name] and \
-                  units["system"]["extruders"][PrinterObject.name]['lane_loaded']:
-                    PrinterObject.lane_loaded = units["system"]["extruders"][PrinterObject.name]['lane_loaded']
+                if extruder_obj.name in units["system"]["extruders"] and \
+                  'lane_loaded' in units["system"]["extruders"][extruder_obj.name] and \
+                  units["system"]["extruders"][extruder_obj.name]['lane_loaded']:
+                    extruder_obj.lane_loaded = units["system"]["extruders"][extruder_obj.name]['lane_loaded']
 
 
         for lane in self.afc.lanes.keys():
@@ -211,7 +217,7 @@ class afcPrep:
         # have selectors to make sure the selector is on the correct lane
         current_lane = self.afc.function.get_current_lane_obj()
         if current_lane is not None:
-            current_lane.unit_obj.select_lane(current_lane)
+            current_lane.unit_obj.select_lane(current_lane, True)
             current_lane.sync_to_extruder()
 
         # Restore previous bypass state if virtual bypass is active

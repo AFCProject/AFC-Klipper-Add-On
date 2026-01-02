@@ -46,6 +46,11 @@ class AfcToolchanger(afcUnit):
         self.functions.register_commands(self.afc.show_macros, "AFC_UNSELECT_TOOL",
                                          self.cmd_AFC_UNSELECT_TOOL, self.cmd_AFC_UNSELECT_TOOL_help)
 
+        self.functions.register_commands(self.afc.show_macros, "AFC_SET_TOOLHEAD_LED",
+                                         self.cmd_AFC_SET_TOOLHEAD_LED,
+                                         self.cmd_AFC_SET_TOOLHEAD_LED_help,
+                                         self.cmd_AFC_SET_TOOLHEAD_LED_options)
+
     def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: str, enable_movement: bool):
         if assignTcmd: self.afc.function.TcmdAssign(cur_lane)
         # Now that a T command is assigned, send lane data to moonraker
@@ -58,7 +63,7 @@ class AfcToolchanger(afcUnit):
     cmd_AFC_SELECT_TOOL_options = {
         "TOOL": {"type": "string", "default": "extruder"}
     }
-    def cmd_AFC_SELECT_TOOL(self, gcmd:GCodeCommand):
+    def cmd_AFC_SELECT_TOOL(self, gcmd: GCodeCommand):
         """
         Select's tool based off passed in extruder name
 
@@ -84,7 +89,7 @@ class AfcToolchanger(afcUnit):
             self.logger.error(f"Key:{tool_key} invalid for TOOL")
 
     cmd_AFC_UNSELECT_TOOL_help = "Unselects and docks current tool on shuttle"
-    def cmd_AFC_UNSELECT_TOOL(self, gcmd:GCodeCommand):
+    def cmd_AFC_UNSELECT_TOOL(self, gcmd: GCodeCommand):
         """
         Unselects current tool loaded in shuttle by calling klipper-toolchanger UNSELECT_TOOL
 
@@ -101,6 +106,10 @@ class AfcToolchanger(afcUnit):
         ```
         """
         self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
+        lane_obj = self.afc.function.get_current_lane_obj()
+        if lane_obj:
+            lane_obj.extruder_obj.set_status_led(lane_obj.led_tool_loaded_idle)
+        self.afc.spool.set_active_spool('')
 
     def tool_swap(self, lane):
         """
@@ -141,6 +150,46 @@ class AfcToolchanger(afcUnit):
             self.afc.last_gcode_position[i] += self.afc.gcode_move.base_position[i]
 
         self.afc.function.log_toolhead_pos("After toolswap: ")
+
+    cmd_AFC_SET_TOOLHEAD_LED_help = "Turns on leds for toolhead specified by mapping, does not affect status led if status_led_idx variable is provided"
+    cmd_AFC_SET_TOOLHEAD_LED_options = {
+        "MAP": {"type": "string", "default": "T0"},
+        "TURN_ON": {"type": "int", "default": 1}
+    }
+    def cmd_AFC_SET_TOOLHEAD_LED(self, gcmd: GCodeCommand):
+        """
+        Macro call to set print led in toolhead based on lane/tool mapping. Led config name needs to be
+        set to AFC_extruder `led_name` variable. Status led in toolhead will not be affected if `status_led_idx`
+        is set in AFC_extruder config.
+
+        `MAP` - is the mapped toolhead to set. ex(T0,T1,etc)
+
+        `TURN_ON` - set to 1 to turn on leds, set to 0 to turn off leds. If not supplied, defaults to 1
+
+        Usage
+        -----
+        `AFC_SET_TOOLHEAD_LED MAP=<T(n) mapping> TURN_ON=<0/1>`
+
+        Example
+        -----
+        ```
+        AFC_SET_TOOLHEAD_LED MAP=T2 TURN_ON=1
+        ```
+
+        """
+        mapping = gcmd.get("MAP")
+        state = gcmd.get_int("TURN_ON", 1)
+
+        lane_obj = self.afc.function.get_lane_by_map(mapping)
+        if lane_obj is None:
+            error_string = f"{mapping} mapping not found when trying to set toolhead led"
+            self.logger.error(error_string)
+            raise gcmd.error(error_string)
+
+        success, error_string = lane_obj.extruder_obj.set_print_leds(state)
+
+        if not success:
+            raise gcmd.error(error_string)
 
 def load_config_prefix(config: ConfigWrapper):
     return AfcToolchanger(config)

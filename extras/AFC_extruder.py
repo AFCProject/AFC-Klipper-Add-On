@@ -8,6 +8,7 @@ from __future__ import annotations
 import traceback
 import chelper
 from extras.force_move import calc_move_time
+import configfile
 
 try:
     from printer import message_ready as READY # type: ignore
@@ -74,6 +75,15 @@ class AFCExtruder:
         self.enable_runout              = config.getboolean("enable_tool_runout",       self.afc.enable_tool_runout)
         self.debounce_delay             = config.getfloat("debounce_delay",             self.afc.debounce_delay)
         self.deadband                   = config.getfloat("deadband", 2)                                                # Deadband for extruder heater, default is 2 degrees Celsius
+
+        self.toolhead_leds              = config.get('led_name', None)
+        self.toolhead_status_index      = config.get('status_led_idx', None)
+        self.toolhead_led_obj           = None
+        self.set_status_color_fn        = None
+        self.check_transmit_status_fn   = None
+        self.status_led_count:int       = 0
+
+        self.toolhead_status_index      = self.afc.function._get_led_indexes(self.toolhead_status_index)
 
         self.tc_unit_name: Optional[str] = config.get("toolchanger_unit", None)
         self.tc_unit_obj: Optional[AfcToolchanger|None] = None
@@ -194,7 +204,7 @@ class AFCExtruder:
             if self.tool:
                 self.tool_obj = self.printer.lookup_object(self.tool)
         except:
-            raise error(f'[{self.tool}] not found in config file for {self.name}')
+            raise error(f'[{self.tool}] not found in config file for {self.fullname}')
 
         try:
             if self.tc_unit_name:
@@ -205,7 +215,31 @@ class AFCExtruder:
 
         except:
             raise error(
-                f'AFC_Toolchanger {self.tc_unit_name} not found in config file for {self.name}'
+                f'AFC_Toolchanger {self.tc_unit_name} not found in config file for {self.fullname}'
+            )
+
+        try:
+            # Looking up led object if user supplied variable
+            if self.toolhead_leds:
+                self.toolhead_led_obj = self.printer.lookup_object(
+                    f"{self.toolhead_leds}"
+                )
+                # Setting led_count, status_color function and check_transmit function since
+                # these functions are named differently depending on klipper/kalico versions
+                if hasattr(self.toolhead_led_obj, "led_helper"):
+                    led_helper = self.toolhead_led_obj.led_helper
+                    self.status_led_count = led_helper.led_count
+                    if hasattr(led_helper, "_set_color"):
+                        self.set_status_color_fn = led_helper._set_color
+                        self.check_transmit_status_fn = led_helper._check_transmit
+                    else:
+                        self.set_status_color_fn = led_helper.set_color
+                        self.check_transmit_status_fn = led_helper.check_transmit
+
+        except configfile.error:
+            raise error(
+                f"{self.toolhead_leds} not found in config file for led_name variable in " \
+                f"{self.fullname} config section"
             )
 
     def _handle_toolhead_sensor_runout(self, state, sensor_name):
@@ -482,6 +516,66 @@ class AFCExtruder:
             self.logger.info(msg)
         else:
             self.logger.error("tool_sensor_after_extruder length should be greater than zero")
+
+    def set_status_led(self, color):
+        """
+        Function to set status led indexes on toolhead if user defines `status_led_idx`
+
+        :param color: Color to set led indexes
+        """
+        if self.toolhead_led_obj is None:
+            return
+        
+        if (self.set_status_color_fn is None
+            or self.check_transmit_status_fn is None):
+            return
+
+        color = tuple(map(float, color.split(',')))
+        for idx in self.toolhead_status_index:
+            self.set_status_color_fn(idx, color)
+        
+        self.check_transmit_status_fn(None)
+
+    def set_print_leds(self, state: int=1):
+        """
+        Function to set toolhead part led's, currently will set leds in `led_name` objects chain count
+        to white. Does not set led's that defined in `status_led_idx`.
+
+        :param state: Set to 1 to turn on the leds, set to 0 to turn off leds
+        """
+        if self.toolhead_led_obj is None:
+            error_string = f"led_name variable not set in [{self.fullname}] config section"
+            self.logger.error(error_string)
+            return False, error_string
+        
+        if (self.set_status_color_fn is None
+            or self.check_transmit_status_fn is None):
+            error_string = "Cannot set print leds as status or check_transmit function are None"
+            self.logger.error(error_string)
+            return False, error_string
+
+        for idx in range(1, self.status_led_count+1):
+            if idx not in self.toolhead_status_index:
+                self.set_status_color_fn(idx, (state,)*4)
+
+        self.check_transmit_status_fn(None)
+
+        return True, ""
+
+    def on_shuttle(self):
+        """
+        Helper function to easily detect if a toolhead is on the shuttle or not. This function is 
+        for toolchangers and will return True for single toolhead printers.
+
+        :return bool: True if toolheads optotap sensor is triggered. Always returns True for single
+                      toolhead printers.
+        """
+        # Return true if both are not set as this would be for single toolhead
+        # setups
+        if self.tool_obj is None and self.tc_unit_name is None:
+            return True
+
+        return self.tool_obj.detect_state
 
     cmd_UPDATE_TOOLHEAD_SENSORS_help = "Gives ability to update tool_stn, tool_stn_unload, tool_sensor_after_extruder values without restarting klipper"
     cmd_UPDATE_TOOLHEAD_SENSORS_options = {

@@ -81,13 +81,17 @@ class afcBoxTurtle(afcUnit):
             else:
                 cur_lane.status = AFCLaneState.LOADED
                 msg +="<span class=success--text> AND LOADED</span>"
-                cur_lane.unit_obj.lane_illuminate_spool(cur_lane)
+                self.lane_illuminate_spool(cur_lane)
 
                 if cur_lane.tool_loaded:
                     if cur_lane.get_toolhead_pre_sensor_state() == True or cur_lane.extruder_obj.tool_start == "buffer" or cur_lane.extruder_obj.tool_end_state:
                         if cur_lane.extruder_obj.lane_loaded == cur_lane.name:
                             cur_lane.sync_to_extruder()
-                            msg +="<span class=primary--text> in ToolHead</span>"
+                            on_shuttle = ""
+                            if (cur_lane.extruder_obj.tool_obj
+                                and cur_lane.extruder_obj.tc_unit_name):
+                                on_shuttle = " and toolhead on shuttle" if cur_lane.extruder_obj.on_shuttle() else ""
+                            msg += f"<span class=primary--text> in ToolHead{on_shuttle}</span>"
                             if cur_lane.extruder_obj.tool_start == "buffer":
                                 msg += "<span class=warning--text>\n Ram sensor enabled, confirm tool is loaded</span>"
 
