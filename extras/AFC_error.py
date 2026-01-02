@@ -61,7 +61,7 @@ class afcError:
         else:
             self.PauseUserIntervention(problem)
         if not error_handled:
-            self.afc.function.afc_led(self.afc.led_fault, LANE.led_index)
+            LANE.unit_obj.lane_fault(LANE)
 
         return error_handled
 
@@ -256,4 +256,4 @@ class afcError:
         cur_lane.status = AFCLaneState.ERROR
         msg = "{} {}".format(cur_lane.name, message)
         self.AFC_error(msg, pause, level=2)
-        self.afc.function.afc_led(self.afc.led_fault, cur_lane.led_index)
+        cur_lane.unit_obj.lane_fault(cur_lane)

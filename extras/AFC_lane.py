@@ -127,6 +127,7 @@ class AFCLane:
         self.led_unloading        = config.get('led_unloading',None)                    # LED color to set when lane is unloading
         self.led_tool_loaded      = config.get('led_tool_loaded',None)                  # LED color to set when lane is loaded into tool
         self.led_tool_loaded_idle = config.get('led_tool_loaded_idle',None)             # LED color to set when lane is loaded into tool and idle
+        self.led_tool_unloaded    = config.get('led_tool_unloaded', None)               # LED color to set when lanes extruder is unloaded
         self.led_spool_index      = config.get('led_spool_index', None)                 # LED index to illuminate under spool
         self.led_spool_illum      = config.get('led_spool_illuminate', None)            # LED color to illuminate under spool
 
@@ -389,6 +390,7 @@ class AFCLane:
         if self.led_unloading        is None: self.led_unloading        = self.unit_obj.led_unloading
         if self.led_tool_loaded      is None: self.led_tool_loaded      = self.unit_obj.led_tool_loaded
         if self.led_tool_loaded_idle is None: self.led_tool_loaded_idle = self.unit_obj.led_tool_loaded_idle
+        if self.led_tool_unloaded    is None: self.led_tool_unloaded    = self.unit_obj.led_tool_unloaded
         if self.led_spool_illum      is None: self.led_spool_illum      = self.unit_obj.led_spool_illum
 
         if self.rev_long_moves_speed_factor is None: self.rev_long_moves_speed_factor  = self.unit_obj.rev_long_moves_speed_factor
@@ -569,7 +571,7 @@ class AFCLane:
             - Once changeover is successful print is automatically resumed
         """
         self.status = AFCLaneState.NONE
-        self.afc.function.afc_led(self.afc.led_not_ready, self.led_index)
+        self.unit_obj.lane_not_ready(self)
         self.logger.info("Infinite Spool triggered for {}".format(self.name))
         empty_lane = self.afc.lanes[self.afc.current]
         change_lane = self.afc.lanes[self.runout_lane]
@@ -592,7 +594,7 @@ class AFCLane:
             # Resume with manual issued command
             self.afc.error.pause_resume.send_resume_command()
             # Set LED to not ready
-            self.afc.function.afc_led(self.led_not_ready, self.led_index)
+            self.unit_obj.lane_not_ready(self)
 
     def _perform_pause_runout(self):
         """
@@ -611,7 +613,7 @@ class AFCLane:
         self.status = AFCLaneState.NONE
         msg = "Runout triggered for lane {} and runout lane is not setup to switch to another lane".format(self.name)
         msg += "\nPlease manually load next spool into toolhead and then hit resume to continue"
-        self.afc.function.afc_led(self.afc.led_not_ready, self.led_index)
+        self.unit_obj.lane_not_ready(self)
         self.afc.error.AFC_error(msg)
 
     def _prep_capture_td1(self):
@@ -727,7 +729,7 @@ class AFCLane:
                         if x> 40:
                             msg = ' FAILED TO LOAD, CHECK FILAMENT AT TRIGGER\n||==>--||----||------||\nTRG   LOAD   HUB    TOOL'
                             self.afc.error.AFC_error(msg, False)
-                            self.afc.function.afc_led(self.afc.led_fault, self.led_index)
+                            self.unit_obj.lane_fault(self)
                             self.status = AFCLaneState.NONE
                             break
                     self.status = AFCLaneState.NONE

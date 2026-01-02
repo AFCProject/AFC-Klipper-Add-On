@@ -145,13 +145,14 @@ class afc:
         self.led_name               = config.get('led_name',None)
         self.led_off                = "0,0,0,0"
         self.led_fault              = config.get('led_fault','1,0,0,0')                # LED color to set when faults occur in lane
-        self.led_ready              = config.get('led_ready','1,1,1,1')                # LED color to set when lane is ready
-        self.led_not_ready          = config.get('led_not_ready','1,1,0,0')            # LED color to set when lane not ready
-        self.led_loading            = config.get('led_loading','1,0,0,0')              # LED color to set when lane is loading
-        self.led_prep_loaded        = config.get('led_loading','1,1,0,0')              # LED color to set when lane is loaded
+        self.led_ready              = config.get('led_ready','0,0.8,0,0')                # LED color to set when lane is ready
+        self.led_not_ready          = config.get('led_not_ready','1,0,0,0')            # LED color to set when lane not ready
+        self.led_loading            = config.get('led_loading','1,1,1,0')              # LED color to set when lane is loading
+        self.led_prep_loaded        = config.get('led_loading','1,1,1,0')              # LED color to set when lane is loaded
         self.led_unloading          = config.get('led_unloading','1,1,.5,0')           # LED color to set when lane is unloading
-        self.led_tool_loaded        = config.get('led_tool_loaded','1,1,0,0')          # LED color to set when lane is loaded into tool
+        self.led_tool_loaded        = config.get('led_tool_loaded','0,0,1,0')          # LED color to set when lane is loaded into tool
         self.led_tool_loaded_idle   = config.get('led_tool_loaded_idle','0.4,0.4,0,0') # LED color to set when lane is loaded into tool and idle
+        self.led_tool_unloaded      = config.get('led_tool_unloaded', '1,0,0,0')       # LED color to set when lanes extruder is unloaded
         self.led_advancing          = config.get('led_buffer_advancing','0,0,1,0')     # LED color to set when buffer is advancing
         self.led_trailing           = config.get('led_buffer_trailing','0,1,0,0')      # LED color to set when buffer is trailing
         self.led_buffer_disabled    = config.get('led_buffer_disable', '0,0,0,0.25')   # LED color to set when buffer is disabled
@@ -1019,7 +1020,7 @@ class afc:
             # Removing spool from vars since it was ejected
             self.spool.set_spoolID(cur_lane, "")
             self.logger.info("LANE {} eject done".format(cur_lane.name))
-            self.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+            cur_lane.unit_obj.lane_not_ready(cur_lane)
         elif cur_lane.extruder_obj.no_lanes and cur_lane.extruder_obj.lane_loaded:
             cur_lane.status = AFCLaneState.EJECTING
             cur_lane.extruder_obj.load_unload_sequence(cur_lane.extruder_obj.tool_stn_unload*-1)
@@ -1469,7 +1470,7 @@ class afc:
             cur_lane.disable_buffer()
 
             # Activate LED indicator for unloading.
-            self.function.afc_led(cur_lane.led_unloading, cur_lane.led_index)
+            cur_lane.unit_obj.lane_unloading(cur_lane)
 
             # Synchronize the extruder stepper with the lane.
             cur_lane.sync_to_extruder()

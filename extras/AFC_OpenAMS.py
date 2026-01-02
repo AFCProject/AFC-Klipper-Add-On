@@ -830,25 +830,25 @@ class afcAMS(afcUnit):
 
         if not cur_lane.prep_state:
             if not cur_lane.load_state:
-                self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+                self.lane_not_ready(cur_lane)
                 msg += '<span class=success--text>EMPTY READY FOR SPOOL</span>'
             else:
-                self.afc.function.afc_led(cur_lane.led_fault, cur_lane.led_index)
+                self.lane_fault(cur_lane)
                 msg += '<span class=error--text> NOT READY</span>'
                 cur_lane.do_enable(False)
                 msg = '<span class=error--text>CHECK FILAMENT Prep: False - Load: True</span>'
                 succeeded = False
         else:
-            self.afc.function.afc_led(cur_lane.led_ready, cur_lane.led_index)
+            self.lane_loaded(cur_lane)
             msg += '<span class=success--text>LOCKED</span>'
             if not cur_lane.load_state:
                 msg += '<span class=error--text> NOT LOADED</span>'
-                self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+                self.lane_not_ready(cur_lane)
                 succeeded = False
             else:
                 cur_lane.status = AFCLaneState.LOADED
                 msg += '<span class=success--text> AND LOADED</span>'
-                self.afc.function.afc_led(cur_lane.led_spool_illum, cur_lane.led_spool_index)
+                self.lane_illuminate_spool(cur_lane)
 
                 if cur_lane.tool_loaded:
                     tool_ready = (
@@ -866,8 +866,10 @@ class afcAMS(afcUnit):
                             )
                         if self.afc.function.get_current_lane() == cur_lane.name:
                             self.afc.spool.set_active_spool(cur_lane.spool_id)
-                            cur_lane.unit_obj.lane_tool_loaded(cur_lane)
+                            self.lane_tool_loaded(cur_lane)
                             cur_lane.status = AFCLaneState.TOOLED
+                        else:
+                            self.lane_tool_loaded_idle(cur_lane)
                         cur_lane.enable_buffer()
                     elif tool_ready:
                         msg += (
