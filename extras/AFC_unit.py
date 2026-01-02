@@ -63,6 +63,7 @@ class afcUnit:
         self.led_unloading               = config.get('led_unloading', self.afc.led_unloading)               # LED color to set when lane is unloading
         self.led_tool_loaded             = config.get('led_tool_loaded', self.afc.led_tool_loaded)           # LED color to set when lane is loaded into tool
         self.led_tool_loaded_idle        = config.get('led_tool_loaded_idle', self.afc.led_tool_loaded_idle) # LED color to set when lane is loaded into tool and idle
+        self.led_tool_unloaded           = config.get('led_tool_unloaded', self.afc.led_tool_unloaded)       # LED color to set when lanes extruder is unloaded
         self.led_spool_illum             = config.get('led_spool_illuminate', self.afc.led_spool_illum)      # LED color to illuminate under spool
         self.led_logo_index              = config.get('led_logo_index', None)                                # LED Logo index
         self.led_logo_color              = self.afc.function.HexConvert(config.get('led_logo_color', '0,0,0,0'))# Default logo color when nothing is loaded
@@ -394,6 +395,14 @@ class afcUnit:
             led_color = self.afc.function.HexToLedString(color.replace("#", ""))
             self.afc.function.afc_led( led_color, self.led_logo_index )
 
+    def lane_not_ready(self, lane):
+        """
+        Common function for setting a lanes led when a lane is not ready
+
+        :param lane: Lane object to set led
+        """
+        self.afc.function.afc_led(lane.led_not_ready, lane.led_index)
+
     def lane_loaded(self, lane):
         """
         Common function for setting a lanes led when lane is loaded
@@ -401,6 +410,14 @@ class afcUnit:
         :param lane: Lane object to set led
         """
         self.afc.function.afc_led(lane.led_ready, lane.led_index)
+    
+    def lane_unloading(self, lane):
+        """
+        Common function for setting a lanes led when lane is unloading
+
+        :param lane: Lane object to set led
+        """
+        self.afc.function.afc_led(lane.led_unloading, lane.led_index)
 
     def lane_unloaded(self, lane):
         """
@@ -408,7 +425,7 @@ class afcUnit:
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_not_ready, lane.led_index)
+        self.lane_not_ready(lane)
 
     def lane_loading(self, lane):
         """
@@ -420,22 +437,52 @@ class afcUnit:
 
     def lane_tool_loaded(self, lane):
         """
-        Common function for setting a lanes led when lane is tool loaded
+        Common function for setting a lanes led when lane is tool loaded,
+        also sets toolheads led status color
 
         :param lane: Lane object to set led
         """
         self.afc.function.afc_led(lane.led_tool_loaded, lane.led_index)
+        lane.extruder_obj.set_status_led(lane.led_tool_loaded)
 
     def lane_tool_unloaded(self, lane):
         """
-        Common function for setting a lanes led when lane is tool unloaded
+        Common function for setting a lanes led when lane is tool unloaded,
+        also sets toolheads led status color
 
         :param lane: Lane object to set led
         """
         self.afc.function.afc_led(lane.led_ready, lane.led_index)
-        return
+        lane.extruder_obj.set_status_led(lane.led_tool_unloaded)
 
-    def select_lane( self, lane ):
+    def lane_tool_loaded_idle(self, lane):
+        """
+        Common function for setting a lanes led when its loaded into a tool
+        and tool is docked(for toolchangers). Function also sets toolheads led
+        status color.
+
+        :param lane: Lane object to set led
+        """
+        self.afc.function.afc_led(lane.led_tool_loaded_idle, lane.led_index)
+        lane.extruder_obj.set_status_led(lane.led_tool_loaded_idle)
+    
+    def lane_illuminate_spool(self, lane):
+        """
+        Common function for setting lane illumination leds
+
+        :param lane: Lane object to set led
+        """
+        self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
+
+    def lane_fault(self, lane):
+        """
+        Common function for setting a lanes led when a fault happens
+
+        :param lane: Lane object to set led
+        """
+        self.afc.function.afc_led(lane.led_fault, lane.led_index)
+
+    def select_lane( self, lane, disable_selector: bool=False ):
         """
         Function to select lane
         """
