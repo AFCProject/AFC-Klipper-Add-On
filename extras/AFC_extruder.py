@@ -84,7 +84,8 @@ class AFCExtruder:
         self.check_transmit_status_fn   = None
         self.status_led_count:int       = 0
 
-        self.toolhead_status_index      = self.afc.function._get_led_indexes(self.toolhead_status_index)
+        if self.toolhead_status_index:
+            self.toolhead_status_index      = self.afc.function._get_led_indexes(self.toolhead_status_index)
 
         self.tc_unit_name: Optional[str] = config.get("toolchanger_unit", None)
         self.tc_unit_obj: Optional[AfcToolchanger|None] = None
