@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-01-02]
+## Added
+- Added AFC_SET_TOOLHEAD_LED macro which sets print leds based off passed in mapping
+- Updated multiple function to set toolhead led status based off current state
+- New variables(led_name, status_led_idx) were added to support setting toolhead leds
+- Updating message during PREP to print out if toolhead is detected on shuttle
+
 ## [2025-12-14]
 ## Added
 - Ability to use TD-1 device on direct load lanes
