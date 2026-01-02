@@ -108,7 +108,15 @@ class AfcToolchanger(afcUnit):
         self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
         lane_obj = self.afc.function.get_current_lane_obj()
         if lane_obj:
-            lane_obj.extruder_obj.set_status_led(lane_obj.led_tool_loaded_idle)
+            if (lane_obj.prep_state
+                and lane_obj.load_state):
+                if lane_obj.tool_loaded:
+                    lane_obj.unit_obj.lane_tool_loaded_idle(lane_obj)
+                else:
+                    lane_obj.unit_obj.lane_tool_unloaded(lane_obj)
+            else:
+                lane_obj.extruder_obj.set_status_led(lane_obj.led_tool_unloaded)
+
         self.afc.spool.set_active_spool('')
 
     def tool_swap(self, lane):
