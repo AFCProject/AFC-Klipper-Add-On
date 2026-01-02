@@ -667,12 +667,12 @@ class AFCExtruder:
 
         Usage
         -----
-        `AFC_SET_TOOLHEAD_LED EXTRUDER=<extruder name> TURN_ON=<0/1>`
+        `AFC_SET_EXTRUDER_LED EXTRUDER=<extruder name> TURN_ON=<0/1>`
 
         Example
         -----
         ```
-        AFC_SET_TOOLHEAD_LED EXTRUDER=extruder TURN_ON=1
+        AFC_SET_EXTRUDER_LED EXTRUDER=extruder TURN_ON=1
         ```
 
         """

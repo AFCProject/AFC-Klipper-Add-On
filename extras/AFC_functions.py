@@ -357,7 +357,7 @@ class afcFunction:
         :return AFCLane: Lane object if found, None if not found
         """
         lane_obj: Optional[AFCLane] = None
-        lane_name: str = self.afc.tool_cmds.get(map_name, None)
+        lane_name: Optional[str] = self.afc.tool_cmds.get(map_name, None)
 
         if lane_name is None:
             self.logger.info("Lane map {} not found".format(map_name))
@@ -407,7 +407,7 @@ class afcFunction:
         :return string: Name of current extruder/tool, None if no extruder/tool
         """
         current_extruder: str = self.afc.toolhead.get_extruder().name
-        tool_obj: AFCExtruder = self.afc.tools.get(current_extruder, None)
+        tool_obj: Optional[AFCExtruder] = self.afc.tools.get(current_extruder, None)
         if tool_obj:
             return current_extruder if tool_obj.on_shuttle() else None
         else:
@@ -495,8 +495,8 @@ class afcFunction:
             if cur_lane_loaded is None or key != cur_lane_loaded.name:
                 obj.do_enable(False)
                 obj.disable_buffer()
-                if cur_lane_loaded is None \
-                    or (obj.unit_obj.name != cur_lane_loaded.unit_obj.name):
+                if (cur_lane_loaded is None
+                    or (obj.unit_obj.name != cur_lane_loaded.unit_obj.name)):
                     obj.unit_obj.return_to_home()
                 obj.unsync_to_extruder()
                 if obj.prep_state and obj.load_state:

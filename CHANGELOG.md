@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Added
 - Added AFC_SET_TOOLHEAD_LED macro which sets print leds based off passed in mapping
 - Added ability to set toolhead leds directly with AFC_SET_EXTRUDER_LED macro
-- Updated multiple function to set toolhead led status based off current state
+- Updated multiple functions to set toolhead led status based off current state
 - New variables(led_name, status_led_idx) were added to support setting toolhead leds
 - Updating message during PREP to print out if toolhead is detected on shuttle
 
