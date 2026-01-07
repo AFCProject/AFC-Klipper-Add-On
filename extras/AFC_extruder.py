@@ -79,13 +79,25 @@ class AFCExtruder:
 
         self.toolhead_leds              = config.get('led_name', None)
         self.toolhead_status_index      = config.get('status_led_idx', None)
+        self.toolhead_nozzle_index      = config.get('nozzle_led_idx', None)
         self.toolhead_led_obj           = None
         self.set_status_color_fn        = None
         self.check_transmit_status_fn   = None
         self.status_led_count:int       = 0
 
         if self.toolhead_status_index:
-            self.toolhead_status_index      = self.afc.function._get_led_indexes(self.toolhead_status_index)
+            self.toolhead_status_index  = self.afc.function._get_led_indexes(self.toolhead_status_index)
+
+        if self.toolhead_nozzle_index:
+            self.toolhead_nozzle_index  = self.afc.function._get_led_indexes(self.toolhead_nozzle_index)
+
+        # If both status and nozzle indexes are provided, verify that they do not overlap
+        if (self.toolhead_nozzle_index
+            and self.toolhead_status_index):
+            led_index_intersection = set(self.toolhead_status_index) & set(self.toolhead_nozzle_index)
+
+            if len(led_index_intersection) > 0:
+                raise error(f"{self.fullname} have overlapping led index(s) {list(led_index_intersection)}. Please fix and restart.")
 
         self.tc_unit_name: Optional[str] = config.get("toolchanger_unit", None)
         self.tc_unit_obj: Optional[AfcToolchanger|None] = None
@@ -532,6 +544,9 @@ class AFCExtruder:
         if self.toolhead_led_obj is None:
             return
 
+        if self.toolhead_status_index is None:
+            return
+
         if (self.set_status_color_fn is None
             or self.check_transmit_status_fn is None):
             return
@@ -545,7 +560,8 @@ class AFCExtruder:
     def set_print_leds(self, state: int=1):
         """
         Function to set toolhead part led's, currently will set leds in `led_name` objects chain count
-        to white. Does not set led's that defined in `status_led_idx`.
+        to white. Does not set led's that defined in `status_led_idx`. If `nozzle_led_idx` is defined
+        then only sets leds that are defined in that index.
 
         :param state: Set to 1 to turn on the leds, set to 0 to turn off leds
         """
@@ -561,8 +577,17 @@ class AFCExtruder:
             return False, error_string
 
         for idx in range(1, self.status_led_count+1):
-            if idx not in self.toolhead_status_index:
-                self.set_status_color_fn(idx, (state,)*4)
+
+            if (self.toolhead_status_index
+                and idx in self.toolhead_status_index ):
+                continue
+            else:
+                if self.toolhead_nozzle_index:
+                    if idx in self.toolhead_nozzle_index:
+                        self.set_status_color_fn(idx, (state,)*4)
+                else:
+                    self.set_status_color_fn(idx, (state,)*4)
+
 
         self.check_transmit_status_fn(None)
 
@@ -659,7 +684,9 @@ class AFCExtruder:
         """
         Macro call to set print led in toolhead based on extruder name. Led config name needs to be
         set to AFC_extruder `led_name` variable. Status led in toolhead will not be affected if `status_led_idx`
-        is set in AFC_extruder config. Macro only is enabled per toolhead if `led_name` variable is provided.
+        is set in AFC_extruder config. If `nozzle_led_idx` is set in AFC_extruder configuration then just
+        those leds will be turned on. If `nozzle_led_inx` is not provided then all leds not in defined in
+        `status_led_idx` will be turned on.
 
         `EXTRUDER` - AFC_extruder config name to print leds. If single toolhead, this will always be `extruder`
 
