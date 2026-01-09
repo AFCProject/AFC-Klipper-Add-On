@@ -3,6 +3,7 @@
 # Copyright (C) 2024 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
 
 import math
 import traceback
@@ -11,6 +12,10 @@ from contextlib import contextmanager
 from configfile import error
 from datetime import datetime
 from enum import Enum
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from extras.AFC import afc
 
 try: from extras.AFC_utils import ERROR_STR, add_filament_switch
 except: raise error("Error when trying to import AFC_utils.ERROR_STR, add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
@@ -50,7 +55,7 @@ class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
     def __init__(self, config):
         self.printer            = config.get_printer()
-        self.afc                = self.printer.load_object(config, 'AFC')
+        self.afc: afc           = self.printer.load_object(config, 'AFC')
         self.gcode              = self.printer.load_object(config, 'gcode')
         self.reactor            = self.printer.get_reactor()
         self.extruder_stepper   = None
@@ -255,9 +260,7 @@ class AFCLane:
         happen between klipper and moonraker when first starting up.
         """
         if self.unit_obj.type != "HTLF" or (self.unit_obj.type == "HTLF" and "AFC_lane" in self.fullname):
-            values = None
-            if self.afc.moonraker.afc_stats is not None:
-                values = self.afc.moonraker.afc_stats["value"]
+            values = self.afc.moonraker.afc_stats["value"]
             self.lane_load_count = AFCStats_var(self.name, "load_count", values, self.afc.moonraker)
             self.espooler.handle_moonraker_connect()
 

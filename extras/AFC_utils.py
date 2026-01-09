@@ -5,6 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 # File is used to hold common functions that can be called from anywhere and don't belong to a class
+from __future__ import annotations
 
 import traceback
 import json
@@ -24,6 +25,11 @@ from urllib.parse import (
 from urllib.error import (
     HTTPError
 )
+
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from extras.AFC_logger import AFC_logger
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -147,7 +153,6 @@ class DebounceButton:
         except:
             self.button_action(eventtime, self.logical_state)
 
-
 class AFC_moonraker:
     """
     This class is used to communicate with moonraker to look up information and post
@@ -161,7 +166,7 @@ class AFC_moonraker:
         AFC logger object to log and print to console
     """
     ERROR_STRING = "Error getting data from moonraker, check AFC.log for more information"
-    def __init__(self, host:str, port:str, logger:object):
+    def __init__(self, host: str, port: str, logger: AFC_logger):
         self.port           = port
         self.logger         = logger
         self.host           = f'{host.rstrip("/")}:{port}'
@@ -255,7 +260,7 @@ class AFC_moonraker:
             self.logger.debug(f"Filament change count metadata not found for file:{filename}")
         return change_count
 
-    def get_afc_stats(self):
+    def get_afc_stats(self) -> Optional[dict]:
         """
         Queries moonraker database for all `afc_stats` entries and returns results if afc_stats exist.
         Function also caches results and refetches data if cache is older than 60s. This is done to help
@@ -285,8 +290,11 @@ class AFC_moonraker:
                 self.afc_stats = resp
             else:
                 self.logger.debug("AFC_stats not in database")
+        values = None
+        if self.afc_stats is not None:
+            values = self.afc_stats['value']
 
-        return self.afc_stats
+        return values
 
     def update_afc_stats(self, key, value):
         """
@@ -410,6 +418,28 @@ class AFC_moonraker:
                               "\nplease check AFC.log for more information.")
             self.logger.debug(f"{e}")
 
+    def remove_database_entry(self, namespace, key):
+        """
+        Common function for removing entries in moonrakers database
+
+        :param namespace: Namespace for moonrakers database
+        :param key: Key to delete from namespace
+        """
+        try:
+            payload = {
+                "request_method": "DELETE",
+                "namespace": namespace,
+                "key": key
+            }
+            req = Request( self.database_url, urlencode(payload).encode(), method="DELETE")
+            urlopen(req)
+            self.logger.debug(f"Removing {key} from {namespace}")
+        except HTTPError as e:
+            self.logger.debug(
+                f"Error occurred when trying to delete {key} from {namespace} namespace"
+            )
+            self.logger.debug(f"{e}")
+
     def delete_lane_data(self):
         """
         Function recursively delete's lane_data namespace from moonrakers database.
@@ -423,13 +453,28 @@ class AFC_moonraker:
             value = resp.get("value")
             try:
                 for key in value.keys():
-                    payload = {
-                        "request_method": "DELETE",
-                        "namespace":"lane_data",
-                        "key": key
-                    }
-                    req = Request( self.database_url, urlencode(payload).encode(), method="DELETE")
-                    urlopen(req)
+                    self.remove_database_entry("lane_data", key)
             except HTTPError as e:
                 self.logger.debug("Error occurred when trying to delete lane data")
                 self.logger.debug(f"{e}")
+
+    def trigger_db_backup(self) -> bool:
+        """
+        Triggers moonrakers database backup with moonrakers default naming scheme
+        """
+        error = False
+        try:
+            req = Request( urljoin(self.host, 'server/database/backup'), method="POST",
+                          headers={"Content-Type": "application/json"})
+            resp = self._get_results(req)
+            if resp is None:
+                self.logger.error("Error trying to backup moonraker database, check AFC.log for more information")
+                error = True
+            else:
+                self.logger.info(f"Moonrakers database backed up to {resp['backup_path']}")
+        except HTTPError as e:
+            self.logger.error("Error occurred when trying to backup moonraker database,"+
+                              "\nplease check AFC.log for more information.")
+            self.logger.debug(f"{e}")
+            error = True
+        return error

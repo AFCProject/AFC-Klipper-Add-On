@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-01-09]
+### Changed:
+- Restructured how extruder load/unload counts are stored in moonraker database to work better for toolchangers.
+- Added ability to track cuts per toolhead for toolchangers.
+- Changed how average times are calculated. Use `AFC_RESET_STATS EXTRUDER=all` to use new `total_time/count` calculation.
+- Merged normal and skinny AFC_STATS printout into one function and changed printout format to work better with toolchangers.
+
 ## [2025-12-26]
 ### Changed:
 - Updated AFC_CUT macro to move to pin first before doing filament retraction.

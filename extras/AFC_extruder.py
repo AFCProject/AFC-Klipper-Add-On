@@ -3,15 +3,173 @@
 # Copyright (C) 2024 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
 import traceback
 
 from configparser import Error as error
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC_utils import AFC_moonraker
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
 try: from extras.AFC_utils import add_filament_switch
 except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.format_exc()))
+
+try: from extras.AFC_stats import AFCStats_var
+except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
+
+class AFCExtruderStats:
+    """
+    Holds a single value for stat tracking. Also has common functions to
+    increment, reset, set time and average time for time values. This class also
+    has the ability to update moonrakers database with value.
+
+    Upon initializing this class, value is retrieved from dictionary if it exists
+    and sets internal value to this, or zero if it does not exist.
+
+    Parameters
+    ----------------
+    extruder_name: string
+        Extruders name to use when retrieving and storing data in moonraker
+    extruder_obj: AFCExtruder
+        AFCExtruder object for extruder
+    cut_threshold: integer
+        Cut threshold set by user in AFC config
+    """
+    def __init__(self, extruder_name: str, extruder_obj: AFCExtruder, cut_threshold: int):
+        self.name = extruder_name
+        self.obj  = extruder_obj
+        self.logger = extruder_obj.logger
+        self.moonraker: AFC_moonraker
+
+        self.cut_total: AFCStats_var
+        self.cut_total_since_changed: AFCStats_var
+        self.last_blade_changed: AFCStats_var
+        self.cut_threshold_for_warning: int  = cut_threshold
+        self.threshold_warning_sent     = False
+        self.threshold_error_sent       = False
+
+        self.tc_total: AFCStats_var
+        self.tc_tool_unload: AFCStats_var
+        self.tc_tool_load: AFCStats_var
+
+
+    def handle_moonraker_stats(self):
+        """
+        Function that should be called at the beginning of PREP so that moonraker has
+        enough time to start before AFC tries to connect. This fixes a race condition that can
+        happen between klipper and moonraker when first starting up.
+        """
+        self.moonraker = self.obj.afc.moonraker
+        values = self.moonraker.get_afc_stats()
+
+        cut_parent_name = f'{self.name}.cut'
+        tool_parent_name = f'{self.name}.change_count'
+        if self.name == 'extruder':
+            # get the data from cut and toolchange_count
+            # after getting data update parent name and delete entry if using old structure
+            self.cut_total                  = AFCStats_var("cut", "cut_total", values,
+                                                           self.moonraker, cut_parent_name)
+            self.cut_total_since_changed    = AFCStats_var("cut", "cut_total_since_changed", values,
+                                                           self.moonraker, cut_parent_name)
+            self.last_blade_changed         = AFCStats_var("cut", "last_blade_changed", values,
+                                                           self.moonraker, cut_parent_name)
+
+            self.tc_total                   = AFCStats_var("toolchange_count", "total", values,
+                                                           self.moonraker, tool_parent_name)
+            self.tc_tool_unload             = AFCStats_var("toolchange_count", "tool_unload", values,
+                                                           self.moonraker, tool_parent_name)
+            self.tc_tool_load               = AFCStats_var("toolchange_count", "tool_load", values,
+                                                           self.moonraker, tool_parent_name)
+        else:
+            self.cut_total                  = AFCStats_var(cut_parent_name, "cut_total", values,
+                                                           self.moonraker)
+            self.cut_total_since_changed    = AFCStats_var(cut_parent_name, "cut_total_since_changed", values,
+                                                           self.moonraker)
+            self.last_blade_changed         = AFCStats_var(cut_parent_name, "last_blade_changed", values,
+                                                           self.moonraker)
+
+            self.tc_total                   = AFCStats_var(cut_parent_name, "total", values,
+                                                           self.moonraker)
+            self.tc_tool_unload             = AFCStats_var(cut_parent_name, "tool_unload", values,
+                                                           self.moonraker)
+            self.tc_tool_load               = AFCStats_var(cut_parent_name, "tool_load", values,
+                                                           self.moonraker)
+
+        self.tool_selected   = AFCStats_var(tool_parent_name, "tool_selected", values, self.moonraker)
+        self.tool_unselected = AFCStats_var(tool_parent_name, "tool_unselected", values, self.moonraker)
+
+        if self.last_blade_changed.value == 0:
+            self.last_blade_changed.value = "N/A"
+            self.last_blade_changed.update_database()
+
+    def check_cut_threshold(self):
+        """
+        Function checks current cut value against users threshold value, outputs warning when cut is within
+        1k cuts of threshold. Outputs errors once number of cuts exceed threshold
+        """
+        send_message = False
+        message_type = None
+        blade_changed_date_string = self.last_blade_changed
+        span_start = "<span class=warning--text>"
+        if 0 == self.last_blade_changed.value:
+            blade_changed_date_string = "N/A"
+
+        if self.cut_total_since_changed.value >= self.cut_threshold_for_warning:
+            warning_msg_time        = "Time"
+            warning_msg_threshold   = "have exceeded"
+            span_start              = "<span class=error--text>"
+            message_type            = "error"
+            if not self.threshold_error_sent:
+                self.threshold_error_sent = send_message = True
+
+        elif self.cut_total_since_changed.value >= (self.cut_threshold_for_warning - 1000):
+            warning_msg_time        = "Almost time"
+            warning_msg_threshold   = "is about to exceeded"
+            span_start              = "<span class=warning--text>"
+            message_type            = "warning"
+            if not self.threshold_warning_sent:
+                self.threshold_warning_sent = send_message = True
+        else:
+            return
+
+        warning_msg = f"{warning_msg_time} to change cutting blade as your blade has performed {self.cut_total_since_changed} cuts\n"
+        warning_msg += f"since changed on {blade_changed_date_string}. Number of cuts {warning_msg_threshold} set threshold of {self.cut_threshold_for_warning}.\n"
+        warning_msg +=  "Once blade is changed, execute AFC_CHANGE_BLADE macro to reset count and date changed.\n"
+        if send_message:
+            self.logger.raw( f"{span_start}{warning_msg}</span>")
+            self.logger.afc.message_queue.append((warning_msg, message_type))
+
+    def increase_cut_total(self):
+        """
+        Helper function for increasing all cut counts
+        """
+        self.cut_total.increase_count()
+        self.cut_total_since_changed.increase_count()
+        self.check_cut_threshold()
+
+    def increase_toolcount_change(self):
+        """
+        Helper function for increasing total toolchange count and number of toolchanges with
+        error count.
+        """
+        self.tc_total.increase_count()
+        self.obj.afc.afc_stats.increase_toolchange_wo_error()
+
+    def reset_stats(self):
+        """
+        Resets extruders load/unload/change total/select/unselect values and updates database
+        """
+        self.tc_total.reset_count()
+        self.tc_tool_unload.reset_count()
+        self.tc_tool_load.reset_count()
+        self.tool_selected.reset_count()
+        self.tool_unselected.reset_count()
 
 class AFCExtruder:
     def __init__(self, config):
@@ -22,6 +180,7 @@ class AFCExtruder:
         self.logger     = self.afc.logger
         self.reactor    = None
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
+        self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
 
         self.fullname                   = config.get_name()
         self.name                       = self.fullname.split(' ')[-1]
@@ -39,6 +198,7 @@ class AFCExtruder:
 
         self.lane_loaded                = None
         self.lanes                      = {}
+        self.estats = AFCExtruderStats(self.name, self, self.afc.tool_cut_threshold)
 
         self.tool_start_state = False
         if self.tool_start is not None:
@@ -86,6 +246,14 @@ class AFCExtruder:
         """
         self.reactor = self.afc.reactor
         self.afc.tools[self.name] = self
+
+    def handle_moonraker_connect(self):
+        """
+        Function that should be called at the beginning of PREP so that moonraker has
+        enough time to start before AFC tries to connect. This fixes a race condition that can
+        happen between klipper and moonraker when first starting up.
+        """
+        self.estats.handle_moonraker_stats()
 
     def _handle_toolhead_sensor_runout(self, state, sensor_name):
         """

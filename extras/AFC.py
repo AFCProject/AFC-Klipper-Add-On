@@ -2,6 +2,7 @@
 #
 # Copyright (C) 2024 Armored Turtle
 #
+from __future__ import annotations
 
 import json
 import re
@@ -9,6 +10,13 @@ import traceback
 from configfile import error
 from typing import Any
 
+from typing import Dict, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gcode import GCodeCommand
+    from extras.AFC_lane import AFCLane
+    from extras.AFC_extruder import AFCExtruder
+    from extras.AFC_functions import afcFunction
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -27,7 +35,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_stats import AFCStats
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-AFC_VERSION="1.0.33"
+AFC_VERSION="1.0.34"
 
 # Class for holding different states so its clear what all valid states are
 class State:
@@ -54,7 +62,7 @@ class afc:
 
         self.spool      = self.printer.load_object(config, 'AFC_spool')
         self.error      = self.printer.load_object(config, 'AFC_error')
-        self.function   = self.printer.load_object(config, 'AFC_functions')
+        self.function: afcFunction   = self.printer.load_object(config, 'AFC_functions')
         self.function.afc = self
         self.gcode      = self.printer.load_object(config, 'gcode')
 
@@ -78,11 +86,12 @@ class afc:
         self.lane_data_enabled  = False
         self.prep_done          = False         # Variable used to hold of save_vars function from saving too early and overriding save before prep can be ran
         self.in_print_timer     = None
+        self.db_backup          = False
 
         # Objects for everything configured for AFC
         self.units      = {}
-        self.tools      = {}
-        self.lanes      = {}
+        self.tools: Dict[str, AFCExtruder] = {}
+        self.lanes: Dict[str, AFCLane]     = {}
         self.hubs       = {}
         self.buffers    = {}
         self.tool_cmds  = {}
@@ -248,6 +257,8 @@ class afc:
                                         self.cmd_AFC_TOGGLE_MACRO_help, self.cmd_AFC_TOGGLE_MACRO_options)
         self.function.register_commands(self.show_macros, 'UNSET_LANE_LOADED', self.cmd_UNSET_LANE_LOADED,
                                         self.cmd_UNSET_LANE_LOADED_help)
+        self.function.register_commands(self.show_macros, 'AFC_RESET_STATS', self.cmd_AFC_RESET_STATS,
+                                        self.cmd_AFC_RESET_STATS_help, self.cmd_AFC_RESET_STATS_options)
 
     def _remove_after_last(self, string, char):
         last_index = string.rfind(char)
@@ -308,7 +319,7 @@ class afc:
             self.moonraker.delete_lane_data()
             self.spoolman = self.moonraker.get_spoolman_server()
             self.td1_defined, self._td1_present, self.lane_data_enabled = self.moonraker.check_for_td1()
-            self.afc_stats = AFCStats(self.moonraker, self.logger, self.tool_cut_threshold)
+            self.afc_stats = AFCStats(self.moonraker, self.logger, len(self.tools) > 1)
 
             self.printer.send_event("afc:moonraker_connect")
         except Exception as e:
@@ -1215,7 +1226,7 @@ class afc:
             self.afc_stats.average_tool_load_time.average_time(load_time)
 
             # Increment stat counts
-            self.afc_stats.tc_tool_load.increase_count()
+            cur_lane.extruder_obj.estats.tc_tool_load.increase_count()
             cur_lane.lane_load_count.increase_count()
             cur_lane.espooler.stats.update_database()
 
@@ -1269,7 +1280,7 @@ class afc:
         # User manually unloaded spool from toolhead, remove spool from active status
         self.spool.set_active_spool(None)
 
-    def TOOL_UNLOAD(self, cur_lane):
+    def TOOL_UNLOAD(self, cur_lane: AFCLane):
         """
         This function handles the unloading of a specified lane from the tool. It performs
         several checks and movements to ensure the lane is properly unloaded.
@@ -1328,7 +1339,7 @@ class afc:
 
         # Perform filament cutting and parking if specified.
         if self.tool_cut:
-            self.afc_stats.increase_cut_total()
+            cur_lane.extruder_obj.estats.increase_cut_total()
             self.gcode.run_script_from_command(self.tool_cut_cmd)
             self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After cut")
             self.function.log_toolhead_pos()
@@ -1507,7 +1518,7 @@ class afc:
         cur_lane.do_enable(False)
         cur_lane.unit_obj.return_to_home()
 
-        self.afc_stats.tc_tool_unload.increase_count()
+        cur_lane.extruder_obj.estats.tc_tool_unload.increase_count()
         cur_lane.espooler.stats.update_database()
 
         self.save_vars()
@@ -1575,7 +1586,7 @@ class afc:
 
         self.CHANGE_TOOL(self.lanes[self.tool_cmds[Tcmd]], purge_length)
 
-    def CHANGE_TOOL(self, cur_lane, purge_length=None, restore_pos=True):
+    def CHANGE_TOOL(self, cur_lane: AFCLane, purge_length=None, restore_pos=True):
         self.afcDeltaTime.set_start_time()
         # Check if the bypass filament sensor detects filament; if so, abort the tool change.
         if self._check_bypass(unload=False): return
@@ -1618,7 +1629,7 @@ class afc:
                 self.in_toolchange = False
                 # Setting next lane load as none since toolchange was successful
                 self.next_lane_load = None
-                self.afc_stats.increase_toolcount_change()
+                cur_lane.extruder_obj.estats.increase_toolcount_change()
             else:
                 # Error happened, reset toolchanges without error count
                 if not self.testing:
@@ -1863,24 +1874,103 @@ class afc:
         self.afc_stats.print_stats(afc_obj=self, short=short)
 
     cmd_AFC_CHANGE_BLADE_help = "Sets cutter blade changed date and resets total count since blade was changed"
-    def cmd_AFC_CHANGE_BLADE(self, gcmd):
+    def cmd_AFC_CHANGE_BLADE(self, gcmd: GCodeCommand):
         """
         This macro handles resetting cut total since blade was last changed and updates the data
         the blade was last changed to current date time when this macro was run.
 
+        Extruder variable is optional and will default to 'extruder'
+
         Usage
         -----
-        `AFC_CHANGE_BLADE`
+        `AFC_CHANGE_BLADE EXTRUDER=<extruder>`
 
         Example
         -----
         ```
-        AFC_CHANGE_BLADE
+        AFC_CHANGE_BLADE EXTRUDER=extruder1
         ```
         """
-        self.afc_stats.last_blade_changed.set_current_time()
-        self.afc_stats.cut_total_since_changed.reset_count()
-        self.logger.info("Cutter blade stats reset")
+        extruder: str = gcmd.get("EXTRUDER", "extruder")
+        extruder_obj = self.tools.get(extruder, None)
+        if extruder_obj:
+            extruder_obj.estats.last_blade_changed.set_current_time()
+            extruder_obj.estats.cut_total_since_changed.reset_count()
+            self.logger.info(f"Cutter blade stats reset for {extruder}")
+        else:
+            self.logger.error(f"{extruder} is not a valid extruder name")
+
+    cmd_AFC_RESET_STATS_help ="Resets stats for a given extruder or lane"
+    cmd_AFC_RESET_STATS_options = {"EXTRUDER": {"type": "string", "default":''},
+                                   "LANE": {"type":"string", "default": ''}}
+    def cmd_AFC_RESET_STATS(self, gcmd: GCodeCommand):
+        """
+        This macro handles resetting extruder(s) and lane(s) change total's. You can reset
+        each extruder or lane one by one or use `all`. When using the command,
+        moonrakers database will be backedup just incase you want to restore the old data.
+
+        When using `all` for extruders, this will trigger AFC will to start using a different
+        calculation when printing lane change times. AFC will now keep track of the total
+        times and divide by the number of changes.
+
+        For example the following will reset extruder change times/counts and start using the
+        new calculation.
+
+        `AFC_RESET_STATS EXTRUDER=all`
+
+        Usage
+        -----
+        `AFC_RESET_STATS EXTRUDER=<extruder_name> LANE=<lane_name>`
+
+        Example
+        -----
+        ```
+        AFC_RESET_STATS EXTRUDER=extruder LANE=lane1
+        ```
+        """
+        extruder: str = gcmd.get('EXTRUDER', None)
+        lane: str = gcmd.get("LANE", None)
+
+        def reset_lane(lane: AFCLane):
+            lane.lane_load_count.reset_count()
+            self.logger.info(f'Lane stats reset for {lane.name}')
+
+        def reset_extruder(extruder: AFCExtruder):
+            extruder.estats.reset_stats()
+            self.logger.info(f'Extruder stats reset for {extruder}')
+
+        if extruder or lane:
+            if not self.db_backup:
+                error = self.moonraker.trigger_db_backup()
+                if error: return
+                self.db_backup = True
+
+        if extruder:
+            if "all" in extruder.lower():
+                for extruder_obj in self.tools.values():
+                    reset_extruder(extruder_obj)
+                self.afc_stats.average_tool_load_time.reset_count()
+                self.afc_stats.reset_average_times()
+            else:
+                extruder_obj: AFCExtruder = self.tools.get(extruder, None)
+                if extruder_obj:
+                    reset_extruder(extruder_obj)
+                else:
+                    self.logger.error(f"{extruder} is not a valid extruder name")
+
+        if lane:
+            if "all" in lane.lower():
+                for lane_obj in self.lanes.values():
+                    reset_lane(lane_obj)
+            else:
+                lane_obj: AFCLane = self.lanes.get(lane, None)
+                if lane_obj:
+                    reset_lane(lane_obj)
+                else:
+                    self.logger.error(f"{lane} is not a valid lane name")
+
+        if extruder is None and lane is None:
+            self.logger.info("A valid EXTRUDER or LANE needs to be specified to reset")
 
     cmd_AFC_CLEAR_MESSAGE_help = "Macro to clear error and warning message from AFC message queue"
     def cmd_AFC_CLEAR_MESSAGE(self, gcmd):

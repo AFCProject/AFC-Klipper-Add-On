@@ -10,6 +10,11 @@ from __future__ import annotations
 import math
 import traceback
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC import afc
+
 from configfile import error
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -113,7 +118,7 @@ class AFCEspoolerStats:
     espooler_obj:
         Espooler object to easily get access to logger and moonraker objects
     """
-    def __init__(self, espooler_name:str, espooler_obj:object):
+    def __init__(self, espooler_name: str, espooler_obj: Espooler):
         self.espooler_name = espooler_name
         self.espooler_obj = espooler_obj
         self._n20_runtime_fwd   = 0
@@ -132,11 +137,7 @@ class AFCEspoolerStats:
         enough time to start before AFC tries to connect. This fixes a race condition that can
         happen between klipper and moonraker when first starting up.
         """
-        afc_stats = self.espooler_obj.afc.moonraker.get_afc_stats()
-        if afc_stats is not None:
-            values = afc_stats["value"]
-        else:
-            values = None
+        values = self.espooler_obj.afc.moonraker.get_afc_stats()
 
         self._n20_runtime_fwd   = AFCStats_var(self.espooler_name, "n20_runtime_fwd", values, self.espooler_obj.afc.moonraker)
         self._n20_runtime_rwd   = AFCStats_var(self.espooler_name, "n20_runtime_rwd", values, self.espooler_obj.afc.moonraker)
@@ -421,7 +422,7 @@ class Espooler:
     def __init__(self, name, config):
         self.name                   = name
         self.printer                = config.get_printer()
-        self.afc                    = self.printer.load_object(config, "AFC")
+        self.afc: afc               = self.printer.load_object(config, "AFC")
         self.logger                 = self.afc.logger
         self.reactor                = self.printer.get_reactor()
         self.callback_timer         = self.reactor.register_timer( self.timer_callback )    # Defaults to never trigger

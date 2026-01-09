@@ -239,7 +239,8 @@ class afcPrep:
         if self.afc.bypass.filament_present:
             self.logger.raw(f"<span class=warning--text>{bypass_name} enabled</span>")
 
-        self.afc.afc_stats.check_cut_threshold()
+        for extruder in self.afc.tools.values():
+            extruder.estats.check_cut_threshold()
 
         # Defaulting to no active spool, putting at end so endpoint has time to register
         if self.afc.current is None:
