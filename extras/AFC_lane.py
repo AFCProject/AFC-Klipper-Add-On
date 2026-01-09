@@ -260,7 +260,7 @@ class AFCLane:
         happen between klipper and moonraker when first starting up.
         """
         if self.unit_obj.type != "HTLF" or (self.unit_obj.type == "HTLF" and "AFC_lane" in self.fullname):
-            values = self.afc.moonraker.afc_stats["value"]
+            values = self.afc.moonraker.get_afc_stats()
             self.lane_load_count = AFCStats_var(self.name, "load_count", values, self.afc.moonraker)
             self.espooler.handle_moonraker_connect()
 

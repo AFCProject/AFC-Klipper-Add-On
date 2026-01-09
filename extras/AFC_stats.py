@@ -44,7 +44,7 @@ class AFCStats_var:
         self.name        = name
         self.moonraker   = moonraker
         self.new_average = new_average
-        self._value: Any
+        self._value: Any = 0
 
         multi_parent = self.parent_name.split('.')
         new_multi_parent = new_parent_name.split('.')
@@ -61,7 +61,7 @@ class AFCStats_var:
         # name and delete key from database if its present.
         if new_parent_name:
             self.parent_name = new_parent_name
-            if multi_parent[0] in data:
+            if data is not None and multi_parent[0] in data:
                 self.update_database()
                 multi_parent.append(name)
                 self.moonraker.remove_database_entry(self.moonraker.afc_stats_key, '.'.join(multi_parent))
@@ -93,6 +93,7 @@ class AFCStats_var:
                 value = 0
         else:
             self.moonraker.logger.error("Cannot have more than two parent names for stats")
+            value = 0
         try:
             self._value = int(value)
         except ValueError:
@@ -193,7 +194,7 @@ class AFCStats:
                                                self.moonraker, "error_stats")
 
         new_average_calc = 1
-        if "average_time" in values:
+        if values is not None and "average_time" in values:
             new_average_calc = 0
 
         self.new_average_calc           = AFCStats_var("average_time", "new_average_calc", values,

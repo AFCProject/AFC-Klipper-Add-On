@@ -1937,7 +1937,7 @@ class afc:
 
         def reset_extruder(extruder: AFCExtruder):
             extruder.estats.reset_stats()
-            self.logger.info(f'Extruder stats reset for {extruder}')
+            self.logger.info(f'Extruder stats reset for {extruder.name}')
 
         if extruder or lane:
             if not self.db_backup:
