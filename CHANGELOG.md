@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-01-10]
 ### Added:
-- Check to verify to users macros positions are set correctly and not left as default values. Changed default values to -99,-99 etc, just in case someone does truly have their positions at -1,-1.
+- Check to verify user's macros positions are set correctly and not left as default values. Changed default values to -99,-99 etc, just in case someone does truly have their positions at -1,-1.
 
 ## [2026-01-09]
 ### Changed:

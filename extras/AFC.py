@@ -377,7 +377,7 @@ class afc:
         Verifies that cut, park, poop, kick, wipe positions are set correctly if these
         macros have been enabled in AFC.cfg file.
 
-        :return str: If an position has not been updated error string is returned with
+        :return str: If a position has not been updated error string is returned with
                      text informing the user they need to update their positions
         """
         error_str = ""
@@ -1117,7 +1117,7 @@ class afc:
         error_str = self.verify_macro_positions()
         if error_str:
             self.error.AFC_error(
-                f"Error occurred when verifying macro postions, TOOL_LOAD aborted.\n{error_str}",
+                f"Error occurred when verifying macro positions, TOOL_LOAD aborted.\n{error_str}",
                 pause=self.function.in_print()
             )
             return False
@@ -1363,7 +1363,7 @@ class afc:
         error_str = self.verify_macro_positions()
         if error_str:
             self.error.AFC_error(
-                f"Error occurred when verifying macro postions, TOOL_UNLOAD aborted.\n{error_str}",
+                f"Error occurred when verifying macro positions, TOOL_UNLOAD aborted.\n{error_str}",
                 pause=self.function.in_print()
             )
             return False
