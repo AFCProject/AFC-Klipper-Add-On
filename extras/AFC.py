@@ -372,6 +372,62 @@ class afc:
 
         self.logger.info(string, console_only)
 
+    def verify_macro_positions(self) -> str:
+        """
+        Verifies that cut, park, poop, kick, wipe positions are set correctly if these
+        macros have been enabled in AFC.cfg file.
+
+        :return str: If an position has not been updated error string is returned with
+                     text informing the user they need to update their positions
+        """
+        error_str = ""
+        tool_cut_obj = self.printer.lookup_object('gcode_macro _AFC_CUT_TIP_VARS', None)
+        if (self.tool_cut
+            and self.tool_cut_cmd == "AFC_CUT"
+            and tool_cut_obj):
+            pin_loc_xy = tool_cut_obj.variables.get('pin_loc_xy', None)
+            if pin_loc_xy and pin_loc_xy == (-99,-99):
+                error_str += 'tool_cut is set to True and variable_pin_loc_xy has not been updated.\n'
+                error_str += 'Please update variable_pin_loc_xy in AFC\AFC_Macro_Vars.cfg file.\n\n'
+
+        park_obj = self.printer.lookup_object('gcode_macro _AFC_PARK_VARS', None)
+        if (self.park
+            and self.park_cmd == "AFC_PARK"
+            and park_obj):
+            park_loc_xy = park_obj.variables.get('park_loc_xy', None)
+            if park_loc_xy and park_loc_xy == (-99,-99):
+                error_str += 'park is set to True and variable_park_loc_xy has not been updated.\n'
+                error_str += 'Please update variable_park_loc_xy in AFC\AFC_Macro_Vars.cfg file.\n\n'
+
+        poop_obj = self.printer.lookup_object('gcode_macro _AFC_POOP_VARS', None)
+        if (self.poop
+            and self.poop_cmd == "AFC_POOP"
+            and poop_obj):
+            purge_loc_xy = poop_obj.variables.get('purge_loc_xy', None)
+            if purge_loc_xy and purge_loc_xy == (-99,-99):
+                error_str += 'poop is set to True and variable_purge_loc_xy has not been updated.\n'
+                error_str += 'Please update variable_purge_loc_xy in AFC\AFC_Macro_Vars.cfg file.\n\n'
+
+        kick_obj = self.printer.lookup_object('gcode_macro _AFC_KICK_VARS', None)
+        if (self.kick
+            and self.kick_cmd == "AFC_KICK"
+            and kick_obj):
+            kick_start_loc = kick_obj.variables.get('kick_start_loc', None)
+            if kick_start_loc and kick_start_loc == (-99,-99,5):
+                error_str += 'kick is set to True and variable_kick_start_loc has not been updated.\n'
+                error_str += 'Please update variable_kick_start_loc in AFC\AFC_Macro_Vars.cfg file.\n\n'
+
+        wipe_obj = self.printer.lookup_object('gcode_macro _AFC_BRUSH_VARS', None)
+        if (self.wipe
+            and self.wipe_cmd == "AFC_BRUSH"
+            and wipe_obj):
+            brush_loc = wipe_obj.variables.get('brush_loc', None)
+            if brush_loc and brush_loc == (-99,-99,-1):
+                error_str += 'wipe is set to True and variable_brush_loc has not been updated.\n'
+                error_str += 'Please update variable_brush_loc in AFC\AFC_Macro_Vars.cfg file.\n\n'
+
+        return error_str
+
     @property
     def td1_present(self):
         present = self._td1_present
@@ -1058,8 +1114,17 @@ class afc:
         if not self.function.check_homed():
             return False
 
+        error_str = self.verify_macro_positions()
+        if error_str:
+            self.error.AFC_error(
+                f"Error occurred when verifying macro postions, TOOL_LOAD aborted.\n{error_str}",
+                pause=self.function.in_print()
+            )
+            return False
+
         if cur_lane is None:
-            self.error.AFC_error("No lane provided to load, not loading any lane.", pause=self.function.in_print())
+            self.error.AFC_error("No lane provided to load, not loading any lane.",
+                                 pause=self.function.in_print())
             # Exit early if no lane is provided.
             return False
 
@@ -1295,9 +1360,18 @@ class afc:
         if not self.function.check_homed():
             return False
 
+        error_str = self.verify_macro_positions()
+        if error_str:
+            self.error.AFC_error(
+                f"Error occurred when verifying macro postions, TOOL_UNLOAD aborted.\n{error_str}",
+                pause=self.function.in_print()
+            )
+            return False
+
         if cur_lane is None:
             # If no lane is provided, exit the function early with a failure.
-            self.error.AFC_error("No lane is currently loaded, nothing to unload", pause=self.function.in_print())
+            self.error.AFC_error("No lane is currently loaded, nothing to unload",
+                                 pause=self.function.in_print())
             return False
 
         self.current_state  = State.UNLOADING

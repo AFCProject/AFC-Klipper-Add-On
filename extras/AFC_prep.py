@@ -258,6 +258,11 @@ class afcPrep:
                                     "switches are triggered on Buffer {}. "
                                     "Please check your buffer switches or configuration.</span>".format(buffer_name))
 
+        # Verifying that user has macro positions set correctly for enabled park, cut, etc macros
+        error_str = self.afc.verify_macro_positions()
+        if error_str:
+            self.logger.error(error_str)
+
 def load_config(config):
     return afcPrep(config)
 
