@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-01-12]
+### Added:
+- Added debugging messages when doing unloading filament from toolhead for tool_stn_unload movements
+
 ## [2026-01-10]
 ### Added:
 - Check to verify user's macros positions are set correctly and not left as default values. Changed default values to -99,-99 etc, just in case someone does truly have their positions at -1,-1.
