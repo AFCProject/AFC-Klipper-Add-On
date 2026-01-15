@@ -156,9 +156,7 @@ class AFC_HTLF(afcBoxTurtle):
         Moves lobe selector to specified lane based off lanes index
 
         :param lane: Lane object to move selector to
-        :return boolean: Returns True if movement of selector succeeded
         """
-        self.failed_to_home = False
         if self.current_selected_lane != lane:
             self.logger.debug("HTLF: {} Homing to endstop.".format(self.name))
             if self.return_to_home( disable_selector=False ):
@@ -166,7 +164,7 @@ class AFC_HTLF(afcBoxTurtle):
                 self.logger.debug("HTLF: {} selected".format(lane))
                 self.current_selected_lane = lane
             else:
-                return False
+                self.logger.error(f"HTLF: failed to home when selecting {lane.name}")
 
     def check_runout(self, cur_lane):
         """
