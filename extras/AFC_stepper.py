@@ -24,6 +24,7 @@ class AFCExtruderStepper(AFCLane):
         super().__init__(config)
 
         self.extruder_stepper   = extruder.ExtruderStepper(config)
+        self.stepper_enable     = self.printer.lookup_object('stepper_enable')
 
         # Check for Klipper new motion queuing update
         try:
@@ -141,14 +142,12 @@ class AFCExtruderStepper(AFCLane):
 
         :param enable: Enables/disables stepper motor
         """
-        self.sync_print_time()
-        stepper_enable = self.printer.lookup_object('stepper_enable')
-        se = stepper_enable.lookup_enable('AFC_stepper {}'.format(self.name))
-        if enable:
-            se.motor_enable(self.next_cmd_time)
+        if hasattr(self.stepper_enable, "set_motors_enable"):
+            # New klipper enable function
+            self.stepper_enable.set_motors_enable([f"AFC_stepper {self.name}"], enable)
         else:
-            se.motor_disable(self.next_cmd_time)
-        self.sync_print_time()
+            # Old klipper and kalico enable function
+            self.stepper_enable.motor_debug_enable(f"AFC_stepper {self.name}", enable)
 
     def sync_print_time(self):
         """
