@@ -132,6 +132,13 @@ class AFCTrigger:
         else:
             return 0
 
+    def restore_fault_sensitivity(self):
+        """
+        Helper function to easily set fault sensitivity back based off passed in
+        filament_error_sensitivity variable
+        """
+        self.fault_sensitivity = self.get_fault_sensitivity(self.error_sensitivity)
+
     def setup_fault_timer(self):
         """
         Set up the fault detection timer and initialize error position tracking.
@@ -165,7 +172,7 @@ class AFCTrigger:
 
         :return boolean: True if printer is printing with movement and sensitivity > 0
         """
-        if self.error_sensitivity > 0:
+        if self.fault_sensitivity > 0:
             return True
         else:
             return False

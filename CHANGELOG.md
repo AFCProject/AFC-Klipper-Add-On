@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added:
 - The afc-debug.sh script will now upload the AFC statistics from moonraker for easier troubleshooting.
 
+## Fixed
+- Updates to help with false clog/feed detections
+- Resetting filament position for clog detection when starting a new print
+
 ## [2026-01-14]
 ### Fix:
 - Implemented some fixes to prevent klipper crashing when calibrating HTLF units

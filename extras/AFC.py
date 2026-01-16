@@ -469,6 +469,13 @@ class afc:
             self.current_toolchange     = -1 # Reset
             self.logger.info("Total number of toolchanges set to {}".format(self.number_of_toolchanges))
 
+            # Get current lane and update position to reset fault detection as sometimes
+            # purging in PRINT_START can lead to false positive detections
+            current_lane = self.function.get_current_lane_obj()
+            if current_lane:
+                if current_lane.buffer_obj is not None:
+                    current_lane.buffer_obj.update_filament_error_pos()
+
         return self.reactor.NEVER
 
     def _get_default_material_temps(self, cur_lane):
@@ -1251,7 +1258,9 @@ class afc:
                 cur_lane.sync_to_extruder()
             # Update tool and lane status.
             cur_lane.set_loaded()
-            cur_lane.enable_buffer()
+            # Setting disable_fault so that fault detection is turned off for users
+            # that utilize poop
+            cur_lane.enable_buffer(disable_fault=True)
             self.save_vars()
 
             # Activate the tool-loaded LED and handle filament operations if enabled.
@@ -1280,6 +1289,8 @@ class afc:
                 self.gcode.run_script_from_command(self.wipe_cmd)
                 self.afcDeltaTime.log_with_time("TOOL_LOAD: After second wipe")
                 self.function.log_toolhead_pos()
+
+            cur_lane.enable_fault_detection()
 
             # Update lane and extruder state for tracking.
             cur_extruder.lane_loaded = cur_lane.name

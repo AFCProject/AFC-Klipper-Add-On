@@ -942,15 +942,27 @@ class AFCLane:
         self.afc.spool.set_active_spool(None)
         self.unit_obj.lane_tool_unloaded(self)
 
-    def enable_buffer(self):
+    def enable_buffer(self, disable_fault: bool=False):
         """
         Enable the buffer if `buffer_name` is set.
         Retrieves the buffer object and calls its `enable_buffer()` method to activate it.
+
+        :param disable_fault: Set to turn to disable fault detection when enabling buffer
         """
         if self.buffer_obj is not None:
+            if disable_fault: self.buffer_obj.fault_sensitivity = 0
             self.buffer_obj.enable_buffer()
         self.espooler.enable_timer()
         self.enable_weight_timer()
+
+    def enable_fault_detection(self):
+        """
+        Helper function to restore fault sensitivity and enables buffer to reactivate
+        fault timer and multiplier.
+        """
+        if self.buffer_obj is not None:
+            self.buffer_obj.restore_fault_sensitivity()
+            self.buffer_obj.enable_buffer()
 
     def disable_buffer(self):
         """
