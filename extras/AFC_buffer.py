@@ -132,9 +132,15 @@ class AFCTrigger:
         else:
             return 0
 
+    def disable_fault_sensitivity(self):
+        """
+        Helper function to easily disable fault detection
+        """
+        self.fault_sensitivity = 0
+
     def restore_fault_sensitivity(self):
         """
-        Helper function to easily set fault sensitivity back based off passed in
+        Helper function to easily set fault sensitivity back based on passed in
         filament_error_sensitivity variable
         """
         self.fault_sensitivity = self.get_fault_sensitivity(self.error_sensitivity)

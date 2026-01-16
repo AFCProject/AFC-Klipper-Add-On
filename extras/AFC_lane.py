@@ -947,10 +947,10 @@ class AFCLane:
         Enable the buffer if `buffer_name` is set.
         Retrieves the buffer object and calls its `enable_buffer()` method to activate it.
 
-        :param disable_fault: Set to turn to disable fault detection when enabling buffer
+        :param disable_fault: Set to True to disable fault detection when enabling buffer
         """
         if self.buffer_obj is not None:
-            if disable_fault: self.buffer_obj.fault_sensitivity = 0
+            if disable_fault: self.buffer_obj.disable_fault_sensitivity()
             self.buffer_obj.enable_buffer()
         self.espooler.enable_timer()
         self.enable_weight_timer()
