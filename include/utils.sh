@@ -220,3 +220,9 @@ del_var_file() {
   fi
   export unit_message
 }
+
+check_for_k1() {
+  if grep -Fqs "ID=buildroot" /etc/os-release; then
+    is_k1_os="True"
+  fi
+}

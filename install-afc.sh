@@ -60,13 +60,12 @@ main() {
   moonraker_config_file="${printer_config_dir}/moonraker.conf"
   afc_path="$HOME/AFC-Klipper-Add-On"
 
-
   # Make sure necessary directories exist
-  echo "Ensuring we are not running as root.."
+  echo "Ensuring we are not running as root..."
   check_root
-  echo "Ensuring no conflicting software is present.."
+  echo "Ensuring no conflicting software is present..."
   check_for_hh
-  echo "Checking to ensure crudini and jq are present.."
+  echo "Checking to ensure crudini and jq are present..."
   check_for_prereqs
   if [ "$test_mode" == "False" ]; then
     check_python_version
