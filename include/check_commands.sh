@@ -25,7 +25,8 @@ check_root() {
   # This is to ensure the script is run by a normal user for security reasons.
 
   check_for_k1
-  if [ "$is_k1_os" == "True" ]; then
+  # On K1 OS, allow running as root but warn the user instead of exiting.
+  if [ "$is_k1_os" == "True" ] && [ "$EUID" -eq 0 ]; then
     print_msg WARNING "K1 OS detected, skipping root user check."
     return
   fi

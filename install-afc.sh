@@ -61,7 +61,7 @@ main() {
   afc_path="$HOME/AFC-Klipper-Add-On"
 
   # Make sure necessary directories exist
-  echo "Ensuring we are not running as root..."
+  echo "Ensuring we are not running as root (except on K1 OS)..."
   check_root
   echo "Ensuring no conflicting software is present..."
   check_for_hh
