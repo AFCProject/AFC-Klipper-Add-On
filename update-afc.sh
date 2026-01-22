@@ -10,26 +10,26 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-source include/constants.sh
+source "${SCRIPT_DIR}/include/constants.sh"
 
 # Menu functions
-source include/menus/main_menu.sh
-source include/menus/install_menu.sh
-source include/menus/update_menu.sh
-source include/menus/utilities_menu.sh
-source include/menus/additional_system_menu.sh
-source include/utils.sh
+source "${SCRIPT_DIR}/include/menus/main_menu.sh"
+source "${SCRIPT_DIR}/include/menus/install_menu.sh"
+source "${SCRIPT_DIR}/include/menus/update_menu.sh"
+source "${SCRIPT_DIR}/include/menus/utilities_menu.sh"
+source "${SCRIPT_DIR}/include/menus/additional_system_menu.sh"
+source "${SCRIPT_DIR}/include/utils.sh"
 
 # Install / Update functions
-source include/buffer_configurations.sh
-source include/check_commands.sh
-source include/colors.sh
-source include/install_functions.sh
-source include/uninstall.sh
-source include/update_commands.sh
-source include/update_functions.sh
+source "${SCRIPT_DIR}/include/buffer_configurations.sh"
+source "${SCRIPT_DIR}/include/check_commands.sh"
+source "${SCRIPT_DIR}/include/colors.sh"
+source "${SCRIPT_DIR}/include/install_functions.sh"
+source "${SCRIPT_DIR}/include/uninstall.sh"
+source "${SCRIPT_DIR}/include/update_commands.sh"
+source "${SCRIPT_DIR}/include/update_functions.sh"
 
-source include/unit_functions.sh
+source "${SCRIPT_DIR}/include/unit_functions.sh"
 
 original_args=("$@")
 
@@ -54,14 +54,14 @@ main() {
   done
 
   moonraker="${moonraker_address}:${moonraker_port}"
-  moonraker="${moonraker_address}:${moonraker_port}"
+
   afc_config_dir="${printer_config_dir}/AFC"
   afc_file="${afc_config_dir}/AFC.cfg"
-  moonraker_config_file="${printer_config_dir}/moonraker.conf"
+  moonraker_config_file="${moonraker_config_file:-${printer_config_dir}/moonraker.conf}"
   afc_path="$HOME/AFC-Klipper-Add-On"
 
 
-  # Make sure necessary directories exist
+  # Perform prerequisite and safety checks, then start the update process
   echo "Ensuring we are not running as root..."
   check_root
   echo "Ensuring no conflicting software is present..."
