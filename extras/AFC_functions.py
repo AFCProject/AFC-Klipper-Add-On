@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    from extras.AFC import afc
+    from AFC_logger import AFC_logger
     from extras.AFC_lane import AFCLane
     from extras.AFC_extruder import AFCExtruder
 
@@ -49,8 +51,8 @@ class afcFunction:
         self.auto_var_file = None
         self.errorLog = {}
         self.pause    = False
-        self.afc      = None
-        self.logger   = None
+        self.afc: afc
+        self.logger: AFC_logger
         self.mcu      = None
         self.next_cmd_time = 0.
 
@@ -1789,6 +1791,7 @@ class afcDeltaTime:
         self.logger = afc.logger
         self.start_time = None
         self.last_time  = None
+        self.delta_time = 0
 
     def set_start_time(self):
         self.major_delta_time = self.last_time = self.start_time = datetime.now()
@@ -1796,9 +1799,9 @@ class afcDeltaTime:
     def log_with_time(self, msg, debug=True):
         try:
             curr_time = datetime.now()
-            delta_time = (curr_time - self.last_time ).total_seconds()
+            self.delta_time = (curr_time - self.last_time ).total_seconds()
             total_time = (curr_time - self.start_time).total_seconds()
-            msg = "{} (Δt:{:.3f}s, t:{:.3f})".format( msg, delta_time, total_time )
+            msg = "{} (Δt:{:.3f}s, t:{:.3f})".format( msg, self.delta_time, total_time )
             if debug:
                 self.logger.debug( msg )
             else:
@@ -1808,17 +1811,17 @@ class afcDeltaTime:
             self.logger.debug("Error in log_with_time function {}".format(e))
 
     def log_major_delta(self, msg, debug=True):
-        delta_time = 0
+        self.delta_time = 0
         try:
             curr_time = datetime.now()
-            delta_time = (curr_time - self.major_delta_time ).total_seconds()
-            msg = "{} t:{:.3f}".format( msg, delta_time )
+            self.delta_time = (curr_time - self.major_delta_time ).total_seconds()
+            msg = "{} t:{:.3f}".format( msg, self.delta_time )
             self.logger.info( msg )
             self.major_delta_time = curr_time
         except Exception as e:
             self.logger.debug("Error in log_major_delta function {}".format(e))
 
-        return delta_time
+        return self.delta_time
 
     def log_total_time(self, msg):
         total_time = 0

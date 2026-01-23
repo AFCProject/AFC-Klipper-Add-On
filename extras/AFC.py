@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_functions import afcFunction
+    from extras.AFC_hub import afc_hub
+    from extras.AFC_spool import AFCSpool
+    from extras.AFC_error import afcError
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -62,8 +65,9 @@ class afc:
         self.printer.register_event_handler("klippy:connect",self.handle_connect)
         self.logger  = AFC_logger(self.printer, self)
 
-        self.spool      = self.printer.load_object(config, 'AFC_spool')
-        self.error      = self.printer.load_object(config, 'AFC_error')
+        self.spool: AFCSpool = self.printer.load_object(config, 'AFC_spool')
+        self.error: afcError = self.printer.load_object(config, 'AFC_error')
+
         self.function: afcFunction   = self.printer.load_object(config, 'AFC_functions')
         self.function.afc = self
         self.gcode: GCodeDispatch = self.printer.load_object(config, 'gcode')
@@ -1278,7 +1282,7 @@ class afc:
                     return False
         return True
 
-    def load_sequence(self, cur_lane, cur_hub, cur_extruder):
+    def load_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub, cur_extruder: AFCExtruder):
         """
         This function controls the loading sequence and allows for custom gcode commands to be executed
         during the loading process.
@@ -1545,7 +1549,7 @@ class afc:
         self.current_state = State.IDLE
         return True
 
-    def unload_sequence(self, cur_lane, cur_hub, cur_extruder):
+    def unload_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub, cur_extruder: AFCExtruder):
         """
         This function controls the unloading sequence and allows for custom gcode commands to be executed
         during the loading process.

@@ -3,9 +3,15 @@
 # Copyright (C) 2024 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
 
 import os
 import json
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC import afc
 
 class afcPrep:
     def __init__(self, config):
@@ -27,7 +33,7 @@ class afcPrep:
         This function is called when the printer connects. It looks up AFC info
         and assigns it to the instance variable `self.AFC`.
         """
-        self.afc = self.printer.lookup_object('AFC')
+        self.afc: afc = self.printer.lookup_object('AFC')
         self.afc.gcode.register_command('PREP', self.PREP, desc=None)
         self.logger = self.afc.logger
 

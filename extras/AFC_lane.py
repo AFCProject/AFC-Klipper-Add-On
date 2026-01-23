@@ -17,11 +17,11 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
+    from extras.AFC import afc
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_hub import afc_hub
     from extras.AFC_buffer import AFCTrigger
     from extras.AFC_unit import afcUnit
-    from extras.AFC import afc
 
 try: from extras.AFC_utils import ERROR_STR, add_filament_switch
 except: raise error("Error when trying to import AFC_utils.ERROR_STR, add_filament_switch\n{trace}".format(trace=traceback.format_exc()))

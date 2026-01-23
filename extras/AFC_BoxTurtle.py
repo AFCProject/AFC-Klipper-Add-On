@@ -3,10 +3,16 @@
 # Copyright (C) 2024 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
 import traceback
 
 from configparser import Error as error
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC_lane import AFCLane
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -47,7 +53,7 @@ class afcBoxTurtle(afcUnit):
         self.logo_error+='! \_________/ |___|</span>\n'
         self.logo_error+= '  ' + self.name + '\n'
 
-    def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
+    def system_Test(self, cur_lane: AFCLane, delay, assignTcmd, enable_movement):
         msg = ''
         succeeded = True
 
