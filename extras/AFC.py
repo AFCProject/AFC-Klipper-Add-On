@@ -329,6 +329,14 @@ class afc:
             # stale lane data is not in database
             self.moonraker.delete_lane_data()
             self.spoolman = self.moonraker.get_spoolman_server()
+            if self.spoolman is not None:
+                # Wait for remote method to be registered
+                for i in range(0, 30):
+                    if self.spool.SPOOLMAN_REMOTE_METHOD in self.webhooks._remote_methods:
+                        self.logger.debug(f"{self.spool.SPOOLMAN_REMOTE_METHOD} registered after {i}s")
+                        break
+
+                    self.toolhead.dwell(1)
             self.td1_defined, self._td1_present, self.lane_data_enabled = self.moonraker.check_for_td1()
             self.afc_stats = AFCStats(self.moonraker, self.logger, self.tool_cut_threshold)
 

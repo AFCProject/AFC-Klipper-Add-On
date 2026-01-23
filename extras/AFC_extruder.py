@@ -606,7 +606,13 @@ class AFCExtruder:
         if self.tool_obj is None and self.tc_unit_name is None:
             return True
 
-        return self.tool_obj.detect_state
+        if hasattr(self.tool_obj, "detect_state"):
+            return (
+                self.tool_obj.detect_state == 1 or
+                self.tool_obj.main_toolchanger.get_selected_tool() == self.tool_obj
+            )
+        else:
+            return False
 
     cmd_UPDATE_TOOLHEAD_SENSORS_help = "Gives ability to update tool_stn, tool_stn_unload, tool_sensor_after_extruder values without restarting klipper"
     cmd_UPDATE_TOOLHEAD_SENSORS_options = {
@@ -724,6 +730,7 @@ class AFCExtruder:
         self.response['tool_end'] = self.tool_end
         self.response['tool_end_status'] = bool(self.tool_end_state)
         self.response['lanes'] = [lane.name for lane in self.lanes.values()]
+        self.response['on_shuttle'] = self.on_shuttle()
         return self.response
 
 def load_config_prefix(config):

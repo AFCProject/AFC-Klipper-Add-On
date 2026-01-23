@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-01-23]
+## Added
+- Support for using tool_probe instead of detection pin in Klipper-Toolchanger so AFC can properly detect which tool is loaded
+## Fixed
+- Fixed `spoolman_set_active_spool` error during PREP
+
 ## [2026-01-02]
 ## Added
 - Added AFC_SET_TOOLHEAD_LED macro which sets print leds based off passed in mapping
