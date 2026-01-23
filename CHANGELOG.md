@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for using tool_probe instead of detection pin in Klipper-Toolchanger so AFC can properly detect which tool is loaded
 ## Fixed
 - Fixed `spoolman_set_active_spool` error during PREP
+- Fixed default poop macro for toolchangers with per-tool fans defined
 
 ## [2026-01-02]
 ## Added
