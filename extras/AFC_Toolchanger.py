@@ -119,6 +119,7 @@ class AfcToolchanger(afcUnit):
 		self._increase_unselect()
         current_extruder = self.afc.function.get_current_extruder_obj()
         if current_extruder.custom_unselect:
+            self.logger.info(f"Running custom unselect: {current_extruder.custom_unselect}")
             self.afc.gcode.run_script_from_command(f"{current_extruder.custom_unselect}")
         else:
             self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
@@ -164,6 +165,7 @@ class AfcToolchanger(afcUnit):
         tool_index = 0 if name == "extruder" else int(name.replace("extruder", ""))
 
         if lane.extruder_obj.custom_tool_swap:
+            self.logger.info(f"Running custom select: {lane.extruder_obj.custom_tool_swap}")
             self.afc.gcode.run_script_from_command(f"{lane.extruder_obj.custom_tool_swap}")
         else:
             self.afc.gcode.run_script_from_command('SELECT_TOOL T={}'.format(tool_index))

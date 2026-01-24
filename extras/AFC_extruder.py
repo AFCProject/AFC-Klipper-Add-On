@@ -265,6 +265,9 @@ class AFCExtruder:
         self.custom_tool_swap: Optional[str] = config.get("custom_tool_swap", None)
         self.custom_unselect: Optional[str] = config.get("custom_unselect", None)
 
+        self.logger.info(f"Swap {self.custom_tool_swap}")
+        self.logger.info(f"Unselect {self.custom_unselect}")
+
         self.lane_loaded: Optional[str] = None
         self.lanes: Dict                = {}
         self.load_active                = False
