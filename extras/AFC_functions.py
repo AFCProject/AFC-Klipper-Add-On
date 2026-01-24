@@ -694,7 +694,7 @@ class afcFunction:
     def cmd_AFC_TEST_LANES(self, gcmd):
         """
         Run load/unload tests on specified lanes. This command allows users to test the loading and unloading
-        mechanisms to serve as a stress test / diagnostic tool for the AFC syst mem with an interactive prompt.
+        mechanisms to serve as a stress test / diagnostic tool for the AFC system with an interactive prompt.
 
         Usage
         -----
