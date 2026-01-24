@@ -694,7 +694,7 @@ class afcFunction:
     def cmd_AFC_TEST_LANES(self, gcmd):
         """
         Run load/unload tests on specified lanes. This command allows users to test the loading and unloading
-        mechanisms to serve as a stress test / diagnostic tool for the AFC system with an interactive prompt.
+        mechanisms to serve as a stress test / diagnostic tool for the AFC syst mem with an interactive prompt.
 
         Usage
         -----
@@ -787,22 +787,28 @@ class afcFunction:
             lane_obj = self.afc.lanes.get(lane)
             if lane != 'all':
                 self.afc.logger.info('Running {} iterations for lane: {}'.format(iterations, lane))
-                for _ in range(iterations):
+                for i in range(iterations):
+                    self.afc.save_pos()
                     self.afc.logger.info('Loading lane: {}'.format(lane))
                     self.afc.CHANGE_TOOL(lane_obj)
+
                     if not self.afc.error_state:
-                        self.afc.logger.info("Lane {} loaded successfully".format(lane))
+                        self.afc.logger.info("Lane {} loaded successfully (Iteration {})".format(lane, i + 1))
                     else:
-                        self.afc.logger.error("Failed to load lane {}".format(lane))
+                        self.afc.logger.error("Failed to load lane {} on iteration {}".format(lane, i + 1))
                         self.afc.error.reset_failure()
                         break
+
                     self._safe_extrude(self.afc.test_extrude_amt)
                     self.logger.info("Unloading lane {}".format(lane))
                     self.afc.TOOL_UNLOAD(lane_obj)
+
                     if not self.afc.error_state:
-                        self.afc.logger.info("Lane {} unloaded successfully".format(lane))
+                        self.afc.logger.info(
+                            "Lane {} unloaded successfully for iteration {}/{}".format(lane, i + 1, iterations))
+                        self.afc.restore_pos()
                     else:
-                        self.afc.logger.error("Failed to unload lane {}".format(lane))
+                        self.afc.logger.error("Failed to unload lane {} at iteration {}".format(lane, i + 1))
                         self.afc.error.reset_failure()
                         return
 
