@@ -116,9 +116,13 @@ class AfcToolchanger(afcUnit):
         AFC_UNSELECT_TOOL
         ```
         """
-        self._increase_unselect()
+		self._increase_unselect()
+        current_extruder = self.afc.function.get_current_extruder_obj()
+        if current_extruder.custom_unselect:
+            self.afc.gcode.run_script_from_command(f"{current_extruder.custom_unselect}")
+        else:
+            self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
 
-        self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
         lane_obj = self.afc.function.get_current_lane_obj()
         if lane_obj:
             if (lane_obj.prep_state
@@ -158,7 +162,11 @@ class AfcToolchanger(afcUnit):
         self.afc.afcDeltaTime.log_with_time("Performing tool swap")
         name = lane.extruder_obj.name
         tool_index = 0 if name == "extruder" else int(name.replace("extruder", ""))
-        self.afc.gcode.run_script_from_command('SELECT_TOOL T={}'.format(tool_index))
+
+        if lane.extruder_obj.custom_tool_swap:
+            self.afc.gcode.run_script_from_command(f"{lane.extruder_obj.custom_tool_swap}")
+        else:
+            self.afc.gcode.run_script_from_command('SELECT_TOOL T={}'.format(tool_index))
 
         # Switching toolhead extruders, this is mainly for setups with multiple extruders
         lane.activate_toolhead_extruder()
