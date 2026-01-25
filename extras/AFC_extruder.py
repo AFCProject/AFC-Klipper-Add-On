@@ -778,6 +778,7 @@ class AFCExtruder:
         """
         # Return true if both are not set as this would be for single toolhead
         # setups
+        return True
         if self.tool_obj is None and self.tc_unit_name is None:
             return True
 
