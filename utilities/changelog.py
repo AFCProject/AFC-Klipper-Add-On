@@ -21,7 +21,6 @@ def consolidate_by_calendar_month(filename="CHANGELOG.md"):
     date_pattern = re.compile(r'^##\s\[(\d{4}-\d{2}-\d{2})\]')
     category_pattern = re.compile(r'^###\s(\w+)')
 
-    # Identify the current year and month for the "Active" zone
     now = datetime.now()
     current_month_key = now.strftime('%Y-%m')
 
@@ -47,8 +46,10 @@ def consolidate_by_calendar_month(filename="CHANGELOG.md"):
             cat_match = category_pattern.match(line)
             if cat_match:
                 current_category = cat_match.group(1)
-            elif line.strip().startswith(('-', '*')):
-                current_entry['content'][current_category].append(line.strip())
+            # Match bullet points or indented lines (sub-bullets)
+            elif line.strip().startswith(('-', '*')) or (line.startswith(' ') and line.strip()):
+                # Use the full line to preserve the newline character (\n)
+                current_entry['content'][current_category].append(line)
 
     if current_entry:
         entries.append(current_entry)
@@ -56,43 +57,34 @@ def consolidate_by_calendar_month(filename="CHANGELOG.md"):
     new_changelog = header[:]
     consolidated_data = defaultdict(lambda: defaultdict(list))
 
-    # Process entries: Keep current month detailed, archive the rest
     for entry in entries:
         entry_month_key = entry['date'].strftime('%Y-%m')
 
         if entry_month_key == current_month_key:
-            # Keep current month entries separated by day
             new_changelog.append(f"\n## [{entry['raw_date']}]\n")
             for cat, items in entry['content'].items():
                 new_changelog.append(f"### {cat}\n")
-                for item in items:
-                    new_changelog.append(f"{item}\n")
+                new_changelog.extend(items)  # items already contain \n
         else:
-            # Archive previous months
             for cat, items in entry['content'].items():
-                # Normalizing "Fixes" to "Fixed" for cleaner consolidation
                 std_cat = "Fixed" if cat.lower() in ['fixes', 'fixed'] else cat
                 consolidated_data[entry_month_key][std_cat].extend(items)
 
-    # Sort archived months in descending order
     sorted_months = sorted(consolidated_data.keys(), reverse=True)
     for month in sorted_months:
-        # Convert YYYY-MM to a readable "September 2025" style if desired
         month_obj = datetime.strptime(month, '%Y-%m')
         readable_month = month_obj.strftime('%B %Y')
 
         new_changelog.append(f"\n## [{readable_month}]\n")
-        # Sort categories so Added always comes before Fixed, etc.
         for cat in sorted(consolidated_data[month].keys()):
             new_changelog.append(f"### {cat}\n")
-            for item in consolidated_data[month][cat]:
-                new_changelog.append(f"{item}\n")
+            new_changelog.extend(consolidated_data[month][cat])
 
-    output_file = "CHANGELOG_REVIEW.md"
+    output_file = "CHANGELOG_Consolidated.md"
     with open(output_file, "w", encoding='utf-8') as f:
         f.writelines(new_changelog)
 
-    print(f"Done! Archived all entries prior to {now.strftime('%B %Y')}.")
+    print(f"Successfully consolidated previous months into {output_file}.")
 
 
 if __name__ == "__main__":
