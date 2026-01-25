@@ -118,7 +118,8 @@ class AfcToolchanger(afcUnit):
         """
 		self._increase_unselect()
         current_extruder = self.afc.function.get_current_extruder_obj()
-        if current_extruder.custom_unselect:
+        if (current_extruder
+            and current_extruder.custom_unselect):
             self.logger.info(f"Running custom unselect: {current_extruder.custom_unselect}")
             self.afc.gcode.run_script_from_command(f"{current_extruder.custom_unselect}")
         else:

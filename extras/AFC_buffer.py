@@ -579,7 +579,8 @@ class AFCTrigger:
         # Add current rotation distance if buffer is enabled and lane is loaded
         if self.enable:
             lane = self.afc.function.get_current_lane_obj()
-            if lane is not None:
+            if (lane is not None
+                and lane in self.lanes):
                 stepper = lane.extruder_stepper.stepper
                 self.response['rotation_distance'] = stepper.get_rotation_distance()[0]
         else:

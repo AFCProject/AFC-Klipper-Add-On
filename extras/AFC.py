@@ -1977,6 +1977,7 @@ class afc:
                 unitdisplay.append(type.replace("'","") + " " + CUR_UNIT.name)
         str['units'] = list(unitdisplay)
         str['lanes'] = list(self.lanes.keys())
+        str["maps"] = list(self.tool_cmds.keys())
         str["extruders"] = list(self.tools.keys())
         str["hubs"] = list(self.hubs.keys())
         str["buffers"] = list(self.buffers.keys())
