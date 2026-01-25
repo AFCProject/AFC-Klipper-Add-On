@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Control
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 from __future__ import annotations
 
