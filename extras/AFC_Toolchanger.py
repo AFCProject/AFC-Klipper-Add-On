@@ -116,7 +116,7 @@ class AfcToolchanger(afcUnit):
         AFC_UNSELECT_TOOL
         ```
         """
-		self._increase_unselect()
+        self._increase_unselect()
         current_extruder = self.afc.function.get_current_extruder_obj()
         if (current_extruder
             and current_extruder.custom_unselect):
