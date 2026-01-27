@@ -1162,6 +1162,7 @@ class afc:
 
         :param cur_lane: The lane object to be loaded into the tool.
         :param purge_length: Amount of filament to poop (optional).
+        :param set_start_time: Set true to set a starting time for afcDeltaTime.
 
         :return bool: True if load was successful, False if an error occurred.
         """
@@ -1458,6 +1459,7 @@ class afc:
         several checks and movements to ensure the lane is properly unloaded.
 
         :param cur_lane: The lane object to be unloaded from the tool.
+        :param set_start_time: Set true to set a starting time for afcDeltaTime.
 
         :return bool: True if unloading was successful, False if an error occurred.
         """

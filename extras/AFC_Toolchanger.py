@@ -141,6 +141,7 @@ class AfcToolchanger(afcUnit):
         to switch to the correct extruder. This is primarily used in multi-extruder/toolchanger setups.
 
         :param lane: The lane object whose extruder/toolhead should be activated.
+        :param set_start_time: Set true to set a starting time for afcDeltaTime.
 
         :return: None
         """
