@@ -1011,7 +1011,7 @@ class AFCLane:
         """
         if self.buffer_obj is not None:
             if disable_fault: self.buffer_obj.disable_fault_sensitivity()
-            self.buffer_obj.enable_buffer()
+            self.buffer_obj.enable_buffer(self)
         self.espooler.enable_timer()
         self.enable_weight_timer()
 
@@ -1022,7 +1022,7 @@ class AFCLane:
         """
         if self.buffer_obj is not None:
             self.buffer_obj.restore_fault_sensitivity()
-            self.buffer_obj.enable_buffer()
+            self.buffer_obj.enable_buffer(self)
 
     def disable_buffer(self):
         """
