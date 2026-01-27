@@ -93,7 +93,6 @@ class AfcToolchanger(afcUnit):
 
         if tool:
             if hasattr(tool, 'tc_lane') and tool.tc_lane is not None:
-                self.afc.afcDeltaTime.set_start_time()
                 self.tool_swap(tool.tc_lane)
             else:
                 self.logger.error(f"Tool '{tool_key}' does not have a valid 'tc_lane' attribute.")
@@ -133,7 +132,7 @@ class AfcToolchanger(afcUnit):
 
         self.afc.spool.set_active_spool('')
 
-    def tool_swap(self, lane: AFCLane):
+    def tool_swap(self, lane: AFCLane, set_start_time=True):
         """
         Perform a tool swap operation for the specified lane.
 
@@ -145,6 +144,9 @@ class AfcToolchanger(afcUnit):
 
         :return: None
         """
+        if set_start_time:
+            self.afc.afcDeltaTime.set_start_time()
+
         self.afc.current_state = State.TOOL_SWAP
         self._increase_unselect()
         self.afc.function.log_toolhead_pos("Before toolswap: ")
@@ -164,7 +166,7 @@ class AfcToolchanger(afcUnit):
         self.afc.function._handle_activate_extruder(0)
 
         self.afc.toolhead.wait_moves()
-        self.afc.afcDeltaTime.log_with_time("Tool swap done")
+        self.afc.afcDeltaTime.log_with_time("Tool swap done", debug=False)
         if self.afc.afc_stats.average_tool_swap_time:
             self.afc.afc_stats.average_tool_swap_time.average_time(self.afc.afcDeltaTime.delta_time)
         self.afc.current_state = State.IDLE

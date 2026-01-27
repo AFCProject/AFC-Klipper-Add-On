@@ -1141,7 +1141,6 @@ class afc:
         TOOL_LOAD LANE=lane1 PURGE_LENGTH=80
         ```
         """
-        self.afcDeltaTime.set_start_time()
         lane = gcmd.get('LANE', None)
         if lane not in self.lanes:
             self.logger.info('{} Unknown'.format(lane))
@@ -1156,7 +1155,7 @@ class afc:
 
         self.TOOL_LOAD(cur_lane, purge_length)
 
-    def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: int=None):
+    def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: int=None, set_start_time=False):
         """
         This function handles the loading of a specified lane into the tool. It performs
         several checks and movements to ensure the lane is properly loaded.
@@ -1168,6 +1167,9 @@ class afc:
         """
         if not self.function.check_homed():
             return False
+
+        if set_start_time:
+            self.afcDeltaTime.set_start_time()
 
         error_str = self.verify_macro_positions()
         if error_str:
@@ -1432,7 +1434,6 @@ class afc:
         TOOL_UNLOAD LANE=lane1
         ```
         """
-        self.afcDeltaTime.set_start_time()
         # TODO figure this out if moving to cur_lane.extruder_obj.lane_loaded structure, maybe get current extruder from toolhead?
         # How would you deal with multiple extruders....
 
@@ -1451,7 +1452,7 @@ class afc:
         # User manually unloaded spool from toolhead, remove spool from active status
         self.spool.set_active_spool(None)
 
-    def TOOL_UNLOAD(self, cur_lane: AFCLane):
+    def TOOL_UNLOAD(self, cur_lane: AFCLane, set_start_time=True):
         """
         This function handles the unloading of a specified lane from the tool. It performs
         several checks and movements to ensure the lane is properly unloaded.
@@ -1462,6 +1463,9 @@ class afc:
         """
         # Check if the bypass filament sensor detects filament; if so unload filament and abort the tool load.
         if self._check_bypass(unload=True): return False
+
+        if set_start_time:
+            self.afcDeltaTime.set_start_time()
 
         if not self.function.check_homed():
             return False
@@ -1890,7 +1894,7 @@ class afc:
                     if self.current not in self.lanes:
                         self.error.AFC_error('{} Unknown'.format(self.current))
                         return
-                    if not self.TOOL_UNLOAD(self.lanes[self.current]):
+                    if not self.TOOL_UNLOAD(self.lanes[self.current], set_start_time=False):
                         # Abort if the unloading process fails.
                         msg = (' UNLOAD ERROR NOT CLEARED')
                         self.error.fix(msg, self.lanes[self.current])  #send to error handling
@@ -1903,7 +1907,7 @@ class afc:
                 self.logger.info("{} heated and ready to print".format(infinite_extruder.name))
 
             # Load the new lane and restore the toolhead position if successful.
-            if self.TOOL_LOAD(cur_lane, purge_length) and not self.error_state:
+            if self.TOOL_LOAD(cur_lane, purge_length, set_start_time=False) and not self.error_state:
                 if restore_pos:
                     self.restore_pos()
                 total_time = self.afcDeltaTime.log_total_time("Total change time:")
