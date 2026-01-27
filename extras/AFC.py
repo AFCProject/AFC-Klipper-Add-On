@@ -1548,8 +1548,8 @@ class afc:
             if not self.unload_sequence(cur_lane, cur_hub, cur_extruder):
                 return False
 
-        unload_time = self.afcDeltaTime.log_major_delta("Lane {} unload done".format(cur_lane.name if cur_lane is not None else "None"))
-        self.afc_stats.average_tool_unload_time.average_time(unload_time)
+            unload_time = self.afcDeltaTime.log_major_delta("Lane {} unload done".format(cur_lane.name if cur_lane is not None else "None"))
+            self.afc_stats.average_tool_unload_time.average_time(unload_time)
         self.current_state = State.IDLE
         return True
 
