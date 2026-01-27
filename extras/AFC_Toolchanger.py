@@ -55,7 +55,10 @@ class AfcToolchanger(afcUnit):
         if assignTcmd: self.afc.function.TcmdAssign(cur_lane)
         # Now that a T command is assigned, send lane data to moonraker
         cur_lane.send_lane_data()
-        self.logger.info( '{lane_name} tool cmd: {tcmd:3} {msg}'.format(lane_name=cur_lane.name, tcmd=cur_lane.map, msg=""))
+        msg = ""
+        if( cur_lane.prep_state and cur_lane.load_state ):
+            msg = "<span class=success--text>LOADED</span> <span class=primary--text>in ToolHead</span>"
+        self.logger.raw( '{lane_name} tool cmd: {tcmd:3} {msg}'.format(lane_name=cur_lane.name, tcmd=cur_lane.map, msg=msg))
         cur_lane.set_afc_prep_done()
         return True
 
