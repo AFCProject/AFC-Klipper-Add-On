@@ -25,6 +25,7 @@ moonraker="${moonraker_address}:${moonraker_port}"
 # Git related constants
 gitrepo="https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git"
 branch="main"
+git_install="True"
 
 # Misc constants
 prior_installation="False"

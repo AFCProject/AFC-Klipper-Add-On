@@ -32,10 +32,17 @@ AFC Macros update failed.
   link_extensions
   remove_t_macros
   remove_velocity
-  update_message+="""
+  if [ "$git_install" == "True" ]; then
+    update_message+="""
 AFC Klipper Add-On updated successfully with version v${afc_version}.
 """
-  export update_message
+    export update_message
+  else
+    update_message+="""
+AFC Klipper Add-On update process completed.
+"""
+    export update_message
+  fi
   files_updated_or_installed="True"
 }
 

@@ -29,7 +29,13 @@ update_menu() {
 
     case $choice in
       U)
-        get_git_version
+        if [ "$git_install" != "True" ]; then
+          print_msg WARNING "Git installation not detected."
+          print_msg WARNING "Ensure you have manually updated the AFC-Klipper-Add-On directory with the latest files from the GitHub repository."
+          read -p "Press Enter to continue or CTRL+C to cancel..."
+        else
+          get_git_version
+        fi
         update_afc ;;
       M)
         main_menu ;;
