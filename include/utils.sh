@@ -231,7 +231,7 @@ check_for_k1() {
 
 check_for_zip_install() {
   if [ ! -d "${afc_path}/.git" ]; then
-    git_install="False"
+    export git_install="False"
     print_msg WARNING "AFC-Klipper-Add-On appears to have been installed via ZIP file."
     print_msg WARNING "Some features may not work as expected without a Git installation."
     print_msg WARNING "Any updates will require manual reinstallation via ZIP file."
