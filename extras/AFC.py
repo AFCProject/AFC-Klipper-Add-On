@@ -2067,8 +2067,9 @@ class afc:
                             and map == lane_obj.map):
                             break
                         elif (lane_obj.map == map):
-                            self.logger.warning(
-                                f"Not setting temperature for {map} since another lane is loaded for {curr_extruder.name}"
+                            self.logger.raw(
+                                ("<span class=warning--text>WARNING: "
+                                f"Not setting temperature for {map} since another lane is loaded for {curr_extruder.name}</span>")
                             )
                             return
                 self.logger.debug("Setting temperature for {} to {}".format(lane.extruder_obj, temp))
