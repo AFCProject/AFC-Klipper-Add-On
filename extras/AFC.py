@@ -2050,11 +2050,27 @@ class afc:
         temp     = gcmd.get_float('S', 0.0)
         deadband = gcmd.get_float('D', None)
 
+        curr_extruder:str = self.function.get_current_extruder_obj()
+
         if toolnum is not None:
             map = "T{}".format(toolnum)
             lane = self.function.get_lane_by_map(map)
             if lane is not None:
                 extruder = lane.extruder_obj
+
+                # Checking if slicer is trying to set temperature(ooze prevention) for another lane
+                #   thats connected to the currently loaded extruder
+                for curr_extr_lane in curr_extruder.lanes:
+                    lane_obj = self.lanes.get(curr_extr_lane, None)
+                    if lane_obj:
+                        if (lane_obj.name == curr_extruder.lane_loaded
+                            and map == lane_obj.map):
+                            break
+                        elif (lane_obj.map == map):
+                            self.logger.warning(
+                                f"Not setting temperature for {map} since another lane is loaded for {curr_extruder.name}"
+                            )
+                            return
                 self.logger.debug("Setting temperature for {} to {}".format(lane.extruder_obj, temp))
                 if extruder is None:
                     self.logger.error("extruder not configured for T{}".format(toolnum))
