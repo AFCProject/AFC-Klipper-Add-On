@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-01-29]
+### Added:
+- Ability to supply custom macro name for tool_swaps with `custom_tool_swap` variable.
+- Ability to supply custom macro name for unselecting tool with `custom_unselect` variable.
+- Ability to prevent M104/109 macros to not set extruder temp for ooze prevention when lane(T mapping) belongs to current active extruder and is not the current lane loaded, this can be disabled with by setting `disable_ooze_check` variable.
+- Added `maps` variable to AFC get_status
+### Changed:
+- Updated buffer logic to internally store active lane buffer is enabled for, this better allows multiple buffer to be active for different lanes in IDEX type setups.
+- Updated `on_shuttle` logic for setups like IDEX setups where KTC is not used but AFC_toolchanger is still included
+
 ## [2026-01-24]
 ## Added
 - Support for tracking selecting/unselecting toolheads for toolchangers
