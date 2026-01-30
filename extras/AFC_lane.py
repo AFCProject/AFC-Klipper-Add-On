@@ -554,7 +554,8 @@ class AFCLane:
             return
 
         # Eject spool before loading next lane
-        self.gcode.run_script_from_command('LANE_UNLOAD LANE={}'.format(empty_lane.name))
+        if self.afc.eject_on_infinite_swap:
+            self.gcode.run_script_from_command('LANE_UNLOAD LANE={}'.format(empty_lane.name))
 
         self.afc.TOOL_LOAD(change_lane)
         # Change Mapping

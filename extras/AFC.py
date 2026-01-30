@@ -208,6 +208,7 @@ class afc:
         self.assisted_unload        = config.getboolean("assisted_unload", True)    # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool
         self.bypass_pause           = config.getboolean("pause_when_bypass_active", False) # When true AFC pauses print when change tool is called and bypass is loaded
         self.unload_on_runout       = config.getboolean("unload_on_runout", False)  # When True AFC will unload lane and then pause when runout is triggered and spool to swap to is not set(infinite spool)
+        self.eject_on_infinite_swap = config.getboolean("eject_on_infinite_swap", True) # When false AFC will not eject remaining filament after infinite spool swaps to a new lane
         self.short_stats            = config.getboolean("print_short_stats", False) # Set to true to print AFC_STATS in short form instead of wide form, printing short form is better for smaller in width consoles
         # Setting to True enables espooler assist while printing
         self.enable_assist          = config.getboolean("enable_assist",        True)
