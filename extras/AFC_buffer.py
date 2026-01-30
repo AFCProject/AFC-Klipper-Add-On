@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane
     from extras.AFC_stepper import AFCExtruderStepper
+    from gcode import GCodeCommand
 
 try: from extras.AFC_utils import add_filament_switch
 except: raise error("Error when trying to import AFC_utils.add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
@@ -567,26 +568,43 @@ class AFCTrigger:
 
         self.logger.info("{} : {}".format(self.name, state_info))
 
-    def cmd_ENABLE_BUFFER(self, gcmd):
+    def cmd_ENABLE_BUFFER(self, gcmd: GCodeCommand):
         """
-        Manually enables the buffer. This command is useful for debugging and testing purposes.
+        Manually enables the buffer for passed in lane. This command is useful for debugging and
+        testing purposes.
 
         Usage
         -----
-        `ENABLE_BUFFER`
+        `ENABLE_BUFFER BUFFER=<buffer_name> LANE=<lane_name>`
+
+        Example
+        ------
+        ```
+        ENABLE_BUFFER BUFFER=Turtle_1 LANE=lane2
+        ```
         """
-        return
-        self.enable_buffer()
+        lane = gcmd.get("LANE")
+        lane_obj = self.lanes.get(lane, None)
+        if not lane_obj:
+            raise gcmd.error(f"{lane} not assigned to {self.name} buffer")
+
+        self.enable_buffer(lane_obj)
 
     def cmd_DISABLE_BUFFER(self, gcmd):
         """
-        Manually disables the buffer. This command is useful for debugging and testing purposes.
+        Manually disables the buffer for currently active lane. This command is useful for debugging
+        and testing purposes.
 
         Usage
         -----
-        `DISABLE_BUFFER`
+        `DISABLE_BUFFER BUFFER=<buffer_name>`
+
+        Example
+        ------
+        ```
+        DISABLE_BUFFER BUFFER=Turtle_1
+        ```
         """
-        return
         self.disable_buffer()
 
     def get_status(self, eventtime=None):
@@ -598,11 +616,13 @@ class AFCTrigger:
         # Add current rotation distance if buffer is enabled and lane is loaded
         if self.enable:
             if (self.current_lane is not None
-                and self.current_lane in self.lanes):
+                and self.current_lane.name in self.lanes):
                 stepper = self.current_lane.extruder_stepper.stepper
                 self.response['rotation_distance'] = stepper.get_rotation_distance()[0]
+                self.response['active_lane'] = self.current_lane.name
         else:
             self.response['rotation_distance'] = None
+            self.response['active_lane'] = None
 
         # Add fault detection information
         self.response['fault_detection_enabled'] = self.error_sensitivity > 0

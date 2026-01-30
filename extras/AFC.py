@@ -2051,7 +2051,7 @@ class afc:
         temp     = gcmd.get_float('S', 0.0)
         deadband = gcmd.get_float('D', None)
 
-        curr_extruder:str = self.function.get_current_extruder_obj()
+        curr_extruder = self.function.get_current_extruder_obj()
 
         if toolnum is not None:
             map = "T{}".format(toolnum)
@@ -2061,7 +2061,8 @@ class afc:
 
                 # Checking if slicer is trying to set temperature(ooze prevention) for another lane
                 #   thats connected to the currently loaded extruder
-                if not self.disable_ooze_check:
+                if (not self.disable_ooze_check
+                    and curr_extruder):
                     for curr_extr_lane in curr_extruder.lanes:
                         lane_obj = self.lanes.get(curr_extr_lane, None)
                         if lane_obj:
