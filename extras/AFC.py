@@ -145,6 +145,7 @@ class afc:
         self.temp_wait_tolerance    = config.getfloat("temp_wait_tolerance", 5.0)         # Temperature tolerance in degrees Celsius for wait commands like M109
 
         self.disable_weight_check   = config.getboolean("disable_weight_check", False) # Set to True to disable weight check when loading filament into lane/toolhead
+        self.disable_ooze_check     = config.getboolean("disable_ooze_check", False) # Disable ooze check for lanes being on the same extruder in M104/M109 commands
         #LED SETTINGS
         # All variables use: (R,G,B,W) 0 = off, 1 = full brightness.
         self.ind_lights = None
@@ -2060,18 +2061,19 @@ class afc:
 
                 # Checking if slicer is trying to set temperature(ooze prevention) for another lane
                 #   thats connected to the currently loaded extruder
-                for curr_extr_lane in curr_extruder.lanes:
-                    lane_obj = self.lanes.get(curr_extr_lane, None)
-                    if lane_obj:
-                        if (lane_obj.name == curr_extruder.lane_loaded
-                            and map == lane_obj.map):
-                            break
-                        elif (lane_obj.map == map):
-                            self.logger.raw(
-                                ("<span class=warning--text>WARNING: "
-                                f"Not setting temperature for {map} since another lane is loaded for {curr_extruder.name}</span>")
-                            )
-                            return
+                if not self.disable_ooze_check:
+                    for curr_extr_lane in curr_extruder.lanes:
+                        lane_obj = self.lanes.get(curr_extr_lane, None)
+                        if lane_obj:
+                            if (lane_obj.name == curr_extruder.lane_loaded
+                                and map == lane_obj.map):
+                                break
+                            elif (lane_obj.map == map):
+                                self.logger.raw(
+                                    ("<span class=warning--text>WARNING: "
+                                    f"Not setting temperature for {map} since another lane is loaded for {curr_extruder.name}</span>")
+                                )
+                                return
                 self.logger.debug("Setting temperature for {} to {}".format(lane.extruder_obj, temp))
                 if extruder is None:
                     self.logger.error("extruder not configured for T{}".format(toolnum))
