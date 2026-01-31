@@ -187,6 +187,8 @@ class afc:
         self.tool_homing_distance   = config.getfloat("tool_homing_distance", 200)  # Distance over which toolhead homing is to be attempted.
         self.max_move_dis           = config.getfloat("max_move_dis", 999999)       # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves.
         self.n20_break_delay_time   = config.getfloat("n20_break_delay_time", 0.200)# Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting.
+        self.auto_home_to_hub       = config.getboolean("auto_home_to_hub", False)  # Global setting to auto-home to hub during moves
+        self.auto_home_to_tool      = config.getboolean("auto_home_to_tool", False) # Global setting to auto-home to tool during moves  
 
         self.tool_max_unload_attempts= config.getint('tool_max_unload_attempts', 4) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
         self.tool_max_load_checks   = config.getint('tool_max_load_checks', 4)      # Max number of attempts to check to make sure filament is loaded into toolhead extruder when using buffer as ramming sensor
@@ -1170,43 +1172,55 @@ class afc:
 
             cur_lane.loaded_to_hub = True
             hub_attempts = 0
+            homed_to_hub = False
+
+            if cur_lane.hub != 'direct' and not cur_hub.state:
+                if not cur_lane.auto_home_to_hub:
+                    cur_lane.move_advanced(cur_hub.move_dis, SpeedMode.SHORT)
+                    hub_attempts += 1
+                else:
+                    homed_to_hub = cur_lane.home_to('hub', cur_hub.move_dis, SpeedMode.HUB, True, True)
+                    hub_attempts += 1
 
             # Ensure filament moves past the hub.
-            while not cur_hub.state and cur_lane.hub != 'direct':
-                if hub_attempts == 0:
-                    cur_lane.move_advanced(cur_hub.move_dis, SpeedMode.SHORT)
-                else:
+            if not homed_to_hub:
+                while not cur_hub.state and cur_lane.hub != 'direct':
                     cur_lane.move_advanced(cur_lane.short_move_dis, SpeedMode.SHORT)
-                hub_attempts += 1
-                if hub_attempts > 20:
-                    message = 'filament did not trigger hub sensor, CHECK FILAMENT PATH\n||=====||==>--||-----||\nTRG   LOAD   HUB   TOOL.'
-                    if self.function.in_print():
-                        message += '\nOnce issue is resolved please manually load {} with {} macro and click resume to continue printing.'.format(cur_lane.name, cur_lane.map)
-                        message += '\nIf you have to retract filament back, use LANE_MOVE macro for {}.'.format(cur_lane.name)
-                    self.error.handle_lane_failure(cur_lane, message)
-                    return False
+                    hub_attempts += 1
+                    if hub_attempts > 20:
+                        message = 'filament did not trigger hub sensor, CHECK FILAMENT PATH\n||=====||==>--||-----||\nTRG   LOAD   HUB   TOOL.'
+                        if self.function.in_print():
+                            message += '\nOnce issue is resolved please manually load {} with {} macro and click resume to continue printing.'.format(cur_lane.name, cur_lane.map)
+                            message += '\nIf you have to retract filament back, use LANE_MOVE macro for {}.'.format(cur_lane.name)
+                        self.error.handle_lane_failure(cur_lane, message)
+                        return False
 
             self.afcDeltaTime.log_with_time("Filament loaded to hub")
 
             # Move filament towards the toolhead.
+            homed_to_tool = False
             if cur_lane.hub != 'direct':
-                cur_lane.move_advanced(cur_hub.afc_bowden_length, SpeedMode.LONG, assist_active = AssistActive.YES)
+                if not cur_lane.auto_home_to_tool:
+                    cur_lane.move_advanced(cur_hub.afc_bowden_length, SpeedMode.LONG, assist_active = AssistActive.YES)
+                else:
+                    homed_to_tool = cur_lane.home_to('tool', cur_hub.afc_bowden_length + 25, SpeedMode.LONG, True, True)
 
-            # Ensure filament reaches the toolhead.
-            tool_attempts = 0
-            if cur_extruder.tool_start:
-                while not cur_lane.get_toolhead_pre_sensor_state():
-                    tool_attempts += 1
-                    cur_lane.move(cur_lane.short_move_dis, cur_extruder.tool_load_speed, cur_lane.long_moves_accel)
-                    if tool_attempts > int(self.tool_homing_distance/cur_lane.short_move_dis):
-                        message = 'filament failed to trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
-                        message += '\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.'.format(cur_lane.name)
-                        message += '\nManually move filament with LANE_MOVE macro for {} until filament is right before toolhead extruder gears,'.format(cur_lane.name)
-                        message += '\n then load into extruder gears with extrude button in your gui of choice until the color fully changes'
-                        if self.function.in_print():
-                            message += '\nOnce filament is fully loaded click resume to continue printing'
-                        self.error.handle_lane_failure(cur_lane, message)
-                        return False
+            if not homed_to_tool:
+                # Ensure filament reaches the toolhead.
+                tool_attempts = 0
+                if cur_extruder.tool_start:
+                    while not cur_lane.get_toolhead_pre_sensor_state():
+                        tool_attempts += 1
+                        cur_lane.move(cur_lane.short_move_dis, cur_extruder.tool_load_speed, cur_lane.long_moves_accel)
+                        if tool_attempts > int(self.tool_homing_distance/cur_lane.short_move_dis):
+                            message = 'filament failed to trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
+                            message += '\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.'.format(cur_lane.name)
+                            message += '\nManually move filament with LANE_MOVE macro for {} until filament is right before toolhead extruder gears,'.format(cur_lane.name)
+                            message += '\n then load into extruder gears with extrude button in your gui of choice until the color fully changes'
+                            if self.function.in_print():
+                                message += '\nOnce filament is fully loaded click resume to continue printing'
+                            self.error.handle_lane_failure(cur_lane, message)
+                            return False
 
             self.afcDeltaTime.log_with_time("Filament loaded to pre-sensor")
 
@@ -1266,6 +1280,7 @@ class afc:
 
             # Activate the tool-loaded LED and handle filament operations if enabled.
             cur_lane.unit_obj.lane_tool_loaded( cur_lane )
+            cur_lane.espooler.do_assist_move()
             if self.poop:
                 if purge_length is not None:
                     self.gcode.run_script_from_command("%s %s=%s" % (self.poop_cmd, 'PURGE_LENGTH', purge_length))
@@ -1548,7 +1563,11 @@ class afc:
         # Synchronize and move filament out of the hub.
         cur_lane.unsync_to_extruder()
         if cur_lane.hub != 'direct':
-            cur_lane.move_advanced(cur_hub.afc_unload_bowden_length * -1, SpeedMode.LONG, assist_active = AssistActive.YES)
+            if not cur_lane.auto_home_to_hub:
+                homed_to_hub = False
+                cur_lane.move_advanced(cur_hub.afc_bowden_length * -1, SpeedMode.LONG, assist_active = AssistActive.YES)
+            else:
+                homed_to_hub = cur_lane.home_to('hub', cur_hub.afc_bowden_length * -1, SpeedMode.LONG, False, False)
         else:
             cur_lane.move_advanced(cur_lane.dist_hub * -1, SpeedMode.HUB, assist_active = AssistActive.DYNAMIC)
 
@@ -1561,7 +1580,7 @@ class afc:
 
         # Ensure filament is fully cleared from the hub.
         num_tries = 0
-        while cur_hub.state:
+        while cur_hub.state and homed_to_hub == False:
             cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT, assist_active = AssistActive.YES)
             num_tries += 1
             if num_tries > (cur_hub.afc_unload_bowden_length / cur_lane.short_move_dis):
