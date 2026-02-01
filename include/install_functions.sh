@@ -129,8 +129,12 @@ install_afc() {
   copy_config
   copy_unit_files
   # Add our extensions to the klipper gitignore
-  if [ "$test_mode" == "False" ] || [ "$git_install" == "True" ]; then
-    exclude_from_klipper_git
+  if [ "$git_install" == "True" ]; then
+    if [ "$test_mode" == "False" ]; then
+      exclude_from_klipper_git
+    fi
+  else
+    print_msg INFO "Skipping exclude from klipper git for git installations."
   fi
   # Include the AFC configuration files if selected
   if [ "$afc_includes" == True ]; then
