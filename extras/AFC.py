@@ -1053,11 +1053,13 @@ class afc:
             cur_lane.status = AFCLaneState.EJECTING
             self.save_vars()
             if cur_lane.loaded_to_hub:
-                cur_lane.move_advanced(cur_lane.dist_hub * -1, SpeedMode.HUB, assist_active = AssistActive.DYNAMIC)
+                # cur_lane.move_advanced(cur_lane.dist_hub * -1, SpeedMode.HUB, assist_active = AssistActive.DYNAMIC)
+                cur_lane.home_to("load", (cur_lane.dist_hub+100) * -1, SpeedMode.HUB, triggered=False,
+                                 assist_active=AssistActive.DYNAMIC)
             cur_lane.loaded_to_hub = False
             while cur_lane.load_state:
                 cur_lane.move_advanced(cur_hub.move_dis * -1, SpeedMode.SHORT, assist_active = AssistActive.YES)
-            cur_lane.move_advanced(cur_hub.move_dis * -5, SpeedMode.SHORT)
+            cur_lane.move_advanced(-50, SpeedMode.SHORT)
             cur_lane.do_enable(False)
             cur_lane.status = AFCLaneState.NONE
             cur_lane.unit_obj.return_to_home()

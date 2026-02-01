@@ -3,6 +3,7 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
 
 import chelper
 import traceback
@@ -10,11 +11,20 @@ import traceback
 from kinematics import extruder
 from configfile import error
 from extras.force_move import calc_move_time
+from toolhead import (
+    DripModeEndSignal,
+    DRIP_TIME,
+    STEPCOMPRESS_FLUSH_TIME,
+    BUFFER_TIME_HIGH,
+    DRIP_SEGMENT_TIME
+)
+
+from typing import Optional, TYPE_CHECKING
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import AFCLane
+try: from extras.AFC_lane import AFCLane, SpeedMode
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 LARGE_TIME_OFFSET = 99999.9
@@ -52,10 +62,7 @@ class AFCExtruderStepper(AFCLane):
                                         desc=self.cmd_AFC_HOME_help)
 
         # Check for Klipper new motion queuing update
-        try:
-            self.motion_queuing = self.printer.load_object(config, "motion_queuing")
-        except Exception:
-            self.motion_queuing = None
+        self.motion_queuing = self.printer.load_object(config, "motion_queuing", None)
 
         self.next_cmd_time = 0.
 
@@ -98,6 +105,13 @@ class AFCExtruderStepper(AFCLane):
             raise self.gcode.error(msg)
 
         self.tmc_load_current = self.tmc_driver.getfloat('run_current')
+    
+    def _submit_move( self, movetime, distance, speed, accel):
+        self.extruder_stepper.stepper.set_position((0., 0., 0.))
+        axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, speed, accel)
+        self.trapq_append(self.trapq, movetime, accel_t, cruise_t, accel_t,
+                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel)
+        return accel_t + cruise_t + accel_t
 
     def _move(self, distance, speed, accel, assist_active=False):
         """
@@ -109,7 +123,7 @@ class AFCExtruderStepper(AFCLane):
         speed (float): The speed of the movement.
         accel (float): The acceleration of the movement.
         """
-
+        self.sync_print_time()
 
         with self.assist_move(speed, distance < 0, assist_active):
             # Code based off force_move.py manual_move function
@@ -117,12 +131,10 @@ class AFCExtruderStepper(AFCLane):
             toolhead.flush_step_generation()
             prev_sk     = self.extruder_stepper.stepper.set_stepper_kinematics(self.stepper_kinematics)
             prev_trapq  = self.extruder_stepper.stepper.set_trapq(self.trapq)
-            self.extruder_stepper.stepper.set_position((0., 0., 0.))
-            axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, speed, accel)
             print_time = toolhead.get_last_move_time()
-            self.trapq_append(self.trapq, print_time, accel_t, cruise_t, accel_t,
-                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel)
-            print_time = print_time + accel_t + cruise_t + accel_t
+            
+            dwell_time = self._submit_move( print_time, distance, speed, accel)
+            print_time += dwell_time
 
             if self.motion_queuing is None:
                 self.extruder_stepper.stepper.generate_steps(print_time)
@@ -132,7 +144,7 @@ class AFCExtruderStepper(AFCLane):
             else:
                 self.motion_queuing.note_mcu_movequeue_activity(print_time)
 
-            toolhead.dwell(accel_t + cruise_t + accel_t)
+            toolhead.dwell( dwell_time )
             toolhead.flush_step_generation()
             self.extruder_stepper.stepper.set_trapq(prev_trapq)
             self.extruder_stepper.stepper.set_stepper_kinematics(prev_sk)
@@ -250,25 +262,27 @@ class AFCExtruderStepper(AFCLane):
         # If our next_cmd_time is ahead of the toolhead's time, trim it instead
         # of blocking. This prevents a post-trigger hesitation when homing
         # stops early before the commanded full distance.
-        try:
-            toolhead = self.printer.lookup_object('toolhead')
-            th_time = toolhead.get_last_move_time()
-            if self.next_cmd_time > th_time:
-                self.next_cmd_time = th_time
-        except Exception:
-            # Fallback to previous behavior if toolhead is unavailable
-            self.sync_print_time()
+        # try:
+        #     toolhead = self.printer.lookup_object('toolhead')
+        #     th_time = toolhead.get_last_move_time()
+        #     if self.next_cmd_time > th_time:
+        #         self.next_cmd_time = th_time
+        # except Exception:
+        #     # Fallback to previous behavior if toolhead is unavailable
+        # toolhead = self.printer.lookup_object('toolhead')
+        # toolhead.flush_step_generation()
+        self.sync_print_time()
 
     def get_position(self):
         # 1D position along filament path
-        return [self._manual_axis_pos, 0., 0., 0.]
+        return [self.extruder_stepper.stepper.get_commanded_position(), 0., 0., 0.]
 
     def set_position(self, newpos, homing_axes=""):
         # Set our internal commanded position (1D)
-        try:
-            self._manual_axis_pos = float(newpos[0])
-        except Exception:
-            self._manual_axis_pos = 0.0
+        # try:
+        #     self._manual_axis_pos = float(newpos[0])
+        # except Exception:
+        self._manual_axis_pos = 0.0
 
     def get_last_move_time(self):
         self.sync_print_time()
@@ -277,35 +291,70 @@ class AFCExtruderStepper(AFCLane):
     def dwell(self, delay):
         # Advance internal time to satisfy homing scheduler
         self.next_cmd_time += max(0., delay)
+    
+    def _drip_update_time(self, toolhead, max_time, drip_completion):
+        """
+        Same as mainline klipper that using motion queue, this is only called if motion
+        queue object is not found
+        """
+        toolhead.special_queuing_state = "Drip"
+        toolhead.need_check_pause = self.reactor.NEVER
+        self.reactor.update_timer(toolhead.flush_timer, self.reactor.NEVER)
+        toolhead.do_kick_flush_timer = False
+        toolhead.lookahead.set_flush_time(BUFFER_TIME_HIGH)
+        toolhead.check_stall_time = 0.
+        flush_delay = DRIP_TIME + STEPCOMPRESS_FLUSH_TIME + toolhead.kin_flush_delay
+
+        while toolhead.print_time < max_time:
+            if drip_completion.test():
+                self.logger.info(f"Done {self.reactor.monotonic()}")
+                break
+            curtime = self.reactor.monotonic()
+            est_print_time = toolhead.mcu.estimated_print_time(curtime)
+            wait_time = toolhead.print_time - est_print_time - flush_delay
+            if wait_time > 0.:
+                drip_completion.wait(curtime + wait_time)
+                continue
+            npt = min(toolhead.print_time + DRIP_SEGMENT_TIME, max_time)
+            toolhead.note_mcu_movequeue_activity(npt + toolhead.kin_flush_delay)
+            toolhead._advance_move_time(npt)
+        
 
     def drip_move(self, newpos, speed, drip_completion):
         # Queue the homing move quickly; do not block or dwell here. Homing
         # controller will wait for the endstop and handle final positioning.
+        self.sync_print_time()
+        self.logger.info(f"AFC_Stepper drip move {newpos} {speed} {self.next_cmd_time}")
         target = float(newpos[0])
         delta = target - self._manual_axis_pos
         accel = self.homing_accel if self.homing_accel is not None else (self.short_moves_accel or 0.)
         v = self.homing_velocity if self.homing_velocity is not None else speed
 
+        start_time = self.next_cmd_time
+
+        prev_sk     = self.extruder_stepper.stepper.set_stepper_kinematics(self.stepper_kinematics)
+        prev_trapq  = self.extruder_stepper.stepper.set_trapq(self.trapq)
+
+        dwell_time = self._submit_move( start_time, delta, v, accel)
+        max_time = start_time + dwell_time
+
         toolhead = self.printer.lookup_object('toolhead')
 
-        toolhead.flush_step_generation()
+        if self.motion_queuing is None:
+            self._drip_update_time(toolhead, max_time, drip_completion)
+            self.reactor.update_timer(toolhead.flush_timer, self.reactor.NOW)
+            toolhead.flush_step_generation()
+            self.trapq_finalize_moves(self.trapq, self.reactor.NEVER, 0)
+            self.extruder_stepper.stepper.set_position([delta, 0., 0.])
+        else:
+            self.motion_queuing.drip_update_time( start_time, max_time, drip_completion)
+
+        self.extruder_stepper.stepper.set_trapq(prev_trapq)
+        self.extruder_stepper.stepper.set_stepper_kinematics(prev_sk)
+        if self.motion_queuing is not None:
+            self.motion_queuing.wipe_trapq(self.trapq)
+
         self.sync_print_time()
-        prev_sk = self.extruder_stepper.stepper.set_stepper_kinematics(self.stepper_kinematics)
-        prev_trapq = self.extruder_stepper.stepper.set_trapq(self.trapq)
-        try:
-            self.extruder_stepper.stepper.set_position((0., 0., 0.))
-            axis_r, accel_t, cruise_t, cruise_v = calc_move_time(delta, v, accel)
-            self.trapq_append(self.trapq, self.next_cmd_time, accel_t, cruise_t, accel_t,
-                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel)
-            end_time = self.next_cmd_time + accel_t + cruise_t + accel_t
-            self.extruder_stepper.stepper.generate_steps(end_time)
-            # Finalize near end_time; no far-future finalize so host can trim
-            self.trapq_finalize_moves(self.trapq, end_time + 0.001, end_time + 0.001)
-            self.next_cmd_time = end_time
-            # toolhead.note_mcu_movequeue_activity(end_time)
-        finally:
-            self.extruder_stepper.stepper.set_trapq(prev_trapq)
-            self.extruder_stepper.stepper.set_stepper_kinematics(prev_sk)
 
     def get_kinematics(self):
         # Homing expects an object with kinematics-like API; we self-provide
@@ -417,10 +466,10 @@ class AFCExtruderStepper(AFCLane):
                     unit_cfg = self._config.getsection(sec)
                     value = unit_cfg.get(target_key, None)
                     if value is not None:
-                        logging.debug(f"Inherited '{target_key}'='{value}' from section '{sec}' for unit '{unit}'")
+                        self.logger.debug(f"Inherited '{target_key}'='{value}' from section '{sec}' for unit '{unit}'")
                     return value
         except Exception as e:
-            logging.debug(f"_inherit_from_unit({target_key}) failed: {e}", exc_info=True)
+            self.logger.debug(f"_inherit_from_unit({target_key}) failed: {e}", exc_info=True)
 
         return None
 
@@ -433,7 +482,7 @@ class AFCExtruderStepper(AFCLane):
             cfg = self._config.getsection(section)
             return cfg.get(key, default)
         except Exception as e:
-            logging.debug(f"Missing or invalid section '{section}': {e}")
+            self.logger.debug(f"Missing or invalid section '{section}': {e}")
             return default
 
     def _add_endstop(self, key, pin, suffix):
@@ -467,7 +516,8 @@ class AFCExtruderStepper(AFCLane):
         """Extend AFCLane hook. Hub endstop is already registered at config time."""
         super().handle_unit_connect(unit_obj)
 
-    def do_homing_move(self, movepos, speed, accel, endstop_spec, triggered=True, check_trigger=True):
+    def do_homing_move(self, movepos: int, speed: int, accel: int, endstop_spec:str,
+                       triggered=True, check_trigger=True, assist_active=True):
         """Perform a homing-like move using the specified endstop.
         movepos: target absolute position along the filament axis
         speed/accel: motion params (fallbacks applied if None)
@@ -476,8 +526,10 @@ class AFCExtruderStepper(AFCLane):
         """
         reactor = self.printer.get_reactor()
         start_ts = reactor.monotonic()
+
         try:
-            self.logger.debug(f"[AFC_stepper:{self.name}] Homing start endstop={endstop_spec} movepos={movepos} speed={speed} accel={accel}")
+
+            self.logger.debug(f"[AFC_stepper:{self.name}] Homing start endstop={endstop_spec} movepos={movepos} speed={speed} accel={accel} {self._manual_axis_pos} {self.extruder_stepper.stepper.get_commanded_position()}")
         except Exception:
             pass
         if accel is None:
@@ -504,7 +556,8 @@ class AFCExtruderStepper(AFCLane):
         # Start/stop assist exactly with homing lifetime
         rewind = movepos < self._manual_axis_pos
         try:
-            with self.assist_move(speed, rewind, assist_active=True):
+            start_mcu_pos = self.extruder_stepper.stepper.get_mcu_position()
+            with self.assist_move(speed, rewind, assist_active=assist_active):
                 phoming.manual_home(self, [endstop], pos, speed, triggered, check_trigger)
             end_ts = reactor.monotonic()
             self._last_home_endstop = endstop_spec
@@ -513,18 +566,18 @@ class AFCExtruderStepper(AFCLane):
             try:
                 homing_mgr = self.printer.lookup_object('homing')
                 stepper_name = self.extruder_stepper.stepper.get_name()
-                trig_mcu_pos = homing_mgr.get_trigger_position(stepper_name)
-                start_mcu_pos = self.extruder_stepper.stepper.get_mcu_position()
+                trig_mcu_pos = self.extruder_stepper.stepper.get_mcu_position()
                 # Distance in steps (commanded frame) is trig - start of homing move
                 # We don't have the start position directly; approximate via last commanded 0 with our local kinematics:
                 # Use delta from current commanded to trigger pos as step delta
                 step_dist = self.extruder_stepper.stepper.get_step_dist()
                 # In Klipper, get_mcu_position() returns at current commanded pos; we can't read 'start' cleanly here.
                 # However, the Homing manager's trigger_mcu_pos is absolute; compute delta from current mcu pos as a proxy for short homing moves.
-                steps_moved = trig_mcu_pos - start_mcu_pos
+                steps_moved = abs(trig_mcu_pos - start_mcu_pos)
                 dist_mm = steps_moved * step_dist
                 self.logger.debug(f"AFC lane '{self.name}': endstop '{endstop_spec}' trigger after {dist_mm:.3f} mm (steps={steps_moved})")
-            except Exception:
+            except Exception as e:
+                self.logger.debug(f"Exception {e}")
                 pass
             self.logger.debug(f"Homed lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {self._manual_axis_pos:.2f}mm (dt={(end_ts-start_ts):.3f}s)")
             return True
@@ -534,12 +587,15 @@ class AFCExtruderStepper(AFCLane):
             if "no trigger on" in msg:
                 if not self.printer.is_shutdown():
                     try:
-                        self.logger.debug(f"[{self.name}] Homing: {e}; continuing because homing_ignore_no_trigger is enabled")
+                        ffi_main, ffi_lib = chelper.get_ffi()
+                        self.logger.debug(f"[{self.name}] Homing: {e}; continuing because homing_ignore_no_trigger is enabled {ffi_lib.itersolve_get_commanded_pos(self.stepper_kinematics)}")
                     except Exception:
                         pass
                     return False
                 raise self.gcode.error(str(e))
             if ("communication timeout during homing" in msg) or ("endstop" in msg and "still triggered" in msg):
+                self.logger.info(f"{e}")
+                self.logger.info(f"{traceback.format_exc()}")
                 raise self.gcode.error(str(e))
             # Other MCU homing issues: surface message and re-raise as gcode error
             try:
@@ -549,7 +605,8 @@ class AFCExtruderStepper(AFCLane):
             raise self.gcode.error(str(e))
 
     # ------------------ Convenience homing helpers ------------------
-    def home_to(self, endstop_spec, distance=None, speed_mode=SpeedMode, triggered=True, check_trigger=True):
+    def home_to(self, endstop_spec:str, distance:Optional[int]=None, speed_mode:SpeedMode=SpeedMode,
+                triggered=True, check_trigger=True, assist_active=True):
         """
         Home towards an endstop relative to current position by distance (mm).
         If 'distance' is None, callers should prefer the typed helpers which pick a
@@ -574,7 +631,8 @@ class AFCExtruderStepper(AFCLane):
         target = float(self._manual_axis_pos + float(distance))
         self.logger.debug(f"Homing lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {distance:.2f}mm")
         homed = self.do_homing_move(target, speed, accel, endstop_spec,
-                            triggered=triggered, check_trigger=check_trigger)
+                            triggered=triggered, check_trigger=check_trigger,
+                            assist_active=assist_active)
         self.sync_print_time()
         return homed
 
@@ -599,6 +657,7 @@ class AFCExtruderStepper(AFCLane):
         homing_move = gcmd.get_int('STOP_ON_ENDSTOP', 0)
         if homing_move:
             movepos = gcmd.get_float('MOVE')
+            final_pos = float(self._manual_axis_pos) + float(movepos)
             endstop_spec = gcmd.get('ENDSTOP', self.default_homing_endstop)
             self.do_homing_move(movepos, speed, accel,
                                 endstop_spec,

@@ -55,13 +55,11 @@ class afc_hub:
         self.enable_runout          = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
 
         buttons = self.printer.load_object(config, "buttons")
-        if self.switch_pin is not None:
-            self.state = False
-            buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
-
         self.fila, self.debounce_button = add_filament_switch( f"{self.name}_Hub", self.switch_pin, self.printer,
                                                                 self.enable_sensors_in_gui, self.handle_runout, self.enable_runout,
                                                                 self.debounce_delay)
+        self.state = False
+        buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
 
         # Adding self to AFC hubs
         self.afc.hubs[self.name]=self

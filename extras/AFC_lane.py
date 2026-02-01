@@ -54,6 +54,7 @@ class AFCLaneState:
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
     def __init__(self, config):
+        self._config            = config
         self.printer            = config.get_printer()
         self.afc: afc           = self.printer.load_object(config, 'AFC')
         self.gcode              = self.printer.load_object(config, 'gcode')
@@ -684,9 +685,9 @@ class AFCLane:
         for i in range(1):
             # Hacky way for do{}while(0) loop, DO NOT return from this for loop, use break instead so that self.prep_state variable gets sets correctly
             #  before exiting function
-            if self.printer.state_message == 'Printer is ready' and True == self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
+            if self.printer.state_message == 'Printer is ready' and self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
                 # Only try to load when load state trigger is false
-                if self.prep_state == True and self.load_state == False:
+                if self.prep_state and not self.load_state:
                     x = 0
                     # Checking to make sure last time prep switch was activated was less than 1 second, returning to keep is printing message from spamming
                     # the console since it takes klipper some time to transition to idle when idle_resume=printing
@@ -697,8 +698,11 @@ class AFCLane:
                     if self.afc.function.is_printing(check_movement=True):
                         self.afc.error.AFC_error("Cannot load spools while printer is actively moving or homing", False)
                         break
-
-                    while self.load_state == False and self.prep_state == True and self.load is not None:
+                    
+                    # TODO: Update this to work with drive_stepper, add try catch
+                    self.home_to("load", 10*40, SpeedMode.SHORT, True, True, assist_active=False)
+                    
+                    while not self.load_state and self.prep_state and self.load is not None:
                         x += 1
                         self.move(10,500,400)
                         self.reactor.pause(self.reactor.monotonic() + 0.1)
