@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-01-28]
 ### Added
-- The install-afc.sh script will now properly users to install the software from a .zip archive if a Git based installation is not available.
+- The install-afc.sh script will now properly allow users to install the software from a .zip archive if a Git based installation is not available.
 
 ## [2026-01-24]
 ### Fixed
