@@ -13,9 +13,10 @@ from configfile import error
 from datetime import datetime
 from enum import Enum
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from extras.AFC import afc
+    from AFC_stepper import AFCExtruderStepper
 
 try: from extras.AFC_utils import ERROR_STR, add_filament_switch
 except: raise error("Error when trying to import AFC_utils.ERROR_STR, add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
@@ -50,6 +51,15 @@ class AFCLaneState:
     HUB_LOADING      = "HUB Loading"
     EJECTING         = "Ejecting"
     CALIBRATING      = "Calibrating"
+
+class AFCHomingPoints:
+    NONE        = None
+    HUB         = "hub"
+    LOAD        = "load"
+    TOOL        = "tool"
+    TOOL_START  = "tool_start"
+    BUFFER      = "buffer"
+    BUFFER_TRAIL= "buffer_trailing"
 
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
@@ -90,7 +100,7 @@ class AFCLane:
         # END TODO
 
         self.multi_hubs_found   = False
-        self.drive_stepper      = None
+        self.drive_stepper: AFCExtruderStepper = None
         unit                    = config.get('unit')                                    # Unit name(AFC_BoxTurtle/NightOwl/etc) that belongs to this stepper.
         # Overrides buffers set at the unit level
         self.hub                = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
@@ -506,6 +516,25 @@ class AFCLane:
         with self.assist_move( speed, distance < 0, assist_active):
             if self.drive_stepper is not None:
                 self.drive_stepper.move(distance, speed, accel, assist_active)
+    
+    def move_to(self, distance: float, speed_mode: SpeedMode,
+                endstop:AFCHomingPoints=AFCHomingPoints.NONE,
+                assist_active=AssistActive.NO, use_homing=True):
+        if (hasattr(self, "drive_stepper")
+            or hasattr(self, "extruder_stepper")):
+            if use_homing:
+                if hasattr(self, "drive_stepper"):
+                    home_to = self.drive_stepper.home_to
+                else:
+                    home_to = self.home_to
+                # Add extra distance to homing move to guarantee that endstop is hit
+                new_distance = distance + 50 if distance > 0 else distance - 50
+                return home_to(endstop, new_distance, speed_mode, 
+                        distance > 0, assist_active=assist_active)
+            else:
+                self.move_advanced(distance, speed_mode, assist_active )
+                return True
+
 
     def move_advanced(self, distance, speed_mode: SpeedMode, assist_active: AssistActive = AssistActive.NO):
         """
@@ -700,7 +729,10 @@ class AFCLane:
                         break
                     
                     # TODO: Update this to work with drive_stepper, add try catch
-                    self.home_to("load", 10*40, SpeedMode.SHORT, True, True, assist_active=False)
+                    if self.afc.homing_enabled:
+                        self.move_to(10*40, SpeedMode.SHORT,
+                                     endstop=AFCHomingPoints.HUB,
+                                     use_homing=True)
                     
                     while not self.load_state and self.prep_state and self.load is not None:
                         x += 1
@@ -1020,6 +1052,12 @@ class AFCLane:
             return self.buffer_obj.advance_state
         else:
             return self.extruder_obj.tool_start_state
+    
+    def get_toolhead_endstop(self):
+        if self.extruder_obj.tool_start == "buffer":
+            return AFCHomingPoints.BUFFER
+        else:
+            return AFCHomingPoints.TOOL
 
     def get_trailing(self):
         """

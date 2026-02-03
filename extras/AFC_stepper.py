@@ -24,7 +24,7 @@ from typing import Optional, TYPE_CHECKING
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import AFCLane, SpeedMode
+try: from extras.AFC_lane import AFCLane, SpeedMode, AFCHomingPoints
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 LARGE_TIME_OFFSET = 99999.9
@@ -175,6 +175,14 @@ class AFCExtruderStepper(AFCLane):
             move_value = move_value * direction
 
             self._move(move_value, speed, accel, assist_active)
+    
+    # def move_to(self, distance: float, speed_mode: SpeedMode, endstop:str,
+    #             assist_active=True, use_homing=True):
+    #     if use_homing:
+    #         self.home_to(endstop, distance, speed_mode,
+    #                                     distance > 0, assist_active=assist_active)
+    #     else:
+    #         self.move_advanced(distance, speed_mode, assist_active )
 
     def do_enable(self, enable):
         """
@@ -605,7 +613,7 @@ class AFCExtruderStepper(AFCLane):
             raise self.gcode.error(str(e))
 
     # ------------------ Convenience homing helpers ------------------
-    def home_to(self, endstop_spec:str, distance:Optional[int]=None, speed_mode:SpeedMode=SpeedMode,
+    def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[int], speed_mode: SpeedMode,
                 triggered=True, check_trigger=True, assist_active=True):
         """
         Home towards an endstop relative to current position by distance (mm).
@@ -630,9 +638,13 @@ class AFCExtruderStepper(AFCLane):
         # Compute an absolute target along our 1D axis
         target = float(self._manual_axis_pos + float(distance))
         self.logger.debug(f"Homing lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {distance:.2f}mm")
-        homed = self.do_homing_move(target, speed, accel, endstop_spec,
-                            triggered=triggered, check_trigger=check_trigger,
-                            assist_active=assist_active)
+        try:
+            homed = self.do_homing_move(target, speed, accel, endstop_spec,
+                                triggered=triggered, check_trigger=check_trigger,
+                                assist_active=assist_active)
+        except Exception:
+            # TODO: figure out what exceptions to catch here
+            self.logger.info(f"{traceback.format_exc()}")
         self.sync_print_time()
         return homed
 
