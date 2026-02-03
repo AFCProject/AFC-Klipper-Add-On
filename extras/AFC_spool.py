@@ -311,7 +311,8 @@ class AFCSpool:
                     cur_lane.spool_id = SpoolID
 
                     cur_lane.material           = self._get_filament_values(result['filament'], 'material')
-                    cur_lane.extruder_temp      = self._get_filament_values(result['filament'], 'settings_extruder_temp')
+                    if not self.afc.ignore_spoolman_material_temps:
+                        cur_lane.extruder_temp      = self._get_filament_values(result['filament'], 'settings_extruder_temp')
                     cur_lane.bed_temp           = self._get_filament_values(result['filament'], 'settings_bed_temp')
                     cur_lane.filament_density   = self._get_filament_values(result['filament'], 'density')
                     cur_lane.filament_diameter  = self._get_filament_values(result['filament'], 'diameter')
