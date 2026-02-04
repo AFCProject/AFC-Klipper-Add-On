@@ -1615,7 +1615,7 @@ class afc:
         # Ensure filament is fully cleared from the hub.
         num_tries = 0
         while cur_hub.state:
-            cur_lane.move_to(cur_lane.afc_bowden_length * -1, SpeedMode.SHORT,
+            cur_lane.move_to(cur_hub.afc_unload_bowden_length * -1, SpeedMode.SHORT,
                              assist_active=AssistActive.YES,
                              endstop=AFCHomingPoints.HUB,
                              use_homing=self.homing_enabled)
