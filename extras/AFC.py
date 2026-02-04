@@ -1238,7 +1238,7 @@ class afc:
                 while not cur_lane.get_toolhead_pre_sensor_state():
                     tool_attempts += 1
                     # TODO: change this to short moves when not using homing, same for unload
-                    cur_lane.move_to(cur_lane.afc_bowden_length, SpeedMode.SHORT,
+                    cur_lane.move_to(cur_hub.afc_bowden_length, SpeedMode.SHORT,
                                         endstop=cur_lane.get_toolhead_endstop(),
                                         use_homing=self.homing_enabled)
                     if tool_attempts > int(self.tool_homing_distance/cur_lane.short_move_dis):
@@ -1286,9 +1286,7 @@ class afc:
                 cur_lane.unsync_to_extruder()
                 load_checks = 0
                 while cur_lane.get_toolhead_pre_sensor_state():
-                    cur_lane.move_to(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
-                                     endstop=AFCHomingPoints.BUFFER_TRAIL,
-                                     use_homing=self.homing_enabled)
+                    cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT)
                     load_checks += 1
                     self.reactor.pause(self.reactor.monotonic() + 0.1)
                     if load_checks > self.tool_max_load_checks:

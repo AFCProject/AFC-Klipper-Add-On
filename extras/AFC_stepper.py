@@ -335,6 +335,7 @@ class AFCExtruderStepper(AFCLane):
         self.logger.info(f"AFC_Stepper drip move {newpos} {speed} {self.next_cmd_time}")
         target = float(newpos[0])
         delta = target - self._manual_axis_pos
+        # TODO: figure out way to use accel passed into home_to function
         accel = self.homing_accel if self.homing_accel is not None else (self.short_moves_accel or 0.)
         v = self.homing_velocity if self.homing_velocity is not None else speed
 
@@ -474,7 +475,7 @@ class AFCExtruderStepper(AFCLane):
                     unit_cfg = self._config.getsection(sec)
                     value = unit_cfg.get(target_key, None)
                     if value is not None:
-                        self.logger.debug(f"Inherited '{target_key}'='{value}' from section '{sec}' for unit '{unit}'")
+                        self.logger.debug(f"Inherited '{target_key}'='{value}' from section '{sec}' for unit '{unit}' {self.name}")
                     return value
         except Exception as e:
             self.logger.debug(f"_inherit_from_unit({target_key}) failed: {e}", exc_info=True)
@@ -496,12 +497,16 @@ class AFCExtruderStepper(AFCLane):
     def _add_endstop(self, key, pin, suffix):
         """Helper to create/register an endstop and bind it to the drive stepper."""
         if pin is None:
+            self.logger.info(f"Pin for {key} is none for {self.name}")
             return
         # Normalize and create endstop
         try:
+            self._ppins.allow_multi_use_pin(pin.strip("!^"))
             self._ppins.parse_pin(pin, True, True)
             mcu_endstop = self._ppins.setup_pin('endstop', pin)
-        except Exception:
+        except Exception as e:
+            self.logger.info(f"Error parsing pin for {key} is none for {self.name}")
+            self.logger.info(f"{e}")
             return
         
         single_key_aliases = {'hub', 'tool_start', 'tool_end', 'buffer_advance', 'buffer_trailing'}
@@ -513,11 +518,14 @@ class AFCExtruderStepper(AFCLane):
         try:
             self._qes.register_endstop(mcu_endstop, name)
         except Exception:
+            self.logger.info(f"Error when registering {name} as endstop for {self.lane}")
             pass
         try:
             mcu_endstop.add_stepper(self.extruder_stepper.stepper)
         except Exception:
+            self.logger.info(f"Error when registering stepper {self.lane}")
             pass
+        self.logger.debug(f"{self.name} adding endstop {key}:{name}:{pin}") # TODO:remove once fully tested on toolchanger
         self._endstops[key] = (mcu_endstop, name)
 
     def handle_unit_connect(self, unit_obj):

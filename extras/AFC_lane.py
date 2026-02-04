@@ -520,17 +520,17 @@ class AFCLane:
     def move_to(self, distance: float, speed_mode: SpeedMode,
                 endstop:AFCHomingPoints=AFCHomingPoints.NONE,
                 assist_active=AssistActive.NO, use_homing=True):
-        if (hasattr(self, "drive_stepper")
+        if (self.drive_stepper
             or hasattr(self, "extruder_stepper")):
             if use_homing:
-                if hasattr(self, "drive_stepper"):
+                if self.drive_stepper:
                     home_to = self.drive_stepper.home_to
                 else:
                     home_to = self.home_to
                 # Add extra distance to homing move to guarantee that endstop is hit
                 new_distance = distance + 50 if distance > 0 else distance - 50
                 return home_to(endstop, new_distance, speed_mode, 
-                        distance > 0, assist_active=assist_active)
+                        distance > 0, assist_active=assist_active==AssistActive.YES)
             else:
                 self.move_advanced(distance, speed_mode, assist_active )
                 return True
@@ -731,7 +731,8 @@ class AFCLane:
                     # TODO: Update this to work with drive_stepper, add try catch
                     if self.afc.homing_enabled:
                         self.move_to(10*40, SpeedMode.SHORT,
-                                     endstop=AFCHomingPoints.HUB,
+                                     assist_active=AssistActive.NO,
+                                     endstop=AFCHomingPoints.LOAD,
                                      use_homing=True)
                     
                     while not self.load_state and self.prep_state and self.load is not None:
@@ -1538,6 +1539,9 @@ class AFCLane:
             response['td1_td']          = self.td1_data['td'] if "td" in self.td1_data else ''
             response['td1_color']       = self.td1_data['color'] if "color" in self.td1_data else ''
             response['td1_scan_time']   = self.td1_data['scan_time'] if "scan_time" in self.td1_data else ''
+        
+        if hasattr(self, "_endstops"):
+            response['endstops'] = ",".join(self._endstops[key][1] for key in self._endstops)
         return response
 
 def load_config_prefix(config):
