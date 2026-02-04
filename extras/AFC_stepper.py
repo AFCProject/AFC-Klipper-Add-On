@@ -11,13 +11,6 @@ import traceback
 from kinematics import extruder
 from configfile import error
 from extras.force_move import calc_move_time
-from toolhead import (
-    DripModeEndSignal,
-    DRIP_TIME,
-    STEPCOMPRESS_FLUSH_TIME,
-    BUFFER_TIME_HIGH,
-    DRIP_SEGMENT_TIME
-)
 
 from typing import Optional, TYPE_CHECKING
 
@@ -27,7 +20,13 @@ except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".f
 try: from extras.AFC_lane import AFCLane, SpeedMode, AFCHomingPoints
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
+
 LARGE_TIME_OFFSET = 99999.9
+# Manually adding since these are in different files between klipper and kalico
+DRIP_TIME=0.100
+STEPCOMPRESS_FLUSH_TIME=0.050
+BUFFER_TIME_HIGH=1.0
+DRIP_SEGMENT_TIME=0.050
 
 class AFCExtruderStepper(AFCLane):
     def __init__(self, config):
