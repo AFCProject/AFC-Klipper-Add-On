@@ -1595,7 +1595,7 @@ class afc:
         # Synchronize and move filament out of the hub.
         cur_lane.unsync_to_extruder()
         if cur_lane.hub != 'direct':
-            cur_lane.move_to(cur_hub.afc_unload_bowden_length * -1, SpeedMode.HUB,
+            cur_lane.move_to(cur_hub.afc_unload_bowden_length * -1, SpeedMode.LONG,
                              assist_active=AssistActive.YES,
                              endstop=AFCHomingPoints.HUB,
                              use_homing=self.homing_enabled)
