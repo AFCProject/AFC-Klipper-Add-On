@@ -42,6 +42,7 @@ class AFCExtruderStepper(AFCLane):
         # Optional overrides similar to manual_stepper
         self.homing_velocity = config.getfloat('homing_velocity', None)
         self.homing_accel = config.getfloat('homing_accel', None)
+        self._homing_accel = self.homing_accel # Should only be updated in do_homing_move so accel can be used in drip_move callback
         self._manual_axis_pos = 0.0
 
         # Optional explicit hub endstop pin override in stepper section
@@ -334,8 +335,6 @@ class AFCExtruderStepper(AFCLane):
         self.logger.info(f"AFC_Stepper drip move {newpos} {speed} {self.next_cmd_time}")
         target = float(newpos[0])
         delta = target - self._manual_axis_pos
-        # TODO: figure out way to use accel passed into home_to function
-        accel = self.homing_accel if self.homing_accel is not None else (self.short_moves_accel or 0.)
         v = self.homing_velocity if self.homing_velocity is not None else speed
 
         start_time = self.next_cmd_time
@@ -343,11 +342,12 @@ class AFCExtruderStepper(AFCLane):
         prev_sk     = self.extruder_stepper.stepper.set_stepper_kinematics(self.stepper_kinematics)
         prev_trapq  = self.extruder_stepper.stepper.set_trapq(self.trapq)
 
-        dwell_time = self._submit_move( start_time, delta, v, accel)
+        dwell_time = self._submit_move( start_time, delta, v, self._homing_accel)
         max_time = start_time + dwell_time
 
         toolhead = self.printer.lookup_object('toolhead')
 
+        # TODO: add a check for toolhead.drip_update_time and test with https://github.com/KalicoCrew/kalico/pull/825 PR
         if self.motion_queuing is None:
             self._drip_update_time(toolhead, max_time, drip_completion)
             self.reactor.update_timer(toolhead.flush_timer, self.reactor.NOW)
@@ -547,10 +547,14 @@ class AFCExtruderStepper(AFCLane):
             self.logger.debug(f"[AFC_stepper:{self.name}] Homing start endstop={endstop_spec} movepos={movepos} speed={speed} accel={accel} {self._manual_axis_pos} {self.extruder_stepper.stepper.get_commanded_position()}")
         except Exception:
             pass
+        self._hom
         if accel is None:
-            accel = self.homing_accel if self.homing_accel is not None else (self.short_moves_accel or 50.)
+            accel = self.homing_accel if self.homing_accel else (self.short_moves_accel or 50.)
         if speed is None:
-            speed = self.homing_velocity if self.homing_velocity is not None else (self.short_moves_speed or 50.)
+            speed = self.homing_velocity if self.homing_velocity else (self.short_moves_speed or 50.)
+        
+         # Setting private variable so accel can be used in drip_move callback
+        self._homing_accel = accel
         # Avoid zero-distance drip sequences which can confuse stepcompress
         if movepos == self._manual_axis_pos:
             self.logger.debug(f"AFC stepper '{self.name}' homing target equals current position; skipping move")
