@@ -547,7 +547,6 @@ class AFCExtruderStepper(AFCLane):
             self.logger.debug(f"[AFC_stepper:{self.name}] Homing start endstop={endstop_spec} movepos={movepos} speed={speed} accel={accel} {self._manual_axis_pos} {self.extruder_stepper.stepper.get_commanded_position()}")
         except Exception:
             pass
-        self._hom
         if accel is None:
             accel = self.homing_accel if self.homing_accel else (self.short_moves_accel or 50.)
         if speed is None:
@@ -649,6 +648,7 @@ class AFCExtruderStepper(AFCLane):
         # Compute an absolute target along our 1D axis
         target = float(self._manual_axis_pos + float(distance))
         self.logger.debug(f"Homing lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {distance:.2f}mm")
+        homed = False
         try:
             homed = self.do_homing_move(target, speed, accel, endstop_spec,
                                 triggered=triggered, check_trigger=check_trigger,
