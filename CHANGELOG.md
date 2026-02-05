@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-02-05]
+### Added:
+- If an AFC_POST_PREP macro is present in the user's config, it is now called when a spool is loaded into the MMU, allowing user-configurable automation after filament swap.
+
 ## [2026-01-22]
 ### Changed:
 - The install-afc.sh script will now allow users to install as root if it detects the user is running a SAF K1 environment.
