@@ -724,6 +724,7 @@ class AFCLane:
                         self.status = AFCLaneState.LOADED
                         self.unit_obj.lane_loaded(self)
                         self.afc.spool._set_values(self)
+                        self._post_prep_user_macro()
                         # Check if user wants to get TD-1 data when loading
                         # TODO: When implementing multi-extruder this could still happen if a lane is loaded for a
                         # different extruder/hub
@@ -1485,7 +1486,10 @@ class AFCLane:
             response['td1_scan_time']   = self.td1_data['scan_time'] if "scan_time" in self.td1_data else ''
         return response
 
-
+    def _post_prep_user_macro(self):
+        if self.afc.function.check_macro_present("AFC_POST_PREP"):
+            cmd = f"AFC_POST_PREP LANE={self.name}"
+            self.gcode.run_script_from_command(cmd)
 
 def load_config_prefix(config):
     return AFCLane(config)
