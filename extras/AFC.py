@@ -187,8 +187,8 @@ class afc:
         self.tool_homing_distance   = config.getfloat("tool_homing_distance", 200)  # Distance over which toolhead homing is to be attempted.
         self.max_move_dis           = config.getfloat("max_move_dis", 999999)       # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves.
         self.n20_break_delay_time   = config.getfloat("n20_break_delay_time", 0.200)# Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting.
-        self.auto_home_to_hub       = config.getboolean("auto_home_to_hub", False)  # Global setting to auto-home to hub during moves
-        self.auto_home_to_tool      = config.getboolean("auto_home_to_tool", False) # Global setting to auto-home to tool during moves  
+        self.home_to_hub            = config.getboolean("home_to_hub", True)  # Global setting to auto-home to hub during moves
+        self.home_to_tool           = config.getboolean("home_to_tool", True) # Global setting to auto-home to tool during moves  
         self.homing_enabled         = config.getboolean("homing_enabled", True)
 
         self.tool_max_unload_attempts= config.getint('tool_max_unload_attempts', 4) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
@@ -1200,7 +1200,6 @@ class afc:
 
             cur_lane.loaded_to_hub = True
             hub_attempts = 0
-            homed_to_hub = False
 
             if cur_lane.hub != 'direct' and not cur_hub.state:
                 cur_lane.move_to(cur_hub.move_dis, SpeedMode.SHORT,
@@ -1212,7 +1211,7 @@ class afc:
             while not cur_hub.state and cur_lane.hub != 'direct':
                 cur_lane.move_to(cur_hub.move_dis, SpeedMode.SHORT,
                                  endstop=AFCHomingPoints.HUB,
-                                 use_homing=self.homing_enabled)
+                                 use_homing=self.homing_enabled and self.home_to_hub)
                 hub_attempts += 1
                 if hub_attempts > 20:
                     message = 'filament did not trigger hub sensor, CHECK FILAMENT PATH\n||=====||==>--||-----||\nTRG   LOAD   HUB   TOOL.'
@@ -1230,17 +1229,20 @@ class afc:
                                  SpeedMode.LONG,
                                  assist_active=AssistActive.YES,
                                  endstop=cur_lane.get_toolhead_endstop(),
-                                 use_homing=self.homing_enabled)
+                                 use_homing=self.homing_enabled and self.home_to_tool)
 
             # Ensure filament reaches the toolhead.
             tool_attempts = 0
             if cur_extruder.tool_start:
                 while not cur_lane.get_toolhead_pre_sensor_state():
                     tool_attempts += 1
-                    # TODO: change this to short moves when not using homing, same for unload
-                    cur_lane.move_to(cur_hub.afc_bowden_length, SpeedMode.SHORT,
-                                        endstop=cur_lane.get_toolhead_endstop(),
-                                        use_homing=self.homing_enabled)
+                    move_distance = cur_lane.short_move_dis
+                    if (self.homing_enabled
+                        and self.home_to_tool):
+                        move_distance = cur_hub.afc_bowden_length
+                    cur_lane.move_to(move_distance, SpeedMode.SHORT,
+                                     endstop=cur_lane.get_toolhead_endstop(),
+                                     use_homing=self.homing_enabled and self.home_to_tool)
                     if tool_attempts > int(self.tool_homing_distance/cur_lane.short_move_dis):
                         message = 'filament failed to trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
                         message += '\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.'.format(cur_lane.name)
@@ -1509,9 +1511,7 @@ class afc:
                     f'TOOL_UNLOAD: Retracting Buffer, Try:{num_tries}'
                 )
                 # attempt to return buffer to trailing pin
-                cur_lane.move_to(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
-                                 endstop=AFCHomingPoints.BUFFER_TRAIL,
-                                 use_homing=self.homing_enabled)
+                cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT)
                 self.reactor.pause(self.reactor.monotonic() + 0.1)
                 if num_tries > self.tool_max_unload_attempts:
                     msg = ''
@@ -1595,12 +1595,12 @@ class afc:
         # Synchronize and move filament out of the hub.
         cur_lane.unsync_to_extruder()
         if cur_lane.hub != 'direct':
-            cur_lane.move_to(cur_hub.afc_bowden_length * -1, SpeedMode.LONG,
+            cur_lane.move_to(cur_hub.afc_unload_bowden_length * -1, SpeedMode.HUB,
                              assist_active=AssistActive.YES,
                              endstop=AFCHomingPoints.HUB,
                              use_homing=self.homing_enabled)
         else:
-            cur_lane.move_to(cur_lane.dist_hub * -1, SpeedMode.HUB,
+            cur_lane.move_to(cur_lane.dist_hub * -1, SpeedMode.LONG,
                              assist_active = AssistActive.DYNAMIC,
                              endstop=AFCHomingPoints.LOAD,
                              use_homing=self.homing_enabled)
