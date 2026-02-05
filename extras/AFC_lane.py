@@ -39,6 +39,7 @@ class SpeedMode(Enum):
     SHORT = 2
     HUB = 3
     NIGHT = 4
+    CALIBRATION = 5
 
 class AFCLaneState:
     NONE             = "None"
@@ -497,10 +498,13 @@ class AFCLane:
                 return self.afc.quiet_moves_speed, self.short_moves_accel
             elif mode == SpeedMode.LONG:
                 return self.long_moves_speed, self.long_moves_accel
-            elif mode == SpeedMode.SHORT:
+            elif (mode == SpeedMode.SHORT
+                  or mode == SpeedMode.CALIBRATION):
                 return self.short_moves_speed, self.short_moves_accel
-            else:
+            elif mode == SpeedMode.HUB:
                 return self.dist_hub_move_speed, self.dist_hub_move_accel
+            else:
+                return self.short_moves_speed, self.short_moves_accel
 
     def move(self, distance, speed, accel, assist_active=False):
         """
@@ -533,7 +537,7 @@ class AFCLane:
                         distance > 0, assist_active=assist_active==AssistActive.YES)
             else:
                 self.move_advanced(distance, speed_mode, assist_active )
-                return True
+                return True, 0
 
 
     def move_advanced(self, distance, speed_mode: SpeedMode, assist_active: AssistActive = AssistActive.NO):

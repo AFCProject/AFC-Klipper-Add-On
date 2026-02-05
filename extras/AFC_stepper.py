@@ -598,7 +598,7 @@ class AFCExtruderStepper(AFCLane):
                 self.logger.debug(f"Exception {e}")
                 pass
             self.logger.debug(f"Homed lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {self._manual_axis_pos:.2f}mm (dt={(end_ts-start_ts):.3f}s)")
-            return True
+            return True, dist_mm
         except Exception as e:
             # TODO Fallback
             msg = str(e).lower()
@@ -649,15 +649,18 @@ class AFCExtruderStepper(AFCLane):
         target = float(self._manual_axis_pos + float(distance))
         self.logger.debug(f"Homing lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {distance:.2f}mm")
         homed = False
+        move_distance = 0
         try:
-            homed = self.do_homing_move(target, speed, accel, endstop_spec,
-                                triggered=triggered, check_trigger=check_trigger,
-                                assist_active=assist_active)
+            homed, move_distance = self.do_homing_move(target, speed, accel,
+                                                       endstop_spec,
+                                                       triggered=triggered,
+                                                       check_trigger=check_trigger,
+                                                       assist_active=assist_active)
         except Exception:
             # TODO: figure out what exceptions to catch here
             self.logger.info(f"{traceback.format_exc()}")
         self.sync_print_time()
-        return homed
+        return homed, move_distance
 
     # ------------------ Command shim (AFC_HOME) ------------------
     cmd_AFC_HOME_help = "Command a manually controlled stepper (AFC shim)"
