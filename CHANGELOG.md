@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-02-05]
+### Added:
+- User can now set an AFC_POST_PREP macro which will automatically run immediately after a new spool is loaded into a lane.
+
 ## [2026-02-01]
 ### Added:
 - Update Cut Macro to support kalico-bleeding-edge-v2 nonlinear pressure advance
