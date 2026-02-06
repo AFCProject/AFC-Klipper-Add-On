@@ -1243,13 +1243,15 @@ class afc:
                 while not cur_lane.get_toolhead_pre_sensor_state():
                     tool_attempts += 1
                     move_distance = cur_lane.short_move_dis
+                    max_attempts = int(self.tool_homing_distance/cur_lane.short_move_dis)
                     if (self.homing_enabled
                         and self.home_to_tool):
                         move_distance = cur_hub.afc_bowden_length
+                        max_attempts = 2
                     cur_lane.move_to(move_distance, SpeedMode.SHORT,
                                      endstop=cur_lane.get_toolhead_endstop(),
                                      use_homing=self.homing_enabled and self.home_to_tool)
-                    if tool_attempts > int(self.tool_homing_distance/cur_lane.short_move_dis):
+                    if tool_attempts >= max_attempts:
                         message = 'filament failed to trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
                         message += '\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.'.format(cur_lane.name)
                         message += '\nManually move filament with LANE_MOVE macro for {} until filament is right before toolhead extruder gears,'.format(cur_lane.name)
@@ -1621,12 +1623,17 @@ class afc:
         # Ensure filament is fully cleared from the hub.
         num_tries = 0
         while cur_hub.state:
-            cur_lane.move_to(cur_hub.afc_unload_bowden_length * -1, SpeedMode.SHORT,
+            max_attempts = (cur_hub.afc_unload_bowden_length / cur_lane.short_move_dis)
+            move_dist = cur_lane.short_move_dis
+            if self.homing_enabled:
+                max_attempts = 2
+                move_dist = cur_hub.afc_unload_bowden_length
+            cur_lane.move_to(move_dist * -1, SpeedMode.SHORT,
                              assist_active=AssistActive.YES,
                              endstop=AFCHomingPoints.HUB,
                              use_homing=self.homing_enabled)
             num_tries += 1
-            if num_tries > (cur_hub.afc_unload_bowden_length / cur_lane.short_move_dis):
+            if num_tries >= max_attempts:
                 # Handle failure if the filament doesn't clear the hub.
                 message = 'Hub is not clearing, filament may be stuck in hub'
                 message += '\nPlease check to make sure filament has not broken off and caused the sensor to stay stuck'
@@ -1660,7 +1667,6 @@ class afc:
                     cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
                                            assist_active=AssistActive.YES)
                     num_tries += 1
-                    # TODO: Figure out max number of tries
                     if num_tries > (cur_hub.afc_unload_bowden_length / cur_lane.short_move_dis):
                         message = 'HUB NOT CLEARING after hub cut\n'
                         self.error.handle_lane_failure(cur_lane, message)

@@ -1309,7 +1309,7 @@ class afcFunction:
         fail_state_msg = "'{}' failed to reset to hub, {} switch became false during reset"
 
         if long_dis is not None:
-            cur_lane.move_to(distance=CUR_HUB.afc_bowden_length,
+            cur_lane.move_to(distance=float(long_dis) *-1,
                              speed_mode=SpeedMode.SHORT,
                              endstop=AFCHomingPoints.HUB,
                              assist_active=AssistActive.YES,

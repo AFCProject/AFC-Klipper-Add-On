@@ -763,7 +763,8 @@ class AFCLane:
                     # Check to see if the printer is printing or moving, as trying to load while printer is doing something will crash klipper
                     if self.afc.function.is_printing(check_movement=True):
                         self.afc.error.AFC_error("Cannot load spools while printer is actively moving or homing", False)
-                        break
+                        self.prep_active = False
+                        return
 
                     if self.afc.homing_enabled:
                         self.move_to(10*40, SpeedMode.SHORT,

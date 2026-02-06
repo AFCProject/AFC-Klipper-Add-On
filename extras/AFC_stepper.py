@@ -704,7 +704,8 @@ class AFCExtruderStepper(AFCLane):
         return homed, move_distance
 
     cmd_AFC_STEPPER_HOME_help = "Command a manually home stepper to specified endstop"
-    cmd_AFC_STEPPER_HOME_options = {"ENABLE": {"type": "int", "default": 1},
+    cmd_AFC_STEPPER_HOME_options = {"STEPPER": {"type":"string", "default":"lane1"},
+                            "ENABLE": {"type": "int", "default": 1},
                             "SPEED": {"type": "float", "default": 100},
                             "ACCEL": {"type": "float", "default": 100},
                             "STOP_ON_ENDSTOP": {"type": "int", "default": 1},
