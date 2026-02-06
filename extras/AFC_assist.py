@@ -428,6 +428,7 @@ class Espooler:
         self.callback_timer         = self.reactor.register_timer( self.timer_callback )    # Defaults to never trigger
         self.stats_timer            = self.reactor.register_timer( self.timer_stats_callback )
         self.lane_obj               = None
+        self.mcu                    = self.printer.lookup_object('mcu')
 
         self.afc_motor_rwd          = config.get("afc_motor_rwd", None)                     # Reverse pin on MCU for spoolers
         self.afc_motor_fwd          = config.get("afc_motor_fwd", None)                     # Forwards pin on MCU for spoolers
@@ -539,22 +540,35 @@ class Espooler:
 
             elif delta_length > self.espooler_values.delta_movement:
                 self.past_extruder_position = extruder_pos
-                self.do_assist_move()
+                self.do_assist_move(self._get_print_time(eventtime))
 
             if self.debug:
                 self.logger.info(f"Timer Callback {eventtime:0.03f} e:{extruder_pos:0.03f} d:{delta_length:0.03f} p:{self.past_extruder_position:0.03f}")
 
         return self.reactor.monotonic() + self.timer_delay
 
-    def _kick_start(self, reverse=False):
+    def _get_print_time(self, systime=None):
+        """
+        Helper function to convert reactor time into print_time.
+
+        :param systime: System/reactor time. If None, current monotonic time is used.
+        :return float: Calculated print_time
+        """
+        now = self.reactor.monotonic()
+        target_time = systime if systime is not None else now
+
+        # Must be at least PIN_MIN_TIME in the future. Otherwise, the command might be scheduled too late,
+        # causing Klipper to error out because it missed a deadline.
+        return self.mcu.estimated_print_time(max(target_time, now + PIN_MIN_TIME))
+
+    def _kick_start(self, print_time, reverse=False):
         """
         Helper function to perform a kick start to help with spool movement
 
+        :param print_time: the time at which to perform the moves
         :param reverse: When set to True, moves espooler in reverse direction
         :return float: Print time with kick_start_time offset
         """
-        print_time = self.afc.toolhead.get_last_move_time()
-
         if reverse:
             self.move_reverse(print_time, 1)
         else:
@@ -579,19 +593,17 @@ class Espooler:
         else:
             self.stats.start_time = print_time
 
-    def do_assist_move(self, movement=100):
+    def do_assist_move(self, print_time):
         """
         Helper function to perform assist move while printing
 
-        :param movement: Amount in mm to move spool
+        :param print_time: Pre-computed print_time for scheduling assist pins
         """
         if self.afc_motor_rwd is None:
             return
-
-        print_time = time = 0.0
+        time = print_time
         if self.lane_obj.weight < self.enable_assist_weight:
-            time = self.afc.toolhead.get_last_move_time()
-            print_time = self._kick_start()
+            print_time = self._kick_start(print_time)
 
             self.move_forwards( print_time, 1 )
             self.espooler_values.cruise_time=self.espooler_values.calculate_cruise_time(self.lane_obj.weight)
@@ -635,7 +647,7 @@ class Espooler:
         :param value: Direction and PWM value to set espooler pins. < 0 RWD, > 0 FWD and 0 disable and enable espooler braking
         """
         reverse = False
-        print_time = self.afc.toolhead.get_last_move_time()
+        print_time = self._get_print_time()
         if self.afc_motor_rwd is None:
             return
 
@@ -665,14 +677,14 @@ class Espooler:
             self.afc_motor_enb._set_pin(print_time, enable)
 
         if self.enable_kick_start:
-            print_time = self._kick_start(reverse)
+            print_time = self._kick_start(print_time, reverse)
         assist_motor._set_pin(print_time, value)
 
     def break_espooler(self):
         """
         Helper function to "brake" n20 motors to hopefully help with keeping down back-feeding into MCU board
         """
-        print_time = self.afc.toolhead.get_last_move_time()
+        print_time = self._get_print_time()
         if self.afc_motor_enb is not None:
             self.afc_motor_rwd._set_pin(print_time, 1)
             self.set_enable_pin(print_time, 1)
@@ -758,7 +770,7 @@ class Espooler:
         TEST_ESPOOLER_ASSIST LANE=lane1
         ```
         """
-        self.do_assist_move(100)
+        self.do_assist_move(self._get_print_time())
 
     cmd_ENABLE_ESPOOLER_ASSIST_help="Enabled espooler print assist for a specified lane, this can be used while printing"
     def cmd_ENABLE_ESPOOLER_ASSIST(self, gcmd):
