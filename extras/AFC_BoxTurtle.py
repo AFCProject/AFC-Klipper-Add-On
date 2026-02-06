@@ -184,11 +184,9 @@ class afcBoxTurtle(afcUnit):
                 if not success:
                     return False, message, hub_dis
 
-            if cur_hub.state or self.afc.homing_enabled:
-                # reset at hub
-                cur_lane.move(cur_hub.hub_clear_move_dis * -1,
-                              cur_lane.short_moves_speed, cur_lane.short_moves_accel,
-                              True)
+            # Always run hub clear move
+            cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed,
+                          cur_lane.short_moves_accel, True)
 
             bowden_dist = round(bow_pos, 2)
             if not self.afc.homing_enabled:
@@ -274,11 +272,14 @@ class afcBoxTurtle(afcUnit):
             cur_lane.move(dis, self.short_moves_speed, self.short_moves_accel)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
 
-        cur_lane.move(bow_pos * -1, cur_lane.long_moves_speed, cur_lane.long_moves_accel, True)
+        cur_lane.move_to(distance=bow_pos*-1, SpeedMode=SpeedMode.LONG,
+                         endstop=AFCHomingPoints.HUB, assist_active=AssistActive.YES,
+                         use_homing=self.afc.homing_enabled)
 
         # Reset to hub
-        self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, 0,
-                           cur_lane.short_move_dis, tol, 200, checkpoint)
+        if not self.afc.homing_enabled:
+            self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, 0,
+                            cur_lane.short_move_dis, tol, 200, checkpoint)
 
         cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
 
@@ -400,8 +401,18 @@ class afcBoxTurtle(afcUnit):
         self.logger.info('Calibrating {}'.format(cur_lane.name))
         cur_lane.status = AFCLaneState.CALIBRATING
         # reset to extruder
-        pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.load_state, 0, cur_lane.short_move_dis,
-                                                      tol, cur_lane.dist_hub + 100, "retract to extruder")
+        if self.afc.homing_enabled:
+            checkpoint = "retract to extruder"
+            success, pos = cur_lane.move_to(distance=(cur_lane.dist_hub+100)*-1,
+                                            speed_mode=SpeedMode.CALIBRATION,
+                                            endstop=AFCHomingPoints.LOAD,
+                                            assist_active=AssistActive.YES)
+        else:
+            pos, checkpoint, success = self.calc_position(cur_lane,
+                                                          lambda: cur_lane.load_state, 0,
+                                                          cur_lane.short_move_dis,
+                                                          tol, cur_lane.dist_hub + 100,
+                                                          "retract to extruder")
 
         if not success:
             if checkpoint == "retract to extruder":
@@ -420,15 +431,22 @@ class afcBoxTurtle(afcUnit):
             return False, msg, 0
 
         else:
-            success, message, hub_pos = self.calibrate_hub(cur_lane, tol)
+            if self.afc.homing_enabled:
+                success, hub_pos = cur_lane.move_to(distance=cur_lane.dist_hub+100,
+                                            speed_mode=SpeedMode.CALIBRATION,
+                                            endstop=AFCHomingPoints.HUB,
+                                            assist_active=AssistActive.NO)
+                message = 'failed hub calibration {cur_lane.name} after {hub_pos}mm'
+            else:
+                success, message, hub_pos = self.calibrate_hub(cur_lane, tol)
 
             if not success:
                 cur_lane.status = AFCLaneState.NONE
                 cur_lane.unit_obj.return_to_home()
                 return False, message, hub_pos
 
-            if cur_hub.state:
-                cur_lane.move(cur_hub.move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+            # Always run hub clear
+            cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
 
             cal_dist = hub_pos - cur_hub.hub_clear_move_dis
             cal_msg = "\n{} dist_hub: New: {} Old: {}".format(cur_lane.name, cal_dist, cur_lane.dist_hub)
