@@ -10,13 +10,15 @@ import traceback
 from configfile import error
 from typing import Any
 
-from typing import Dict, TYPE_CHECKING
+from typing import Dict, TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
     from extras.AFC_lane import AFCLane
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_functions import afcFunction
+    from extras.AFC_error import afcError
+    from extras.AFC_stepper import AFCExtruderStepper
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -61,7 +63,7 @@ class afc:
         self.logger  = AFC_logger(self.printer, self)
 
         self.spool      = self.printer.load_object(config, 'AFC_spool')
-        self.error      = self.printer.load_object(config, 'AFC_error')
+        self.error: afcError = self.printer.load_object(config, 'AFC_error')
         self.function: afcFunction   = self.printer.load_object(config, 'AFC_functions')
         self.function.afc = self
         self.gcode      = self.printer.load_object(config, 'gcode')
@@ -91,7 +93,7 @@ class afc:
         # Objects for everything configured for AFC
         self.units      = {}
         self.tools: Dict[str, AFCExtruder] = {}
-        self.lanes: Dict[str, AFCLane]     = {}
+        self.lanes: Dict[str, Union[AFCLane, AFCExtruderStepper]] = {}
         self.hubs       = {}
         self.buffers    = {}
         self.tool_cmds  = {}
@@ -187,8 +189,8 @@ class afc:
         self.tool_homing_distance   = config.getfloat("tool_homing_distance", 200)  # Distance over which toolhead homing is to be attempted.
         self.max_move_dis           = config.getfloat("max_move_dis", 999999)       # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves.
         self.n20_break_delay_time   = config.getfloat("n20_break_delay_time", 0.200)# Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting.
-        self.home_to_hub            = config.getboolean("home_to_hub", True)  # Global setting to auto-home to hub during moves
-        self.home_to_tool           = config.getboolean("home_to_tool", True) # Global setting to auto-home to tool during moves  
+        self.home_to_hub            = config.getboolean("home_to_hub", True)        # Global setting to auto-home to hub during moves
+        self.home_to_tool           = config.getboolean("home_to_tool", True)       # Global setting to auto-home to tool during moves
         self.homing_enabled         = config.getboolean("homing_enabled", True)
 
         self.tool_max_unload_attempts= config.getint('tool_max_unload_attempts', 4) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
@@ -783,7 +785,7 @@ class afc:
         if abs(distance) >= 200: speed_mode = SpeedMode.LONG
 
         cur_lane.set_load_current() # Making current is set correctly when doing lane moves
-        cur_lane.move_advanced(distance, speed_mode, assist_active = AssistActive.YES)      # Checked
+        cur_lane.move_advanced(distance, speed_mode, assist_active = AssistActive.YES)
         cur_lane.do_enable(False)
         self.current_state = State.IDLE
         cur_lane.unit_obj.return_to_home()
@@ -1016,7 +1018,7 @@ class afc:
                              endstop=AFCHomingPoints.HUB, use_homing=self.homing_enabled)
         while cur_hub.state:
             # TODO: add timout routine here
-            cur_lane.move_advanced(cur_hub.move_dis * -1, SpeedMode.SHORT) # Checked
+            cur_lane.move_advanced(cur_hub.move_dis * -1, SpeedMode.SHORT)
         cur_lane.status = AFCLaneState.NONE
         cur_lane.do_enable(False)
         cur_lane.loaded_to_hub = True
@@ -1074,8 +1076,9 @@ class afc:
             cur_lane.loaded_to_hub = False
             while cur_lane.load_state:
                 # TODO: add timout routine here
-                cur_lane.move_advanced(cur_hub.move_dis * -1, SpeedMode.SHORT, assist_active = AssistActive.YES) # Checked
-            cur_lane.move_advanced(-50, SpeedMode.SHORT) # Checked
+                cur_lane.move_advanced(cur_hub.move_dis * -1, SpeedMode.SHORT,
+                                       assist_active = AssistActive.YES)
+            cur_lane.move_advanced(cur_lane.extruder_clear_dis * -1, SpeedMode.SHORT)
             cur_lane.do_enable(False)
             cur_lane.status = AFCLaneState.NONE
             cur_lane.unit_obj.return_to_home()
@@ -1186,13 +1189,16 @@ class afc:
             # Move filament to the hub if it's not already loaded there.
             if not cur_lane.loaded_to_hub or cur_lane.hub == 'direct':
                 dist_to_hub = cur_lane.dist_hub
-                if self.homing_enabled and cur_lane.hub != 'direct':
+                if (self.homing_enabled
+                    and cur_lane.hub != 'direct'):
                     dist_to_hub += cur_hub.move_dis
+
                 home_endstop = AFCHomingPoints.HUB
                 if cur_lane.hub == 'direct':
                     home_endstop= cur_lane.get_toolhead_endstop()
 
-                cur_lane.move_to(dist_to_hub, SpeedMode.HUB, assist_active=AssistActive.DYNAMIC,
+                cur_lane.move_to(dist_to_hub, SpeedMode.HUB,
+                                 assist_active=AssistActive.DYNAMIC,
                                  endstop=home_endstop, use_homing=self.homing_enabled)
                 self.afcDeltaTime.log_with_time(
                     f"Loaded to {'hub' if cur_lane.hub != 'direct' else 'toolhead'}"
@@ -1548,7 +1554,7 @@ class afc:
                         f'TOOL_UNLOAD: Sensor-Unloading from toolhead(tool_stn_unload==0), Try:{num_tries}'
                     )
                     # attempt to move filament back from sensor without moving extruder
-                    cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT) # Checked, not sure if this should use move_to
+                    cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT)
                     if num_tries > self.tool_max_unload_attempts:
                         # note that this will break out of the loop and immediately fall into the error
                         # condition of the next loop for messaging to the user
@@ -1640,7 +1646,7 @@ class afc:
         #Move to make sure hub path is clear based on the move_clear_dis var
         if cur_lane.hub != 'direct':
             cur_lane.move_advanced(cur_hub.hub_clear_move_dis * -1, SpeedMode.SHORT,
-                                   assist_active=AssistActive.YES) # Checked
+                                   assist_active=AssistActive.YES)
 
             # Cut filament at the hub, if configured.
             if cur_hub.cut:
@@ -1652,7 +1658,7 @@ class afc:
                 # Confirm the hub is clear after the cut.
                 while cur_hub.state:
                     cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
-                                           assist_active=AssistActive.YES) # Checked
+                                           assist_active=AssistActive.YES)
                     num_tries += 1
                     # TODO: Figure out max number of tries
                     if num_tries > (cur_hub.afc_unload_bowden_length / cur_lane.short_move_dis):
@@ -1671,7 +1677,7 @@ class afc:
             while cur_lane.load_state:
                 cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
                                        assist_active=AssistActive.YES)
-            cur_lane.move_advanced(cur_lane.short_move_dis * -5, SpeedMode.SHORT) # Checked both
+            cur_lane.move_advanced(cur_lane.short_move_dis * -5, SpeedMode.SHORT)
 
         cur_lane.do_enable(False)
         cur_lane.unit_obj.return_to_home()

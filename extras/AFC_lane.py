@@ -13,7 +13,7 @@ from configfile import error
 from datetime import datetime
 from enum import Enum
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from extras.AFC import afc
     from AFC_stepper import AFCExtruderStepper
@@ -26,6 +26,9 @@ except: raise error(ERROR_STR.format(import_lib="AFC_assist", trace=traceback.fo
 
 try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
+
+if TYPE_CHECKING:
+    from extras.AFC_hub import afc_hub
 
 # Class for holding different states so its clear what all valid states are
 
@@ -77,7 +80,7 @@ class AFCLane:
         self.cb_update_weight   = self.reactor.register_timer( self.update_weight_callback )
 
         self.unit_obj           = None
-        self.hub_obj            = None
+        self.hub_obj: afc_hub   = None
         self.buffer_obj         = None
         self.extruder_obj       = None
 
@@ -139,6 +142,7 @@ class AFCLane:
         self.max_move_dis       = config.getfloat("max_move_dis", None)                 # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.n20_break_delay_time= config.getfloat("n20_break_delay_time", None)        # Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.homing_overshoot   = config.getfloat("homing_overshoot", None)             # Amount to add to homing distance so that distance is long enough to actually hit endstop
+        self.extruder_clear_dis = config.getfloat("extruder_clear_dis", None)
 
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", None)     # scalar speed factor when reversing filamentalist
 
@@ -400,6 +404,7 @@ class AFCLane:
         if self.homing_overshoot            is None: self.homing_overshoot  = self.unit_obj.homing_overshoot
         if self.td1_when_loaded             is None: self.td1_when_loaded   = self.unit_obj.td1_when_loaded
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
+        if self.extruder_clear_dis          is None: self.extruder_clear_dis= self.unit_obj.extruder_clear_dis
         if self.post_prep_macro             is None: self.post_prep_macro   = self.unit_obj.post_prep_macro
 
         if self.rev_long_moves_speed_factor < 0.5: self.rev_long_moves_speed_factor = 0.5
@@ -508,6 +513,21 @@ class AFCLane:
             else:
                 return self.short_moves_speed, self.short_moves_accel
 
+    def get_active_assist(self, distance, assist_active:AssistActive) -> bool:
+        """
+        Helper method to return boolean based off `AssistActive` enum and distance
+
+        :param distance: Distance to move stepper, used to determine assist if using Dynamic assist mode
+        :param assist_active: `AssistActive` enum to determine if assist will be active or not
+        :return bool: Returns True if `AssistActive.YES` or `AssistActive.DYNAMIC` and distance > 200
+        """
+        assist = False
+        if assist_active == AssistActive.YES:
+            assist = True
+        elif assist_active == AssistActive.DYNAMIC:
+            assist = abs(distance) > 200
+        return assist
+
     def move(self, distance, speed, accel, assist_active=False):
         """
         Move the specified lane a given distance with specified speed and acceleration.
@@ -522,10 +542,22 @@ class AFCLane:
         with self.assist_move( speed, distance < 0, assist_active):
             if self.drive_stepper is not None:
                 self.drive_stepper.move(distance, speed, accel, assist_active)
-    
+
     def move_to(self, distance: float, speed_mode: SpeedMode,
                 endstop:AFCHomingPoints=AFCHomingPoints.NONE,
-                assist_active=AssistActive.NO, use_homing=True):
+                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, int]:
+        """
+        Helper function for calling stepper move_advance or home_to functions based
+        off use_homing parameter
+
+        :param distance: Distance to move stepper
+        :param speed_mode: SpeedMode type to use when moving stepper
+        :param endstop: When homing is enabled, used to specify which endstop to home to
+        :param assist_active: AssistActive type to enable/disable espoolers when moving stepper
+        :param use_homing: When enabled home_to logic is used, else move_advance logic is used
+        :return tuple: Returns if move was successful and distance moved. When homing is
+                       disabled, always returns True, 0.
+        """
         if (self.drive_stepper
             or hasattr(self, "extruder_stepper")):
             if use_homing:
@@ -538,8 +570,8 @@ class AFCLane:
                 if distance < 0:
                     new_distance = distance - self.homing_overshoot
 
-                return home_to(endstop, new_distance, speed_mode, 
-                        distance > 0, assist_active=assist_active==AssistActive.YES)
+                return home_to(endstop, new_distance, speed_mode,
+                        distance > 0, assist_active=self.get_active_assist(distance, assist_active))
             else:
                 self.move_advanced(distance, speed_mode, assist_active )
                 return True, 0
@@ -556,11 +588,7 @@ class AFCLane:
         """
         speed, accel = self.get_speed_accel(speed_mode)
 
-        assist = False
-        if assist_active == AssistActive.YES:
-            assist = True
-        elif assist_active == AssistActive.DYNAMIC:
-            assist = abs(distance) > 200
+        assist = self.get_active_assist(distance, assist_active)
 
         self.move(distance, speed, accel, assist)
 
@@ -736,14 +764,13 @@ class AFCLane:
                     if self.afc.function.is_printing(check_movement=True):
                         self.afc.error.AFC_error("Cannot load spools while printer is actively moving or homing", False)
                         break
-                    
-                    # TODO: Update this to work with drive_stepper, add try catch
+
                     if self.afc.homing_enabled:
                         self.move_to(10*40, SpeedMode.SHORT,
                                      assist_active=AssistActive.NO,
                                      endstop=AFCHomingPoints.LOAD,
                                      use_homing=True)
-                    
+
                     while not self.load_state and self.prep_state and self.load is not None:
                         x += 1
                         self.move(10,500,400)
@@ -1062,8 +1089,14 @@ class AFCLane:
             return self.buffer_obj.advance_state
         else:
             return self.extruder_obj.tool_start_state
-    
-    def get_toolhead_endstop(self):
+
+    def get_toolhead_endstop(self) ->AFCHomingPoints:
+        """
+        Helper method to lookup endstop type based on users config.
+
+        :return AFCHomingPoints: Returns `AFCHomingPoints.BUFFER` if users tool_start is set to buffer
+            else returns `AFCHomingPoints.TOOL`
+        """
         if self.extruder_obj.tool_start == "buffer":
             return AFCHomingPoints.BUFFER
         else:
@@ -1226,7 +1259,15 @@ class AFCLane:
 
         if not self.hub_obj.state:
             if not self.loaded_to_hub:
-                self.move_auto_speed(self.dist_hub)
+                move_dis = self.dist_hub
+                if self.afc.homing_enabled:
+                    move_dis += self.hub_obj.move_dis
+                self.move_to(distance=move_dis,
+                             speed_mode=SpeedMode.LONG,
+                             endstop=AFCHomingPoints.HUB,
+                             assist_active=AssistActive.YES,
+                             use_homing=self.afc.homing_enabled)
+                self.loaded_to_hub = True
 
             while not self.hub_obj.state:
                 if max_move_tries >= self.afc.max_move_tries:
@@ -1252,7 +1293,11 @@ class AFCLane:
                 self.afc.error.AFC_error(msg, pause=False)
                 status = False
 
-            self.move_auto_speed(self.hub_obj.td1_bowden_length * -1)
+            self.move_to(distance=self.hub_obj.td1_bowden_length * -1,
+                         speed_mode=SpeedMode.LONG,
+                         endstop=AFCHomingPoints.HUB,
+                         assist_active=AssistActive.YES,
+                         use_homing=self.afc.homing_enabled)
             if success:
                 self.send_lane_data()
 
@@ -1548,9 +1593,7 @@ class AFCLane:
             response['td1_td']          = self.td1_data['td'] if "td" in self.td1_data else ''
             response['td1_color']       = self.td1_data['color'] if "color" in self.td1_data else ''
             response['td1_scan_time']   = self.td1_data['scan_time'] if "scan_time" in self.td1_data else ''
-        
-        if hasattr(self, "_endstops"):
-            response['endstops'] = ",".join(self._endstops[key][1] for key in self._endstops)
+
         return response
 
 def load_config_prefix(config):

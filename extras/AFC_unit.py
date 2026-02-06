@@ -59,6 +59,7 @@ class afcUnit:
         self.homing_overshoot            = config.getfloat("homing_overshoot", 50)                           # Amount to add to homing distance so that distance is long enough to actually hit endstop
         self.debug                       = config.getboolean("debug",            False)                      # Turns on/off debug messages to console
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", self.afc.rev_long_moves_speed_factor)
+        self.extruder_clear_dis          = config.getfloat("extruder_clear_dis", 50)                        # Amount to move to clear extruder gears when ejecting filament
 
         # Espooler defines
         # Time in seconds to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in AFC.cfg file

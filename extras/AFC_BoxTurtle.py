@@ -125,10 +125,10 @@ class afcBoxTurtle(afcUnit):
         # move to hub and retrieve that distance, the checkpoint returned and if successful
         if not self.afc.homing_enabled:
             hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state,
-                                                                cur_hub.move_dis, tol,
-                                                                cur_lane.short_move_dis,
-                                                                0, cur_lane.dist_hub + 200,
-                                                                "Moving to hub")
+                                                                 cur_hub.move_dis, tol,
+                                                                 cur_lane.short_move_dis,
+                                                                 0, cur_lane.dist_hub + 200,
+                                                                 "Moving to hub")
         else:
             success, hub_pos = cur_lane.move_to(distance=cur_lane.dist_hub+200,
                                                 speed_mode=SpeedMode.CALIBRATION,
@@ -418,11 +418,11 @@ class afcBoxTurtle(afcUnit):
         if not success:
             if checkpoint == "retract to extruder":
                 msg = f"{cur_lane.name} failed during calibration after {round(pos,2)}mm. Check position of filament and " \
-                    "reset filament using BT_LANE_MOVE macro if necessary. If filament is between " \
-                    "the extruder and the hub, and is moving smoothly, you may need to increase the " \
-                    "dist_hub value. Once adjusted, please try again. This can be adjusted by " \
-                    "using the SET_HUB_DIST LANE=<lane> LENGTH=<+/- distance> macro. Once you are " \
-                    "satisfied, you can save the values with SAVE_HUB_DIST LANE=<lane> macro.\n"
+                      "reset filament using BT_LANE_MOVE macro if necessary. If filament is between " \
+                      "the extruder and the hub, and is moving smoothly, you may need to increase the " \
+                      "dist_hub value. Once adjusted, please try again. This can be adjusted by " \
+                      "using the SET_HUB_DIST LANE=<lane> LENGTH=<+/- distance> macro. Once you are " \
+                      "satisfied, you can save the values with SAVE_HUB_DIST LANE=<lane> macro.\n"
             else:
                 msg = 'Lane failed to calibrate {} after {}mm'.format(checkpoint, pos)
             cur_lane.status = AFCLaneState.NONE
