@@ -138,6 +138,7 @@ class AFCLane:
         self.short_move_dis     = config.getfloat("short_move_dis", None)               # Move distance in mm for failsafe moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.max_move_dis       = config.getfloat("max_move_dis", None)                 # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.n20_break_delay_time= config.getfloat("n20_break_delay_time", None)        # Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.homing_overshoot   = config.getfloat("homing_overshoot", None)             # Amount to add to homing distance so that distance is long enough to actually hit endstop
 
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", None)     # scalar speed factor when reversing filamentalist
 
@@ -396,6 +397,7 @@ class AFCLane:
         if self.short_moves_accel           is None: self.short_moves_accel = self.unit_obj.short_moves_accel
         if self.short_move_dis              is None: self.short_move_dis    = self.unit_obj.short_move_dis
         if self.max_move_dis                is None: self.max_move_dis      = self.unit_obj.max_move_dis
+        if self.homing_overshoot            is None: self.homing_overshoot  = self.unit_obj.homing_overshoot
         if self.td1_when_loaded             is None: self.td1_when_loaded   = self.unit_obj.td1_when_loaded
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
         if self.post_prep_macro             is None: self.post_prep_macro   = self.unit_obj.post_prep_macro
@@ -532,7 +534,10 @@ class AFCLane:
                 else:
                     home_to = self.home_to
                 # Add extra distance to homing move to guarantee that endstop is hit
-                new_distance = distance + 50 if distance > 0 else distance - 50
+                new_distance = distance + self.homing_overshoot
+                if distance > 0:
+                    new_distance = distance - self.homing_overshoot
+
                 return home_to(endstop, new_distance, speed_mode, 
                         distance > 0, assist_active=assist_active==AssistActive.YES)
             else:
