@@ -1594,8 +1594,7 @@ class AFCLane:
             response['td1_td']          = self.td1_data['td'] if "td" in self.td1_data else ''
             response['td1_color']       = self.td1_data['color'] if "color" in self.td1_data else ''
             response['td1_scan_time']   = self.td1_data['scan_time'] if "scan_time" in self.td1_data else ''
-        if hasattr(self, "_endstops"):
-            response['endstops'] = ",".join(self._endstops[key][1] for key in self._endstops)
+        
         return response
 
 def load_config_prefix(config):
