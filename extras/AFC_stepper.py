@@ -41,7 +41,7 @@ class AFCExtruderStepper(AFCLane):
         self.stepper_enable     = self.printer.lookup_object('stepper_enable')
 
         # Homing-related configuration
-        self.default_homing_endstop = config.get('homing_endstop', 'load')
+        self.default_homing_endstop = config.get('default_homing_endstop', 'load')
         self._homing_accel          = self.short_moves_accel # Should only be updated in do_homing_move so accel can be used in drip_move callback
         self._manual_axis_pos       = 0.0
 
@@ -720,16 +720,15 @@ class AFCExtruderStepper(AFCLane):
 
         Optional Values
         ----
-        ENABLE: Use the ENABLE parameter to enable/disable the stepper.
-        SPEED: If SPEED is specified then the given value will be used instead of the default specified in the config file.
-        ACCEL: If SPEED is specified then the given value will be used instead of the default specified in the config file.
-        STOP_ON_ENDSTOP: If STOP_ON_ENDSTOP=1 is specified then the move will end early should the endstop report as
+        ENABLE - Use the ENABLE parameter to enable/disable the stepper.<br>
+        SPEED - If SPEED is specified then the given value will be used instead of the default specified in the config file.<br>
+        ACCEL - If SPEED is specified then the given value will be used instead of the default specified in the config file.<br>
+        STOP_ON_ENDSTOP - If STOP_ON_ENDSTOP=1 is specified then the move will end early should the endstop report as
         triggered (use STOP_ON_ENDSTOP=2 to complete the move without error even if the endstop does not trigger,
-        use -1 or -2 to stop when the endstop reports not triggered).
-        DIST: Distance to move stepper
-        ENDSTOP: Endstop to try and home to, default names to use are:
-            load, hub, tool_start, buffer_adv, buffer_trailing
-        SYNC: Only valid when not using STOP_ON_ENDSTOP, setting sync 0 will allow the stepper
+        use -1 or -2 to stop when the endstop reports not triggered).<br>
+        DIST - Distance to move stepper<br>
+        ENDSTOP - Endstop to try and home to, default names to use are: load, hub, tool_start, buffer_adv, buffer_trailing<br>
+        SYNC - Only valid when not using STOP_ON_ENDSTOP, setting sync 0 will allow the stepper
         to be moved in paralled with other stepper movement.
 
         Usage
@@ -739,9 +738,22 @@ class AFCExtruderStepper(AFCLane):
         Example
         ----
         ```
-        AFC_STEPPER_HOME STEPPER=lane1 ENABLE=1
+        AFC_STEPPER_HOME STEPPER=lane1 ENABLE=0
+        ```
+        Example
+        ----
+        ```
         AFC_STEPPER_HOME STEPPER=lane1 MOVE=10 SPEED=5
-        AFC_STEPPER_HOME STEPPER=lane1 STOP_ON_ENDSTOP=1 DIST=200 SPEED=5 ENDSTOP=hub]
+        ```
+        Example
+        ----
+        ```
+        AFC_STEPPER_HOME STEPPER=lane1 STOP_ON_ENDSTOP=1 DIST=200 SPEED=5 ENDSTOP=hub
+        ```
+        Example
+        ----
+        ```
+        AFC_STEPPER_HOME STEPPER=lane1 STOP_ON_ENDSTOP=-1 DIST=-200 SPEED=5 ENDSTOP=hub
         ```
         """
         enable = gcmd.get_int('ENABLE', None)

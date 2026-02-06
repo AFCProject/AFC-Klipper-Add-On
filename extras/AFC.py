@@ -394,7 +394,7 @@ class afc:
             pin_loc_xy = tool_cut_obj.variables.get('pin_loc_xy', None)
             if pin_loc_xy and pin_loc_xy == (-99,-99):
                 error_str += 'tool_cut is set to True and variable_pin_loc_xy has not been updated.\n'
-                error_str += 'Please update variable_pin_loc_xy in AFC\AFC_Macro_Vars.cfg file.\n\n'
+                error_str += 'Please update variable_pin_loc_xy in AFC\\AFC_Macro_Vars.cfg file.\n\n'
 
         park_obj = self.printer.lookup_object('gcode_macro _AFC_PARK_VARS', None)
         if (self.park
@@ -403,7 +403,7 @@ class afc:
             park_loc_xy = park_obj.variables.get('park_loc_xy', None)
             if park_loc_xy and park_loc_xy == (-99,-99):
                 error_str += 'park is set to True and variable_park_loc_xy has not been updated.\n'
-                error_str += 'Please update variable_park_loc_xy in AFC\AFC_Macro_Vars.cfg file.\n\n'
+                error_str += 'Please update variable_park_loc_xy in AFC\\AFC_Macro_Vars.cfg file.\n\n'
 
         poop_obj = self.printer.lookup_object('gcode_macro _AFC_POOP_VARS', None)
         if (self.poop
@@ -412,7 +412,7 @@ class afc:
             purge_loc_xy = poop_obj.variables.get('purge_loc_xy', None)
             if purge_loc_xy and purge_loc_xy == (-99,-99):
                 error_str += 'poop is set to True and variable_purge_loc_xy has not been updated.\n'
-                error_str += 'Please update variable_purge_loc_xy in AFC\AFC_Macro_Vars.cfg file.\n\n'
+                error_str += 'Please update variable_purge_loc_xy in AFC\\AFC_Macro_Vars.cfg file.\n\n'
 
         kick_obj = self.printer.lookup_object('gcode_macro _AFC_KICK_VARS', None)
         if (self.kick
@@ -421,7 +421,7 @@ class afc:
             kick_start_loc = kick_obj.variables.get('kick_start_loc', None)
             if kick_start_loc and kick_start_loc == (-99,-99,5):
                 error_str += 'kick is set to True and variable_kick_start_loc has not been updated.\n'
-                error_str += 'Please update variable_kick_start_loc in AFC\AFC_Macro_Vars.cfg file.\n\n'
+                error_str += 'Please update variable_kick_start_loc in AFC\\AFC_Macro_Vars.cfg file.\n\n'
 
         wipe_obj = self.printer.lookup_object('gcode_macro _AFC_BRUSH_VARS', None)
         if (self.wipe
@@ -430,7 +430,7 @@ class afc:
             brush_loc = wipe_obj.variables.get('brush_loc', None)
             if brush_loc and brush_loc == (-99,-99,-1):
                 error_str += 'wipe is set to True and variable_brush_loc has not been updated.\n'
-                error_str += 'Please update variable_brush_loc in AFC\AFC_Macro_Vars.cfg file.\n\n'
+                error_str += 'Please update variable_brush_loc in AFC\\AFC_Macro_Vars.cfg file.\n\n'
 
         return error_str
 
