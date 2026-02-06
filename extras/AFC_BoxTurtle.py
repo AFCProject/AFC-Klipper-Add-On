@@ -401,9 +401,10 @@ class afcBoxTurtle(afcUnit):
         self.logger.info('Calibrating {}'.format(cur_lane.name))
         cur_lane.status = AFCLaneState.CALIBRATING
         # reset to extruder
+        move_dis = cur_lane.dist_hub+100
         if self.afc.homing_enabled:
             checkpoint = "retract to extruder"
-            success, pos = cur_lane.move_to(distance=(cur_lane.dist_hub+100)*-1,
+            success, pos = cur_lane.move_to(distance=move_dis*-1,
                                             speed_mode=SpeedMode.CALIBRATION,
                                             endstop=AFCHomingPoints.LOAD,
                                             assist_active=AssistActive.YES)
@@ -411,19 +412,17 @@ class afcBoxTurtle(afcUnit):
             pos, checkpoint, success = self.calc_position(cur_lane,
                                                           lambda: cur_lane.load_state, 0,
                                                           cur_lane.short_move_dis,
-                                                          tol, cur_lane.dist_hub + 100,
+                                                          tol, move_dis,
                                                           "retract to extruder")
 
         if not success:
             if checkpoint == "retract to extruder":
-                msg = (
-                    """\n{} failed during calibration after {}mm. Check position of filament and
-                    reset filament using BT_LANE_MOVE macro if necessary. If filament is between
-                    the extruder and the hub, and is moving smoothly, you may need to increase the
-                    dist_hub value. Once adjusted, please try again. This can be adjusted by
-                    using the SET_HUB_DIST LANE=<lane> LENGTH=<+/- distance> macro. Once you are
-                    satisfied, you can save the values with SAVE_HUB_DIST LANE=<lane> macro.\n""".format(cur_lane.name, pos)
-                )
+                msg = f"{cur_lane.name} failed during calibration after {round(pos,2)}mm. Check position of filament and " \
+                    "reset filament using BT_LANE_MOVE macro if necessary. If filament is between " \
+                    "the extruder and the hub, and is moving smoothly, you may need to increase the " \
+                    "dist_hub value. Once adjusted, please try again. This can be adjusted by " \
+                    "using the SET_HUB_DIST LANE=<lane> LENGTH=<+/- distance> macro. Once you are " \
+                    "satisfied, you can save the values with SAVE_HUB_DIST LANE=<lane> macro.\n"
             else:
                 msg = 'Lane failed to calibrate {} after {}mm'.format(checkpoint, pos)
             cur_lane.status = AFCLaneState.NONE
@@ -432,11 +431,11 @@ class afcBoxTurtle(afcUnit):
 
         else:
             if self.afc.homing_enabled:
-                success, hub_pos = cur_lane.move_to(distance=cur_lane.dist_hub+100,
+                success, hub_pos = cur_lane.move_to(distance=move_dis,
                                             speed_mode=SpeedMode.CALIBRATION,
                                             endstop=AFCHomingPoints.HUB,
                                             assist_active=AssistActive.NO)
-                message = 'failed hub calibration {cur_lane.name} after {hub_pos}mm'
+                message = f'Failed hub calibration {cur_lane.name} after {round(hub_pos, 2)}mm'
             else:
                 success, message, hub_pos = self.calibrate_hub(cur_lane, tol)
 
@@ -448,7 +447,7 @@ class afcBoxTurtle(afcUnit):
             # Always run hub clear
             cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
 
-            cal_dist = hub_pos - cur_hub.hub_clear_move_dis
+            cal_dist = round(hub_pos - cur_hub.hub_clear_move_dis, 2)
             cal_msg = "\n{} dist_hub: New: {} Old: {}".format(cur_lane.name, cal_dist, cur_lane.dist_hub)
             cur_lane.loaded_to_hub  = True
             cur_lane.do_enable(False)

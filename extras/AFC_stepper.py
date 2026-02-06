@@ -266,19 +266,6 @@ class AFCExtruderStepper(AFCLane):
     # ------------------ ManualStepper compatibility shims ------------------
     # These wrappers allow using Klipper's homing flow with our existing stepper
     def flush_step_generation(self):
-        # Do not dwell the main toolhead waiting for our private time cursor.
-        # If our next_cmd_time is ahead of the toolhead's time, trim it instead
-        # of blocking. This prevents a post-trigger hesitation when homing
-        # stops early before the commanded full distance.
-        # try:
-        #     toolhead = self.printer.lookup_object('toolhead')
-        #     th_time = toolhead.get_last_move_time()
-        #     if self.next_cmd_time > th_time:
-        #         self.next_cmd_time = th_time
-        # except Exception:
-        #     # Fallback to previous behavior if toolhead is unavailable
-        # toolhead = self.printer.lookup_object('toolhead')
-        # toolhead.flush_step_generation()
         self.sync_print_time()
 
     def get_position(self):
@@ -286,10 +273,6 @@ class AFCExtruderStepper(AFCLane):
         return [self.extruder_stepper.stepper.get_commanded_position(), 0., 0., 0.]
 
     def set_position(self, newpos, homing_axes=""):
-        # Set our internal commanded position (1D)
-        # try:
-        #     self._manual_axis_pos = float(newpos[0])
-        # except Exception:
         self._manual_axis_pos = 0.0
 
     def get_last_move_time(self):
@@ -315,7 +298,6 @@ class AFCExtruderStepper(AFCLane):
 
         while toolhead.print_time < max_time:
             if drip_completion.test():
-                self.logger.info(f"Done {self.reactor.monotonic()}")
                 break
             curtime = self.reactor.monotonic()
             est_print_time = toolhead.mcu.estimated_print_time(curtime)
@@ -332,7 +314,6 @@ class AFCExtruderStepper(AFCLane):
         # Queue the homing move quickly; do not block or dwell here. Homing
         # controller will wait for the endstop and handle final positioning.
         self.sync_print_time()
-        self.logger.info(f"AFC_Stepper drip move {newpos} {speed} {self.next_cmd_time}")
         target = float(newpos[0])
         delta = target - self._manual_axis_pos
         v = self.homing_velocity if self.homing_velocity is not None else speed
@@ -544,7 +525,7 @@ class AFCExtruderStepper(AFCLane):
 
         try:
 
-            self.logger.debug(f"[AFC_stepper:{self.name}] Homing start endstop={endstop_spec} movepos={movepos} speed={speed} accel={accel} {self._manual_axis_pos} {self.extruder_stepper.stepper.get_commanded_position()}")
+            self.logger.debug(f"[AFC_stepper:{self.name}] Homing start endstop={endstop_spec} movepos={movepos} speed={speed} accel={accel}")
         except Exception:
             pass
         if accel is None:
@@ -582,8 +563,6 @@ class AFCExtruderStepper(AFCLane):
             self._last_home_time = end_ts
             # Log distance at trigger using homing trigger positions
             try:
-                homing_mgr = self.printer.lookup_object('homing')
-                stepper_name = self.extruder_stepper.stepper.get_name()
                 trig_mcu_pos = self.extruder_stepper.stepper.get_mcu_position()
                 # Distance in steps (commanded frame) is trig - start of homing move
                 # We don't have the start position directly; approximate via last commanded 0 with our local kinematics:
@@ -609,7 +588,7 @@ class AFCExtruderStepper(AFCLane):
                         self.logger.debug(f"[{self.name}] Homing: {e}; continuing because homing_ignore_no_trigger is enabled {ffi_lib.itersolve_get_commanded_pos(self.stepper_kinematics)}")
                     except Exception:
                         pass
-                    return False
+                    return False, movepos
                 raise self.gcode.error(str(e))
             if ("communication timeout during homing" in msg) or ("endstop" in msg and "still triggered" in msg):
                 self.logger.info(f"{e}")
@@ -683,7 +662,6 @@ class AFCExtruderStepper(AFCLane):
         homing_move = gcmd.get_int('STOP_ON_ENDSTOP', 0)
         if homing_move:
             movepos = gcmd.get_float('MOVE')
-            final_pos = float(self._manual_axis_pos) + float(movepos)
             endstop_spec = gcmd.get('ENDSTOP', self.default_homing_endstop)
             self.do_homing_move(movepos, speed, accel,
                                 endstop_spec,

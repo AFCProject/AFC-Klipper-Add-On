@@ -535,7 +535,7 @@ class AFCLane:
                     home_to = self.home_to
                 # Add extra distance to homing move to guarantee that endstop is hit
                 new_distance = distance + self.homing_overshoot
-                if distance > 0:
+                if distance < 0:
                     new_distance = distance - self.homing_overshoot
 
                 return home_to(endstop, new_distance, speed_mode, 
