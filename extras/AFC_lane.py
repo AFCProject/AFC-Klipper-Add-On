@@ -386,7 +386,7 @@ class AFCLane:
         if self.max_move_dis                is None: self.max_move_dis      = self.unit_obj.max_move_dis
         if self.td1_when_loaded             is None: self.td1_when_loaded   = self.unit_obj.td1_when_loaded
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
-        if self.post_prep_macro             is None: self.post_prep_macro   = self.unit_obj.self.post_prep_macro
+        if self.post_prep_macro             is None: self.post_prep_macro   = self.unit_obj.post_prep_macro
 
         if self.rev_long_moves_speed_factor < 0.5: self.rev_long_moves_speed_factor = 0.5
         if self.rev_long_moves_speed_factor > 1.2: self.rev_long_moves_speed_factor = 1.2
