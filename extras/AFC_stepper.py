@@ -614,7 +614,7 @@ class AFCExtruderStepper(AFCLane):
         try:
             endstop = self._resolve_endstop_pin(endstop_spec)
         except Exception as e_resolve:
-            self._info(f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve}); using software homing.")
+            self.logger.debug(f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve})")
             raise_string = f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve})"
             raise self.gcode.error(raise_string)
 
