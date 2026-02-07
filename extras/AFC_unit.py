@@ -90,6 +90,8 @@ class afcUnit:
         self.td1_when_loaded    = config.getboolean("capture_td1_when_loaded", self.afc.td1_when_loaded)
         self.td1_device_id      = config.get("td1_device_id", None)
 
+        self.post_prep_macro    = config.get("post_prep_macro", "AFC_POST_PREP")  # Macro to call after loading filament during prep callback
+
     def __str__(self):
         return self.name
 
