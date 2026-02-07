@@ -643,6 +643,7 @@ class AFCLane:
                 # Check if user wants to get TD-1 data when loading
                 if not self.tool_loaded:
                     self._prep_capture_td1()
+                self._post_prep_user_macro()
             else:
                 # Don't run if user disabled sensor in gui
                 if not self.fila_load.runout_helper.sensor_enabled and self.afc.function.is_printing():
