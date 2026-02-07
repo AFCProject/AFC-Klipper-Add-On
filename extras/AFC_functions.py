@@ -29,7 +29,7 @@ try: from extras.AFC_respond import AFCprompt
 except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
 
 try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints
-except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
+except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
     from extras.AFC import afc

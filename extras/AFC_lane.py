@@ -545,7 +545,7 @@ class AFCLane:
 
     def move_to(self, distance: float, speed_mode: SpeedMode,
                 endstop:AFCHomingPoints=AFCHomingPoints.NONE,
-                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, int]:
+                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int]:
         """
         Helper function for calling stepper move_advance or home_to functions based
         off use_homing parameter

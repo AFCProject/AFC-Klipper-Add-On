@@ -162,7 +162,7 @@ class afcBoxTurtle(afcUnit):
                     return False, msg, bow_pos
 
             if (cur_extruder.tool_start != 'buffer'
-                and not self.homing_enabled):
+                and not self.afc.homing_enabled):
                 # is using ramming, only use first trigger of sensor
                 bow_pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.get_toolhead_pre_sensor_state(), bow_pos,
                                                                   cur_lane.short_move_dis, tol, 100, "retract from toolhead sensor")
@@ -272,7 +272,7 @@ class afcBoxTurtle(afcUnit):
             cur_lane.move(dis, self.short_moves_speed, self.short_moves_accel)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
 
-        cur_lane.move_to(distance=bow_pos*-1, SpeedMode=SpeedMode.LONG,
+        cur_lane.move_to(distance=bow_pos*-1, speed_mode=SpeedMode.LONG,
                          endstop=AFCHomingPoints.HUB, assist_active=AssistActive.YES,
                          use_homing=self.afc.homing_enabled)
 

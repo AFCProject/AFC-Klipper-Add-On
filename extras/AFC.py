@@ -1004,7 +1004,7 @@ class afc:
                 # TODO: add timout routine here
                 cur_lane.move_to(cur_hub.move_dis, SpeedMode.SHORT,
                                  endstop=AFCHomingPoints.LOAD,
-                                 active_assist=AssistActive.DYNAMIC,
+                                 assist_active=AssistActive.DYNAMIC,
                                  use_homing=self.homing_enabled)
         if not cur_lane.loaded_to_hub:
             dist_to_hub = cur_lane.dist_hub

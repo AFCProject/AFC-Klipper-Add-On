@@ -15,7 +15,9 @@ from extras.force_move import calc_move_time
 from typing import Optional, TYPE_CHECKING, Dict
 
 try: from extras.AFC_utils import ERROR_STR
-except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
+except:
+    raise_string = "Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc())
+    raise error(raise_string)
 
 try: from extras.AFC_lane import AFCLane, SpeedMode, AFCHomingPoints
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
@@ -50,7 +52,7 @@ class AFCExtruderStepper(AFCLane):
 
         self._extra_homing_pins = set(config.getlist('homing_endstop_pins', default="", sep=',')) # Additional homing endstops to add to stepper, comma-seperated list
         # Pre-create MCU endstops now so MCU config callbacks run before ready
-        self._endstops: Dict[MCU_endstop,str] = {}
+        self._endstops: Dict[str, tuple[MCU_endstop,str]] = {}
         self._init_endstops()
 
         # Register AFC_HOME mux command for this lane name
@@ -339,7 +341,7 @@ class AFCExtruderStepper(AFCLane):
             toolhead.note_mcu_movequeue_activity(npt + toolhead.kin_flush_delay)
             toolhead._advance_move_time(npt)
 
-    def drip_move(self, newpos: float, speed: float, drip_completion):
+    def drip_move(self, newpos: list[float], speed: float, drip_completion):
         """
         Drip move callback, needed for homing flow. Creates and add moves to trapq then
         waits for homing to complete or exits once max time is hit.
@@ -412,8 +414,10 @@ class AFCExtruderStepper(AFCLane):
         # Look up a pre-created endstop; do not create at runtime (MCU cb won't run)
         mcu_endstop, name = self._endstops.get(key, (None, None))
         if mcu_endstop is None:
-            raise error("Unknown ENDSTOP '{}' for lane '{}'. Declare it in [AFC_stepper {}] using 'homing_endstop_pins: {}' or use ENDSTOP=load/hub/tool/buffer".format(
-                endstop_spec, self.name, self.name, endstop_spec))
+            raise_string = f"Unknown ENDSTOP '{endstop_spec}' for lane '{self.name}'. "\
+                           f"Declare it in [AFC_stepper {self.name}] using 'homing_endstop_pins: "\
+                           f"{endstop_spec}' or use ENDSTOP=load/hub/tool/buffer"
+            raise error(raise_string)
         return (mcu_endstop, name)
 
     def _init_endstops(self):
@@ -611,7 +615,8 @@ class AFCExtruderStepper(AFCLane):
             endstop = self._resolve_endstop_pin(endstop_spec)
         except Exception as e_resolve:
             self._info(f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve}); using software homing.")
-            raise self.gcode.error(f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve})")
+            raise_string = f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve})"
+            raise self.gcode.error(raise_string)
 
         # Try MCU-based homing first
         # Start/stop assist exactly with homing lifetime
@@ -722,12 +727,12 @@ class AFCExtruderStepper(AFCLane):
         ----
         ENABLE - Use the ENABLE parameter to enable/disable the stepper.<br>
         SPEED - If SPEED is specified then the given value will be used instead of the default specified in the config file.<br>
-        ACCEL - If SPEED is specified then the given value will be used instead of the default specified in the config file.<br>
+        ACCEL - If ACCEL is specified then the given value will be used instead of the default specified in the config file.<br>
         STOP_ON_ENDSTOP - If STOP_ON_ENDSTOP=1 is specified then the move will end early should the endstop report as
         triggered (use STOP_ON_ENDSTOP=2 to complete the move without error even if the endstop does not trigger,
         use -1 or -2 to stop when the endstop reports not triggered).<br>
         DIST - Distance to move stepper<br>
-        ENDSTOP - Endstop to try and home to, default names to use are: load, hub, tool_start, buffer_adv, buffer_trailing<br>
+        ENDSTOP - Endstop to try and home to, default names to use are: load, hub, tool_start, buffer_advance, buffer_trailing<br>
         SYNC - Only valid when not using STOP_ON_ENDSTOP, setting sync 0 will allow the stepper
         to be moved in paralled with other stepper movement.
 
