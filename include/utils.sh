@@ -147,6 +147,8 @@ restart_service() {
 restart_klipper() {
   if query_printer_status; then
     restart_service klipper
+  else
+    print_msg WARNING "We could not determine the state of your printer. Please manually restart the klipper service to apply changes."
   fi
 }
 
