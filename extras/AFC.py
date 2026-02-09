@@ -8,9 +8,8 @@ import json
 import re
 import traceback
 from configfile import error
-from typing import Any
 
-from typing import Dict, TYPE_CHECKING, Union
+from typing import Dict, TYPE_CHECKING, Union, Any
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
@@ -22,7 +21,10 @@ if TYPE_CHECKING:
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
-try: from extras.AFC_lane import AFCLaneState, SpeedMode, AssistActive, AFCHomingPoints
+try: from extras.AFC_lane import (
+    AFCLaneState, SpeedMode, AssistActive,
+    AFCHomingPoints, MoveDirection
+)
 except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
 
 try: from extras.AFC_logger import AFC_logger
@@ -296,7 +298,7 @@ class afc:
         # Function needed for virtual pins, does nothing
         return
 
-    def register_lane_macros(self, lane_obj):
+    def register_lane_macros(self, lane_obj: AFCLane):
         """
         Callback function to register macros with proper lane names so that klipper errors out correctly when users supply lanes that
         are not valid
@@ -305,8 +307,9 @@ class afc:
         """
         self.gcode.register_mux_command('LANE_MOVE',    "LANE", lane_obj.name, self.cmd_LANE_MOVE,      desc=self.cmd_LANE_MOVE_help)
         self.gcode.register_mux_command('LANE_UNLOAD',  "LANE", lane_obj.name, self.cmd_LANE_UNLOAD,    desc=self.cmd_LANE_UNLOAD_help)
-        self.gcode.register_mux_command('HUB_LOAD',     "LANE", lane_obj.name, self.cmd_HUB_LOAD,       desc=self.cmd_HUB_LOAD_help)
         self.gcode.register_mux_command('TOOL_LOAD',    "LANE", lane_obj.name, self.cmd_TOOL_LOAD,      desc=self.cmd_TOOL_LOAD_help)
+        if lane_obj.unit_obj.type != "ViViD":
+            self.gcode.register_mux_command('HUB_LOAD',     "LANE", lane_obj.name, self.cmd_HUB_LOAD,       desc=self.cmd_HUB_LOAD_help)
 
     def handle_moonraker_connect(self):
         """
@@ -986,7 +989,7 @@ class afc:
         HUB_LOAD LANE=lane1
         ```
         """
-
+        # TODO: Add a check to make sure hub is not already loaded
         if self.function.is_printing():
             self.error.AFC_error("Cannot load lane to hub while printer is printing", pause=False)
             return
@@ -1003,22 +1006,25 @@ class afc:
             while not cur_lane.load_state:
                 # TODO: add timout routine here
                 cur_lane.move_to(cur_hub.move_dis, SpeedMode.SHORT,
-                                 endstop=AFCHomingPoints.LOAD,
+                                 endstop=cur_lane.load_es,
                                  assist_active=AssistActive.DYNAMIC,
                                  use_homing=self.homing_enabled)
+                
         if not cur_lane.loaded_to_hub:
             dist_to_hub = cur_lane.dist_hub
             if self.homing_enabled:
                 dist_to_hub = cur_lane.dist_hub + cur_hub.move_dis
-            cur_lane.move_to(dist_to_hub, SpeedMode.HUB, assist_active=AssistActive.DYNAMIC,
-                             endstop=AFCHomingPoints.HUB, use_homing=self.homing_enabled)
+            cur_lane.unit_obj.move_to_hub(cur_lane, dist_to_hub, MoveDirection.POS,
+                                          self.homing_enabled)
+
         while not cur_hub.state:
             # TODO: add timout routine here
-            cur_lane.move_to(cur_hub.move_dis, SpeedMode.SHORT, assist_active=AssistActive.NO,
-                             endstop=AFCHomingPoints.HUB, use_homing=self.homing_enabled)
-        while cur_hub.state:
-            # TODO: add timout routine here
-            cur_lane.move_advanced(cur_hub.move_dis * -1, SpeedMode.SHORT)
+            cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.move_dis, MoveDirection.POS,
+                                          self.homing_enabled)
+
+        cur_lane.move_to(cur_hub.hub_clear_move_dis*MoveDirection.NEG, SpeedMode.HUB,
+                         assist_active=AssistActive.YES, use_homing=False)
+
         cur_lane.status = AFCLaneState.NONE
         cur_lane.do_enable(False)
         cur_lane.loaded_to_hub = True
@@ -1055,7 +1061,7 @@ class afc:
         cur_lane = self.lanes[lane]
         self.LANE_UNLOAD( cur_lane )
 
-    def LANE_UNLOAD(self, cur_lane):
+    def LANE_UNLOAD(self, cur_lane: AFCLane):
         # TODO: update this to unload from toolhead and move all the way back to load
         # when homing is enabled
         cur_hub = cur_lane.hub_obj
@@ -1068,18 +1074,11 @@ class afc:
             # once user removes filament lanes status will go to None
             cur_lane.status = AFCLaneState.EJECTING
             self.save_vars()
-            if cur_lane.loaded_to_hub:
-                cur_lane.move_to( cur_lane.dist_hub * -1, SpeedMode.HUB,
-                                  endstop=AFCHomingPoints.LOAD,
-                                  assist_active=AssistActive.DYNAMIC,
-                                  use_homing=self.homing_enabled)
+
+            # Calling unit specific eject function
+            cur_lane.unit_obj.eject_lane(cur_lane)
+
             cur_lane.loaded_to_hub = False
-            while cur_lane.load_state:
-                # TODO: add timout routine here
-                cur_lane.move_advanced(cur_hub.move_dis * -1, SpeedMode.SHORT,
-                                       assist_active = AssistActive.YES)
-            cur_lane.move_advanced(cur_lane.extruder_clear_dis * -1, SpeedMode.SHORT)
-            cur_lane.do_enable(False)
             cur_lane.status = AFCLaneState.NONE
             cur_lane.unit_obj.return_to_home()
             # Put CAM back to lane if its loaded to toolhead
@@ -1166,7 +1165,9 @@ class afc:
         cur_hub = cur_lane.hub_obj
 
         # Check if the lane is in a state ready to load and hub is clear.
-        if (cur_lane.load_state and not cur_hub.state) or cur_lane.hub == 'direct':
+        if ((cur_lane.load_state
+             and not cur_hub.state)
+             or cur_lane.hub == 'direct'):
 
             self.logger.info("Loading {}".format(cur_lane.name))
 
@@ -1187,19 +1188,22 @@ class afc:
                 self.afcDeltaTime.log_with_time("Done heating toolhead")
 
             # Move filament to the hub if it's not already loaded there.
-            if not cur_lane.loaded_to_hub or cur_lane.hub == 'direct':
+            if (not cur_lane.loaded_to_hub
+                or cur_lane.hub == 'direct'):
                 dist_to_hub = cur_lane.dist_hub
                 if (self.homing_enabled
                     and cur_lane.hub != 'direct'):
                     dist_to_hub += cur_hub.move_dis
 
-                home_endstop = AFCHomingPoints.HUB
                 if cur_lane.hub == 'direct':
                     home_endstop= cur_lane.get_toolhead_endstop()
-
-                cur_lane.move_to(dist_to_hub, SpeedMode.HUB,
-                                 assist_active=AssistActive.DYNAMIC,
-                                 endstop=home_endstop, use_homing=self.homing_enabled)
+                    cur_lane.move_to(dist_to_hub, SpeedMode.LONG,
+                                     assist_active=AssistActive.DYNAMIC,
+                                     endstop=home_endstop, use_homing=self.homing_enabled)
+                else:      
+                    cur_lane.unit_obj.move_to_hub(cur_lane, dist_to_hub, MoveDirection.POS,
+                                                  self.homing_enabled,
+                                                  speedMode=SpeedMode.LONG)
                 self.afcDeltaTime.log_with_time(
                     f"Loaded to {'hub' if cur_lane.hub != 'direct' else 'toolhead'}"
                 )
@@ -1207,17 +1211,10 @@ class afc:
             cur_lane.loaded_to_hub = True
             hub_attempts = 0
 
-            if cur_lane.hub != 'direct' and not cur_hub.state:
-                cur_lane.move_to(cur_hub.move_dis, SpeedMode.SHORT,
-                                 endstop=AFCHomingPoints.HUB,
-                                 use_homing=self.homing_enabled)
-                hub_attempts += 1
-
             # Ensure filament moves past the hub.
             while not cur_hub.state and cur_lane.hub != 'direct':
-                cur_lane.move_to(cur_hub.move_dis, SpeedMode.SHORT,
-                                 endstop=AFCHomingPoints.HUB,
-                                 use_homing=self.homing_enabled and self.home_to_hub)
+                cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.move_dis,
+                                              MoveDirection.POS, self.homing_enabled)
                 hub_attempts += 1
                 if hub_attempts > 20:
                     message = 'filament did not trigger hub sensor, CHECK FILAMENT PATH\n||=====||==>--||-----||\nTRG   LOAD   HUB   TOOL.'
@@ -1603,14 +1600,13 @@ class afc:
         # Synchronize and move filament out of the hub.
         cur_lane.unsync_to_extruder()
         if cur_lane.hub != 'direct':
-            cur_lane.move_to(cur_hub.afc_unload_bowden_length * -1, SpeedMode.LONG,
-                             assist_active=AssistActive.YES,
-                             endstop=AFCHomingPoints.HUB,
-                             use_homing=self.homing_enabled)
+            cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.afc_unload_bowden_length,
+                                          MoveDirection.NEG, self.homing_enabled,
+                                          speedMode=SpeedMode.LONG)
         else:
             cur_lane.move_to(cur_lane.dist_hub * -1, SpeedMode.LONG,
                              assist_active = AssistActive.DYNAMIC,
-                             endstop=AFCHomingPoints.LOAD,
+                             endstop=cur_lane.load_es,
                              use_homing=self.homing_enabled)
 
         self.afcDeltaTime.log_with_time("Long retract done")
@@ -1628,10 +1624,9 @@ class afc:
             if self.homing_enabled:
                 max_attempts = 2
                 move_dist = cur_hub.afc_unload_bowden_length
-            cur_lane.move_to(move_dist * -1, SpeedMode.SHORT,
-                             assist_active=AssistActive.YES,
-                             endstop=AFCHomingPoints.HUB,
-                             use_homing=self.homing_enabled)
+            cur_lane.unit_obj.move_to_hub(cur_lane, move_dist,
+                                          MoveDirection.NEG, self.homing_enabled)
+
             num_tries += 1
             if num_tries >= max_attempts:
                 # Handle failure if the filament doesn't clear the hub.

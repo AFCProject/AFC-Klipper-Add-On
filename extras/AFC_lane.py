@@ -30,6 +30,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.for
 if TYPE_CHECKING:
     from extras.AFC_hub import afc_hub
 
+EXCLUDE_TYPES = ["HTLF", "ViViD"]
 # Class for holding different states so its clear what all valid states are
 
 class AssistActive(Enum):
@@ -44,6 +45,10 @@ class SpeedMode(Enum):
     NIGHT = 4
     CALIBRATION = 5
 
+class MoveDirection(float):
+    POS = 1.
+    NEG = -1.
+
 class AFCLaneState:
     NONE             = "None"
     ERROR            = "Error"
@@ -56,7 +61,7 @@ class AFCLaneState:
     EJECTING         = "Ejecting"
     CALIBRATING      = "Calibrating"
 
-class AFCHomingPoints:
+class AFCHomingPoints(str):
     NONE        = None
     HUB         = "hub"
     LOAD        = "load"
@@ -158,6 +163,7 @@ class AFCLane:
         self.assisted_unload    = config.getboolean("assisted_unload", None) # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.td1_when_loaded    = config.getboolean("capture_td1_when_loaded", None)
         self.td1_device_id      = config.get("td1_device_id", None)
+        self.calibrated_lane    = config.get("calibrated_lane", False)
 
         self.post_prep_macro    = config.get("post_prep_macro", None)  # Macro to call after loading filament during prep callback
 
@@ -174,10 +180,12 @@ class AFCLane:
             buttons.register_buttons([self.prep], self.prep_callback)
 
         self.load = config.get('load', None)                                    # MCU pin load trigger
-        self.load_state = False
+        self._load_state = False
         if self.load is not None:
             buttons.register_buttons([self.load], self.load_callback)
-        else: self.load_state = True
+        else: self._load_state = True
+
+        self.selector = config.get("selector", None)
 
         self.espooler = AFC_assist.Espooler(self.name, config)
         self.lane_load_count = None
@@ -194,9 +202,13 @@ class AFCLane:
         self.past_extruder_position = -1
         self.save_counter       = -1
 
+        query_endstops = self.printer.load_object( config, "query_endstops")
+        ppins          = self.printer.lookup_object('pins')
         # Defaulting to false so that extruder motors to not move until PREP has been called
         self._afc_prep_done = False
 
+        self.prep_endstop_name = None
+        self.prep_endstop = None
         if self.prep is not None:
             show_sensor = True
             if not self.enable_sensors_in_gui or (self.sensor_to_show is not None and 'prep' not in self.sensor_to_show):
@@ -206,7 +218,18 @@ class AFCLane:
                                                                             debounce_delay=self.debounce_delay )
             self.prep_debounce_button.button_action = self.handle_prep_runout
             self.prep_debounce_button.debounce_delay = 0 # Delay will be set once klipper is ready
+            ppins.allow_multi_use_pin(self.prep.strip("!^"))
+            ppins.parse_pin(self.prep, True, True)
+            self.prep_endstop = ppins.setup_pin('endstop', self.prep)
+            self.prep_endstop_name = f"{self.name}_prep"
+            try:
+                query_endstops.register_endstop(self.prep_endstop,
+                                                self.prep_endstop_name)
+            except Exception as e:
+                raise error(f"{e} Error prep haasdfklajsfdskl")
 
+        self.load_endstop_name = None
+        self.load_endstop = None
         if self.load is not None:
             show_sensor = True
             if not self.enable_sensors_in_gui or (self.sensor_to_show is not None and 'load' not in self.sensor_to_show):
@@ -216,6 +239,35 @@ class AFCLane:
                                                                             debounce_delay=self.debounce_delay )
             self.load_debounce_button.button_action = self.handle_load_runout
             self.load_debounce_button.debounce_delay = 0 # Delay will be set once klipper is ready
+            ppins.allow_multi_use_pin(self.load.strip("!^"))
+            ppins.parse_pin(self.load, True, True)
+            self.load_endstop = ppins.setup_pin('endstop', self.load)
+            self.load_endstop_name = f"{self.name}_load"
+            try:
+                query_endstops.register_endstop(self.load_endstop,
+                                                self.load_endstop_name)
+            except Exception as e:
+                raise error(f"{e} Error load haasdfklajsfdskl")
+            
+        self.selector_endstop_name = None
+        self.selector_endstop = None
+        if self.selector is not None:
+            show_sensor = True
+            if not self.enable_sensors_in_gui or (self.sensor_to_show is not None and 'selector' not in self.sensor_to_show):
+                show_sensor = False
+            self.fila_selector = add_filament_switch(f"{self.name}_selector", self.selector,
+                                                     self.printer, show_sensor)
+            
+            ppins.allow_multi_use_pin(self.selector.strip("!^"))
+            ppins.parse_pin(self.selector, True, True)
+            self.selector_endstop = ppins.setup_pin('endstop', self.selector)
+            self.selector_endstop_name = f"{self.name}_selector"
+            try:
+                query_endstops.register_endstop(self.selector_endstop,
+                                                self.selector_endstop_name)
+            except Exception:
+                raise error("Error selector haasdfklajsfdskl")
+
 
         self.connect_done = False
         self.prep_active = False
@@ -226,6 +278,7 @@ class AFCLane:
         self.function.register_mux_command(self.show_macros, 'SET_LANE_LOADED', 'LANE', self.name,
                                            self.cmd_SET_LANE_LOADED, self.cmd_SET_LANE_LOADED_help,
                                            self.cmd_SET_LANE_LOAD_options )
+        self._get_steppers(config)
 
     def __str__(self):
         return self.name
@@ -236,6 +289,13 @@ class AFCLane:
         Returns lanes filament material type
         """
         return self._material
+    
+    @property
+    def load_es(self) -> str:
+        if self.load_endstop_name:
+            return self.load_endstop_name
+        else:
+            return AFCHomingPoints.LOAD
 
     @material.setter
     def material(self, value):
@@ -280,7 +340,9 @@ class AFCLane:
         enough time to start before AFC tries to connect. This fixes a race condition that can
         happen between klipper and moonraker when first starting up.
         """
-        if self.unit_obj.type != "HTLF" or (self.unit_obj.type == "HTLF" and "AFC_lane" in self.fullname):
+        
+        if (self.unit_obj.type not in EXCLUDE_TYPES
+            or (self.unit_obj.type in EXCLUDE_TYPES and "AFC_lane" in self.fullname)):
             values = self.afc.moonraker.get_afc_stats()
             self.lane_load_count = AFCStats_var(self.name, "load_count", values, self.afc.moonraker)
             self.espooler.handle_moonraker_connect()
@@ -303,7 +365,8 @@ class AFCLane:
 
         # Register all lanes if their type is not HTLF or only register lanes that are HTLF and have AFC_lane
         # in the name so that HTLF stepper names do not get added since they are not a lane for this unit type
-        if self.unit_obj.type != "HTLF" or (self.unit_obj.type == "HTLF" and "AFC_lane" in self.fullname):
+        if (self.unit_obj.type not in EXCLUDE_TYPES
+            or (self.unit_obj.type in EXCLUDE_TYPES and "AFC_lane" in self.fullname)):
             add_to_other_obj = True
             # Registering lane name in unit
             self.unit_obj.lanes[self.name] = self
@@ -320,25 +383,28 @@ class AFCLane:
                     error_string = 'Error: No config found for hub: {hub} in [AFC_stepper {stepper}]. Please make sure [AFC_hub {hub}] section exists in your config'.format(
                     hub=self.hub, stepper=self.name )
                     raise error(error_string)
-            elif self.hub_obj is None:
-                # Check to make sure at least 1 hub exists in config, if not error out with message
-                if len(self.afc.hubs) == 0:
-                    error_string = "Error: AFC_hub not found in configuration please make sure there is a [AFC_hub <hub_name>] defined in your configuration"
-                    raise error(error_string)
-                # Setting hub to first hub in AFC hubs dictionary
-                if len(self.afc.hubs) > 0:
-                    self.hub_obj = next(iter(self.afc.hubs.values()))
-                # Set flag to warn during prep that multiple hubs were found
-                if len(self.afc.hubs) > 1:
-                    self.multi_hubs_found = True
+            # elif self.hub_obj is None:
+            #     # Check to make sure at least 1 hub exists in config, if not error out with message
+            #     if len(self.afc.hubs) == 0:
+            #         error_string = "Error: AFC_hub not found in configuration please make sure there is a [AFC_hub <hub_name>] defined in your configuration"
+            #         raise error(error_string)
+            #     # Setting hub to first hub in AFC hubs dictionary
+            #     if len(self.afc.hubs) > 0:
+            #         self.hub_obj = next(iter(self.afc.hubs.values()))
+            #     # Set flag to warn during prep that multiple hubs were found
+            #     if len(self.afc.hubs) > 1:
+            #         self.multi_hubs_found = True
 
             # Assigning hub name just in case stepper is using hub defined in units config
-            self.hub = self.hub_obj.name
-            if add_to_other_obj:
-                self.hub_obj.lanes[self.name] = self
+            if self.hub_obj:
+                self.hub = self.hub_obj.name
+                if add_to_other_obj:
+                    self.hub_obj.lanes[self.name] = self
         else:
             self.hub_obj = lambda: None
             self.hub_obj.state = False
+            self.hub_obj.move_dis = 75
+            self.hub_obj.hub_clear_move_dis = 65
 
         self.extruder_obj = self.unit_obj.extruder_obj
         if self.extruder_name is not None:
@@ -383,7 +449,7 @@ class AFCLane:
             # Assigning buffer name just in case stepper is using buffer defined in units/extruder config
             self.buffer_name = self.buffer_obj.name
 
-        self.get_steppers()
+        # self.get_steppers()
 
         if self.led_fault           is None: self.led_fault         = self.unit_obj.led_fault
         if self.led_ready           is None: self.led_ready         = self.unit_obj.led_ready
@@ -432,13 +498,42 @@ class AFCLane:
 
         self.connect_done = True
 
-    def get_steppers(self):
+    def _get_steppers(self, config):
         """
         Helper function to get steppers for lane
         """
-        if self.unit_obj.type == "HTLF" and "AFC_lane" in self.fullname:
+        if config.get("step_pin", None) is None:
+            try:
+                unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s)
+                self.logger.info(f"{unit_cfg.get_name()} drive stepper {self.name}")
+                self.unit_obj = self.printer.load_object(config, unit_cfg.get_name())
+                self.drive_stepper = self.unit_obj.drive_stepper_obj
+                self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+                self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
+                self.prep_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+                self.drive_stepper._endstops[self.prep_endstop_name] = (self.prep_endstop, self.prep_endstop_name)
+            except:
+                self.logger.info(f"Couldnt find unit for {self.name}")
+                return
+        else:
+            self.logger.info(f"Has extruder stepper {self.name}")
+            return
+
+        if (self.unit_obj.type in EXCLUDE_TYPES
+            and "AFC_lane" in self.fullname):
             self.drive_stepper      = self.unit_obj.drive_stepper_obj
             self.extruder_stepper   = self.drive_stepper.extruder_stepper
+            if (self.selector
+                and hasattr(self.unit_obj,"selector_stepper_obj")):
+                selector_stepper = self.unit_obj.selector_stepper_obj
+                self.logger.info(f"Before {len(self.selector_endstop._dispatch._trsyncs)}")
+                self.selector_endstop.add_stepper(selector_stepper.extruder_stepper.stepper)
+                self.logger.info(f"After {len(self.selector_endstop._dispatch._trsyncs)}")
+                selector_stepper._endstops[self.selector_endstop_name] = (self.selector_endstop, self.selector_endstop_name)
+            # if self.unit_obj.type == "ViViD":
+            #     self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+            #     self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
+
 
     def get_color(self):
         """
@@ -569,7 +664,7 @@ class AFCLane:
                 new_distance = distance + self.homing_overshoot
                 if distance < 0:
                     new_distance = distance - self.homing_overshoot
-
+                self.unit_obj.select_lane(self)
                 return home_to(endstop, new_distance, speed_mode,
                         distance > 0, assist_active=self.get_active_assist(distance, assist_active))
             else:
@@ -677,9 +772,16 @@ class AFCLane:
             else:
                 self.logger.info(f"Cannot get TD-1 data for {self.name}, either toolhead is loaded or hub shows filament in path")
 
+    @property
+    def load_state(self) -> bool:
+        if self.unit_obj.type == "ViViD":
+            return self.loaded_to_hub
+        else:
+            return bool(self._load_state)
+        
 
     def load_callback(self, eventtime, state):
-        self.load_state = state
+        self._load_state = state
         if self.printer.state_message == 'Printer is ready' and self.unit_obj.type == "HTLF":
             self.prep_state = state
 
@@ -738,6 +840,7 @@ class AFCLane:
         delta_time = eventtime - self.last_prep_time
         self.last_prep_time = eventtime
 
+
         if self.prep_active:
             return
 
@@ -766,22 +869,9 @@ class AFCLane:
                         self.prep_active = False
                         return
 
-                    if self.afc.homing_enabled:
-                        self.move_to(10*40, SpeedMode.SHORT,
-                                     assist_active=AssistActive.NO,
-                                     endstop=AFCHomingPoints.LOAD,
-                                     use_homing=True)
+                    # Calling common load function
+                    self.unit_obj.prep_load(self)
 
-                    while not self.load_state and self.prep_state and self.load is not None:
-                        x += 1
-                        self.move(10,500,400)
-                        self.reactor.pause(self.reactor.monotonic() + 0.1)
-                        if x> 40:
-                            msg = ' FAILED TO LOAD, CHECK FILAMENT AT TRIGGER\n||==>--||----||------||\nTRG   LOAD   HUB    TOOL'
-                            self.afc.error.AFC_error(msg, False)
-                            self.afc.function.afc_led(self.afc.led_fault, self.led_index)
-                            self.status = AFCLaneState.NONE
-                            break
                     self.status = AFCLaneState.NONE
 
                     # Verify that load state is still true as this would still trigger if prep sensor was triggered and then filament was removed
@@ -791,14 +881,12 @@ class AFCLane:
                         self.afc.TOOL_LOAD(self)
                         self.material = self.afc.default_material_type
                         break
-
-                    # Checking if loaded to hub(it should not be since filament was just inserted), if false load to hub. Does a fast load if hub distance is over 200mm
-                    if self.load_to_hub and not self.loaded_to_hub and self.load_state and self.prep_state:
-                        self.move(self.dist_hub, self.dist_hub_move_speed, self.dist_hub_move_accel, self.dist_hub > 200)
-                        self.loaded_to_hub = True
+                    
+                    self.unit_obj.prep_post_load(self)
 
                     self.do_enable(False)
-                    if self.load_state == True and self.prep_state == True:
+                    if (self.load_state
+                        and self.prep_state):
                         self.status = AFCLaneState.LOADED
                         self.unit_obj.lane_loaded(self)
                         self.afc.spool._set_values(self)
@@ -1263,11 +1351,8 @@ class AFCLane:
                 move_dis = self.dist_hub
                 if self.afc.homing_enabled:
                     move_dis += self.hub_obj.move_dis
-                self.move_to(distance=move_dis,
-                             speed_mode=SpeedMode.LONG,
-                             endstop=AFCHomingPoints.HUB,
-                             assist_active=AssistActive.YES,
-                             use_homing=self.afc.homing_enabled)
+                self.unit_obj.move_to_hub(self, move_dis, MoveDirection.POS,
+                                          self.afc.homing_enabled)
                 self.loaded_to_hub = True
 
             while not self.hub_obj.state:
@@ -1294,11 +1379,10 @@ class AFCLane:
                 self.afc.error.AFC_error(msg, pause=False)
                 status = False
 
-            self.move_to(distance=self.hub_obj.td1_bowden_length * -1,
-                         speed_mode=SpeedMode.LONG,
-                         endstop=AFCHomingPoints.HUB,
-                         assist_active=AssistActive.YES,
-                         use_homing=self.afc.homing_enabled)
+            self.unit_obj.move_to_hub(self, self.hub_obj.td1_bowden_length,
+                                      MoveDirection.NEG,
+                                      self.afc.homing_enabled,
+                                      speedMode=SpeedMode.LONG)
             if success:
                 self.send_lane_data()
 
@@ -1566,7 +1650,7 @@ class AFCLane:
         response['buffer_status'] = self.buffer_status()
         response['lane'] = self.index
         response['map'] = self.map
-        response['load'] = bool(self.load_state)
+        response['load'] = self.load_state
         response["prep"] =bool(self.prep_state)
         response["tool_loaded"] = self.tool_loaded
         response["loaded_to_hub"] = self.loaded_to_hub
@@ -1594,6 +1678,9 @@ class AFCLane:
             response['td1_td']          = self.td1_data['td'] if "td" in self.td1_data else ''
             response['td1_color']       = self.td1_data['color'] if "color" in self.td1_data else ''
             response['td1_scan_time']   = self.td1_data['scan_time'] if "scan_time" in self.td1_data else ''
+        
+        if hasattr(self, "_endstops"):
+            response["endstops"] = ",".join(self._endstops.keys())
         
         return response
 

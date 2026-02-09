@@ -99,6 +99,13 @@ def check_and_return( value_str:str, data_values:dict ) -> str:
 
     return value
 
+def section_in_config(config, name):
+    in_cfg = False
+    for s in config.fileconfig.sections():
+        if name in s:
+            in_cfg = True
+    return in_cfg
+
 # Copied from klipper for kalico and older klipper support
 class DebounceButton:
     def __init__(self, config, filament_sensor):

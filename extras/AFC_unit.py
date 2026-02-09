@@ -3,16 +3,31 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
 import traceback
 
-from configfile import error
+from configfile import error as config_error
 from datetime import datetime, timedelta
 
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC_lane import (
+        AFCLane, AssistActive,
+        AFCHomingPoints, AFCLaneState, MoveDirection
+    )
+
 try: from extras.AFC_utils import ERROR_STR
-except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
+except: raise config_error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
 try: from extras.AFC_respond import AFCprompt
-except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
+except: raise config_error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
+
+try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints
+except:
+    err_str = ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc())
+    raise config_error(err_str)
 
 class afcUnit:
     def __init__(self, config):
@@ -21,6 +36,8 @@ class afcUnit:
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.afc            = self.printer.load_object(config, 'AFC')
+        self.reactor        = self.printer.get_reactor()
+        self.function       = self.afc.function
         self.logger         = self.afc.logger
 
         self.lanes      = {}
@@ -97,6 +114,14 @@ class afcUnit:
     def __str__(self):
         return self.name
 
+    def _check_and_errorout(self, check_obj: Any, config_name: str, variable_name:str):
+        error_string = f"Error: [{config_name}] config not found for {variable_name} in "\
+                       f"{self.full_name} config section. Please make sure [{config_name}] " \
+                       "section exists in your config.\n"
+        if check_obj is None:
+            return True, error_string
+        return False, ""
+
     def handle_connect(self):
         """
         Handles klippy:connect event, and does error checking to make sure users have hub/extruder/buffers sections if these variables are defined at the unit level
@@ -134,6 +159,7 @@ class afcUnit:
 
         # Send out event so lanes can store units object
         self.printer.send_event("AFC_unit_{}:connect".format(self.name), self)
+        self.logger.info("Calling AFC_unit_{}:connect".format(self.name))
 
         self.gcode.register_mux_command('UNIT_CALIBRATION', "UNIT", self.name, self.cmd_UNIT_CALIBRATION, desc=self.cmd_UNIT_CALIBRATION_help)
         self.gcode.register_mux_command('UNIT_LANE_CALIBRATION', "UNIT", self.name, self.cmd_UNIT_LANE_CALIBRATION, desc=self.cmd_UNIT_LANE_CALIBRATION_help)
@@ -408,7 +434,6 @@ class afcUnit:
         Function to select lane
         """
         return
-
     def return_to_home(self ):
         """
         Function to home unit if unit has homing sensor
@@ -499,4 +524,29 @@ class afcUnit:
                 self.logger.info(f"{cur_lane.name} TD-1 data captured")
                 self.afc.save_vars()
                 return True
-        return False
+
+    def prep_load(self, lane: AFCLane):
+        return
+    
+    def prep_post_load(self, lane: AFCLane):
+        return
+    
+    def eject_lane(self, lane: AFCLane):
+        return
+    
+    def move_to_hub(self, lane: AFCLane, dist: float,
+                    dir:MoveDirection, use_homing=True,
+                    speedMode=SpeedMode.HUB,
+                    assist_active=AssistActive.DYNAMIC) -> bool:
+        homed, distance = lane.move_to(dist * dir, speedMode,
+                                       assist_active=assist_active,
+                                       endstop=AFCHomingPoints.HUB,
+                                       use_homing=use_homing)
+        return homed, distance
+    
+    def move_to_load(self, lane: AFCLane, dist: float,
+                     dir: MoveDirection, use_homing=True) -> bool:
+        homed, _ = lane.move_to(dist * dir, SpeedMode.LONG,
+                                endstop=lane.load_es,
+                                active_assist=AssistActive.DYNAMIC,
+                                use_homing=use_homing)

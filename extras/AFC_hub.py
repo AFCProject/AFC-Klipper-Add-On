@@ -25,7 +25,7 @@ class afc_hub:
 
         self.unit = None
         self.lanes = {}
-        self.state = False
+        self._state = False
 
         # HUB Cut variables
         # Next two variables are used in AFC
@@ -54,12 +54,12 @@ class afc_hub:
         self.debounce_delay         = config.getfloat("debounce_delay",             self.afc.debounce_delay)
         self.enable_runout          = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
 
-        buttons = self.printer.load_object(config, "buttons")
-        self.fila, self.debounce_button = add_filament_switch( f"{self.name}_Hub", self.switch_pin, self.printer,
-                                                                self.enable_sensors_in_gui, self.handle_runout, self.enable_runout,
-                                                                self.debounce_delay)
-        self.state = False
-        buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
+        if self.switch_pin.lower() != "virtual":
+            buttons = self.printer.load_object(config, "buttons")
+            self.fila, self.debounce_button = add_filament_switch( f"{self.name}_Hub", self.switch_pin, self.printer,
+                                                                    self.enable_sensors_in_gui, self.handle_runout, self.enable_runout,
+                                                                    self.debounce_delay)
+            buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
 
         # Adding self to AFC hubs
         self.afc.hubs[self.name]=self
@@ -95,9 +95,16 @@ class afc_hub:
         self.reactor = self.afc.reactor
 
         self.printer.send_event("afc_hub:register_macros", self)
+    
+    @property
+    def state(self):
+        state = self._state
+        if self.switch_pin.lower() == "virtual":
+            state = any(lane._load_state for lane in self.lanes.values())
+        return state
 
     def switch_pin_callback(self, eventtime, state):
-        self.state = state
+        self._state = state
 
     def hub_cut(self, cur_lane):
         servo_string = 'SET_SERVO SERVO={servo} ANGLE={{angle}}'.format(servo=self.cut_servo_name)

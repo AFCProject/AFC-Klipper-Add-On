@@ -585,6 +585,9 @@ class Espooler:
 
         :param movement: Amount in mm to move spool
         """
+        if self.afc_motor_rwd is None:
+            return
+
         print_time = time = 0.0
         if self.lane_obj.weight < self.enable_assist_weight:
             time = self.afc.toolhead.get_last_move_time()

@@ -28,8 +28,8 @@ except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".f
 try: from extras.AFC_respond import AFCprompt
 except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints
-except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
+try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints, MoveDirection
+except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -1309,11 +1309,9 @@ class afcFunction:
         fail_state_msg = "'{}' failed to reset to hub, {} switch became false during reset"
 
         if long_dis is not None:
-            cur_lane.move_to(distance=float(long_dis) *-1,
-                             speed_mode=SpeedMode.SHORT,
-                             endstop=AFCHomingPoints.HUB,
-                             assist_active=AssistActive.YES,
-                             use_homing=self.afc.homing_enabled)
+            cur_lane.unit_obj.move_to_hub(cur_lane, float(long_dis),
+                                          MoveDirection.NEG, self.afc.homing_enabled,
+                                          AssistActive.YES)
 
         while CUR_HUB.state:
             cur_lane.move(short_move * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)

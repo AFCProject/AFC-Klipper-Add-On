@@ -3,15 +3,24 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
 import traceback
 
 from configparser import Error as error
 from datetime import datetime
 
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC_lane import AFCLane, MoveDirection
+
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import AFCLaneState, SpeedMode, AFCHomingPoints, AssistActive
+try: from extras.AFC_lane import (
+    AFCLaneState, SpeedMode, AFCHomingPoints, AssistActive, MoveDirection
+)
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 try: from extras.AFC_unit import afcUnit
@@ -130,10 +139,10 @@ class afcBoxTurtle(afcUnit):
                                                                  0, cur_lane.dist_hub + 200,
                                                                  "Moving to hub")
         else:
-            success, hub_pos = cur_lane.move_to(distance=cur_lane.dist_hub+200,
-                                                speed_mode=SpeedMode.CALIBRATION,
-                                                endstop=AFCHomingPoints.HUB,
-                                                use_homing=self.afc.homing_enabled)
+            success, hub_pos = cur_lane.unit_obj.move_to_hub(cur_lane,
+                                                             cur_lane.dist_hub+200,
+                                                             MoveDirection.POS,
+                                                             self.afc.homing_enabled)
 
         if not success:
             # if movement does not succeed fault and return values to calibration macro
@@ -172,9 +181,10 @@ class afcBoxTurtle(afcUnit):
                 msg = 'Failed {} after {}mm'.format(checkpoint, bow_pos)
                 return False, msg, bow_pos
 
-            success, _ = cur_lane.move_to(bow_pos * -1, speed_mode=SpeedMode.LONG,
-                             endstop=AFCHomingPoints.HUB, assist_active=AssistActive.YES,
-                             use_homing=self.afc.homing_enabled)
+            success, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
+                                                       MoveDirection.NEG,
+                                                       self.afc.homing_enabled,
+                                                       speedMode=SpeedMode.LONG)
             if not success:
                 return False, "Failed to home filament back to hub", 0
 
@@ -272,9 +282,10 @@ class afcBoxTurtle(afcUnit):
             cur_lane.move(dis, self.short_moves_speed, self.short_moves_accel)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
 
-        cur_lane.move_to(distance=bow_pos*-1, speed_mode=SpeedMode.LONG,
-                         endstop=AFCHomingPoints.HUB, assist_active=AssistActive.YES,
-                         use_homing=self.afc.homing_enabled)
+        cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
+                                      MoveDirection.NEG,
+                                      self.afc.homing_enabled,
+                                      speedMode=SpeedMode.LONG)
 
         # Reset to hub
         if not self.afc.homing_enabled:
@@ -406,7 +417,7 @@ class afcBoxTurtle(afcUnit):
             checkpoint = "retract to extruder"
             success, pos = cur_lane.move_to(distance=move_dis*-1,
                                             speed_mode=SpeedMode.CALIBRATION,
-                                            endstop=AFCHomingPoints.LOAD,
+                                            endstop=cur_lane.load_es,
                                             assist_active=AssistActive.YES)
         else:
             pos, checkpoint, success = self.calc_position(cur_lane,
@@ -431,10 +442,9 @@ class afcBoxTurtle(afcUnit):
 
         else:
             if self.afc.homing_enabled:
-                success, hub_pos = cur_lane.move_to(distance=move_dis,
-                                            speed_mode=SpeedMode.CALIBRATION,
-                                            endstop=AFCHomingPoints.HUB,
-                                            assist_active=AssistActive.NO)
+                success, hub_pos = cur_lane.unit_obj.move_to_hub(cur_lane, move_dis,
+                                                                 MoveDirection.POS,
+                                                                 assist_active=AssistActive.NO)
                 message = f'Failed hub calibration {cur_lane.name} after {round(hub_pos, 2)}mm'
             else:
                 success, message, hub_pos = self.calibrate_hub(cur_lane, tol)
@@ -456,6 +466,48 @@ class afcBoxTurtle(afcUnit):
             cur_lane.status = AFCLaneState.NONE
             cur_lane.unit_obj.return_to_home()
             return True, cal_msg, cal_dist
+
+    def prep_load(self, lane: AFCLane):
+        if self.afc.homing_enabled:
+            lane.move_to(10*40, SpeedMode.SHORT,
+                            assist_active=AssistActive.NO,
+                            endstop=lane.load_es,
+                            use_homing=True)
+        x = 0
+        while not lane.load_state and lane.prep_state and lane.load is not None:
+            x += 1
+            lane.move(10,500,400)
+            self.reactor.pause(self.reactor.monotonic() + 0.1)
+            if x> 40:
+                msg = ' FAILED TO LOAD, CHECK FILAMENT AT TRIGGER\n||==>--||----||------||\nTRG   LOAD   HUB    TOOL'
+                self.afc.error.AFC_error(msg, False)
+                self.afc.function.afc_led(self.afc.led_fault, lane.led_index)
+                lane.status = AFCLaneState.NONE
+                break
+        return False
+
+    def prep_post_load(self, lane: AFCLane):
+        # Checking if loaded to hub(it should not be since filament was just inserted), if false load to hub. Does a fast load if hub distance is over 200mm
+        if (lane.load_to_hub
+            and not lane.loaded_to_hub
+            and lane.load_state
+            and lane.prep_state):
+            lane.move(lane.dist_hub, lane.dist_hub_move_speed, lane.dist_hub_move_accel, lane.dist_hub > 200)
+            lane.loaded_to_hub = True
+    
+    def eject_lane(self, lane: AFCLane):
+        if lane.loaded_to_hub:
+            lane.move_to( lane.dist_hub * -1, SpeedMode.HUB,
+                                endstop=lane.load_es,
+                                assist_active=AssistActive.DYNAMIC,
+                                use_homing=self.afc.homing_enabled)
+        while lane.load_state:
+            # TODO: add timout routine here
+            lane.move_advanced(lane.move_dis * -1, SpeedMode.SHORT,
+                                    assist_active = AssistActive.YES)
+        lane.move_advanced(lane.extruder_clear_dis * -1, SpeedMode.SHORT)
+        lane.do_enable(False)
+        return
 
 def load_config_prefix(config):
     return afcBoxTurtle(config)
