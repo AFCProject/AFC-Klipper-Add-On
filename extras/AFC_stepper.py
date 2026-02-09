@@ -468,7 +468,8 @@ class AFCExtruderStepper(AFCLane):
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
 
-        self._add_endstop('hub', hub_pin, 'hub')
+        if hub_pin.lower() != "virtual":
+            self._add_endstop('hub', hub_pin, 'hub')
         if tool_start_pin != 'buffer':
             self._add_endstop('tool_start', tool_start_pin, 'tool_start')
         else:
@@ -509,7 +510,7 @@ class AFCExtruderStepper(AFCLane):
                         self.logger.debug(f"Inherited '{target_key}'='{value}' from section '{sec}' for unit '{unit}' {self.name}")
                     return value
         except Exception as e:
-            self.logger.debug(f"_inherit_from_unit({target_key}) failed: {e}", exc_info=True)
+            self.logger.debug(f"_inherit_from_unit({target_key}) failed: {e}")
 
         return None
 
@@ -533,7 +534,7 @@ class AFCExtruderStepper(AFCLane):
             self.logger.debug(f"Missing or invalid section '{section}': {e}")
             return default
 
-    def _add_endstop(self, key: str, pin: str, suffix: str):
+    def _add_endstop(self, key: str, pin: str, suffix: str, fullname:str=None):
         """
         Helper to create/register an endstop and bind it to the drive stepper.
 
@@ -555,7 +556,9 @@ class AFCExtruderStepper(AFCLane):
             return
 
         single_key_aliases = {'hub', 'tool_start', 'tool_end', 'buffer_advance', 'buffer_trailing'}
-        if key in single_key_aliases:
+        if fullname:
+            name = fullname
+        elif key in single_key_aliases:
             name = '{}'.format(suffix)
         else:
             name = '{}_{}'.format(self.name, suffix)
@@ -609,7 +612,6 @@ class AFCExtruderStepper(AFCLane):
         pos = [movepos, 0., 0., 0.]
 
         phoming = self.printer.lookup_object('homing')
-
         # Try to get a real MCU-backed endstop
         try:
             endstop = self._resolve_endstop_pin(endstop_spec)
@@ -774,8 +776,8 @@ class AFCExtruderStepper(AFCLane):
                                 endstop_spec,
                                 triggered = homing_move > 0,
                                 check_trigger = abs(homing_move) == 1)
-        elif gcmd.get_float('MOVE', None) is not None:
-            movepos = gcmd.get_float('MOVE')
+        elif gcmd.get_float('DIST', None) is not None:
+            movepos = gcmd.get_float('DIST')
             sync = gcmd.get_int('SYNC', 1)
             # Implement simple absolute-position move using our pipeline
             delta = movepos - self._manual_axis_pos
