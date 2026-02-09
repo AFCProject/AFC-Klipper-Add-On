@@ -77,6 +77,7 @@ class afcError:
 
         else: #toolhead empty
             if cur_lane.load_state: #Lane has filament
+                # TODO: Update this to use better logic
                 while cur_lane.load_state:  # slowly back filament up to lane extruder
                     cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
                 while not cur_lane.load_state:  # reload lane extruder

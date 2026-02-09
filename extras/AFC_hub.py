@@ -30,12 +30,12 @@ class afc_hub:
         # HUB Cut variables
         # Next two variables are used in AFC
         self.switch_pin             = config.get('switch_pin')                      # Pin hub sensor it connected to
-        self.hub_clear_move_dis     = config.getfloat("hub_clear_move_dis", 25)     # How far to move filament so that it's not block the hub exit
+        self.hub_clear_move_dis     = config.getfloat("hub_clear_move_dis", 65)     # How far to move filament so that it's not block the hub exit
         self.afc_bowden_length      = config.getfloat("afc_bowden_length", 900)     # Length of the Bowden tube from the hub to the toolhead sensor in mm.
         self.td1_bowden_length      = config.getfloat("td1_bowden_length", self.afc_bowden_length-50)     # Length of the Bowden tube from the hub to a TD-1 device in mm.
         self.afc_unload_bowden_length= config.getfloat("afc_unload_bowden_length", self.afc_bowden_length) # Length to unload when retracting back from toolhead to hub in mm. Defaults to afc_bowden_length
         self.assisted_retract       = config.getboolean("assisted_retract", False)  # if True, retracts are assisted to prevent loose windings on the spool
-        self.move_dis               = config.getfloat("move_dis", 50)               # Distance to move the filament within the hub in mm.
+        self.move_dis               = config.getfloat("move_dis", 75)               # Distance to move the filament within the hub in mm.
         # Servo settings
         self.cut                    = config.getboolean("cut", False)               # Set True if Hub cutter installed (e.g. Snappy)
         self.cut_cmd                = config.get('cut_cmd', None)                   # Macro to use for cut.
@@ -55,13 +55,11 @@ class afc_hub:
         self.enable_runout          = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
 
         buttons = self.printer.load_object(config, "buttons")
-        if self.switch_pin is not None:
-            self.state = False
-            buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
-
         self.fila, self.debounce_button = add_filament_switch( f"{self.name}_Hub", self.switch_pin, self.printer,
                                                                 self.enable_sensors_in_gui, self.handle_runout, self.enable_runout,
                                                                 self.debounce_delay)
+        self.state = False
+        buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
 
         # Adding self to AFC hubs
         self.afc.hubs[self.name]=self
