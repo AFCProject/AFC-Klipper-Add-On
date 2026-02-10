@@ -429,7 +429,7 @@ class afcUnit:
         self.afc.function.afc_led(lane.led_ready, lane.led_index)
         return
 
-    def select_lane( self, lane ):
+    def select_lane( self, lane, sel_prep:bool=False ):
         """
         Function to select lane
         """

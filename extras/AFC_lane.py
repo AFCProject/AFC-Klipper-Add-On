@@ -504,7 +504,7 @@ class AFCLane:
         """
         if config.get("step_pin", None) is None:
             try:
-                unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s)
+                unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s and "AFC" in s)
                 self.logger.info(f"{unit_cfg.get_name()} drive stepper {self.name}")
                 self.unit_obj = self.printer.load_object(config, unit_cfg.get_name())
                 self.drive_stepper = self.unit_obj.drive_stepper_obj
@@ -512,8 +512,8 @@ class AFCLane:
                 self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
                 self.prep_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
                 self.drive_stepper._endstops[self.prep_endstop_name] = (self.prep_endstop, self.prep_endstop_name)
-            except:
-                self.logger.info(f"Couldnt find unit for {self.name}")
+            except Exception as e:
+                self.logger.info(f"Couldnt find unit for {self.name} {e}")
                 return
         else:
             self.logger.info(f"Has extruder stepper {self.name}")
