@@ -102,15 +102,16 @@ class AFC_vivid(afcBoxTurtle):
             state = fila_selector_status["filament_detected"]
         return state
 
-    def select_lane( self, lane: AFCLane ):
+    def select_lane( self, lane: AFCLane, sel_prep:bool=False ):
         if lane.selector_endstop:
+            sel_dir = -1 if sel_prep else 1
             if self._get_lane_selector_state(lane):
                 self.logger.debug(f"{lane.name} already selected")
                 return True, 0.0
             else:
                 self.logger.debug(f"ViViD: Homing to {lane.name}")
                 homed, distance= self.selector_stepper_obj.do_homing_move(
-                    movepos=800,
+                    movepos=800 * sel_dir,
                     speed=self.selector_homing_speed,
                     accel=self.selector_homing_accel,
                     endstop_spec=lane.selector_endstop_name,
@@ -123,7 +124,7 @@ class AFC_vivid(afcBoxTurtle):
 
     def prep_load(self, lane: AFCLane):
         self.lane_loading(lane)
-        self.select_lane(lane)
+        self.select_lane(lane, sel_prep=True)
         if not lane.calibrated_lane:
             distance = 5000
             move_speed = SpeedMode.SHORT
