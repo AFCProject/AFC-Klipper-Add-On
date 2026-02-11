@@ -214,6 +214,12 @@ elif [ "$installation_type" == "QuattroBox" ]; then
 
 - Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_QuattroBox_1.cfg file
   """
+elif [ "$installation_type" == "VVD" ]; then
+  message+="""
+- Ensure you enter your serial information in the ${afc_config_dir}/AFC_Vivid_1.cfg file
+
+- Review the ${afc_config_dir}/AFC_Hardware.cfg file to reference the proper buffer configuration and pins.
+  """
 fi
 
 if [ "$buffer_type" == "TurtleNeckV2" ]; then

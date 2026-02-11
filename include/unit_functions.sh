@@ -119,6 +119,9 @@ install_additional_unit() {
     # If we are installing a NightOwl, then copy these files over.
   elif [ "$installation_type" == "NightOwl" ]; then
     cp "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+  elif [ "$installation_type" == "VVD" ]; then
+    cp "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/Vivid_${boxturtle_name}.cfg"
   elif [ "$installation_type" == "HTLF" ]; then
     mkdir -p "${afc_config_dir}/mcu"
     cp "${afc_path}/config/mcu/HTLF_${htlf_board_type}.cfg" "${afc_config_dir}/mcu/"
