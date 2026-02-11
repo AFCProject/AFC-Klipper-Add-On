@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -98,6 +98,13 @@ def check_and_return( value_str:str, data_values:dict ) -> str:
         value = data_values[value_str]
 
     return value
+
+def section_in_config(config, name):
+    in_cfg = False
+    for s in config.fileconfig.sections():
+        if name in s:
+            in_cfg = True
+    return in_cfg
 
 # Copied from klipper for kalico and older klipper support
 class DebounceButton:

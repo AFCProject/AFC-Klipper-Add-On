@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -25,6 +25,7 @@ moonraker="${moonraker_address}:${moonraker_port}"
 # Git related constants
 gitrepo="https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git"
 branch="main"
+git_install="True"
 
 # Misc constants
 prior_installation="False"

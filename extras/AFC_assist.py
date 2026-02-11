@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -585,6 +585,9 @@ class Espooler:
 
         :param movement: Amount in mm to move spool
         """
+        if self.afc_motor_rwd is None:
+            return
+
         print_time = time = 0.0
         if self.lane_obj.weight < self.enable_assist_weight:
             time = self.afc.toolhead.get_last_move_time()

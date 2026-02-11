@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import traceback
@@ -77,6 +77,7 @@ class afcError:
 
         else: #toolhead empty
             if cur_lane.load_state: #Lane has filament
+                # TODO: Update this to use better logic
                 while cur_lane.load_state:  # slowly back filament up to lane extruder
                     cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
                 while not cur_lane.load_state:  # reload lane extruder

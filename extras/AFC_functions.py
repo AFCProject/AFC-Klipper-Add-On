@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Control
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
@@ -8,6 +8,7 @@
 # Originally authored by Félix Boisselier and licensed under the GNU General Public License v3.0.
 #
 # Full license text available at: https://www.gnu.org/licenses/gpl-3.0.html
+from __future__ import annotations
 
 import os
 import random
@@ -19,11 +20,22 @@ from configfile import error
 from datetime import datetime
 from pathlib import Path
 
+from typing import TYPE_CHECKING, Union
+
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
 try: from extras.AFC_respond import AFCprompt
 except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
+
+try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints, MoveDirection
+except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
+
+if TYPE_CHECKING:
+    from extras.AFC import afc
+    from extras.AFC_lane import AFCLane
+    from extras.AFC_stepper import AFCExtruderStepper
+    from extras.AFC_hub import afc_hub
 
 def load_config(config):
     return afcFunction(config)
@@ -39,7 +51,7 @@ class afcFunction:
         self.auto_var_file = None
         self.errorLog = {}
         self.pause    = False
-        self.afc      = None
+        self.afc: afc
         self.logger   = None
         self.mcu      = None
 
@@ -787,22 +799,28 @@ class afcFunction:
             lane_obj = self.afc.lanes.get(lane)
             if lane != 'all':
                 self.afc.logger.info('Running {} iterations for lane: {}'.format(iterations, lane))
-                for _ in range(iterations):
+                for i in range(iterations):
+                    self.afc.save_pos()
                     self.afc.logger.info('Loading lane: {}'.format(lane))
                     self.afc.CHANGE_TOOL(lane_obj)
+
                     if not self.afc.error_state:
-                        self.afc.logger.info("Lane {} loaded successfully".format(lane))
+                        self.afc.logger.info("Lane {} loaded successfully (Iteration {})".format(lane, i + 1))
                     else:
-                        self.afc.logger.error("Failed to load lane {}".format(lane))
+                        self.afc.logger.error("Failed to load lane {} on iteration {}".format(lane, i + 1))
                         self.afc.error.reset_failure()
                         break
+
                     self._safe_extrude(self.afc.test_extrude_amt)
                     self.logger.info("Unloading lane {}".format(lane))
                     self.afc.TOOL_UNLOAD(lane_obj)
+
                     if not self.afc.error_state:
-                        self.afc.logger.info("Lane {} unloaded successfully".format(lane))
+                        self.afc.logger.info(
+                            "Lane {} unloaded successfully for iteration {}/{}".format(lane, i + 1, iterations))
+                        self.afc.restore_pos()
                     else:
-                        self.afc.logger.error("Failed to unload lane {}".format(lane))
+                        self.afc.logger.error("Failed to unload lane {} at iteration {}".format(lane, i + 1))
                         self.afc.error.reset_failure()
                         return
 
@@ -1228,7 +1246,7 @@ class afcFunction:
                                   "LANE": {"default": "lane1", "type": "string"}}
     def cmd_AFC_LANE_RESET(self, gcmd):
         """
-        This function resets a specified lane to the hub position in the AFC system. It checks for various error conditions,
+        This macro resets a specified lane to the hub position in the AFC system. It checks for various error conditions,
         such as whether the toolhead is loaded or whether the hub is already clear. The function moves the lane back to the
         hub based on the specified or default distances, ensuring the lane's correct state before completing the reset.
 
@@ -1250,7 +1268,7 @@ class afcFunction:
 
         prompt = AFCprompt(gcmd, self.logger)
         lane = gcmd.get('LANE', None)
-        long_dis = gcmd.get('DISTANCE', None)
+        long_dis = gcmd.get('DISTANCE', 50)
 
         if not lane:
             prompt.p_end()
@@ -1272,8 +1290,8 @@ class afcFunction:
                 self.afc.error.AFC_error("DISTANCE must be a valid number.", pause=False)
                 return
 
-        cur_lane = self.afc.lanes[lane]
-        CUR_HUB = cur_lane.hub_obj
+        cur_lane: Union[AFCLane, AFCExtruderStepper] = self.afc.lanes[lane]
+        CUR_HUB: afc_hub = cur_lane.hub_obj
         short_move = cur_lane.short_move_dis * 2
 
         if not CUR_HUB.state:
@@ -1291,7 +1309,9 @@ class afcFunction:
         fail_state_msg = "'{}' failed to reset to hub, {} switch became false during reset"
 
         if long_dis is not None:
-            cur_lane.move(float(long_dis) * -1, cur_lane.long_moves_speed, cur_lane.long_moves_accel, True)
+            cur_lane.unit_obj.move_to_hub(cur_lane, float(long_dis),
+                                          MoveDirection.NEG, self.afc.homing_enabled,
+                                          AssistActive.YES)
 
         while CUR_HUB.state:
             cur_lane.move(short_move * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
@@ -1309,7 +1329,7 @@ class afcFunction:
                 self.afc.error.AFC_error("'{}' failed to reset to hub".format(cur_lane), pause=False)
                 return
 
-        cur_lane.move(CUR_HUB.move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+        cur_lane.move(CUR_HUB.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
         cur_lane.loaded_to_hub = True
         cur_lane.do_enable(False)
 

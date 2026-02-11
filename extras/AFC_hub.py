@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import traceback
@@ -25,17 +25,17 @@ class afc_hub:
 
         self.unit = None
         self.lanes = {}
-        self.state = False
+        self._state = False
 
         # HUB Cut variables
         # Next two variables are used in AFC
         self.switch_pin             = config.get('switch_pin')                      # Pin hub sensor it connected to
-        self.hub_clear_move_dis     = config.getfloat("hub_clear_move_dis", 25)     # How far to move filament so that it's not block the hub exit
+        self.hub_clear_move_dis     = config.getfloat("hub_clear_move_dis", 65)     # How far to move filament so that it's not block the hub exit
         self.afc_bowden_length      = config.getfloat("afc_bowden_length", 900)     # Length of the Bowden tube from the hub to the toolhead sensor in mm.
         self.td1_bowden_length      = config.getfloat("td1_bowden_length", self.afc_bowden_length-50)     # Length of the Bowden tube from the hub to a TD-1 device in mm.
         self.afc_unload_bowden_length= config.getfloat("afc_unload_bowden_length", self.afc_bowden_length) # Length to unload when retracting back from toolhead to hub in mm. Defaults to afc_bowden_length
         self.assisted_retract       = config.getboolean("assisted_retract", False)  # if True, retracts are assisted to prevent loose windings on the spool
-        self.move_dis               = config.getfloat("move_dis", 50)               # Distance to move the filament within the hub in mm.
+        self.move_dis               = config.getfloat("move_dis", 75)               # Distance to move the filament within the hub in mm.
         # Servo settings
         self.cut                    = config.getboolean("cut", False)               # Set True if Hub cutter installed (e.g. Snappy)
         self.cut_cmd                = config.get('cut_cmd', None)                   # Macro to use for cut.
@@ -54,14 +54,12 @@ class afc_hub:
         self.debounce_delay         = config.getfloat("debounce_delay",             self.afc.debounce_delay)
         self.enable_runout          = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
 
-        buttons = self.printer.load_object(config, "buttons")
-        if self.switch_pin is not None:
-            self.state = False
+        if self.switch_pin.lower() != "virtual":
+            buttons = self.printer.load_object(config, "buttons")
+            self.fila, self.debounce_button = add_filament_switch( f"{self.name}_Hub", self.switch_pin, self.printer,
+                                                                    self.enable_sensors_in_gui, self.handle_runout, self.enable_runout,
+                                                                    self.debounce_delay)
             buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
-
-        self.fila, self.debounce_button = add_filament_switch( f"{self.name}_Hub", self.switch_pin, self.printer,
-                                                                self.enable_sensors_in_gui, self.handle_runout, self.enable_runout,
-                                                                self.debounce_delay)
 
         # Adding self to AFC hubs
         self.afc.hubs[self.name]=self
@@ -97,9 +95,16 @@ class afc_hub:
         self.reactor = self.afc.reactor
 
         self.printer.send_event("afc_hub:register_macros", self)
+    
+    @property
+    def state(self):
+        state = self._state
+        if self.switch_pin.lower() == "virtual":
+            state = any(lane._load_state for lane in self.lanes.values())
+        return state
 
     def switch_pin_callback(self, eventtime, state):
-        self.state = state
+        self._state = state
 
     def hub_cut(self, cur_lane):
         servo_string = 'SET_SERVO SERVO={servo} ANGLE={{angle}}'.format(servo=self.cut_servo_name)

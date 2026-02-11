@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Armored Turtle Automated Filament Changer - Debug Script
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 # Licensed under GNU GPLv3
 # Thanks to @Esoterical, @bolliostu, and @dormouse for contributions to the original source / inspiration for this script
 # at https://github.com/Esoterical/voron_canbus/blob/main/troubleshooting/debugging/can_debug.sh

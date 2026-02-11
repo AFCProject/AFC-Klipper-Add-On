@@ -1,18 +1,33 @@
 # Armored Turtle Automated Filament Control
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
 import traceback
 
-from configfile import error
+from configfile import error as config_error
 from datetime import datetime, timedelta
 
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC_lane import (
+        AFCLane, AssistActive,
+        AFCHomingPoints, AFCLaneState, MoveDirection
+    )
+
 try: from extras.AFC_utils import ERROR_STR
-except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
+except: raise config_error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
 try: from extras.AFC_respond import AFCprompt
-except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
+except: raise config_error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
+
+try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints
+except:
+    err_str = ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc())
+    raise config_error(err_str)
 
 class afcUnit:
     def __init__(self, config):
@@ -21,6 +36,8 @@ class afcUnit:
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.afc            = self.printer.load_object(config, 'AFC')
+        self.reactor        = self.printer.get_reactor()
+        self.function       = self.afc.function
         self.logger         = self.afc.logger
 
         self.lanes      = {}
@@ -37,6 +54,7 @@ class afcUnit:
         self.hub                         = config.get("hub", None)                                           # Hub name(AFC_hub) that belongs to this unit, can be overridden in AFC_stepper section
         self.extruder                    = config.get("extruder", None)                                      # Extruder name(AFC_extruder) that belongs to this unit, can be overridden in AFC_stepper section
         self.buffer_name                 = config.get('buffer', None)                                        # Buffer name(AFC_buffer) that belongs to this unit, can be overridden in AFC_stepper section
+        self.remember_spool              = config.get('remember_spool', False)                               # Turns on/off ability to remember last ejected spool values for all lanes in this unit, can be overridden in AFC_stepper section
         self.led_fault                   = config.get('led_fault', self.afc.led_fault)                       # LED color to set when faults occur in lane        (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in AFC.cfg file
         self.led_ready                   = config.get('led_ready', self.afc.led_ready)                       # LED color to set when lane is ready               (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in AFC.cfg file
         self.led_not_ready               = config.get('led_not_ready', self.afc.led_not_ready)               # LED color to set when lane not ready              (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in AFC.cfg file
@@ -55,8 +73,10 @@ class afcUnit:
         self.short_moves_accel           = config.getfloat("short_moves_accel", self.afc.short_moves_accel) # Acceleration in mm/s squared when doing short moves. Setting value here overrides values set in AFC.cfg file
         self.short_move_dis              = config.getfloat("short_move_dis", self.afc.short_move_dis)       # Move distance in mm for failsafe moves. Setting value here overrides values set in AFC.cfg file
         self.max_move_dis                = config.getfloat("max_move_dis", self.afc.max_move_dis)            # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves. Setting value here overrides values set in AFC.cfg file
+        self.homing_overshoot            = config.getfloat("homing_overshoot", 50)                           # Amount to add to homing distance so that distance is long enough to actually hit endstop
         self.debug                       = config.getboolean("debug",            False)                      # Turns on/off debug messages to console
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", self.afc.rev_long_moves_speed_factor)
+        self.extruder_clear_dis          = config.getfloat("extruder_clear_dis", 50)                        # Amount to move to clear extruder gears when ejecting filament
 
         # Espooler defines
         # Time in seconds to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in AFC.cfg file
@@ -89,8 +109,18 @@ class afcUnit:
         self.td1_when_loaded    = config.getboolean("capture_td1_when_loaded", self.afc.td1_when_loaded)
         self.td1_device_id      = config.get("td1_device_id", None)
 
+        self.post_prep_macro    = config.get("post_prep_macro", "AFC_POST_PREP")  # Macro to call after loading filament during prep callback
+
     def __str__(self):
         return self.name
+
+    def _check_and_errorout(self, check_obj: Any, config_name: str, variable_name:str):
+        error_string = f"Error: [{config_name}] config not found for {variable_name} in "\
+                       f"{self.full_name} config section. Please make sure [{config_name}] " \
+                       "section exists in your config.\n"
+        if check_obj is None:
+            return True, error_string
+        return False, ""
 
     def handle_connect(self):
         """
@@ -129,6 +159,7 @@ class afcUnit:
 
         # Send out event so lanes can store units object
         self.printer.send_event("AFC_unit_{}:connect".format(self.name), self)
+        self.logger.info("Calling AFC_unit_{}:connect".format(self.name))
 
         self.gcode.register_mux_command('UNIT_CALIBRATION', "UNIT", self.name, self.cmd_UNIT_CALIBRATION, desc=self.cmd_UNIT_CALIBRATION_help)
         self.gcode.register_mux_command('UNIT_LANE_CALIBRATION', "UNIT", self.name, self.cmd_UNIT_LANE_CALIBRATION, desc=self.cmd_UNIT_LANE_CALIBRATION_help)
@@ -398,12 +429,11 @@ class afcUnit:
         self.afc.function.afc_led(lane.led_ready, lane.led_index)
         return
 
-    def select_lane( self, lane ):
+    def select_lane( self, lane, sel_prep:bool=False ):
         """
         Function to select lane
         """
         return
-
     def return_to_home(self ):
         """
         Function to home unit if unit has homing sensor
@@ -494,4 +524,29 @@ class afcUnit:
                 self.logger.info(f"{cur_lane.name} TD-1 data captured")
                 self.afc.save_vars()
                 return True
-        return False
+
+    def prep_load(self, lane: AFCLane):
+        return
+    
+    def prep_post_load(self, lane: AFCLane):
+        return
+    
+    def eject_lane(self, lane: AFCLane):
+        return
+    
+    def move_to_hub(self, lane: AFCLane, dist: float,
+                    dir:MoveDirection, use_homing=True,
+                    speedMode=SpeedMode.HUB,
+                    assist_active=AssistActive.DYNAMIC) -> bool:
+        homed, distance = lane.move_to(dist * dir, speedMode,
+                                       assist_active=assist_active,
+                                       endstop=AFCHomingPoints.HUB,
+                                       use_homing=use_homing)
+        return homed, distance
+    
+    def move_to_load(self, lane: AFCLane, dist: float,
+                     dir: MoveDirection, use_homing=True) -> bool:
+        homed, _ = lane.move_to(dist * dir, SpeedMode.LONG,
+                                endstop=lane.load_es,
+                                active_assist=AssistActive.DYNAMIC,
+                                use_homing=use_homing)
