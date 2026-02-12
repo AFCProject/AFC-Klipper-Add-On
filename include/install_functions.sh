@@ -72,6 +72,7 @@ copy_unit_files() {
   "VVD")
     cp "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_Vivid_1.cfg"
     cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/Vivid.cfg"
+    cp "${afc_path}/templates/AFC_Hardware-AFC.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
     ;;
   "BoxTurtle (4-Lane)")
     cp "${afc_path}/config/mcu/AFC_Lite.cfg" "${afc_config_dir}/mcu/AFC_Lite.cfg"
