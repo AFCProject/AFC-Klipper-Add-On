@@ -171,6 +171,7 @@ class AFCLane:
         self.printer.register_event_handler("AFC_unit_{}:connect".format(self.unit),self.handle_unit_connect)
 
         self.config_dist_hub = self.dist_hub
+        self.only_lane = False
 
         # lane triggers
         buttons = self.printer.load_object(config, "buttons")
@@ -292,7 +293,7 @@ class AFCLane:
     
     @property
     def load_es(self) -> str:
-        if self.load_endstop_name:
+        if self.only_lane:
             return self.load_endstop_name
         else:
             return AFCHomingPoints.LOAD
@@ -504,6 +505,7 @@ class AFCLane:
         """
         if config.get("step_pin", None) is None:
             try:
+                self.only_lane = True
                 unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s and "AFC" in s)
                 self.logger.info(f"{unit_cfg.get_name()} drive stepper {self.name}")
                 self.unit_obj = self.printer.load_object(config, unit_cfg.get_name())
