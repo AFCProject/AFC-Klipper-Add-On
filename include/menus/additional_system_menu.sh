@@ -176,6 +176,11 @@ fi
           boxturtle_name="QuattroBox_1"
         fi
         printf "1. QuattroBox Name: %s \n" "$boxturtle_name"
+      elif [ "$installation_type" == "VVD" ]; then
+        if [ "$turtle_renamed" != "True" ]; then
+          boxturtle_name="Vivid_1"
+        fi
+        printf "1. VVD Name: %s \n" "$boxturtle_name"
       fi
       if [ "$installation_type" == "HTLF" ]; then
         printf "D. HTLF Board Type: %s \n" "$htlf_board_type"
