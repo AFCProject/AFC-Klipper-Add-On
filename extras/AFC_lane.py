@@ -642,7 +642,7 @@ class AFCLane:
 
     def move_to(self, distance: float, speed_mode: SpeedMode,
                 endstop:AFCHomingPoints=AFCHomingPoints.NONE,
-                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int]:
+                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int, bool]:
         """
         Helper function for calling stepper move_advance or home_to functions based
         off use_homing parameter
@@ -655,6 +655,7 @@ class AFCLane:
         :return tuple: Returns if move was successful and distance moved. When homing is
                        disabled, always returns True, 0.
         """
+        warn = False
         if (self.drive_stepper
             or hasattr(self, "extruder_stepper")):
             if use_homing:
@@ -667,11 +668,18 @@ class AFCLane:
                 if distance < 0:
                     new_distance = distance - self.homing_overshoot
                 self.unit_obj.select_lane(self)
-                return home_to(endstop, new_distance, speed_mode,
+                homed, mov_dis = home_to(endstop, new_distance, speed_mode,
                         distance > 0, assist_active=self.get_active_assist(distance, assist_active))
+                if abs(distance) - mov_dis > 300:
+                    # self.logger.warning(
+                    #     f"Possible false load, Commanded: {distance}, Total move: {mov_dis}.\n"
+                    # )
+                    warn = True
+                
+                return homed, mov_dis, warn
             else:
                 self.move_advanced(distance, speed_mode, assist_active )
-                return True, 0
+                return True, 0, warn
 
 
     def move_advanced(self, distance, speed_mode: SpeedMode, assist_active: AssistActive = AssistActive.NO):

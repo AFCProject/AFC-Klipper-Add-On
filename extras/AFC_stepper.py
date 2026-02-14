@@ -644,6 +644,7 @@ class AFCExtruderStepper(AFCLane):
                 self.logger.debug(f"Exception {e}")
                 pass
             self.logger.debug(f"Homed lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {self._manual_axis_pos:.2f}mm (dt={(end_ts-start_ts):.3f}s)")
+            
             return True, dist_mm
         except Exception as e:
             msg = str(e).lower()

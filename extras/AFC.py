@@ -1235,7 +1235,7 @@ class afc:
 
                     if cur_lane.hub == 'direct':
                         home_endstop= cur_lane.get_toolhead_endstop()
-                        cur_lane.move_to(dist_to_hub, SpeedMode.LONG,
+                        _, _, warn = cur_lane.move_to(dist_to_hub, SpeedMode.LONG,
                                         assist_active=AssistActive.DYNAMIC,
                                         endstop=home_endstop, use_homing=self.homing_enabled)
                     else:      
@@ -1266,16 +1266,16 @@ class afc:
 
                 # Move filament towards the toolhead.
                 if cur_lane.hub != 'direct':
-                    cur_lane.move_to(cur_hub.afc_bowden_length,
-                                     SpeedMode.LONG,
-                                     assist_active=AssistActive.YES,
-                                     endstop=cur_lane.get_toolhead_endstop(),
-                                     use_homing=self.homing_enabled and self.home_to_tool)
+                    _, _, warn = cur_lane.move_to(cur_hub.afc_bowden_length,
+                                    SpeedMode.LONG,
+                                    assist_active=AssistActive.YES,
+                                    endstop=cur_lane.get_toolhead_endstop(),
+                                    use_homing=self.homing_enabled and self.home_to_tool)
 
                 # Ensure filament reaches the toolhead.
                 tool_attempts = 0
                 if cur_extruder.tool_start:
-                    while not cur_lane.get_toolhead_pre_sensor_state():
+                    while not cur_lane.get_toolhead_pre_sensor_state() or warn:
                         tool_attempts += 1
                         move_distance = cur_lane.short_move_dis
                         max_attempts = int(self.tool_homing_distance/cur_lane.short_move_dis)
@@ -1283,9 +1283,15 @@ class afc:
                             and self.home_to_tool):
                             move_distance = cur_hub.afc_bowden_length
                             max_attempts = 2
-                        cur_lane.move_to(move_distance, SpeedMode.SHORT,
-                                         endstop=cur_lane.get_toolhead_endstop(),
-                                         use_homing=self.homing_enabled and self.home_to_tool)
+                            self.logger.info("Choo Choo backing up!!!!")
+                            cur_lane.move_to(100 * -1, SpeedMode.SHORT,
+                                            use_homing=False)
+                        _, dist, warn = cur_lane.move_to(move_distance, SpeedMode.SHORT,
+                                                        endstop=cur_lane.get_toolhead_endstop(),
+                                                        use_homing=self.homing_enabled and self.home_to_tool)
+                        if (dist > 50.0
+                            and self.homing_enabled):
+                            warn = False
                         if tool_attempts >= max_attempts:
                             message = 'filament failed to trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
                             message += '\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.'.format(cur_lane.name)

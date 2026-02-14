@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 
 try: from extras.AFC_utils import ERROR_STR, section_in_config
 except:
-    err_str = "Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc())
+    trace=traceback.format_exc()
+    err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{trace}"
     raise config_error(err_str)
 
 try: from extras.AFC_BoxTurtle import afcBoxTurtle
@@ -42,7 +43,8 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_stepper_obj: AFCExtruderStepper = None
         self.current_selected_lane  = None
         self.home_state             = False
-        self.enable_sensors_in_gui  = config.getboolean("enable_sensors_in_gui", self.afc.enable_sensors_in_gui)    # Set to True to show prep and load sensors switches as filament sensors in mainsail/fluidd gui, overrides value set in AFC.cfg
+        self.enable_sensors_in_gui  = config.getboolean("enable_sensors_in_gui",
+                                                        self.afc.enable_sensors_in_gui)    # Set to True to show prep and load sensors switches as filament sensors in mainsail/fluidd gui, overrides value set in AFC.cfg
         self.prep_homed             = False
         self.failed_to_home         = False
         self.selector_homing_speed  = config.getfloat("selector_homing_speed", 150)
@@ -62,8 +64,7 @@ class AFC_vivid(afcBoxTurtle):
         if section_in_config(config, config_name):
             self.drive_stepper_obj: Optional[AFCExtruderStepper] = \
                 self.printer.load_object(config, config_name, None)
-        error, rtn_str = self._check_and_errorout(self.drive_stepper_obj,
-                                                  config_name,
+        error, rtn_str = self._check_and_errorout(self.drive_stepper_obj, config_name,
                                                   "drive_stepper")
         error_string += rtn_str
         error_bool |= error
@@ -73,49 +74,56 @@ class AFC_vivid(afcBoxTurtle):
             self.selector_stepper_obj: Optional[AFCExtruderStepper] = \
                 self.printer.load_object(config, config_name, None)
 
-        error, rtn_str = self._check_and_errorout(self.drive_stepper_obj,
-                                                  config_name,
+        error, rtn_str = self._check_and_errorout(self.drive_stepper_obj, config_name,
                                                   "drive_stepper")
         error_string += rtn_str
         error_bool |= error
         if error_bool:
             raise config_error(error_string)
 
-    # def handle_connect(self):
-    #     super().handle_connect()
-
     def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
-
         return super().system_Test( cur_lane, delay, assignTcmd, enable_movement=False)
-        # self.lane_unloaded(cur_lane)
-        # self.logger.info(f"{cur_lane.name} selector state {self._get_lane_selector_state(cur_lane)}")
 
-        # if assignTcmd: self.afc.function.TcmdAssign(cur_lane)
-        # cur_lane.send_lane_data()
-        # cur_lane.set_afc_prep_done()
-        # return True
+    def _get_lane_selector_state(self, lane: AFCLane) -> bool:
+        """
+        Helper method to return status for lanes selctor
 
-    def _get_lane_selector_state(self, lane: AFCLane):
+        :param lane: ViViD lane to get selector status from.
+        :return bool: Returns True if cam is triggering lanes selector.
+        """
         state = False
         if hasattr(lane, "fila_selector"):
             fila_selector_status = lane.fila_selector.get_status(0)
             state = fila_selector_status["filament_detected"]
+            # TODO: Add check to verify that motor is still active, if its not rotate the selector
+            # by 50-100mm so selector is rehomed
         return state
 
-    def select_lane( self, lane: AFCLane, sel_prep:bool=False ):
+    def select_lane( self, lane: AFCLane, sel_prep:bool=False ) -> tuple[bool, float|int]:
+        """
+        Helper method to use homing to rotate cam until lanes selector
+        is triggered.
+
+        :param lane: Lane to select for moving filament
+        :param sel_prep: When set to True, cam is rotated in the negative direction
+                         this is useful when loading filament so the filament properly
+                         goes into the PTFE
+        :return tuple: Returns truple of homed(True/False) and distance moved
+        """
         if lane.selector_endstop:
             sel_dir = -1 if sel_prep else 1
             if self._get_lane_selector_state(lane):
                 self.logger.debug(f"{lane.name} already selected")
                 return True, 0.0
             else:
-                self.logger.debug(f"ViViD: Homing to {lane.name}")
+                self.logger.info(f"ViViD: Selecting {lane.name}")
                 homed, distance= self.selector_stepper_obj.do_homing_move(
                     movepos=800 * sel_dir,
                     speed=self.selector_homing_speed,
                     accel=self.selector_homing_accel,
                     endstop_spec=lane.selector_endstop_name,
-                    assist_active=False)
+                    assist_active=False
+                )
                 self.logger.debug(f"ViViD: Homing done, success:{homed}, distance:{distance}")
                 return homed, round(distance, 2)
 
@@ -123,6 +131,23 @@ class AFC_vivid(afcBoxTurtle):
         pass
 
     def prep_load(self, lane: AFCLane):
+        """
+        Helper method for initially loading spools when prep sensor is triggered.
+        Upon first load, if lanes do not have calibrated_lanes variable set, filament
+        will move slowly until load sensor is triggered. This is value is set as
+        dist_hub variable and calibration variable is set in config file.
+
+        Lane selector is first rotated in the negative distance until selector is
+        triggered, then filament is moved to load sensor via homing routine. Once sensor
+        is triggered lane is backed up 10mm so that filament is not triggering load
+        sensor anymore since VVD uses all load sensors as a virtual hub, which means if
+        one load sensor is triggered then the virtual hub state is triggered.
+
+        After lane is loaded selector will select current lane if a lane is loaded into
+        toolhead.
+
+        :param lane: Lane for which to activate and load filament to load sensor
+        """
         self.lane_loading(lane)
         self.select_lane(lane, sel_prep=True)
         if not lane.calibrated_lane:
@@ -132,10 +157,8 @@ class AFC_vivid(afcBoxTurtle):
             distance = lane.dist_hub
             move_speed = SpeedMode.LONG
 
-        homed, distance = lane.move_to(distance, move_speed,
-                                       assist_active=AssistActive.NO,
-                                       endstop=lane.load_endstop_name,
-                                       use_homing=True)
+        homed, distance, warn = lane.move_to(distance, move_speed, assist_active=AssistActive.NO,
+                                             endstop=lane.load_endstop_name, use_homing=True)
         if homed:
             lane.loaded_to_hub = True
             if not lane.calibrated_lane:
@@ -153,34 +176,53 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
         self.afc.function.select_loaded_lane()
-        return
 
     def prep_post_load(self, lane: AFCLane):
         # Do nothing and return
         return
     
     def unselect_lane(self):
+        """
+        Method for moving the selector 50mm to free filament in a lane, this is useful when
+        ejecting filament.
+        """
         self.selector_stepper_obj.move(50, 100, 100, False)
     
     def eject_lane(self, lane: AFCLane):
+        """
+        Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
+        will stop once prep sensor is no longer triggered if movement has not already stopped. 
+
+        After retract movement is done, selector is rotated so loosen grip on filament so it can
+        be easily removed.
+
+        :param lane: Lane to eject spool
+        """
         self.select_lane(lane)
-        lane.move_to( (lane.dist_hub-100) * -1, SpeedMode.LONG,
-                    endstop=lane.prep_endstop_name,
-                    assist_active=AssistActive.NO,
-                    use_homing=True)
+        lane.move_to( (lane.dist_hub-100) * -1, SpeedMode.LONG, endstop=lane.prep_endstop_name,
+                    assist_active=AssistActive.NO, use_homing=True)
         self.unselect_lane()
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
     
-    def move_to_hub(self, lane: AFCLane, dist: float,
-                    dir:MoveDirection, use_homing=True,
-                    speedMode=SpeedMode.HUB,
-                    assist_active=AssistActive.DYNAMIC) -> bool:
-        homed, distance = lane.move_to(dist * dir, speedMode,
-                                       assist_active=assist_active,
-                                       endstop=lane.load_es,
-                                       use_homing=use_homing)
-        return homed, distance
+    def move_to_hub(self, lane: AFCLane, dist: float, dir:MoveDirection, use_homing=True,
+                    speedMode=SpeedMode.HUB, assist_active=AssistActive.DYNAMIC) -> bool:
+        """
+        Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
+        point.
+
+        :param lane:
+        :param dist: 
+        :param dir:
+        :param use_homing:
+        :param speedMode:
+        :param assist_active:
+
+        :return bool:
+        """
+        homed, distance, warn = lane.move_to(dist * dir, speedMode, assist_active=assist_active,
+                                       endstop=lane.load_es, use_homing=use_homing)
+        return homed, distance, warn
     
     cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane"
     cmd_AFC_SELECT_LANE_options = {"LANE": {"type":"string", "default":"lane1"}}

@@ -538,15 +538,15 @@ class afcUnit:
                     dir:MoveDirection, use_homing=True,
                     speedMode=SpeedMode.HUB,
                     assist_active=AssistActive.DYNAMIC) -> bool:
-        homed, distance = lane.move_to(dist * dir, speedMode,
+        homed, distance, warn = lane.move_to(dist * dir, speedMode,
                                        assist_active=assist_active,
                                        endstop=AFCHomingPoints.HUB,
                                        use_homing=use_homing)
-        return homed, distance
+        return homed, distance, warn
     
     def move_to_load(self, lane: AFCLane, dist: float,
                      dir: MoveDirection, use_homing=True) -> bool:
-        homed, _ = lane.move_to(dist * dir, SpeedMode.LONG,
+        homed, _, warn = lane.move_to(dist * dir, SpeedMode.LONG,
                                 endstop=lane.load_es,
                                 active_assist=AssistActive.DYNAMIC,
                                 use_homing=use_homing)

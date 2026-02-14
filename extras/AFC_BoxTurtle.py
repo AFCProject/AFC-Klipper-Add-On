@@ -139,7 +139,7 @@ class afcBoxTurtle(afcUnit):
                                                                  0, cur_lane.dist_hub + 200,
                                                                  "Moving to hub")
         else:
-            success, hub_pos = cur_lane.unit_obj.move_to_hub(cur_lane,
+            success, hub_pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane,
                                                              cur_lane.dist_hub+200,
                                                              MoveDirection.POS,
                                                              self.afc.homing_enabled)
@@ -156,7 +156,7 @@ class afcBoxTurtle(afcUnit):
                 fault_dis = cur_hub.afc_bowden_length + 500
                 if self.afc.homing_enabled:
                     dis = fault_dis
-                homed, distance = cur_lane.move_to(distance=dis,
+                homed, distance, warn = cur_lane.move_to(distance=dis,
                                                    speed_mode=SpeedMode.CALIBRATION,
                                                    endstop=cur_lane.get_toolhead_endstop(),
                                                    use_homing=self.afc.homing_enabled)
@@ -181,7 +181,7 @@ class afcBoxTurtle(afcUnit):
                 msg = 'Failed {} after {}mm'.format(checkpoint, bow_pos)
                 return False, msg, bow_pos
 
-            success, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
+            success, _, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
                                                        MoveDirection.NEG,
                                                        self.afc.homing_enabled,
                                                        speedMode=SpeedMode.LONG)
@@ -415,7 +415,7 @@ class afcBoxTurtle(afcUnit):
         move_dis = cur_lane.dist_hub+100
         if self.afc.homing_enabled:
             checkpoint = "retract to extruder"
-            success, pos = cur_lane.move_to(distance=move_dis*-1,
+            success, pos, warn = cur_lane.move_to(distance=move_dis*-1,
                                             speed_mode=SpeedMode.CALIBRATION,
                                             endstop=cur_lane.load_es,
                                             assist_active=AssistActive.YES)
@@ -442,7 +442,7 @@ class afcBoxTurtle(afcUnit):
 
         else:
             if self.afc.homing_enabled:
-                success, hub_pos = cur_lane.unit_obj.move_to_hub(cur_lane, move_dis,
+                success, hub_pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane, move_dis,
                                                                  MoveDirection.POS,
                                                                  assist_active=AssistActive.NO)
                 message = f'Failed hub calibration {cur_lane.name} after {round(hub_pos, 2)}mm'
