@@ -955,6 +955,7 @@ class afcFunction:
         calibrated  = []
         checked     = False
         title       = "AFC Calibration"
+        additional_msg = []
 
         # Check to make sure lane and unit is valid
         if lanes is not None and lanes != 'all' and lanes not in self.afc.lanes:
@@ -984,9 +985,14 @@ class afcFunction:
                         if pos > 0:
                             self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
                         return
-                    else: calibrated.append(lanes)
+                    else:
+                        calibrated.append(lanes)
+                        additional_msg.append(cur_lane.unit_obj.calibration_lane_message())
+                        additional_msg.append(msg)
                 else:
+                    vvd_lane = False
                     # Calibrate all lanes if no specific lane is provided
+                    final_msg = ""
                     for cur_lane in self.afc.lanes.values():
                         if not cur_lane.load_state or not cur_lane.prep_state:
                             self.logger.info("{} not loaded skipping to next loaded lane".format(cur_lane.name))
@@ -997,7 +1003,17 @@ class afcFunction:
                             self.afc.error.AFC_error(msg, False)
                             self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
                             return
-                        else: calibrated.append(cur_lane.name)
+                        else:
+                            calibrated.append(cur_lane.name)
+                            if cur_lane.unit_obj.type == "ViViD":
+                                vvd_lane = True
+                                final_msg = cur_lane.unit_obj.calibration_lane_message()
+                                additional_msg.append(msg)
+                    if vvd_lane:
+                        temp_lanes = ", ".join(additional_msg)
+                        additional_msg = []
+                        additional_msg.append(final_msg)
+                        additional_msg.append(temp_lanes)
             else:
                 if lanes != 'all':
                     cur_lane = self.afc.lanes[lanes]
@@ -1006,7 +1022,10 @@ class afcFunction:
                         self.afc.error.AFC_error(msg, False)
                         self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
                         return
-                    else: calibrated.append(lanes)
+                    else:
+                        calibrated.append(lanes)
+                        additional_msg.append(cur_lane.unit_obj.calibration_lane_message())
+                        additional_msg.append(msg)
                 else:
                     CUR_UNIT = self.afc.units[unit]
                     self.logger.info('{}'.format(CUR_UNIT.name))
@@ -1021,7 +1040,15 @@ class afcFunction:
                             self.afc.error.AFC_error(msg, False)
                             self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
                             return
-                        else: calibrated.append(cur_lane.name)
+                        else:
+                            calibrated.append(cur_lane.name)
+                            if CUR_UNIT.type == "ViViD":
+                                additional_msg.append(msg)
+                    if CUR_UNIT.type == "ViViD":
+                        temp_lanes = ", ".join(additional_msg)
+                        additional_msg = []
+                        additional_msg.append(CUR_UNIT.calibration_lane_message())
+                        additional_msg.append(temp_lanes)
 
             self.logger.info("Lane calibration Done!")
 
@@ -1051,7 +1078,7 @@ class afcFunction:
                 self.afc.error.AFC_error('{} failed to calibrate bowden length {}'.format(afc_bl, msg), pause=False)
                 self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(afc_bl, pos))
                 return
-            else: calibrated.append('Bowden_length:_{}'.format(afc_bl))
+            else: calibrated.append('Bowden_length: {}'.format(afc_bl))
 
             self.logger.info("Bowden length calibration Done!")
 
@@ -1078,8 +1105,15 @@ class afcFunction:
                 calibrated.append(f"'TD1_Bowden_length: {td1}'")
 
         if checked:
-            lanes_calibrated = ','.join(calibrated)
-            self.afc.gcode.run_script_from_command(f"AFC_CALI_COMP TITLE='{title} Completed' CALI={lanes_calibrated}")
+            lanes_calibrated = ', '.join(calibrated)
+
+            gcode_command = f"AFC_CALI_COMP TITLE='{title} Completed' CALI={lanes_calibrated}"
+            msg = ""
+            if additional_msg:
+                msg = " ".join(additional_msg)
+                gcode_command += f" ADD_MSG='{msg}'"
+            # self.afc.gcode.run_script_from_command(gcode_command)
+            self._afc_cali_comp(lanes_calibrated, title, msg)
 
     cmd_AFC_CALI_COMP_help = 'Opens prompt after calibration is complete'
     def cmd_AFC_CALI_COMP(self, gcmd):
@@ -1101,10 +1135,18 @@ class afcFunction:
 
         cali = gcmd.get("CALI", None)
         title = gcmd.get("TITLE", "AFC Calibration Completed")
+        additional_msg = gcmd.get("ADD_MSG", None)
+        self._afc_cali_comp(cali, title, additional_msg)
+
+    def _afc_cali_comp(self, cali, title, additional_msg, gcmd=None):
 
         prompt = AFCprompt(gcmd, self.logger)
         buttons = []
         text = 'Calibration was completed for {}, would you like to do more calibrations?'.format(cali)
+
+        if additional_msg:
+            text += additional_msg
+
         buttons.append(("Yes", "AFC_Calibration", "primary"))
         buttons.append(("No", "AFC_HAPPY_P STEP='AFC Calibration'", "info"))
 

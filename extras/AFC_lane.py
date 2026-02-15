@@ -514,23 +514,24 @@ class AFCLane:
         """
         Helper function to get steppers for lane and setup for proper homing
         """
-        if config.get("step_pin", None) is None:
-            try:
-                self.only_lane = True
-                unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s and "AFC" in s)
-                self.logger.info(f"{unit_cfg.get_name()} drive stepper {self.name}")
-                self.unit_obj: afcUnit = self.printer.load_object(config, unit_cfg.get_name())
+        if config.get("step_pin", None):
+            return
+        try:
+            self.only_lane = True
+            unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s and "AFC" in s)
+            self.logger.info(f"{unit_cfg.get_name()} drive stepper {self.name}")
+            self.unit_obj: afcUnit = self.printer.load_object(config, unit_cfg.get_name())
 
-                self.drive_stepper = self.unit_obj.drive_stepper_obj
-                self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
-                self.prep_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+            self.drive_stepper = self.unit_obj.drive_stepper_obj
+            self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+            self.prep_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
 
-                self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
-                self.drive_stepper._endstops[self.prep_endstop_name] = (self.prep_endstop, self.prep_endstop_name)
+            self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
+            self.drive_stepper._endstops[self.prep_endstop_name] = (self.prep_endstop, self.prep_endstop_name)
 
-            except Exception as e:
-                self.logger.info(f"Couldn't find unit for {self.name} {e}")
-                return
+        except Exception as e:
+            self.logger.info(f"Couldn't find unit for {self.name} {e}")
+            return
 
         if (self.unit_obj.type in EXCLUDE_TYPES
             and "AFC_lane" in self.fullname):

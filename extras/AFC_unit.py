@@ -494,6 +494,9 @@ class afcUnit:
     def calibrate_lane(self, cur_lane, tol):
         self._print_function_not_defined(self.calibrate_lane.__name__)
 
+    def calibration_lane_message(self) -> str:
+        return ""
+
     def get_td1_data(self, cur_lane, compare_time):
         """
         Queries moonrakers endpoint to get td1 data and check to see if data is valid and time

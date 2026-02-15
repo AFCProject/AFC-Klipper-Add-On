@@ -9,13 +9,13 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
     from extras.AFC_stepper import AFCExtruderStepper
-    from extras.AFC_lane import AFCLane, MoveDirection
+    from extras.AFC_lane import AFCLane
 
 try: from extras.AFC_utils import ERROR_STR, section_in_config
 except:
@@ -28,7 +28,7 @@ except:
     err_str = ERROR_STR.format(import_lib="AFC_BoxTurtle", trace=traceback.format_exc())
     raise config_error(err_str)
 
-try: from extras.AFC_lane import SpeedMode, AssistActive
+try: from extras.AFC_lane import SpeedMode, AssistActive, AFCLaneState, MoveDirection
 except:
     err_str = ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc())
     raise config_error(err_str)
@@ -36,6 +36,7 @@ except:
 class AFC_vivid(afcBoxTurtle):
     VALID_CAM_ANGLES = [30,45,60]
     CALIBRATION_DISTANCE = 5000
+    LANE_OVERSHOOT = 200
     def __init__(self, config: ConfigWrapper):
         super().__init__(config)
         self.type:str               = config.get('type', 'ViViD')
@@ -58,9 +59,9 @@ class AFC_vivid(afcBoxTurtle):
                                         description=self.cmd_AFC_SELECT_LANE_help,
                                         options=self.cmd_AFC_SELECT_LANE_options)
 
+
         self._lookup_objects(config)
-    # TODO: Update calibration lanes routine to eject and reset calibration flag and then
-    # instruct users to reinsert filament
+
     def _lookup_objects(self, config: ConfigWrapper) -> None:
         """
         Helper method for looking up drive and selector stepper config sections in config file
@@ -90,6 +91,11 @@ class AFC_vivid(afcBoxTurtle):
         error_bool |= error
         if error_bool:
             raise config_error(error_string)
+
+    def handle_connect(self):
+        super().handle_connect()
+        self.logo = '<span class=success--text>ViViD Ready\n</span>'
+        self.logo_error = '<span class=error--text>ViViD Not Ready</span>\n'
 
     def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
         return super().system_Test( cur_lane, delay, assignTcmd, enable_movement=False)
@@ -137,15 +143,15 @@ class AFC_vivid(afcBoxTurtle):
         if lane.selector_endstop:
             sel_dir = MoveDirection.NEG if sel_prep else MoveDirection.POS
             selector_state = self._get_lane_selector_state(lane)
-            selector_enabled= self._get_selector_enabled(lane)
+            selector_enabled= self._get_selector_enabled()
 
             if (selector_state
                 and selector_enabled):
                 self.logger.debug(f"{lane.name} already selected")
                 return True, 0.0
             else:
-                if not selector_enabled:
-                    self.logger.info("Moving lane since selector was not enabled")
+                if (not selector_enabled
+                    and selector_state):
                     self.unselect_lane()
 
                 self.logger.info(f"ViViD: Selecting {lane.name}")
@@ -192,7 +198,7 @@ class AFC_vivid(afcBoxTurtle):
             lane.loaded_to_hub = True
             if not lane.calibrated_lane:
                 lane.calibrated_lane = True
-                lane.dist_hub = round(distance, 2) + 200
+                lane.dist_hub = round(distance, 2) + self.LANE_OVERSHOOT
                 self.afc.function.ConfigRewrite(lane.fullname, "dist_hub", lane.dist_hub,
                                                 f"{lane.name} calibrated, updating dist_hub")
                 self.afc.function.ConfigRewrite(lane.fullname, "calibrated_lane",
@@ -230,7 +236,10 @@ class AFC_vivid(afcBoxTurtle):
         :param lane: Lane to eject spool
         """
         self.select_lane(lane)
-        lane.move_to( (lane.dist_hub-100) * MoveDirection.NEG, SpeedMode.LONG,
+        move_dis = lane.dist_hub
+        if move_dis > 400:
+            move_dis = lane.dist_hub - (self.LANE_OVERSHOOT+100)
+        lane.move_to( move_dis * MoveDirection.NEG, SpeedMode.LONG,
                      endstop=lane.prep_endstop_name,
                      assist_active=AssistActive.NO, use_homing=True)
         self.unselect_lane()
@@ -258,6 +267,21 @@ class AFC_vivid(afcBoxTurtle):
         homed, distance, warn = lane.move_to(dist * dir, speedMode, assist_active=assist_active,
                                        endstop=lane.load_es, use_homing=use_homing)
         return homed, distance, warn
+
+    def calibrate_lane(
+            self, cur_lane: AFCLane, tol: Union[float|int]
+        ) -> tuple[bool, str, Union[float|int]]:
+        self.eject_lane(cur_lane)
+        cur_lane.loaded_to_hub = False
+        cur_lane.status = AFCLaneState.NONE
+        cur_lane.calibrated_lane = False
+        self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+        return True, cur_lane.name, 0
+
+    def calibration_lane_message(self) -> str:
+        msg = "\nThe following lanes were ejected and calibration flag set to false. "
+        msg += "Please reinsert filament(s) into ViViD to automatically calibrate distance(s).\n"
+        return msg
 
     cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane in selector style units."
     cmd_AFC_SELECT_LANE_options = {"LANE": {"type":"string", "default":"lane1"}}
