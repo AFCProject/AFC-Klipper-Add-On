@@ -468,6 +468,7 @@ class AFCExtruderStepper(AFCLane):
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
 
+        # Check to verify that hub is not a virtual sensor
         if hub_pin.lower() != "virtual":
             self._add_endstop('hub', hub_pin, 'hub')
         if tool_start_pin != 'buffer':
@@ -510,7 +511,8 @@ class AFCExtruderStepper(AFCLane):
                         self.logger.debug(f"Inherited '{target_key}'='{value}' from section '{sec}' for unit '{unit}' {self.name}")
                     return value
         except Exception as e:
-            self.logger.debug(f"_inherit_from_unit({target_key}) failed: {e}")
+            err_str = f"_inherit_from_unit({target_key}) failed: {e}"
+            self.logger.debug(err_str)
 
         return None
 
@@ -541,6 +543,7 @@ class AFCExtruderStepper(AFCLane):
         :param key: Endstop key name to register for stepper
         :param pin: Pin to register as endstop for stepper
         :param suffix: String to append at end of endstop key
+        :param fullname: Fullname to register endstop name as
         """
         if pin is None:
             self.logger.info(f"Pin for {key} is none for {self.name}")
@@ -576,10 +579,6 @@ class AFCExtruderStepper(AFCLane):
         self.logger.debug(f"{self.name} adding endstop {key}:{name}:{pin}") # TODO:remove once fully tested on toolchanger
         self._endstops[key] = (mcu_endstop, name)
 
-    # def handle_unit_connect(self, unit_obj):
-    #     """Extend AFCLane hook. Hub endstop is already registered at config time."""
-    #     super().handle_unit_connect(unit_obj)
-
     def do_homing_move(self, movepos: int, speed: int, accel: int, endstop_spec:str,
                        triggered=True, check_trigger=True, assist_active=True) -> tuple[bool, float]:
         """
@@ -589,6 +588,7 @@ class AFCExtruderStepper(AFCLane):
         :param speed/accel: motion params (fallbacks applied if None)
         :param endstop_spec: 'load' | raw pin string
         :param triggered/check_trigger: same semantics as manual_stepper
+        :param assist_active: When true espoolers(if configured) activate during homing move
         :return tuple: When homing is success returns True and distance moved.
                        If homing failed returns False and move pos as distance moved.
         """
@@ -596,7 +596,6 @@ class AFCExtruderStepper(AFCLane):
         start_ts = reactor.monotonic()
 
         try:
-
             self.logger.debug(f"[AFC_stepper:{self.name}] Homing start endstop={endstop_spec} movepos={movepos} speed={speed} accel={accel}")
         except Exception:
             pass
@@ -644,7 +643,7 @@ class AFCExtruderStepper(AFCLane):
                 self.logger.debug(f"Exception {e}")
                 pass
             self.logger.debug(f"Homed lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {self._manual_axis_pos:.2f}mm (dt={(end_ts-start_ts):.3f}s)")
-            
+
             return True, dist_mm
         except Exception as e:
             msg = str(e).lower()

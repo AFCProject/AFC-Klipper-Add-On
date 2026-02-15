@@ -9,9 +9,10 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Optional, Any
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    from configfile import ConfigWrapper
     from gcode import GCodeCommand
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_lane import AFCLane, MoveDirection
@@ -27,14 +28,15 @@ except:
     err_str = ERROR_STR.format(import_lib="AFC_BoxTurtle", trace=traceback.format_exc())
     raise config_error(err_str)
 
-try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints
+try: from extras.AFC_lane import SpeedMode, AssistActive
 except:
     err_str = ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc())
     raise config_error(err_str)
 
 class AFC_vivid(afcBoxTurtle):
     VALID_CAM_ANGLES = [30,45,60]
-    def __init__(self, config):
+    CALIBRATION_DISTANCE = 5000
+    def __init__(self, config: ConfigWrapper):
         super().__init__(config)
         self.type:str               = config.get('type', 'ViViD')
         self.drive_stepper:str      = config.get("drive_stepper")                                                   # Name of AFC_stepper for drive motor
@@ -49,6 +51,7 @@ class AFC_vivid(afcBoxTurtle):
         self.failed_to_home         = False
         self.selector_homing_speed  = config.getfloat("selector_homing_speed", 150)
         self.selector_homing_accel  = config.getfloat("selector_homing_accel", 150)
+        self.max_selector_movement  = config.getfloat("max_selector_movement", 800)
 
         self.function.register_commands(self.afc.show_macros, "AFC_SELECT_LANE",
                                         self.cmd_AFC_SELECT_LANE,
@@ -56,8 +59,15 @@ class AFC_vivid(afcBoxTurtle):
                                         options=self.cmd_AFC_SELECT_LANE_options)
 
         self._lookup_objects(config)
-    
-    def _lookup_objects(self, config):
+    # TODO: Update calibration lanes routine to eject and reset calibration flag and then
+    # instruct users to reinsert filament
+    def _lookup_objects(self, config: ConfigWrapper) -> None:
+        """
+        Helper method for looking up drive and selector stepper config sections in config file
+        and loading their respective object. If config is not found and error is raised.
+
+        :param config: Config object to search for config sections
+        """
         error_string = ""
         error_bool   = False
         config_name = f'AFC_stepper {self.drive_stepper}'
@@ -68,7 +78,7 @@ class AFC_vivid(afcBoxTurtle):
                                                   "drive_stepper")
         error_string += rtn_str
         error_bool |= error
-        
+
         config_name = f'AFC_stepper {self.selector_stepper}'
         if section_in_config(config, config_name):
             self.selector_stepper_obj: Optional[AFCExtruderStepper] = \
@@ -86,7 +96,7 @@ class AFC_vivid(afcBoxTurtle):
 
     def _get_lane_selector_state(self, lane: AFCLane) -> bool:
         """
-        Helper method to return status for lanes selctor
+        Helper method to return status for lanes selector
 
         :param lane: ViViD lane to get selector status from.
         :return bool: Returns True if cam is triggering lanes selector.
@@ -95,9 +105,23 @@ class AFC_vivid(afcBoxTurtle):
         if hasattr(lane, "fila_selector"):
             fila_selector_status = lane.fila_selector.get_status(0)
             state = fila_selector_status["filament_detected"]
-            # TODO: Add check to verify that motor is still active, if its not rotate the selector
-            # by 50-100mm so selector is rehomed
         return state
+
+    def _get_selector_enabled(self) -> bool:
+        """
+        Helper method to lookup if lanes selector is enabled.
+
+        :return bool: Returns True if lanes selector is enabled.
+        """
+        stepper_enable = self.printer.lookup_object("stepper_enable", None)
+        enabled = False
+        if stepper_enable:
+            status = stepper_enable.get_status(0)
+            try:
+                enabled = status["steppers"][f"AFC_stepper {self.selector_stepper}"]
+            except:
+                pass
+        return enabled
 
     def select_lane( self, lane: AFCLane, sel_prep:bool=False ) -> tuple[bool, float|int]:
         """
@@ -111,14 +135,22 @@ class AFC_vivid(afcBoxTurtle):
         :return tuple: Returns truple of homed(True/False) and distance moved
         """
         if lane.selector_endstop:
-            sel_dir = -1 if sel_prep else 1
-            if self._get_lane_selector_state(lane):
+            sel_dir = MoveDirection.NEG if sel_prep else MoveDirection.POS
+            selector_state = self._get_lane_selector_state(lane)
+            selector_enabled= self._get_selector_enabled(lane)
+
+            if (selector_state
+                and selector_enabled):
                 self.logger.debug(f"{lane.name} already selected")
                 return True, 0.0
             else:
+                if not selector_enabled:
+                    self.logger.info("Moving lane since selector was not enabled")
+                    self.unselect_lane()
+
                 self.logger.info(f"ViViD: Selecting {lane.name}")
                 homed, distance= self.selector_stepper_obj.do_homing_move(
-                    movepos=800 * sel_dir,
+                    movepos=self.max_selector_movement * sel_dir,
                     speed=self.selector_homing_speed,
                     accel=self.selector_homing_accel,
                     endstop_spec=lane.selector_endstop_name,
@@ -126,9 +158,6 @@ class AFC_vivid(afcBoxTurtle):
                 )
                 self.logger.debug(f"ViViD: Homing done, success:{homed}, distance:{distance}")
                 return homed, round(distance, 2)
-
-    def check_runout(self, lane):
-        pass
 
     def prep_load(self, lane: AFCLane):
         """
@@ -146,12 +175,12 @@ class AFC_vivid(afcBoxTurtle):
         After lane is loaded selector will select current lane if a lane is loaded into
         toolhead.
 
-        :param lane: Lane for which to activate and load filament to load sensor
+        :param lane: AFCLane object for which to activate and load filament to load sensor
         """
         self.lane_loading(lane)
         self.select_lane(lane, sel_prep=True)
         if not lane.calibrated_lane:
-            distance = 5000
+            distance = self.CALIBRATION_DISTANCE
             move_speed = SpeedMode.SHORT
         else:
             distance = lane.dist_hub
@@ -171,27 +200,29 @@ class AFC_vivid(afcBoxTurtle):
             # Retract a bit so load sensor is not triggered
             lane.move_to( -10, SpeedMode.SHORT, use_homing=False)
             self.lane_loaded(lane)
-                
 
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
         self.afc.function.select_loaded_lane()
 
     def prep_post_load(self, lane: AFCLane):
+        """
+        This method does nothing and just returns for ViViD units
+        """
         # Do nothing and return
         return
-    
+
     def unselect_lane(self):
         """
         Method for moving the selector 50mm to free filament in a lane, this is useful when
         ejecting filament.
         """
         self.selector_stepper_obj.move(50, 100, 100, False)
-    
+
     def eject_lane(self, lane: AFCLane):
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
-        will stop once prep sensor is no longer triggered if movement has not already stopped. 
+        will stop once prep sensor is no longer triggered if movement has not already stopped.
 
         After retract movement is done, selector is rotated so loosen grip on filament so it can
         be easily removed.
@@ -199,34 +230,51 @@ class AFC_vivid(afcBoxTurtle):
         :param lane: Lane to eject spool
         """
         self.select_lane(lane)
-        lane.move_to( (lane.dist_hub-100) * -1, SpeedMode.LONG, endstop=lane.prep_endstop_name,
-                    assist_active=AssistActive.NO, use_homing=True)
+        lane.move_to( (lane.dist_hub-100) * MoveDirection.NEG, SpeedMode.LONG,
+                     endstop=lane.prep_endstop_name,
+                     assist_active=AssistActive.NO, use_homing=True)
         self.unselect_lane()
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
-    
+
     def move_to_hub(self, lane: AFCLane, dist: float, dir:MoveDirection, use_homing=True,
-                    speedMode=SpeedMode.HUB, assist_active=AssistActive.DYNAMIC) -> bool:
+                    speedMode=SpeedMode.HUB, assist_active=AssistActive.DYNAMIC
+                    ) -> tuple[bool, float|int, bool]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
-        point.
+        point when homing is enabled.
 
-        :param lane:
-        :param dist: 
-        :param dir:
-        :param use_homing:
-        :param speedMode:
-        :param assist_active:
+        :param lane: AFCLane object to move
+        :param dist: Distance in mm to move filament
+        :param dir: Direction(+/-) to move filament
+        :param use_homing: When enabled home_to logic is used, else move_advance logic is used
+        :param speedMode: SpeedMode type to use when moving stepper
+        :param assist_active: ViViD does not have spoolers, setting this parameter does nothing.
 
-        :return bool:
+        :return tuple: Returns if move was successful, distance moved, and boolean set to true if
+                movement moved is not within 300mm of total distance. When homing is
+                disabled, always returns True, 0, False.
         """
         homed, distance, warn = lane.move_to(dist * dir, speedMode, assist_active=assist_active,
                                        endstop=lane.load_es, use_homing=use_homing)
         return homed, distance, warn
-    
-    cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane"
+
+    cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane in selector style units."
     cmd_AFC_SELECT_LANE_options = {"LANE": {"type":"string", "default":"lane1"}}
     def cmd_AFC_SELECT_LANE(self, gcmd: GCodeCommand):
+        """
+        Macro handles selecting specific lane for selector style units.
+
+        Usage
+        -----
+        `AFC_SELECT_LANE LANE=<lane>`
+
+        Example
+        -----
+        ```
+        AFC_SELECT_LANE LANE=lane1`
+        ```
+        """
         lane = gcmd.get("LANE")
         lane_obj = self.afc.lanes.get(lane, None)
         if lane_obj:
@@ -235,7 +283,6 @@ class AFC_vivid(afcBoxTurtle):
                 self.logger.info(f"Successfully homed to {lane_obj.name} selector after {distance}mm")
             else:
                 self.logger.error(f"Failed to home to {lane_obj.name}")
-                # TODO: add pause?
         else:
             error_string = f"Invalid lane {lane}"
             gcmd.error(error_string)

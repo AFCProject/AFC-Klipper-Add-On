@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
+    from configfile import ConfigWrapper
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -99,7 +100,15 @@ def check_and_return( value_str:str, data_values:dict ) -> str:
 
     return value
 
-def section_in_config(config, name):
+def section_in_config(config: ConfigWrapper, name: str):
+    """
+    Helper function for searching through config file to see if a config section exists
+
+    :param config: Config file object to search through
+    :param name: Config section name to search for
+
+    :return bool: Returns True if config section name is found in config file
+    """
     in_cfg = False
     for s in config.fileconfig.sections():
         if name in s:

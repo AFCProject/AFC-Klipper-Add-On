@@ -172,7 +172,10 @@ class AFC_HTLF(afcBoxTurtle):
 
         :return boolean: Returns true if current lane is loaded and printer is printing but lanes status is not ejecting or calibrating
         """
-        return cur_lane.name == self.afc.function.get_current_lane() and self.afc.function.is_printing() and cur_lane.status != AFCLaneState.EJECTING and cur_lane.status != AFCLaneState.CALIBRATING
+        return (cur_lane.name == self.afc.function.get_current_lane()
+                and self.afc.function.is_printing()
+                and cur_lane.status != AFCLaneState.EJECTING
+                and cur_lane.status != AFCLaneState.CALIBRATING)
 
 def load_config_prefix(config):
     return AFC_HTLF(config)

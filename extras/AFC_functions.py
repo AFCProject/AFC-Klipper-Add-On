@@ -28,8 +28,8 @@ except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".f
 try: from extras.AFC_respond import AFCprompt
 except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints, MoveDirection
-except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
+try: from extras.AFC_lane import AssistActive, MoveDirection
+except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
     from extras.AFC import afc

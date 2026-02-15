@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
 try: from extras.AFC_lane import (
-    AFCLaneState, SpeedMode, AssistActive,
-    AFCHomingPoints, MoveDirection
+    AFCLaneState, SpeedMode, AssistActive, MoveDirection
 )
 except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
 
@@ -1045,7 +1044,7 @@ class afc:
                                  endstop=cur_lane.load_es,
                                  assist_active=AssistActive.DYNAMIC,
                                  use_homing=self.homing_enabled)
-                
+
         if not cur_lane.loaded_to_hub:
             dist_to_hub = cur_lane.dist_hub
             if self.homing_enabled:
@@ -1100,7 +1099,6 @@ class afc:
     def LANE_UNLOAD(self, cur_lane: AFCLane):
         # TODO: update this to unload from toolhead and move all the way back to load
         # when homing is enabled
-        cur_hub = cur_lane.hub_obj
 
         self.current_state = State.EJECTING_LANE
 
@@ -1238,7 +1236,7 @@ class afc:
                         _, _, warn = cur_lane.move_to(dist_to_hub, SpeedMode.LONG,
                                         assist_active=AssistActive.DYNAMIC,
                                         endstop=home_endstop, use_homing=self.homing_enabled)
-                    else:      
+                    else:
                         cur_lane.unit_obj.move_to_hub(cur_lane, dist_to_hub, MoveDirection.POS,
                                                     self.homing_enabled,
                                                     speedMode=SpeedMode.LONG)

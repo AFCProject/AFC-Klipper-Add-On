@@ -15,8 +15,10 @@ from enum import Enum
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from configfile import ConfigWrapper
     from extras.AFC import afc
-    from AFC_stepper import AFCExtruderStepper
+    from extras.AFC_stepper import AFCExtruderStepper
+    from extras.AFC_unit import afcUnit
 
 try: from extras.AFC_utils import ERROR_STR, add_filament_switch
 except: raise error("Error when trying to import AFC_utils.ERROR_STR, add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
@@ -72,6 +74,8 @@ class AFCHomingPoints(str):
 
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
+    WARN_DELTA = 300    # Delta for which to warn if homing move delta is not within this amount from
+                        # command move distance.
     def __init__(self, config):
         self._config            = config
         self.printer            = config.get_printer()
@@ -84,7 +88,7 @@ class AFCLane:
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.cb_update_weight   = self.reactor.register_timer( self.update_weight_callback )
 
-        self.unit_obj           = None
+        self.unit_obj: afcUnit  = None
         self.hub_obj: afc_hub   = None
         self.buffer_obj         = None
         self.extruder_obj       = None
@@ -227,7 +231,8 @@ class AFCLane:
                 query_endstops.register_endstop(self.prep_endstop,
                                                 self.prep_endstop_name)
             except Exception as e:
-                raise error(f"{e} Error prep haasdfklajsfdskl")
+                err_msg = f"Error trying to register prep endstop for {self.name}.\b Error:{e}"
+                raise error(err_msg)
 
         self.load_endstop_name = None
         self.load_endstop = None
@@ -248,8 +253,9 @@ class AFCLane:
                 query_endstops.register_endstop(self.load_endstop,
                                                 self.load_endstop_name)
             except Exception as e:
-                raise error(f"{e} Error load haasdfklajsfdskl")
-            
+                err_msg = f"Error trying to register load endstop for {self.name}.\b Error:{e}"
+                raise error(err_msg)
+
         self.selector_endstop_name = None
         self.selector_endstop = None
         if self.selector is not None:
@@ -258,7 +264,7 @@ class AFCLane:
                 show_sensor = False
             self.fila_selector = add_filament_switch(f"{self.name}_selector", self.selector,
                                                      self.printer, show_sensor)
-            
+
             ppins.allow_multi_use_pin(self.selector.strip("!^"))
             ppins.parse_pin(self.selector, True, True)
             self.selector_endstop = ppins.setup_pin('endstop', self.selector)
@@ -266,9 +272,9 @@ class AFCLane:
             try:
                 query_endstops.register_endstop(self.selector_endstop,
                                                 self.selector_endstop_name)
-            except Exception:
-                raise error("Error selector haasdfklajsfdskl")
-
+            except Exception as e:
+                err_msg = f"Error trying to register selector endstop for {self.name}.\b Error:{e}"
+                raise error(err_msg)
 
         self.connect_done = False
         self.prep_active = False
@@ -290,9 +296,15 @@ class AFCLane:
         Returns lanes filament material type
         """
         return self._material
-    
+
     @property
     def load_es(self) -> str:
+        """
+        Returns endstop name to use for homing.
+
+        :return str: Returns 'load' if lane has stepper, returns unique lane load name if lane is
+                     part of a selector based system.
+        """
         if self.only_lane:
             return self.load_endstop_name
         else:
@@ -341,7 +353,7 @@ class AFCLane:
         enough time to start before AFC tries to connect. This fixes a race condition that can
         happen between klipper and moonraker when first starting up.
         """
-        
+
         if (self.unit_obj.type not in EXCLUDE_TYPES
             or (self.unit_obj.type in EXCLUDE_TYPES and "AFC_lane" in self.fullname)):
             values = self.afc.moonraker.get_afc_stats()
@@ -356,7 +368,7 @@ class AFCLane:
         Callback from <unit_name>:connect to verify units/hub/buffer/extruder object. Errors out if user specified names and they do not exist in their configuration
         """
         # Saving reference to unit
-        self.unit_obj = unit_obj
+        self.unit_obj: afcUnit = unit_obj
         self.buffer_obj = self.unit_obj.buffer_obj
         add_to_other_obj = False
 
@@ -384,6 +396,7 @@ class AFCLane:
                     error_string = 'Error: No config found for hub: {hub} in [AFC_stepper {stepper}]. Please make sure [AFC_hub {hub}] section exists in your config'.format(
                     hub=self.hub, stepper=self.name )
                     raise error(error_string)
+            # Removing for now as this is probably not the best idea to default to a random hub
             # elif self.hub_obj is None:
             #     # Check to make sure at least 1 hub exists in config, if not error out with message
             #     if len(self.afc.hubs) == 0:
@@ -450,8 +463,6 @@ class AFCLane:
             # Assigning buffer name just in case stepper is using buffer defined in units/extruder config
             self.buffer_name = self.buffer_obj.name
 
-        # self.get_steppers()
-
         if self.led_fault           is None: self.led_fault         = self.unit_obj.led_fault
         if self.led_ready           is None: self.led_ready         = self.unit_obj.led_ready
         if self.led_not_ready       is None: self.led_not_ready     = self.unit_obj.led_not_ready
@@ -499,42 +510,38 @@ class AFCLane:
 
         self.connect_done = True
 
-    def _get_steppers(self, config):
+    def _get_steppers(self, config: ConfigWrapper):
         """
-        Helper function to get steppers for lane
+        Helper function to get steppers for lane and setup for proper homing
         """
         if config.get("step_pin", None) is None:
             try:
                 self.only_lane = True
                 unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s and "AFC" in s)
                 self.logger.info(f"{unit_cfg.get_name()} drive stepper {self.name}")
-                self.unit_obj = self.printer.load_object(config, unit_cfg.get_name())
+                self.unit_obj: afcUnit = self.printer.load_object(config, unit_cfg.get_name())
+
                 self.drive_stepper = self.unit_obj.drive_stepper_obj
                 self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
-                self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
                 self.prep_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+
+                self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
                 self.drive_stepper._endstops[self.prep_endstop_name] = (self.prep_endstop, self.prep_endstop_name)
+
             except Exception as e:
-                self.logger.info(f"Couldnt find unit for {self.name} {e}")
+                self.logger.info(f"Couldn't find unit for {self.name} {e}")
                 return
-        else:
-            self.logger.info(f"Has extruder stepper {self.name}")
-            return
 
         if (self.unit_obj.type in EXCLUDE_TYPES
             and "AFC_lane" in self.fullname):
             self.drive_stepper      = self.unit_obj.drive_stepper_obj
             self.extruder_stepper   = self.drive_stepper.extruder_stepper
             if (self.selector
-                and hasattr(self.unit_obj,"selector_stepper_obj")):
+                and hasattr(self.unit_obj, "selector_stepper_obj")):
                 selector_stepper = self.unit_obj.selector_stepper_obj
-                self.logger.info(f"Before {len(self.selector_endstop._dispatch._trsyncs)}")
                 self.selector_endstop.add_stepper(selector_stepper.extruder_stepper.stepper)
-                self.logger.info(f"After {len(self.selector_endstop._dispatch._trsyncs)}")
                 selector_stepper._endstops[self.selector_endstop_name] = (self.selector_endstop, self.selector_endstop_name)
-            # if self.unit_obj.type == "ViViD":
-            #     self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
-            #     self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
+
 
 
     def get_color(self):
@@ -644,7 +651,7 @@ class AFCLane:
                 endstop:AFCHomingPoints=AFCHomingPoints.NONE,
                 assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int, bool]:
         """
-        Helper function for calling stepper move_advance or home_to functions based
+        Helper method for calling stepper move_advance or home_to functions based
         off use_homing parameter
 
         :param distance: Distance to move stepper
@@ -652,8 +659,9 @@ class AFCLane:
         :param endstop: When homing is enabled, used to specify which endstop to home to
         :param assist_active: AssistActive type to enable/disable espoolers when moving stepper
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
-        :return tuple: Returns if move was successful and distance moved. When homing is
-                       disabled, always returns True, 0.
+        :return tuple: Returns if move was successful, distance moved, and boolean set to true if
+                movement moved is not within 300mm of total distance. When homing is
+                disabled, always returns True, 0, False.
         """
         warn = False
         if (self.drive_stepper
@@ -670,12 +678,9 @@ class AFCLane:
                 self.unit_obj.select_lane(self)
                 homed, mov_dis = home_to(endstop, new_distance, speed_mode,
                         distance > 0, assist_active=self.get_active_assist(distance, assist_active))
-                if abs(distance) - mov_dis > 300:
-                    # self.logger.warning(
-                    #     f"Possible false load, Commanded: {distance}, Total move: {mov_dis}.\n"
-                    # )
+                if abs(distance) - mov_dis > self.WARN_DELTA:
                     warn = True
-                
+
                 return homed, mov_dis, warn
             else:
                 self.move_advanced(distance, speed_mode, assist_active )
@@ -788,7 +793,7 @@ class AFCLane:
             return self.loaded_to_hub
         else:
             return bool(self._load_state)
-        
+
 
     def load_callback(self, eventtime, state):
         self._load_state = state
@@ -867,7 +872,6 @@ class AFCLane:
             if self.printer.state_message == 'Printer is ready' and self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
                 # Only try to load when load state trigger is false
                 if self.prep_state and not self.load_state:
-                    x = 0
                     # Checking to make sure last time prep switch was activated was less than 1 second, returning to keep is printing message from spamming
                     # the console since it takes klipper some time to transition to idle when idle_resume=printing
                     if delta_time < 1.0:
@@ -891,7 +895,7 @@ class AFCLane:
                         self.afc.TOOL_LOAD(self)
                         self.material = self.afc.default_material_type
                         break
-                    
+
                     self.unit_obj.prep_post_load(self)
 
                     self.do_enable(False)
@@ -931,8 +935,14 @@ class AFCLane:
         except:
             self.prep_debounce_button._old_note_filament_present(eventtime, prep_state)
 
-        if self.printer.state_message == 'Printer is ready' and True == self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
-            if prep_state == False and self.name == self.afc.current and self.afc.function.is_printing() and self.load_state and self.status != AFCLaneState.EJECTING:
+        if (self.printer.state_message == 'Printer is ready'
+            and True == self._afc_prep_done
+            and self.status != AFCLaneState.TOOL_UNLOADING):
+            if (prep_state == False
+                and self.name == self.afc.current
+                and self.afc.function.is_printing()
+                and self.load_state
+                and self.status != AFCLaneState.EJECTING):
                 # Don't run if user disabled sensor in gui
                 if not self.fila_prep.runout_helper.sensor_enabled:
                     self.logger.warning("Prep runout has been detected, but pause and runout detection has been disabled")
@@ -1688,10 +1698,10 @@ class AFCLane:
             response['td1_td']          = self.td1_data['td'] if "td" in self.td1_data else ''
             response['td1_color']       = self.td1_data['color'] if "color" in self.td1_data else ''
             response['td1_scan_time']   = self.td1_data['scan_time'] if "scan_time" in self.td1_data else ''
-        
+
         if hasattr(self, "_endstops"):
             response["endstops"] = ",".join(self._endstops.keys())
-        
+
         return response
 
 def load_config_prefix(config):
