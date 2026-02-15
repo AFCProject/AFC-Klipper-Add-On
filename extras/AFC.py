@@ -1281,7 +1281,8 @@ class afc:
                             and self.home_to_tool):
                             move_distance = cur_hub.afc_bowden_length
                             max_attempts = 2
-                            self.logger.info("Choo Choo backing up!!!!")
+                            self.logger.info("Distance stopped short of commanded distance to toolhead, "\
+                                            "backing up and retrying load.")
                             cur_lane.move_to(100 * -1, SpeedMode.SHORT,
                                             use_homing=False)
                         _, dist, warn = cur_lane.move_to(move_distance, SpeedMode.SHORT,
