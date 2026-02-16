@@ -82,6 +82,7 @@ class AFCLane:
         self.afc: afc           = self.printer.load_object(config, 'AFC')
         self.gcode              = self.printer.load_object(config, 'gcode')
         self.reactor            = self.printer.get_reactor()
+        self.mutex              = self.reactor.mutex()
         self.extruder_stepper   = None
         self.logger             = self.afc.logger
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
@@ -870,52 +871,53 @@ class AFCLane:
         for i in range(1):
             # Hacky way for do{}while(0) loop, DO NOT return from this for loop, use break instead so that self.prep_state variable gets sets correctly
             #  before exiting function
-            if self.printer.state_message == 'Printer is ready' and self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
-                # Only try to load when load state trigger is false
-                if self.prep_state and not self.load_state:
-                    # Checking to make sure last time prep switch was activated was less than 1 second, returning to keep is printing message from spamming
-                    # the console since it takes klipper some time to transition to idle when idle_resume=printing
-                    if delta_time < 1.0:
-                        break
-
+            with self.mutex:
+                if self.printer.state_message == 'Printer is ready' and self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
                     # Check to see if the printer is printing or moving, as trying to load while printer is doing something will crash klipper
                     if self.afc.function.is_printing(check_movement=True):
                         self.afc.error.AFC_error("Cannot load spools while printer is actively moving or homing", False)
                         self.prep_active = False
                         return
 
-                    # Calling common load function
-                    self.unit_obj.prep_load(self)
+                    # Only try to load when load state trigger is false
+                    if self.prep_state and not self.load_state:
+                        # Checking to make sure last time prep switch was activated was less than 1 second, returning to keep is printing message from spamming
+                        # the console since it takes klipper some time to transition to idle when idle_resume=printing
+                        if delta_time < 1.0:
+                            break
 
-                    self.status = AFCLaneState.NONE
+                        # Calling common load function
+                        self.unit_obj.prep_load(self)
 
-                    # Verify that load state is still true as this would still trigger if prep sensor was triggered and then filament was removed
-                    #   This is only really a issue when using direct and still using load sensor
-                    if self.hub == 'direct' and self.prep_state:
-                        self.afc.afcDeltaTime.set_start_time()
-                        self.afc.TOOL_LOAD(self)
-                        self.material = self.afc.default_material_type
-                        break
+                        self.status = AFCLaneState.NONE
 
-                    self.unit_obj.prep_post_load(self)
+                        # Verify that load state is still true as this would still trigger if prep sensor was triggered and then filament was removed
+                        #   This is only really a issue when using direct and still using load sensor
+                        if self.hub == 'direct' and self.prep_state:
+                            self.afc.afcDeltaTime.set_start_time()
+                            self.afc.TOOL_LOAD(self)
+                            self.material = self.afc.default_material_type
+                            break
 
-                    self.do_enable(False)
-                    if (self.load_state
-                        and self.prep_state):
-                        self.status = AFCLaneState.LOADED
-                        self.unit_obj.lane_loaded(self)
-                        self.afc.spool._set_values(self)
-                        self._post_prep_user_macro()
-                        # Check if user wants to get TD-1 data when loading
-                        # TODO: When implementing multi-extruder this could still happen if a lane is loaded for a
-                        # different extruder/hub
-                        self._prep_capture_td1()
+                        self.unit_obj.prep_post_load(self)
 
-                elif self.prep_state == True and self.load_state == True and not self.afc.function.is_printing():
-                    message = 'Cannot load {} load sensor is triggered.'.format(self.name)
-                    message += '\n    Make sure filament is not stuck in load sensor or check to make sure load sensor is not stuck triggered.'
-                    message += '\n    Once cleared try loading again'
-                    self.afc.error.AFC_error(message, pause=False)
+                        self.do_enable(False)
+                        if (self.load_state
+                            and self.prep_state):
+                            self.status = AFCLaneState.LOADED
+                            self.unit_obj.lane_loaded(self)
+                            self.afc.spool._set_values(self)
+                            self._post_prep_user_macro()
+                            # Check if user wants to get TD-1 data when loading
+                            # TODO: When implementing multi-extruder this could still happen if a lane is loaded for a
+                            # different extruder/hub
+                            self._prep_capture_td1()
+
+                    elif self.prep_state == True and self.load_state == True and not self.afc.function.is_printing():
+                        message = 'Cannot load {} load sensor is triggered.'.format(self.name)
+                        message += '\n    Make sure filament is not stuck in load sensor or check to make sure load sensor is not stuck triggered.'
+                        message += '\n    Once cleared try loading again'
+                        self.afc.error.AFC_error(message, pause=False)
         self.prep_active = False
         self.afc.save_vars()
 
