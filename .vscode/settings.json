@@ -13,8 +13,5 @@
     ],
     "python.analysis.extraPaths": [
         "${workspaceFolder}/klipper/klippy"
-    ],
-    "cSpell.words": [
-        "satasitified"
     ]
 }

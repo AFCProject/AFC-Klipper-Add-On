@@ -34,10 +34,35 @@ except:
     raise config_error(err_str)
 
 class AFC_vivid(afcBoxTurtle):
+    """
+    ViViD style AFC unit implementation.
+
+    This class provides all selector based behavior for ViViD units, including:
+    - Loading drive/selector steppers and validating configuration.
+    - Selector cam homing and lane selection (`select_lane`).
+    - Filament loading, initial calibration, and hub distance updates (`prep_load`).
+    - Lane ejection routines (`eject_lane`).
+    - Standardized hub movement helpers (`move_to_hub`).
+    - Calibration reset workflow (`calibrate_lane`).
+    - Registration of the `AFC_SELECT_LANE` G‑code command.
+
+    ViViD units use a rotating cam to select lanes and rely on prep/load sensors
+    for homing based filament movement. This class encapsulates all hardware specific
+    logic needed to operate those units within the AFC framework.
+    """
     VALID_CAM_ANGLES = [30,45,60]
     CALIBRATION_DISTANCE = 5000
     LANE_OVERSHOOT = 200
     def __init__(self, config: ConfigWrapper):
+        """
+        Initialize a ViViD style AFC unit.
+
+        Parameters
+        ----------
+        config : ConfigWrapper
+            Configuration for this unit, including stepper names, homing
+            parameters, GUI sensor settings, and other AFC specific options.
+        """
         super().__init__(config)
         self.type:str               = config.get('type', 'ViViD')
         self.drive_stepper:str      = config.get("drive_stepper")                                                   # Name of AFC_stepper for drive motor
