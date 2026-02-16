@@ -44,7 +44,7 @@ class AFC_vivid(afcBoxTurtle):
     - Lane ejection routines (`eject_lane`).
     - Standardized hub movement helpers (`move_to_hub`).
     - Calibration reset workflow (`calibrate_lane`).
-    - Registration of the `AFC_SELECT_LANE` G‑code command.
+    - Registration of the `AFC_SELECT_LANE` Gcode command.
 
     ViViD units use a rotating cam to select lanes and rely on prep/load sensors
     for homing based filament movement. This class encapsulates all hardware specific
@@ -296,6 +296,15 @@ class AFC_vivid(afcBoxTurtle):
     def calibrate_lane(
             self, cur_lane: AFCLane, tol: Union[float|int]
         ) -> tuple[bool, str, Union[float|int]]:
+        """
+        Method to calibrate lane for ViViD units. Since ViViD units are unique, this method ejects
+        filament and sets calibration flag to False. Once user reinserts filament lane will be
+        automatically calibrated.
+
+        :param cur_lane: Lane object to eject
+        :param tol: Unused for this method
+        :return tuple: Always returns True, lane name, 0
+        """
         self.eject_lane(cur_lane)
         cur_lane.loaded_to_hub = False
         cur_lane.status = AFCLaneState.NONE
@@ -304,6 +313,12 @@ class AFC_vivid(afcBoxTurtle):
         return True, cur_lane.name, 0
 
     def calibration_lane_message(self) -> str:
+        """
+        Method for returning calibration message informing user to reinsert filament to calibrate
+        lane.
+
+        :return str: Message informing user to reinsert to calibrate lane.
+        """
         msg = "\nThe following lanes were ejected and calibration flag set to false. "
         msg += "Please reinsert filament(s) into ViViD to automatically calibrate distance(s).\n"
         return msg

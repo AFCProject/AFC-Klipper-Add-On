@@ -1283,7 +1283,7 @@ class afc:
                             max_attempts = 2
                             self.logger.info("Distance stopped short of commanded distance to toolhead, "\
                                             "backing up and retrying load.")
-                            cur_lane.move_to(100 * -1, SpeedMode.SHORT,
+                            cur_lane.move_to(100 * MoveDirection.NEG, SpeedMode.SHORT,
                                             use_homing=False)
                         _, dist, warn = cur_lane.move_to(move_distance, SpeedMode.SHORT,
                                                         endstop=cur_lane.get_toolhead_endstop(),
