@@ -527,7 +527,7 @@ class afcBoxTurtle(afcUnit):
                              use_homing=self.afc.homing_enabled)
             max_tries = 0
             while lane.load_state:
-                lane.move_advanced(lane.move_dis * -1, SpeedMode.SHORT,
+                lane.move_advanced(lane.hub_obj.move_dis * -1, SpeedMode.SHORT,
                                    assist_active = AssistActive.YES)
                 if max_tries >= self.MAX_NUM_MOVES:
                     msg = f' Failed to eject {lane.name}'
