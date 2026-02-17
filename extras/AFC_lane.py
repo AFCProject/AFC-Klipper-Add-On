@@ -231,7 +231,7 @@ class AFCLane:
                 query_endstops.register_endstop(self.prep_endstop,
                                                 self.prep_endstop_name)
             except Exception as e:
-                err_msg = f"Error trying to register prep endstop for {self.name}.\b Error:{e}"
+                err_msg = f"Error trying to register prep endstop for {self.name}.\n Error:{e}"
                 raise error(err_msg)
 
         self.load_endstop_name = None
@@ -253,7 +253,7 @@ class AFCLane:
                 query_endstops.register_endstop(self.load_endstop,
                                                 self.load_endstop_name)
             except Exception as e:
-                err_msg = f"Error trying to register load endstop for {self.name}.\b Error:{e}"
+                err_msg = f"Error trying to register load endstop for {self.name}.\n Error:{e}"
                 raise error(err_msg)
 
         self.selector_endstop_name = None
@@ -273,7 +273,7 @@ class AFCLane:
                 query_endstops.register_endstop(self.selector_endstop,
                                                 self.selector_endstop_name)
             except Exception as e:
-                err_msg = f"Error trying to register selector endstop for {self.name}.\b Error:{e}"
+                err_msg = f"Error trying to register selector endstop for {self.name}.\n Error:{e}"
                 raise error(err_msg)
 
         self.connect_done = False

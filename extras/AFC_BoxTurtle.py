@@ -475,7 +475,7 @@ class afcBoxTurtle(afcUnit):
 
         If load sensor is not triggered and prep is still triggered small moves of short_move_dis in
         mm will happen until a total of short_move_dis*40mm is reached. This is also the same
-        movement hat happens if homing is not enabled.
+        movement that happens if homing is not enabled.
 
         :param lane: AFCLane object for which to activate and load filament to load sensor
         """
@@ -494,7 +494,6 @@ class afcBoxTurtle(afcUnit):
                 self.afc.function.afc_led(self.afc.led_fault, lane.led_index)
                 lane.status = AFCLaneState.NONE
                 break
-        return False
 
     def prep_post_load(self, lane: AFCLane):
         """
@@ -504,7 +503,7 @@ class afcBoxTurtle(afcUnit):
         long as load and prep states are still triggered. If this check is satisfied then filament
         is moved to hub with length specified by dist_hub parameter.
 
-        :param lane: AFCLane object for which to preform prep_post_load action on
+        :param lane: AFCLane object for which to perform prep_post_load action on
         """
         # Checking if loaded to hub(it should not be since filament was just inserted), if false load to hub. Does a fast load if hub distance is over 200mm
         if (lane.load_to_hub
@@ -518,7 +517,7 @@ class afcBoxTurtle(afcUnit):
         """
         Method to eject spool from lane.
 
-        :param lane: AFCLane object for which to preform eject action on
+        :param lane: AFCLane object for which to perform eject action on
         """
         try:
             if lane.loaded_to_hub:
@@ -527,6 +526,7 @@ class afcBoxTurtle(afcUnit):
                              use_homing=self.afc.homing_enabled)
             max_tries = 0
             while lane.load_state:
+                max_tries += 1
                 lane.move_advanced(lane.hub_obj.move_dis * -1, SpeedMode.SHORT,
                                    assist_active = AssistActive.YES)
                 if max_tries >= self.MAX_NUM_MOVES:

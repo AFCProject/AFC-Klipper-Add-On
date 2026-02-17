@@ -571,7 +571,7 @@ class afcUnit:
 
         See unit specific function for how this is unique per unit type.
 
-        :param lane: AFCLane object for which to preform prep_post_load action on
+        :param lane: AFCLane object for which to perform prep_post_load action on
         """
         self._print_function_not_defined(self.prep_post_load.__name__)
 
@@ -580,7 +580,7 @@ class afcUnit:
         Method to eject spool from Unit/lane.
         Need to override in specific unit
 
-        :param lane: AFCLane object for which to preform eject action on
+        :param lane: AFCLane object for which to perform eject action on
         """
         self._print_function_not_defined(self.eject_lane.__name__)
 
@@ -612,8 +612,8 @@ class afcUnit:
     def move_to_load(self, lane: AFCLane, dist: float,
                      dir: MoveDirection, use_homing=True) -> tuple[bool, float|int, bool]:
         """
-        Helper method to move filament to load sensor, calls lanes move_to method with HUB as trigger
-        point when homing is enabled.
+        Helper method to move filament to load sensor, calls lane's move_to method with the load
+        sensor endpoint (lane.load_es) as trigger point when homing is enabled.
 
         This can be overridden if needed for unit specific functionality
 
@@ -630,4 +630,4 @@ class afcUnit:
                        disabled, always returns True, 0, False.
         """
         return lane.move_to(dist * dir, SpeedMode.LONG, endstop=lane.load_es,
-                            active_assist=AssistActive.DYNAMIC, use_homing=use_homing)
+                            assist_active=AssistActive.DYNAMIC, use_homing=use_homing)

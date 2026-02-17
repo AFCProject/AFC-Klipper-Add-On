@@ -110,8 +110,8 @@ class AFC_vivid(afcBoxTurtle):
             self.selector_stepper_obj: Optional[AFCExtruderStepper] = \
                 self.printer.load_object(config, config_name, None)
 
-        error, rtn_str = self._check_and_errorout(self.drive_stepper_obj, config_name,
-                                                  "drive_stepper")
+        error, rtn_str = self._check_and_errorout(self.selector_stepper_obj, config_name,
+                                                  "selector_stepper")
         error_string += rtn_str
         error_bool |= error
         if error_bool:
@@ -163,7 +163,7 @@ class AFC_vivid(afcBoxTurtle):
         :param sel_prep: When set to True, cam is rotated in the negative direction
                          this is useful when loading filament so the filament properly
                          goes into the PTFE
-        :return tuple: Returns truple of homed(True/False) and distance moved
+        :return tuple: Returns tuple of homed(True/False) and distance moved
         """
         if lane.selector_endstop:
             sel_dir = MoveDirection.NEG if sel_prep else MoveDirection.POS
@@ -255,7 +255,7 @@ class AFC_vivid(afcBoxTurtle):
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
         will stop once prep sensor is no longer triggered if movement has not already stopped.
 
-        After retract movement is done, selector is rotated so loosen grip on filament so it can
+        After retract movement is done, selector is rotated to loosen grip on filament so it can
         be easily removed.
 
         :param lane: Lane to eject spool
@@ -320,7 +320,7 @@ class AFC_vivid(afcBoxTurtle):
         :return str: Message informing user to reinsert to calibrate lane.
         """
         msg = "\nThe following lanes were ejected and calibration flag set to false. "
-        msg += "Please reinsert filament(s) into ViViD to automatically calibrate distance(s).\n"
+        msg += "Please reinsert filament into ViViD to automatically calibrate distance.\n"
         return msg
 
     cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane in selector style units."
