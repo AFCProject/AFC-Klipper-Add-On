@@ -34,6 +34,8 @@ except:
     raise config_error(err_str)
 
 class afcUnit:
+    HOMING_DELTA = 300  # Delta for which to warn if homing move delta is not within this amount from
+                        # command move distance.
     def __init__(self, config):
         self.printer        = config.get_printer()
         self.gcode          = self.printer.load_object(config, 'gcode')
@@ -80,6 +82,7 @@ class afcUnit:
         self.short_move_dis              = config.getfloat("short_move_dis", self.afc.short_move_dis)       # Move distance in mm for failsafe moves. Setting value here overrides values set in AFC.cfg file
         self.max_move_dis                = config.getfloat("max_move_dis", self.afc.max_move_dis)            # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves. Setting value here overrides values set in AFC.cfg file
         self.homing_overshoot            = config.getfloat("homing_overshoot", 50)                           # Amount to add to homing distance so that distance is long enough to actually hit endstop
+        self.homing_delta                = config.getfloat("homing_delta", self.HOMING_DELTA)                # Delta for which to warn if homing move delta is not within this amount from command move distance.
         self.debug                       = config.getboolean("debug",            False)                      # Turns on/off debug messages to console
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", self.afc.rev_long_moves_speed_factor)
         self.extruder_clear_dis          = config.getfloat("extruder_clear_dis", 50)                        # Amount to move to clear extruder gears when ejecting filament

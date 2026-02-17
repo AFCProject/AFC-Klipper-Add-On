@@ -74,8 +74,6 @@ class AFCHomingPoints(str):
 
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
-    WARN_DELTA = 300    # Delta for which to warn if homing move delta is not within this amount from
-                        # command move distance.
     def __init__(self, config):
         self._config            = config
         self.printer            = config.get_printer()
@@ -152,6 +150,7 @@ class AFCLane:
         self.max_move_dis       = config.getfloat("max_move_dis", None)                 # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.n20_break_delay_time= config.getfloat("n20_break_delay_time", None)        # Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.homing_overshoot   = config.getfloat("homing_overshoot", None)             # Amount to add to homing distance so that distance is long enough to actually hit endstop
+        self.homing_delta       = config.getfloat("homing_delta", None)                 # Delta for which to warn if homing move delta is not within this amount from command move distance.
         self.extruder_clear_dis = config.getfloat("extruder_clear_dis", None)
 
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", None)     # scalar speed factor when reversing filamentalist
@@ -481,6 +480,7 @@ class AFCLane:
         if self.short_move_dis              is None: self.short_move_dis    = self.unit_obj.short_move_dis
         if self.max_move_dis                is None: self.max_move_dis      = self.unit_obj.max_move_dis
         if self.homing_overshoot            is None: self.homing_overshoot  = self.unit_obj.homing_overshoot
+        if self.homing_delta                is None: self.homing_delta      = self.unit_obj.homing_delta
         if self.td1_when_loaded             is None: self.td1_when_loaded   = self.unit_obj.td1_when_loaded
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
         if self.extruder_clear_dis          is None: self.extruder_clear_dis= self.unit_obj.extruder_clear_dis
@@ -680,7 +680,7 @@ class AFCLane:
                 self.unit_obj.select_lane(self)
                 homed, mov_dis = home_to(endstop, new_distance, speed_mode,
                         distance > 0, assist_active=self.get_active_assist(distance, assist_active))
-                if abs(distance) - mov_dis > self.WARN_DELTA:
+                if (abs(distance) - mov_dis) > self.homing_delta:
                     warn = True
 
                 return homed, mov_dis, warn

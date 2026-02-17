@@ -615,8 +615,8 @@ class AFCExtruderStepper(AFCLane):
         try:
             endstop = self._resolve_endstop_pin(endstop_spec)
         except Exception as e_resolve:
-            self.logger.debug(f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve})")
             raise_string = f"ENDSTOP '{endstop_spec}' could not be resolved ({e_resolve})"
+            self.logger.debug(raise_string)
             raise self.gcode.error(raise_string)
 
         # Try MCU-based homing first
@@ -638,11 +638,11 @@ class AFCExtruderStepper(AFCLane):
                 # However, the Homing manager's trigger_mcu_pos is absolute; compute delta from current mcu pos as a proxy for short homing moves.
                 steps_moved = abs(trig_mcu_pos - start_mcu_pos)
                 dist_mm = steps_moved * step_dist
-                self.logger.debug(f"AFC lane '{self.name}': endstop '{endstop_spec}' trigger after {dist_mm:.3f} mm (steps={steps_moved})")
             except Exception as e:
                 self.logger.debug(f"Exception {e}")
                 pass
-            self.logger.debug(f"Homed lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {self._manual_axis_pos:.2f}mm (dt={(end_ts-start_ts):.3f}s)")
+            self.logger.debug(f"Homed lane {self.name}'to ENDSTOP={endstop_spec} trigger after "\
+                              f"{dist_mm:.3f}mm (steps={steps_moved} dt={(end_ts-start_ts):.3f}s")
 
             return True, dist_mm
         except Exception as e:
@@ -694,7 +694,6 @@ class AFCExtruderStepper(AFCLane):
             raise self.gcode.error("home_to requires an explicit distance; use home_to_hub/toolhead/buffer for sensible defaults")
         # Compute an absolute target along our 1D axis
         target = float(self._manual_axis_pos + float(distance))
-        self.logger.debug(f"Homing lane '{self.name}' to ENDSTOP='{endstop_spec}' at position {distance:.2f}mm")
         homed = False
         move_distance = 0
         try:
