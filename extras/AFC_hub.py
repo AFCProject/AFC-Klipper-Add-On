@@ -102,15 +102,16 @@ class afc_hub:
 
         self.printer.send_event("afc_hub:register_macros", self)
 
-        msg = "The following lanes need load sensors for virtual hub sensor to work correctly:"
-        report_error = False
-        for lane in self.lanes.values():
-            if lane.load is None:
-                report_error = True
-                msg += f"\n{lane.fullname}"
+        if self.switch_pin.lower() == "virtual":
+            msg = "The following lanes need load sensors for virtual hub sensor to work correctly:"
+            report_error = False
+            for lane in self.lanes.values():
+                if lane.load is None:
+                    report_error = True
+                    msg += f"\n{lane.fullname}"
 
-        if report_error:
-            raise config_error(msg)
+            if report_error:
+                raise config_error(msg)
 
     @property
     def state(self):
