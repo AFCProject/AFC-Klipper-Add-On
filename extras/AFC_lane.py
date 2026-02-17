@@ -523,12 +523,15 @@ class AFCLane:
             self.logger.info(f"{unit_cfg.get_name()} drive stepper {self.name}")
             self.unit_obj: afcUnit = self.printer.load_object(config, unit_cfg.get_name())
 
-            self.drive_stepper = self.unit_obj.drive_stepper_obj
-            self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
-            self.prep_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+            if getattr(self.unit_obj, "drive_stepper_obj", None):
+                self.drive_stepper = self.unit_obj.drive_stepper_obj
+                if self.load_endstop:
+                    self.load_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+                    self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
 
-            self.drive_stepper._endstops[self.load_endstop_name] = (self.load_endstop, self.load_endstop_name)
-            self.drive_stepper._endstops[self.prep_endstop_name] = (self.prep_endstop, self.prep_endstop_name)
+                if self.prep_endstop:
+                    self.prep_endstop.add_stepper(self.drive_stepper.extruder_stepper.stepper)
+                    self.drive_stepper._endstops[self.prep_endstop_name] = (self.prep_endstop, self.prep_endstop_name)
 
         except Exception as e:
             self.logger.info(f"Couldn't find unit for {self.name} {e}")
@@ -539,7 +542,7 @@ class AFCLane:
             self.drive_stepper      = self.unit_obj.drive_stepper_obj
             self.extruder_stepper   = self.drive_stepper.extruder_stepper
             if (self.selector
-                and hasattr(self.unit_obj, "selector_stepper_obj")):
+                and getattr(self.unit_obj, "selector_stepper_obj", None)):
                 selector_stepper = self.unit_obj.selector_stepper_obj
                 self.selector_endstop.add_stepper(selector_stepper.extruder_stepper.stepper)
                 selector_stepper._endstops[self.selector_endstop_name] = (self.selector_endstop, self.selector_endstop_name)
