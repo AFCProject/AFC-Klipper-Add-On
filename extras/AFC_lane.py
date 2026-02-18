@@ -287,6 +287,14 @@ class AFCLane:
                                            self.cmd_SET_LANE_LOAD_options )
         self._get_steppers(config)
 
+        if getattr(self.unit_obj, "selector_stepper_obj", None):
+            # Register macro for units that have selectors
+            self.function.register_mux_command(self.afc.show_macros, "AFC_SELECT_LANE",
+                                               "LANE", self.name,
+                                               self.unit_obj.cmd_AFC_SELECT_LANE,
+                                               description=self.unit_obj.cmd_AFC_SELECT_LANE_help,
+                                               options=self.unit_obj.cmd_AFC_SELECT_LANE_options)
+
     def __str__(self):
         return self.name
 

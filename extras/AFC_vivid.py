@@ -9,15 +9,13 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
-    from gcode import GCodeCommand
-    from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_lane import AFCLane
 
-try: from extras.AFC_utils import ERROR_STR, section_in_config
+try: from extras.AFC_utils import ERROR_STR
 except:
     trace=traceback.format_exc()
     err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{trace}"
@@ -67,8 +65,6 @@ class AFC_vivid(afcBoxTurtle):
         self.type:str               = config.get('type', 'ViViD')
         self.drive_stepper:str      = config.get("drive_stepper")                                                   # Name of AFC_stepper for drive motor
         self.selector_stepper:str   = config.get("selector_stepper")                                                # Name of AFC_stepper for selector motor
-        self.drive_stepper_obj: AFCExtruderStepper = None
-        self.selector_stepper_obj: AFCExtruderStepper = None
         self.current_selected_lane  = None
         self.home_state             = False
         self.enable_sensors_in_gui  = config.getboolean("enable_sensors_in_gui",
@@ -79,43 +75,7 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_homing_accel  = config.getfloat("selector_homing_accel", 150)
         self.max_selector_movement  = config.getfloat("max_selector_movement", 800)
 
-        self.function.register_commands(self.afc.show_macros, "AFC_SELECT_LANE",
-                                        self.cmd_AFC_SELECT_LANE,
-                                        description=self.cmd_AFC_SELECT_LANE_help,
-                                        options=self.cmd_AFC_SELECT_LANE_options)
-
-
         self._lookup_objects(config)
-
-    def _lookup_objects(self, config: ConfigWrapper) -> None:
-        """
-        Helper method for looking up drive and selector stepper config sections in config file
-        and loading their respective object. If config is not found and error is raised.
-
-        :param config: Config object to search for config sections
-        """
-        error_string = ""
-        error_bool   = False
-        config_name = f'AFC_stepper {self.drive_stepper}'
-        if section_in_config(config, config_name):
-            self.drive_stepper_obj: Optional[AFCExtruderStepper] = \
-                self.printer.load_object(config, config_name, None)
-        error, rtn_str = self._check_and_errorout(self.drive_stepper_obj, config_name,
-                                                  "drive_stepper")
-        error_string += rtn_str
-        error_bool |= error
-
-        config_name = f'AFC_stepper {self.selector_stepper}'
-        if section_in_config(config, config_name):
-            self.selector_stepper_obj: Optional[AFCExtruderStepper] = \
-                self.printer.load_object(config, config_name, None)
-
-        error, rtn_str = self._check_and_errorout(self.selector_stepper_obj, config_name,
-                                                  "selector_stepper")
-        error_string += rtn_str
-        error_bool |= error
-        if error_bool:
-            raise config_error(error_string)
 
     def handle_connect(self):
         super().handle_connect()
@@ -322,34 +282,6 @@ class AFC_vivid(afcBoxTurtle):
         msg = "\nThe following lanes were ejected and calibration flag set to false. "
         msg += "Please reinsert filament into ViViD to automatically calibrate distance.\n"
         return msg
-
-    cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane in selector style units."
-    cmd_AFC_SELECT_LANE_options = {"LANE": {"type":"string", "default":"lane1"}}
-    def cmd_AFC_SELECT_LANE(self, gcmd: GCodeCommand):
-        """
-        Macro handles selecting specific lane for selector style units.
-
-        Usage
-        -----
-        `AFC_SELECT_LANE LANE=<lane>`
-
-        Example
-        -----
-        ```
-        AFC_SELECT_LANE LANE=lane1`
-        ```
-        """
-        lane = gcmd.get("LANE")
-        lane_obj = self.afc.lanes.get(lane, None)
-        if lane_obj:
-            homed, distance = self.select_lane(lane_obj)
-            if homed:
-                self.logger.info(f"Successfully homed to {lane_obj.name} selector after {distance}mm")
-            else:
-                self.logger.error(f"Failed to home to {lane_obj.name}")
-        else:
-            error_string = f"Invalid lane {lane}"
-            gcmd.error(error_string)
 
 def load_config_prefix(config):
     return AFC_vivid(config)

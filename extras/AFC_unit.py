@@ -10,7 +10,7 @@ import traceback
 from configfile import error as config_error
 from datetime import datetime, timedelta
 
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from extras.AFC_lane import (
@@ -21,9 +21,14 @@ if TYPE_CHECKING:
     from extras.AFC_buffer import AFCTrigger
     from extras.AFC_hub import afc_hub
     from extras.AFC_extruder import AFCExtruder
+    from gcode import GCodeCommand
+    from configfile import ConfigWrapper
 
-try: from extras.AFC_utils import ERROR_STR
-except: raise config_error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
+try: from extras.AFC_utils import ERROR_STR, section_in_config
+except:
+    trace=traceback.format_exc()
+    err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{trace}"
+    raise config_error(err_str)
 
 try: from extras.AFC_respond import AFCprompt
 except: raise config_error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
@@ -142,6 +147,38 @@ class afcUnit:
         if check_obj is None:
             return True, error_string
         return False, ""
+
+
+    def _lookup_objects(self, config: ConfigWrapper) -> None:
+        """
+        Helper method for looking up drive and selector stepper config sections in config file
+        and loading their respective object. If config is not found and error is raised. This should
+        only be called if Unit relies on drive stepper and selector steppers.
+
+        :param config: Config object to search for config sections
+        """
+        error_string = ""
+        error_bool   = False
+        config_name = f'AFC_stepper {self.drive_stepper}'
+        if section_in_config(config, config_name):
+            self.drive_stepper_obj: Optional[AFCExtruderStepper] = \
+                self.printer.load_object(config, config_name, None)
+        error, rtn_str = self._check_and_errorout(self.drive_stepper_obj, config_name,
+                                                  "drive_stepper")
+        error_string += rtn_str
+        error_bool |= error
+
+        config_name = f'AFC_stepper {self.selector_stepper}'
+        if section_in_config(config, config_name):
+            self.selector_stepper_obj: Optional[AFCExtruderStepper] = \
+                self.printer.load_object(config, config_name, None)
+
+        error, rtn_str = self._check_and_errorout(self.selector_stepper_obj, config_name,
+                                                  "selector_stepper")
+        error_string += rtn_str
+        error_bool |= error
+        if error_bool:
+            raise config_error(error_string)
 
     def handle_connect(self):
         """
@@ -449,7 +486,7 @@ class afcUnit:
         self.afc.function.afc_led(lane.led_ready, lane.led_index)
         return
 
-    def select_lane( self, lane: AFCLane, sel_prep:bool=False ):
+    def select_lane( self, lane: AFCLane, sel_prep:bool=False ) -> tuple[bool, float|int]:
         """
         Common method to select a units lane.
 
@@ -458,7 +495,7 @@ class afcUnit:
         :param lane: AFCLane object for lane to select
         :param sel_prep: Set to true is selection is happing during prep macro
         """
-        return
+        return True, 0.0
     def return_to_home(self):
         """
         Function to home unit if unit has homing sensor
@@ -631,3 +668,31 @@ class afcUnit:
         """
         return lane.move_to(dist * dir, SpeedMode.LONG, endstop=lane.load_es,
                             assist_active=AssistActive.DYNAMIC, use_homing=use_homing)
+
+    cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane in selector style units."
+    cmd_AFC_SELECT_LANE_options = {"LANE": {"type":"string", "default":"lane1"}}
+    def cmd_AFC_SELECT_LANE(self, gcmd: GCodeCommand):
+        """
+        Macro handles selecting specific lane for selector style units.
+
+        Usage
+        -----
+        `AFC_SELECT_LANE LANE=<lane>`
+
+        Example
+        -----
+        ```
+        AFC_SELECT_LANE LANE=lane1`
+        ```
+        """
+        lane = gcmd.get("LANE")
+        lane_obj = self.afc.lanes.get(lane, None)
+        if lane_obj:
+            homed, distance = self.select_lane(lane_obj)
+            if homed:
+                self.logger.info(f"Successfully homed to {lane_obj.name} selector after {distance}mm")
+            else:
+                self.logger.error(f"Failed to home to {lane_obj.name}")
+        else:
+            error_string = f"Invalid lane {lane}"
+            gcmd.error(error_string)
