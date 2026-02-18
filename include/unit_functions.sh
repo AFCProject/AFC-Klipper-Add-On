@@ -43,6 +43,39 @@ name_additional_unit() {
         echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
       fi
     done
+  elif [ "$installation_type" == "BoxTurtle (8-Lane)" ]; then
+    while true; do
+      read -p "Enter name for unit (Default: Turtle_2): " boxturtle_name
+      boxturtle_name=${boxturtle_name:-Turtle_2}
+
+      if [[ "$boxturtle_name" =~ ^[a-zA-Z0-9_-]+$ ]] && [[ ${#boxturtle_name} -le 24 ]]; then
+        break
+      else
+        echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
+      fi
+    done
+  elif [ "$installation_type" == "ViViD" ]; then
+    while true; do
+      read -p "Enter name for unit (Default: Vivid_1): " boxturtle_name
+      boxturtle_name=${boxturtle_name:-Vivid_1}
+
+      if [[ "$boxturtle_name" =~ ^[a-zA-Z0-9_-]+$ ]] && [[ ${#boxturtle_name} -le 24 ]]; then
+        break
+      else
+        echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
+      fi
+    done
+  elif [ "$installation_type" == "NightOwl" ]; then
+    while true; do
+      read -p "Enter name for unit (Default: NightOwl_1): " boxturtle_name
+      boxturtle_name=${boxturtle_name:-NightOwl_1}
+
+      if [[ "$boxturtle_name" =~ ^[a-zA-Z0-9_-]+$ ]] && [[ ${#boxturtle_name} -le 24 ]]; then
+        break
+      else
+        echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
+      fi
+    done
   elif [ "$installation_type" == "QuattroBox" ]; then
     while true; do
       read -p "Enter name for unit (Default: QuattroBox_1): " boxturtle_name
@@ -99,6 +132,7 @@ replace_unit_name() {
 
   find "$afc_config_dir" -type f -exec sed -i "s/$old_unit_name/$new_unit_name/g" {} +
   find "$afc_config_dir" -type f -name "AFC_${old_unit_name}.cfg" -exec mv {} "$afc_config_dir/AFC_${new_unit_name}.cfg" \;
+  find "$afc_config_dir/mcu" -type f -name "${old_unit_name}.cfg" -exec mv {} "$afc_config_dir/mcu/${new_unit_name}.cfg" \;
 }
 
 verify_name_not_in_use() {
@@ -119,9 +153,9 @@ install_additional_unit() {
     # If we are installing a NightOwl, then copy these files over.
   elif [ "$installation_type" == "NightOwl" ]; then
     cp "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-  elif [ "$installation_type" == "VVD" ]; then
+  elif [ "$installation_type" == "ViViD" ]; then
     cp "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-    cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/Vivid_${boxturtle_name}.cfg"
+    cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/${boxturtle_name}.cfg"
   elif [ "$installation_type" == "HTLF" ]; then
     mkdir -p "${afc_config_dir}/mcu"
     cp "${afc_path}/config/mcu/HTLF_${htlf_board_type}.cfg" "${afc_config_dir}/mcu/"

@@ -69,7 +69,7 @@ template_unit_files() {
 
 copy_unit_files() {
   case "$installation_type" in
-  "VVD")
+  "ViViD")
     cp "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_Vivid_1.cfg"
     cp "${afc_path}/templates/AFC_Hardware-AFC.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
     cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/Vivid.cfg"
@@ -215,7 +215,7 @@ elif [ "$installation_type" == "QuattroBox" ]; then
 
 - Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_QuattroBox_1.cfg file
   """
-elif [ "$installation_type" == "VVD" ]; then
+elif [ "$installation_type" == "ViViD" ]; then
   message+="""
 - Ensure you enter your serial information in the ${afc_config_dir}/AFC_Vivid_1.cfg file
 
