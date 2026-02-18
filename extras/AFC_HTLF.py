@@ -233,7 +233,7 @@ class AFC_HTLF(afcBoxTurtle):
             else:
                 self.logger.error(f"HTLF: failed to home when selecting {lane.name}")
                 return False, 0.0
-        return False, 0.0
+        return True, 0.0
 
     def check_runout(self, cur_lane):
         """
