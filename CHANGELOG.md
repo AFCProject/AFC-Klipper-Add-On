@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-02-18]
+### Fixed
+- Fixed M104/M109 macros to work as expected on tools when a lane is not yet loaded
+
 ## [2026-01-29]
 ### Added:
 - Ability to supply custom macro name for tool_swaps with `custom_tool_swap` variable.

@@ -2060,9 +2060,12 @@ class afc:
                 extruder = lane.extruder_obj
 
                 # Checking if slicer is trying to set temperature(ooze prevention) for another lane
-                #   thats connected to the currently loaded extruder
+                #   thats connected to the currently loaded extruder. Bypass this check if current
+                #   extruder does not have a lane loaded, so that M109 can set temperature in a
+                #   start macro for the initial tool, prior to loading filament.
                 if (not self.disable_ooze_check
-                    and curr_extruder):
+                    and curr_extruder
+                    and curr_extruder.lane_loaded is not None):
                     for curr_extr_lane in curr_extruder.lanes:
                         lane_obj = self.lanes.get(curr_extr_lane, None)
                         if lane_obj:
