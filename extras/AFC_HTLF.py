@@ -17,7 +17,7 @@ except:
     err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{trace}"
     raise config_error(err_str)
 
-try: from extras.AFC_lane import AFCLaneState, MoveDirection, SpeedMode
+try: from extras.AFC_lane import AFCLaneState, MoveDirection
 except: raise config_error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 try: from extras.AFC_BoxTurtle import afcBoxTurtle
@@ -43,6 +43,8 @@ class AFC_HTLF(afcBoxTurtle):
         self.home_pin               = config.get("home_pin")                                                        # Pin for homing sensor
         self.MAX_ANGLE_MOVEMENT     = config.getint("MAX_ANGLE_MOVEMENT", 215)                                      # Max angle to move lobes, this is when lobe 1 is fully engaged with its lane
         self.enable_sensors_in_gui  = config.getboolean("enable_sensors_in_gui", self.afc.enable_sensors_in_gui)    # Set to True to show prep and load sensors switches as filament sensors in mainsail/fluidd gui, overrides value set in AFC.cfg
+        self.selector_movement_speed: float = config.getfloat("selector_movement_speed", 50)
+        self.selector_movement_accel: float = config.getfloat("selector_movement_accel", 50)
         self.prep_homed             = False
         self.failed_to_home         = False
         self._homed_distance        = 0.0
@@ -76,9 +78,10 @@ class AFC_HTLF(afcBoxTurtle):
 
         self._lookup_objects(config)
 
-        # Adding home endstop to selector
-        self.home_endstop.add_stepper(self.selector_stepper_obj.extruder_stepper.stepper)
-        self.selector_stepper_obj._endstops[self.home_endstop_name] = (self.home_endstop, self.home_endstop_name)
+        if self.home_endstop:
+            # Adding home endstop to selector
+            self.home_endstop.add_stepper(self.selector_stepper_obj.extruder_stepper.stepper)
+            self.selector_stepper_obj._endstops[self.home_endstop_name] = (self.home_endstop, self.home_endstop_name)
 
         self.function.register_commands(self.afc.show_macros, "AFC_HOME_UNIT",
                                         self.cmd_AFC_HOME_UNIT,
@@ -91,20 +94,6 @@ class AFC_HTLF(afcBoxTurtle):
         This function is called when the printer connects. It looks up AFC info
         and assigns it to the instance variable `self.AFC`.
         """
-
-        try:
-            self.drive_stepper_obj = self.printer.lookup_object('AFC_stepper {}'.format(self.drive_stepper))
-        except:
-            error_string = 'Error: No config found for drive_stepper: {drive_stepper} in [AFC_HTLF {stepper}]. Please make sure [AFC_stepper {drive_stepper}] section exists in your config'.format(
-                drive_stepper=self.drive_stepper, stepper=self.name )
-            raise config_error(error_string)
-
-        try:
-            self.selector_stepper_obj = self.printer.lookup_object('AFC_stepper {}'.format(self.selector_stepper))
-        except:
-            error_string = 'Error: No config found for selector_stepper: {selector_stepper} in [AFC_HTLF {stepper}]. Please make sure [AFC_stepper {selector_stepper}] section exists in your config'.format(
-                selector_stepper=self.selector_stepper, stepper=self.name )
-            raise config_error(error_string)
 
         super().handle_connect()
 
@@ -150,20 +139,21 @@ class AFC_HTLF(afcBoxTurtle):
         Helper function to move stepper with correct function call depending on if homing is enabled
         or not
 
-        :param distance: Distance to move selectore stepper
+        :param distance: Distance to move selector stepper
         """
         if self.afc.homing_enabled:
-            homed, self._homed_distance = self.selector_stepper_obj.home_to(
+            homed, self._homed_distance = self.selector_stepper_obj.do_homing_move(
+                distance *MoveDirection.NEG,
+                self.selector_movement_speed,
+                self.selector_movement_accel,
                 self.home_endstop_name,
-                distance * MoveDirection.NEG,
-                SpeedMode.SHORT,
                 assist_active=False
             )
             self.logger.debug(f"HTLF: Homing done, success:{homed}, distance:{self._homed_distance}")
         else:
             self.selector_stepper_obj.move(distance * MoveDirection.NEG,
-                                           self.short_moves_speed,
-                                           self.short_moves_accel,
+                                           self.selector_movement_speed,
+                                           self.selector_movement_accel,
                                            False)
 
     def return_to_home(self, prep=False, disable_selector=True):
@@ -226,7 +216,10 @@ class AFC_HTLF(afcBoxTurtle):
         if self.current_selected_lane != lane:
             self.logger.debug("HTLF: {} Homing to endstop.".format(self.name))
             if self.return_to_home( disable_selector=False ):
-                self.selector_stepper_obj.move(self.calculate_lobe_movement( lane.index ), 50, 50, False)
+                self.selector_stepper_obj.move(self.calculate_lobe_movement( lane.index ),
+                                               self.selector_movement_speed,
+                                               self.selector_movement_accel,
+                                               False)
                 self.logger.debug("HTLF: Selecting {}".format(lane))
                 self.current_selected_lane = lane
                 return True, self._homed_distance
