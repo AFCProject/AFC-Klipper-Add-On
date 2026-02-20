@@ -4,13 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-## [2026-02-17]
+
+## [2026-02-20]
 ### Fixed
-- Updated the install-afc.sh script to properly allow renaming of additional units.
+- Refactored lane calibration workflow.
+- Improved calibration prompts and added warnings for lanes requiring ejection(currently only for ViViD systems).
+- Blocked calibration when toolhead is loaded.
 
 ## [2026-02-17]
 ### Added
 - HTLF homing to home pin now uses homing logic when enabled
+
+### Fixed
+- Updated the install-afc.sh script to properly allow renaming of additional units.
 
 ## [2026-02-15]
 ### Added
