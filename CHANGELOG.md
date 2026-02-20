@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-02-20]
 ### Fixed
 - Refactored lane calibration workflow.
-- Improved calibration prompts and added warnings for lanes requiring ejection(currently only for ViViD systems).
+- Improved calibration prompts and added warnings for lanes requiring ejection (currently only for ViViD systems).
 - Blocked calibration when toolhead is loaded.
 
 ## [2026-02-17]

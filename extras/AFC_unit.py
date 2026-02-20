@@ -553,7 +553,7 @@ class afcUnit:
     def calibration_lane_message(self) -> str:
         return ""
 
-    def get_calibrated_lanes(self) -> list[str]:
+    def get_calibrated_lanes(self) -> Optional[list[str]]:
         """
         Helper method to return lanes in a unit that have already been calibrated and require
         lane to be ejected to be calibrated correctly.

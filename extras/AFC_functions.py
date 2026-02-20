@@ -702,7 +702,9 @@ class afcFunction:
         self.afc.gcode.run_script_from_command(f"G1 E{amount_mm} F{feedrate}")
         self.afc.gcode.run_script_from_command("M82")
 
-    def _lane_calibration(self, lanes: str, unit: str, tol: float ) -> tuple[bool, list[str], list[str]]:
+    def _lane_calibration(
+            self, lanes: str, unit: Optional[str], tol: float
+        ) -> tuple[bool, list[str], list[str]]:
         """
         Helper method for calibrating lanes specified by user
 
@@ -717,9 +719,10 @@ class afcFunction:
         calibrated = []
         additional_msg = []
         calibrate_lanes: list[AFCLane] = []
+        checked: bool = False
         self.logger.info('Starting AFC distance Calibrations')
 
-        # When a single lane is specified reguardless if UNIT is specified or not
+        # When a single lane is specified regardless if UNIT is specified or not
         if lanes != "all":
             lane_obj: AFCLane = self.afc.lanes.get(lanes)
             if lane_obj: calibrate_lanes.append(lane_obj)
@@ -732,13 +735,11 @@ class afcFunction:
             if cal_unit:
                 calibrate_lanes += list(cal_unit.lanes.values())
 
-        calibrated_lanes = False
         calibration_info = {}
         for lane in calibrate_lanes:
             if not lane.load_state or not lane.prep_state:
                 self.logger.info("{} not loaded skipping to next loaded lane".format(lane.name))
                 continue
-            calibrated_lanes |= lane.calibrated_lane
             checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol)
             if(not checked):
                 self.afc.error.AFC_error(msg, False)
@@ -746,7 +747,7 @@ class afcFunction:
                     self.afc.gcode.run_script_from_command(
                         'AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(lane, pos)
                     )
-                return False, "", ""
+                return checked, [], []
             else:
                 if msg == "calibration_lane":
                     if not calibration_info.get(lane.unit_obj.name):
@@ -989,7 +990,7 @@ class afcFunction:
         buttons = []
         title = 'AFC Calibration'
         if self.afc.current is not None:
-            text = "Toolhead must be unload to calibrate system"
+            text = "Toolhead must be unloaded to calibrate system"
             prompt.create_custom_p(title, text, None, True, buttons, None)
             return
         text = ('The following prompts will lead you through the calibration of your AFC unit(s).'
@@ -1033,7 +1034,7 @@ class afcFunction:
         for unit in self.afc.units.values():
             cal_lanes = unit.get_calibrated_lanes()
             if cal_lanes is not None:
-                eject_lanes += unit.get_calibrated_lanes()
+                eject_lanes += cal_lanes
 
         text = ""
         if eject_lanes:
