@@ -93,7 +93,7 @@ class AFCLane:
         self.extruder_obj       = None
 
         #stored status variables
-        self.fullname:str       = config.get_name()
+        self.fullname: str      = config.get_name()
         self.name               = self.fullname.split()[-1]
 
         # TODO: Put these variables into a common class or something so they are easier to clear out
@@ -113,11 +113,11 @@ class AFCLane:
 
         self.multi_hubs_found   = False
         self.drive_stepper: AFCExtruderStepper = None
-        unit:str                = config.get('unit')                                    # Unit name(AFC_BoxTurtle/NightOwl/etc) that belongs to this stepper.
+        unit: str               = config.get('unit')                                    # Unit name(AFC_BoxTurtle/NightOwl/etc) that belongs to this stepper.
         # Overrides buffers set at the unit level
-        self.hub:str            = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
+        self.hub: str           = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
         # Overrides buffers set at the unit and extruder level
-        self.buffer_name:str    = config.get("buffer", None)                            # Buffer name(AFC_buffer) that belongs to this stepper, overrides buffer that is set in extruder(AFC_extruder) or unit(AFC_BoxTurtle/NightOwl/etc) sections.
+        self.buffer_name: str   = config.get("buffer", None)                            # Buffer name(AFC_buffer) that belongs to this stepper, overrides buffer that is set in extruder(AFC_extruder) or unit(AFC_BoxTurtle/NightOwl/etc) sections.
         self.unit               = unit.split(':')[0]
         try:
             self.index              = int(unit.split(':')[1])
@@ -190,7 +190,7 @@ class AFCLane:
             buttons.register_buttons([self.load], self.load_callback)
         else: self._load_state = True
 
-        self.selector:str = config.get("selector", None)
+        self.selector: str = config.get("selector", None)
 
         self.espooler = AFC_assist.Espooler(self.name, config)
         self.lane_load_count = None

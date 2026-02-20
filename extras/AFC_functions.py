@@ -20,7 +20,7 @@ from configfile import error
 from datetime import datetime
 from pathlib import Path
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Union, Optional
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_hub import afc_hub
+    from gcode import GCodeCommand
 
 def load_config(config):
     return afcFunction(config)
@@ -764,6 +765,64 @@ class afcFunction:
         self.logger.info("Lane calibration Done!")
         return checked, calibrated, additional_msg
 
+
+    def _afc_cali_comp(self, cali: str, title: str,
+                       additional_msg: str, gcmd: Optional[GCodeCommand]=None):
+        """
+        This method handles the completion of the AFC calibration process by displaying a prompt to the user, asking
+        whether they want to perform more calibrations.
+
+        :param cali: String of lanes that calibration was completed for.
+        :param title: Title to display in popup
+        :param additional_msg: Any additional messages to display in popup box
+        :param gcmd: GcodeCommand object to pass into AFCPrompt class
+        """
+        prompt = AFCprompt(gcmd, self.logger)
+        buttons = []
+        text = ""
+        if len(cali) > 0:
+            text += 'Calibration was completed for {}.'.format(cali)
+
+        if additional_msg:
+            text += additional_msg
+
+        text += "\nWould you like to do more calibrations?"
+
+        buttons.append(("Yes", "AFC_Calibration", "primary"))
+        buttons.append(("No", "AFC_HAPPY_P STEP='AFC Calibration'", "info"))
+
+        prompt.create_custom_p(title, text, buttons,
+                               True, None)
+
+    def _calc_length(self, config_length, current_length, new_length):
+        """
+        Common function to calculate length for afc_bowden_length, afc_unload_bowden_length, and hub_dist
+
+        :param config_length: Current configuration length that's in config file
+        :param current_length: Current length for bowden or hub_dist
+        :param new_length: New length to set, increase(+), decrease(-), or reset to config value
+
+        :returns length: Calculated length value
+        """
+        length = 0.0
+
+        if new_length.lower() == 'reset':
+            length = config_length
+        else:
+            if new_length[0] in ('+', '-'):
+                try:
+                    bowden_value = float(new_length)
+                    length = current_length + bowden_value
+                except ValueError:
+                    length = current_length
+                    self.logger.error("Invalid length: {}".format(new_length))
+            else:
+                length = float(new_length)
+
+        return length
+    # ---------------------------------------------------------------------------------------------
+    # Macros only below
+    # ---------------------------------------------------------------------------------------------
     cmd_AFC_TEST_LANES_help = 'Run load/unload tests on specified lanes'
     def cmd_AFC_TEST_LANES(self, gcmd):
         """
@@ -1115,25 +1174,6 @@ class afcFunction:
 
             self._afc_cali_comp(lanes_calibrated, title, msg)
 
-    def _afc_cali_comp(self, cali, title, additional_msg, gcmd=None):
-
-        prompt = AFCprompt(gcmd, self.logger)
-        buttons = []
-        text = ""
-        if len(cali) > 0:
-            text += 'Calibration was completed for {}.'.format(cali)
-
-        if additional_msg:
-            text += additional_msg
-
-        text += "\nWould you like to do more calibrations?"
-
-        buttons.append(("Yes", "AFC_Calibration", "primary"))
-        buttons.append(("No", "AFC_HAPPY_P STEP='AFC Calibration'", "info"))
-
-        prompt.create_custom_p(title, text, buttons,
-                               True, None)
-
     cmd_AFC_HAPPY_P_help = 'Opens prompt after calibration is complete'
     def cmd_AFC_HAPPY_P(self, gcmd):
         """
@@ -1265,6 +1305,8 @@ class afcFunction:
                         True, None)
 
     cmd_AFC_LANE_RESET_help = 'reset a loaded lane to hub'
+    cmd_AFC_LANE_RESET_options = {"DISTANCE": {"default": "50", "type": "float"},
+                                  "LANE": {"default": "lane1", "type": "string"}}
     def cmd_AFC_LANE_RESET(self, gcmd):
         """
         This macro resets a specified lane to the hub position in the AFC system. It checks for various error conditions,
@@ -1499,33 +1541,6 @@ class afcFunction:
                 self.logger.error("An incorrect serial number was provided")
         else:
             self.logger.error("An error occurred when trying to send reboot command")
-
-    def _calc_length(self, config_length, current_length, new_length):
-        """
-        Common function to calculate length for afc_bowden_length, afc_unload_bowden_length, and hub_dist
-
-        :param config_length: Current configuration length that's in config file
-        :param current_length: Current length for bowden or hub_dist
-        :param new_length: New length to set, increase(+), decrease(-), or reset to config value
-
-        :returns length: Calculated length value
-        """
-        length = 0.0
-
-        if new_length.lower() == 'reset':
-            length = config_length
-        else:
-            if new_length[0] in ('+', '-'):
-                try:
-                    bowden_value = float(new_length)
-                    length = current_length + bowden_value
-                except ValueError:
-                    length = current_length
-                    self.logger.error("Invalid length: {}".format(new_length))
-            else:
-                length = float(new_length)
-
-        return length
 
     cmd_SET_BOWDEN_LENGTH_help = "Helper to dynamically set length of bowden between hub and toolhead. Pass in HUB if using multiple box turtles"
     def cmd_SET_BOWDEN_LENGTH(self, gcmd):
