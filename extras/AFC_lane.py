@@ -93,7 +93,7 @@ class AFCLane:
         self.extruder_obj       = None
 
         #stored status variables
-        self.fullname           = config.get_name()
+        self.fullname:str       = config.get_name()
         self.name               = self.fullname.split()[-1]
 
         # TODO: Put these variables into a common class or something so they are easier to clear out
@@ -113,11 +113,11 @@ class AFCLane:
 
         self.multi_hubs_found   = False
         self.drive_stepper: AFCExtruderStepper = None
-        unit                    = config.get('unit')                                    # Unit name(AFC_BoxTurtle/NightOwl/etc) that belongs to this stepper.
+        unit:str                = config.get('unit')                                    # Unit name(AFC_BoxTurtle/NightOwl/etc) that belongs to this stepper.
         # Overrides buffers set at the unit level
-        self.hub                = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
+        self.hub:str            = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
         # Overrides buffers set at the unit and extruder level
-        self.buffer_name        = config.get("buffer", None)                            # Buffer name(AFC_buffer) that belongs to this stepper, overrides buffer that is set in extruder(AFC_extruder) or unit(AFC_BoxTurtle/NightOwl/etc) sections.
+        self.buffer_name:str    = config.get("buffer", None)                            # Buffer name(AFC_buffer) that belongs to this stepper, overrides buffer that is set in extruder(AFC_extruder) or unit(AFC_BoxTurtle/NightOwl/etc) sections.
         self.unit               = unit.split(':')[0]
         try:
             self.index              = int(unit.split(':')[1])
@@ -126,7 +126,7 @@ class AFCLane:
             pass
 
         self.extruder_name      = config.get('extruder', None)                          # Extruder name(AFC_extruder) that belongs to this stepper, overrides extruder that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
-        self.remember_spool     = config.getboolean('remember_spool', None)             # remember_spool that is set in AFC_Stepper section, overrides remember_spool that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
+        self.remember_spool:bool= config.getboolean('remember_spool', None)             # remember_spool that is set in AFC_Stepper section, overrides remember_spool that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
         self.map                = config.get('cmd', None)                               # Keeping this in so it does not break others config that may have used this, use map instead
         # Saving to self._map so that if a user has it defined it will be reset back to this when
         # the calling RESET_AFC_MAPPING macro.
@@ -142,34 +142,34 @@ class AFCLane:
         self.led_spool_index    = config.get('led_spool_index', None)                   # LED index to illuminate under spool
         self.led_spool_illum    = config.get('led_spool_illuminate', None)              # LED color to illuminate under spool
 
-        self.long_moves_speed   = config.getfloat("long_moves_speed", None)             # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.long_moves_accel   = config.getfloat("long_moves_accel", None)             # Acceleration in mm/s squared when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.short_moves_speed  = config.getfloat("short_moves_speed", None)            # Speed in mm/s to move filament when doing short moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.short_moves_accel  = config.getfloat("short_moves_accel", None)            # Acceleration in mm/s squared when doing short moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.short_move_dis     = config.getfloat("short_move_dis", None)               # Move distance in mm for failsafe moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.max_move_dis       = config.getfloat("max_move_dis", None)                 # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.n20_break_delay_time= config.getfloat("n20_break_delay_time", None)        # Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.homing_overshoot   = config.getfloat("homing_overshoot", None)             # Amount to add to homing distance so that distance is long enough to actually hit endstop
-        self.homing_delta       = config.getfloat("homing_delta", None)                 # Delta for which to warn if homing move delta is not within this amount from command move distance.
-        self.extruder_clear_dis = config.getfloat("extruder_clear_dis", None)
+        self.long_moves_speed: float   = config.getfloat("long_moves_speed", None)             # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.long_moves_accel: float   = config.getfloat("long_moves_accel", None)             # Acceleration in mm/s squared when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.short_moves_speed: float  = config.getfloat("short_moves_speed", None)            # Speed in mm/s to move filament when doing short moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.short_moves_accel: float  = config.getfloat("short_moves_accel", None)            # Acceleration in mm/s squared when doing short moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.short_move_dis: float     = config.getfloat("short_move_dis", None)               # Move distance in mm for failsafe moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.max_move_dis: float       = config.getfloat("max_move_dis", None)                 # Maximum distance to move filament. AFC breaks filament moves over this number into multiple moves. Useful to lower this number if running into timer too close errors when doing long filament moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.n20_break_delay_time: float= config.getfloat("n20_break_delay_time", None)        # Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.homing_overshoot: float   = config.getfloat("homing_overshoot", None)             # Amount to add to homing distance so that distance is long enough to actually hit endstop
+        self.homing_delta: float       = config.getfloat("homing_delta", None)                 # Delta for which to warn if homing move delta is not within this amount from command move distance.
+        self.extruder_clear_dis: float = config.getfloat("extruder_clear_dis", None)
 
-        self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", None)     # scalar speed factor when reversing filamentalist
+        self.rev_long_moves_speed_factor: float = config.getfloat("rev_long_moves_speed_factor", None)     # scalar speed factor when reversing filamentalist
 
-        self.dist_hub           = config.getfloat('dist_hub', 60)                       # Bowden distance between Box Turtle extruder and hub
-        self.park_dist          = config.getfloat('park_dist', 10)                      # Currently unused
+        self.dist_hub: float        = config.getfloat('dist_hub', 60)                       # Bowden distance between Box Turtle extruder and hub
+        self.park_dist: float       = config.getfloat('park_dist', 10)                      # Currently unused
 
-        self.load_to_hub        = config.getboolean("load_to_hub", self.afc.load_to_hub) # Fast loads filament to hub when inserted, set to False to disable. Setting here overrides global setting in AFC.cfg
-        self.enable_sensors_in_gui  = config.getboolean("enable_sensors_in_gui",    self.afc.enable_sensors_in_gui) # Set to True to show prep and load sensors switches as filament sensors in mainsail/fluidd gui, overrides value set in AFC.cfg
-        self.debounce_delay         = config.getfloat("debounce_delay",             self.afc.debounce_delay)
-        self.enable_runout          = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
-        self.sensor_to_show         = config.get("sensor_to_show", None)                # Set to prep to only show prep sensor, set to load to only show load sensor. Do not add if you want both prep and load sensors to show in web gui
+        self.load_to_hub: bool      = config.getboolean("load_to_hub", self.afc.load_to_hub) # Fast loads filament to hub when inserted, set to False to disable. Setting here overrides global setting in AFC.cfg
+        self.enable_sensors_in_gui: bool = config.getboolean("enable_sensors_in_gui",    self.afc.enable_sensors_in_gui) # Set to True to show prep and load sensors switches as filament sensors in mainsail/fluidd gui, overrides value set in AFC.cfg
+        self.debounce_delay: float  = config.getfloat("debounce_delay",             self.afc.debounce_delay)
+        self.enable_runout: bool    = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
+        self.sensor_to_show: str    = config.get("sensor_to_show", None)                # Set to prep to only show prep sensor, set to load to only show load sensor. Do not add if you want both prep and load sensors to show in web gui
 
-        self.assisted_unload    = config.getboolean("assisted_unload", None) # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.td1_when_loaded    = config.getboolean("capture_td1_when_loaded", None)
-        self.td1_device_id      = config.get("td1_device_id", None)
-        self.calibrated_lane    = config.get("calibrated_lane", False)
+        self.assisted_unload: bool = config.getboolean("assisted_unload", None) # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
+        self.td1_when_loaded: bool = config.getboolean("capture_td1_when_loaded", None)
+        self.td1_device_id: str    = config.get("td1_device_id", None)
+        self.calibrated_lane: bool = config.getboolean("calibrated_lane", False)
 
-        self.post_prep_macro    = config.get("post_prep_macro", None)  # Macro to call after loading filament during prep callback
+        self.post_prep_macro: str  = config.get("post_prep_macro", None)  # Macro to call after loading filament during prep callback
 
 
         self.printer.register_event_handler("AFC_unit_{}:connect".format(self.unit),self.handle_unit_connect)
@@ -190,19 +190,19 @@ class AFCLane:
             buttons.register_buttons([self.load], self.load_callback)
         else: self._load_state = True
 
-        self.selector = config.get("selector", None)
+        self.selector:str = config.get("selector", None)
 
         self.espooler = AFC_assist.Espooler(self.name, config)
         self.lane_load_count = None
 
-        self.filament_diameter  = config.getfloat("filament_diameter", 1.75)    # Diameter of filament being used
-        self.filament_density   = config.getfloat("filament_density", 1.24)     # Density of filament being used
-        self.inner_diameter     = config.getfloat("spool_inner_diameter", 75, minval=1)   # Inner diameter in mm
-        self.outer_diameter     = config.getfloat("spool_outer_diameter", 200, minval=100)  # Outer diameter in mm
-        self.empty_spool_weight = config.getfloat("empty_spool_weight", 190, minval=1)    # Empty spool weight in g
-        self.max_motor_rpm      = config.getfloat("assist_max_motor_rpm", 465)  # Max motor RPM
-        self.rwd_speed_multi    = config.getfloat("rwd_speed_multiplier", 0.5)  # Multiplier to apply to rpm
-        self.fwd_speed_multi    = config.getfloat("fwd_speed_multiplier", 0.5)  # Multiplier to apply to rpm
+        self.filament_diameter: float  = config.getfloat("filament_diameter", 1.75)    # Diameter of filament being used
+        self.filament_density: float   = config.getfloat("filament_density", 1.24)     # Density of filament being used
+        self.inner_diameter: float     = config.getfloat("spool_inner_diameter", 75, minval=1)   # Inner diameter in mm
+        self.outer_diameter: float     = config.getfloat("spool_outer_diameter", 200, minval=100)  # Outer diameter in mm
+        self.empty_spool_weight: float = config.getfloat("empty_spool_weight", 190, minval=1)    # Empty spool weight in g
+        self.max_motor_rpm: float      = config.getfloat("assist_max_motor_rpm", 465)  # Max motor RPM
+        self.rwd_speed_multi: float    = config.getfloat("rwd_speed_multiplier", 0.5)  # Multiplier to apply to rpm
+        self.fwd_speed_multi: float    = config.getfloat("fwd_speed_multiplier", 0.5)  # Multiplier to apply to rpm
         self.diameter_range     = self.outer_diameter - self.inner_diameter     # Range for effective diameter
         self.past_extruder_position = -1
         self.save_counter       = -1

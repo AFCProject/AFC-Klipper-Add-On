@@ -74,6 +74,7 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_homing_speed  = config.getfloat("selector_homing_speed", 150)
         self.selector_homing_accel  = config.getfloat("selector_homing_accel", 150)
         self.max_selector_movement  = config.getfloat("max_selector_movement", 800)
+        self._eject_to_calibrate    = True
 
         self._lookup_objects(config)
 
@@ -270,7 +271,7 @@ class AFC_vivid(afcBoxTurtle):
         cur_lane.status = AFCLaneState.NONE
         cur_lane.calibrated_lane = False
         self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
-        return True, cur_lane.name, 0
+        return True, "calibration_lane", 0
 
     def calibration_lane_message(self) -> str:
         """
@@ -279,7 +280,7 @@ class AFC_vivid(afcBoxTurtle):
 
         :return str: Message informing user to reinsert to calibrate lane.
         """
-        msg = "\nThe following lanes were ejected and calibration flag set to false. "
+        msg = "\nThe following lanes ({lanes}) were ejected and calibration flag set to false. "
         msg += "Please reinsert filament into ViViD to automatically calibrate distance.\n"
         return msg
 
