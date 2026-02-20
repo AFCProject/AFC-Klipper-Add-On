@@ -120,7 +120,7 @@ class AFC_HTLF(afcBoxTurtle):
     cmd_AFC_HOME_UNIT_options = {"UNIT": {"type":"string", "default":"HTLF_1"}}
     def cmd_AFC_HOME_UNIT(self, gcmd):
         """
-        Moves unit lane selection back to home position
+        Moves units lane selector back to home position
 
         Usage
         -----
