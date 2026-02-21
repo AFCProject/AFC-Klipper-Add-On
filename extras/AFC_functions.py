@@ -743,10 +743,7 @@ class afcFunction:
             checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol)
             if(not checked):
                 self.afc.error.AFC_error(msg, False)
-                if pos > 0:
-                    self.afc.gcode.run_script_from_command(
-                        'AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(lane, pos)
-                    )
+                self._afc_cali_fail(cali=lane, dis=pos, reset_lane=(pos!=0),fail_message=msg)
                 return checked, [], []
             else:
                 if msg == "calibration_lane":
@@ -791,6 +788,38 @@ class afcFunction:
 
         buttons.append(("Yes", "AFC_Calibration", "primary"))
         buttons.append(("No", "AFC_HAPPY_P STEP='AFC Calibration'", "info"))
+
+        prompt.create_custom_p(title, text, buttons,
+                               True, None)
+
+    def _afc_cali_fail(self, cali: str, dis: str, reset_lane: bool=True,
+                       title: str="AFC Calibration Failed", fail_message: str="",
+                       gcmd: GCodeCommand=None):
+        """
+        This method opens a prompt after an AFC calibration failure. It informs the user about the failure and provides
+        instructions to reset the lane and review the error messages in the console. The user is prompted to take corrective
+        action and re-run the calibration.
+
+        :param cali: Specifies the lane where the calibration failed.
+        :param dis: The distance value that caused the failure.
+        :param reset_lane: Set to True to display reset lane message.
+        :param title: Dynamic title to set in prompt
+        :param fail_message: Dynamic message to display in prompt
+        :param gcmd: GcodeCommand object to pass into AFCPrompt class
+        """
+
+        prompt = AFCprompt(gcmd, self.logger)
+        buttons = []
+        footer = []
+        text = f'{title} for {cali}. '
+        if reset_lane:
+            text += 'First: reset lane, Second: review messages and take necessary action and re-run calibration.'
+            buttons.append(("Reset lane", "AFC_LANE_RESET LANE={} DISTANCE={}".format(cali, dis), "primary"))
+
+        if fail_message:
+            text += f"\nFail message: {fail_message}"
+
+        footer.append(('EXIT', 'prompt_end', 'info'))
 
         prompt.create_custom_p(title, text, buttons,
                                True, None)
@@ -1239,22 +1268,7 @@ class afcFunction:
         reset_lane      = bool(gcmd.get_int("RESET", 1))
         title           = gcmd.get("TITLE", "AFC Calibration Failed")
         fail_message    = gcmd.get("MSG", "")
-
-        prompt = AFCprompt(gcmd, self.logger)
-        buttons = []
-        footer = []
-        text = f'{title} for {cali}. '
-        if reset_lane:
-            text += 'First: reset lane, Second: review messages in console and take necessary action and re-run calibration.'
-            buttons.append(("Reset lane", "AFC_LANE_RESET LANE={} DISTANCE={}".format(cali, dis), "primary"))
-
-        if fail_message:
-            text += f" Fail message: {fail_message}"
-
-        footer.append(('EXIT', 'prompt_end', 'info'))
-
-        prompt.create_custom_p(title, text, buttons,
-                               True, None)
+        self._afc_cali_fail(cali, dis, reset_lane, title, fail_message, gcmd)
 
     cmd_AFC_RESET_help = 'Opens prompt to select lane to reset.'
     cmd_AFC_RESET_options = {"DISTANCE": {"default": "30", "type": "float"}}

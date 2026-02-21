@@ -314,9 +314,9 @@ class afcBoxTurtle(afcUnit):
 
         if not success:
             # fault if check is not successful
-            msg = 'Failed to calibrate dist_hub for {}. Failed after {}mm'.format(cur_lane.name, hub_fault_dis)
-            msg += '\n if filament stopped short of the hub during calibration use the following command to increase dist_hub value'
-            msg += '\n SET_HUB_DIST LANE={} LENGTH=+(distance the filament was short from the hub)'.format(cur_lane.name)
+            msg = f'Failed to calibrate dist_hub for {cur_lane.name} after moving {hub_fault_dis}mm'
+            msg += 'If filament stopped short of the hub during calibration use the following command to increase dist_hub value'
+            msg += f' SET_HUB_DIST LANE={cur_lane.name} LENGTH=+(distance the filament was short from the hub)'
             return False, msg, hub_pos
 
         hub_dist = cur_lane.dist_hub + 500
@@ -427,12 +427,12 @@ class afcBoxTurtle(afcUnit):
 
         if not success:
             if checkpoint == "retract to extruder":
-                msg = f"{cur_lane.name} failed during calibration after {round(pos,2)}mm. Check position of filament and " \
+                msg = f"\n{cur_lane.name} failed during calibration after {round(pos,2)}mm. Check position of filament and " \
                       "reset filament using BT_LANE_MOVE macro if necessary. If filament is between " \
                       "the extruder and the hub, and is moving smoothly, you may need to increase the " \
-                      "dist_hub value. Once adjusted, please try again. This can be adjusted by " \
-                      "using the SET_HUB_DIST LANE=<lane> LENGTH=<+/- distance> macro. Once you are " \
-                      "satisfied, you can save the values with SAVE_HUB_DIST LANE=<lane> macro.\n"
+                      "dist_hub value. Once adjusted, please try again.\nThis can be adjusted by " \
+                      f"using the SET_HUB_DIST LANE={cur_lane.name} LENGTH=+/-distance macro. Once you are " \
+                      f"satisfied, you can save the values with SAVE_HUB_DIST LANE={cur_lane.name} macro."
             else:
                 msg = 'Lane failed to calibrate {} after {}mm'.format(checkpoint, pos)
             cur_lane.status = AFCLaneState.NONE
@@ -444,7 +444,9 @@ class afcBoxTurtle(afcUnit):
                 success, hub_pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane, move_dis,
                                                                     MoveDirection.POS,
                                                                     assist_active=AssistActive.NO)
-                message = f'Failed hub calibration {cur_lane.name} after {round(hub_pos, 2)}mm'
+                message = f'\nFailed to calibrate dist_hub for {cur_lane.name} after moving {hub_pos}mm. '
+                message += 'If filament stopped short of the hub during calibration use the following command to increase dist_hub value'
+                message += f' SET_HUB_DIST LANE={cur_lane.name} LENGTH=+(distance the filament was short from the hub)'
             else:
                 success, message, hub_pos = self.calibrate_hub(cur_lane, tol)
 
