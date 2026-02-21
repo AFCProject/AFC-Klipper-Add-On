@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Control
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 from __future__ import annotations
@@ -14,16 +14,24 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC_lane import AFCLane, MoveDirection
+
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import AFCLaneState
+try: from extras.AFC_lane import (
+    AFCLaneState, SpeedMode, AssistActive, MoveDirection
+)
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 try: from extras.AFC_unit import afcUnit
 except: raise error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
 
 class afcBoxTurtle(afcUnit):
+    MAX_NUM_MOVES = 40
     def __init__(self, config):
         super().__init__(config)
         self.type = config.get('type', 'Box_Turtle')
@@ -137,21 +145,26 @@ class afcBoxTurtle(afcUnit):
         else:
             self.logger.raw(f'Calibrating Bowden Length with {cur_lane.name}')
 
-        if not cur_lane.is_direct_hub():
-            # move to hub and retrieve that distance, the checkpoint returned and if successful
-            pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state, cur_hub.move_dis, tol,
-                                                                cur_lane.short_move_dis, 0, cur_lane.dist_hub + 200, "Moving to hub")
-            bowden_length = cur_hub.afc_bowden_length
-            variable_name = "afc_bowden_length"
-            fullname = cur_hub.fullname
-            fault_dis = bowden_length + 500
+        # move to hub and retrieve that distance, the checkpoint returned and if successful
+        if not self.afc.homing_enabled and not cur_lane.is_direct_hub():
+            pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state,
+                                                                cur_hub.move_dis, tol,
+                                                                cur_lane.short_move_dis,
+                                                                0, cur_lane.dist_hub + 200,
+                                                                "Moving to hub")
+        elif not self.afc.homing_enabled:
+            pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.load_state,
+                                                        0, cur_lane.short_move_dis, tol,
+                                                        cur_lane.dist_hub + 100,
+                                                        "retract to extruder")
+        elif not cur_lane.is_direct_hub():
+            success, pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane, cur_lane.dist_hub+200,
+                                                                MoveDirection.POS,
+                                                                self.afc.homing_enabled)
         else:
-            pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.load_state, 0, cur_lane.short_move_dis,
-                                                      tol, cur_lane.dist_hub + 100, "retract to extruder")
-            bowden_length = cur_lane.dist_hub
-            variable_name = "dist_hub"
-            fullname = cur_lane.fullname
-            fault_dis = bowden_length + 500
+            success, pos, _ = cur_lane.unit_obj.move_to_load(cur_lane, cur_lane.dist_hub+100,
+                                                                MoveDirection.POS,
+                                                                self.afc.homing_enabled)
 
         if not success:
             # if movement does not succeed fault and return values to calibration macro
@@ -162,8 +175,14 @@ class afcBoxTurtle(afcUnit):
         if cur_extruder.tool_start:
             # if tool_start is defined move and confirm distance
             while not cur_lane.get_toolhead_pre_sensor_state():
-                cur_lane.move(dis, self.short_moves_speed, self.short_moves_accel)
-                bow_pos += dis
+                fault_dis = cur_hub.afc_bowden_length + 500
+                if self.afc.homing_enabled:
+                    dis = fault_dis
+                homed, distance, warn = cur_lane.move_to(distance=dis,
+                                                         speed_mode=SpeedMode.CALIBRATION,
+                                                         endstop=cur_lane.get_toolhead_endstop(),
+                                                         use_homing=self.afc.homing_enabled)
+                bow_pos += distance
                 self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.1)
                 if bow_pos >= fault_dis:
                     # fault if move to bowden length does not reach toolhead sensor return to calibration macro
@@ -176,7 +195,8 @@ class afcBoxTurtle(afcUnit):
                         msg += '\n SET_HUB_DIST LANE={} LENGTH=+(distance the filament was short from the toolhead)'.format(cur_lane.name)
                     return False, msg, bow_pos
 
-            if cur_extruder.tool_start != 'buffer':
+            if (cur_extruder.tool_start != 'buffer'
+                and not self.afc.homing_enabled):
                 # is using ramming, only use first trigger of sensor
                 bow_pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.get_toolhead_pre_sensor_state(), bow_pos,
                                                                   cur_lane.short_move_dis, tol, 100, "retract from toolhead sensor")
@@ -186,23 +206,28 @@ class afcBoxTurtle(afcUnit):
                 msg = 'Failed {} after {}mm'.format(checkpoint, bow_pos)
                 return False, msg, bow_pos
 
-            cur_lane.move(bow_pos * -1, cur_lane.long_moves_speed, cur_lane.long_moves_accel, True)
+            success, _, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos, MoveDirection.NEG,
+                                                          self.afc.homing_enabled,
+                                                          speedMode=SpeedMode.LONG)
+            if not success:
+                return False, "Failed to home filament back to hub", 0
 
-            if not cur_lane.is_direct_hub():
+            if not self.afc.homing_enabled:
                 success, message, hub_dis = self.calibrate_hub(cur_lane, tol)
 
                 if not success:
                     return False, message, hub_dis
 
-                if cur_hub.state:
-                    # reset at hub
-                    cur_lane.move(cur_hub.move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+            # Always run hub clear move
+            cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed,
+                          cur_lane.short_moves_accel, True)
 
-            bowden_dist = 0
-            if cur_extruder.tool_start == 'buffer':
-                bowden_dist = bow_pos - (cur_lane.short_move_dis * 2)
-            else:
-                bowden_dist = bow_pos - cur_lane.short_move_dis
+            bowden_dist = round(bow_pos, 2)
+            if not self.afc.homing_enabled:
+                if cur_extruder.tool_start == 'buffer':
+                    bowden_dist = round(bow_pos - (cur_lane.short_move_dis * 2), 2)
+                else:
+                    bowden_dist = round(bow_pos - cur_lane.short_move_dis, 2)
 
 
             unload_cal_msg = ''
@@ -291,12 +316,15 @@ class afcBoxTurtle(afcUnit):
             cur_lane.move(dis, self.short_moves_speed, self.short_moves_accel)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
 
-        cur_lane.move(bow_pos * -1, cur_lane.long_moves_speed, cur_lane.long_moves_accel, True)
+        cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
+                                      MoveDirection.NEG,
+                                      self.afc.homing_enabled,
+                                      speedMode=SpeedMode.LONG)
 
-        if not cur_lane.is_direct_hub():
-            # Reset to hub
+        # Reset to hub
+        if not self.afc.homing_enabled or not cur_lane.is_direct_hub():
             self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, 0,
-                                cur_lane.short_move_dis, tol, 200, checkpoint)
+                            cur_lane.short_move_dis, tol, 200, checkpoint)
 
             cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
 
@@ -327,9 +355,9 @@ class afcBoxTurtle(afcUnit):
 
         if not success:
             # fault if check is not successful
-            msg = 'Failed to calibrate dist_hub for {}. Failed after {}mm'.format(cur_lane.name, hub_fault_dis)
-            msg += '\n if filament stopped short of the hub during calibration use the following command to increase dist_hub value'
-            msg += '\n SET_HUB_DIST LANE={} LENGTH=+(distance the filament was short from the hub)'.format(cur_lane.name)
+            msg = f'Failed to calibrate dist_hub for {cur_lane.name} after moving {hub_fault_dis}mm'
+            msg += 'If filament stopped short of the hub during calibration use the following command to increase dist_hub value'
+            msg += f' SET_HUB_DIST LANE={cur_lane.name} LENGTH=+(distance the filament was short from the hub)'
             return False, msg, hub_pos
 
         hub_dist = cur_lane.dist_hub + 500
@@ -424,19 +452,28 @@ class afcBoxTurtle(afcUnit):
         self.logger.info('Calibrating {}'.format(cur_lane.name))
         cur_lane.status = AFCLaneState.CALIBRATING
         # reset to extruder
-        pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.load_state, 0, cur_lane.short_move_dis,
-                                                      tol, cur_lane.dist_hub + 100, "retract to extruder")
+        move_dis = cur_lane.dist_hub+100
+        if self.afc.homing_enabled:
+            checkpoint = "retract to extruder"
+            success, pos, warn = cur_lane.move_to(distance=move_dis*-1,
+                                                  speed_mode=SpeedMode.CALIBRATION,
+                                                  endstop=cur_lane.load_es,
+                                                  assist_active=AssistActive.YES)
+        else:
+            pos, checkpoint, success = self.calc_position(cur_lane,
+                                                          lambda: cur_lane.load_state, 0,
+                                                          cur_lane.short_move_dis,
+                                                          tol, move_dis,
+                                                          "retract to extruder")
 
         if not success:
             if checkpoint == "retract to extruder":
-                msg = (
-                    """\n{} failed during calibration after {}mm. Check position of filament and
-                    reset filament using BT_LANE_MOVE macro if necessary. If filament is between
-                    the extruder and the hub, and is moving smoothly, you may need to increase the
-                    dist_hub value. Once adjusted, please try again. This can be adjusted by
-                    using the SET_HUB_DIST LANE=<lane> LENGTH=<+/- distance> macro. Once you are
-                    satisfied, you can save the values with SAVE_HUB_DIST LANE=<lane> macro.\n""".format(cur_lane.name, pos)
-                )
+                msg = f"\n{cur_lane.name} failed during calibration after {round(pos,2)}mm. Check position of filament and " \
+                      "reset filament using BT_LANE_MOVE macro if necessary. If filament is between " \
+                      "the extruder and the hub, and is moving smoothly, you may need to increase the " \
+                      "dist_hub value. Once adjusted, please try again.\nThis can be adjusted by " \
+                      f"using the SET_HUB_DIST LANE={cur_lane.name} LENGTH=+/-distance macro. Once you are " \
+                      f"satisfied, you can save the values with SAVE_HUB_DIST LANE={cur_lane.name} macro."
             else:
                 msg = 'Lane failed to calibrate {} after {}mm'.format(checkpoint, pos)
             cur_lane.status = AFCLaneState.NONE
@@ -444,17 +481,25 @@ class afcBoxTurtle(afcUnit):
             return False, msg, 0
 
         else:
-            success, message, hub_pos = self.calibrate_hub(cur_lane, tol)
+            if self.afc.homing_enabled:
+                success, hub_pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane, move_dis,
+                                                                    MoveDirection.POS,
+                                                                    assist_active=AssistActive.NO)
+                message = f'\nFailed to calibrate dist_hub for {cur_lane.name} after moving {hub_pos}mm. '
+                message += 'If filament stopped short of the hub during calibration use the following command to increase dist_hub value'
+                message += f' SET_HUB_DIST LANE={cur_lane.name} LENGTH=+(distance the filament was short from the hub)'
+            else:
+                success, message, hub_pos = self.calibrate_hub(cur_lane, tol)
 
             if not success:
                 cur_lane.status = AFCLaneState.NONE
                 cur_lane.unit_obj.return_to_home()
                 return False, message, hub_pos
 
-            if cur_hub.state:
-                cur_lane.move(cur_hub.move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+            # Always run hub clear
+            cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
 
-            cal_dist = hub_pos - cur_hub.hub_clear_move_dis
+            cal_dist = round(hub_pos - cur_hub.hub_clear_move_dis, 2)
             cal_msg = "\n{} dist_hub: New: {} Old: {}".format(cur_lane.name, cal_dist, cur_lane.dist_hub)
             cur_lane.loaded_to_hub  = True
             cur_lane.do_enable(False)
@@ -463,6 +508,77 @@ class afcBoxTurtle(afcUnit):
             cur_lane.status = AFCLaneState.NONE
             cur_lane.unit_obj.return_to_home()
             return True, cal_msg, cal_dist
+
+    def prep_load(self, lane: AFCLane):
+        """
+        Helper method for initially loading spools when prep sensor is triggered.
+
+        Upon first load if homing is enabled, stepper motor will be activated for a move of 400mm
+        or until load sensor is triggered.
+
+        If load sensor is not triggered and prep is still triggered small moves of short_move_dis in
+        mm will happen until a total of short_move_dis*40mm is reached. This is also the same
+        movement that happens if homing is not enabled.
+
+        :param lane: AFCLane object for which to activate and load filament to load sensor
+        """
+        if self.afc.homing_enabled:
+            lane.move_to(self.short_move_dis*self.MAX_NUM_MOVES, SpeedMode.SHORT,
+                         assist_active=AssistActive.NO, endstop=lane.load_es,
+                         use_homing=True)
+        x = 0
+        while not lane.load_state and lane.prep_state and lane.load is not None:
+            x += 1
+            lane.move(self.short_move_dis,500,400)
+            self.reactor.pause(self.reactor.monotonic() + 0.1)
+            if x> self.MAX_NUM_MOVES:
+                msg = ' FAILED TO LOAD, CHECK FILAMENT AT TRIGGER\n||==>--||----||------||\nTRG   LOAD   HUB    TOOL'
+                self.afc.error.AFC_error(msg, False)
+                self.afc.function.afc_led(self.afc.led_fault, lane.led_index)
+                lane.status = AFCLaneState.NONE
+                break
+
+    def prep_post_load(self, lane: AFCLane):
+        """
+        Helper method to run after prep_load has been successful.
+
+        Check to see if boolean is set to load to hub only if lane is not already loaded to hub as
+        long as load and prep states are still triggered. If this check is satisfied then filament
+        is moved to hub with length specified by dist_hub parameter.
+
+        :param lane: AFCLane object for which to perform prep_post_load action on
+        """
+        # Checking if loaded to hub(it should not be since filament was just inserted), if false load to hub. Does a fast load if hub distance is over 200mm
+        if (lane.load_to_hub
+            and not lane.loaded_to_hub
+            and lane.load_state
+            and lane.prep_state):
+            lane.move(lane.dist_hub, lane.dist_hub_move_speed, lane.dist_hub_move_accel, lane.dist_hub > 200)
+            lane.loaded_to_hub = True
+
+    def eject_lane(self, lane: AFCLane):
+        """
+        Method to eject spool from lane.
+
+        :param lane: AFCLane object for which to perform eject action on
+        """
+        try:
+            if lane.loaded_to_hub:
+                lane.move_to(lane.dist_hub * -1, SpeedMode.HUB,
+                             endstop=lane.load_es, assist_active=AssistActive.DYNAMIC,
+                             use_homing=self.afc.homing_enabled)
+            max_tries = 0
+            while lane.load_state:
+                max_tries += 1
+                lane.move_advanced(lane.hub_obj.move_dis * -1, SpeedMode.SHORT,
+                                   assist_active = AssistActive.YES)
+                if max_tries >= self.MAX_NUM_MOVES:
+                    msg = f' Failed to eject {lane.name}'
+                    self.afc.error.AFC_error(msg, False)
+                    break
+            lane.move_advanced(lane.extruder_clear_dis * -1, SpeedMode.SHORT)
+        finally:
+            lane.do_enable(False)
 
 def load_config_prefix(config):
     return afcBoxTurtle(config)

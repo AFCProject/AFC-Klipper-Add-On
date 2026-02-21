@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -48,11 +48,13 @@ function copy_openams_config() {
 }
 
 get_git_version() {
-  cd "$afc_path"
+  local git_hash
+  local afc_py_version
+  cd "$afc_path" || exit
 	git_hash=$(git -C . rev-parse --short HEAD)
 	afc_py_version=$(grep "AFC_VERSION=" "${afc_path}/extras/AFC.py" | cut -d '=' -f2 | tr -d ' "')
 	afc_version="${afc_py_version}-${git_hash}"
-	cd - > /dev/null
+	cd - > /dev/null || exit
 }
 
 clone_and_maybe_restart() {
@@ -153,6 +155,8 @@ restart_service() {
 restart_klipper() {
   if query_printer_status; then
     restart_service klipper
+  else
+    print_msg WARNING "Your printer is not idle/ready, or its status could not be confirmed. Automatic Klipper restart has been skipped; please restart the Klipper service manually once the printer is idle."
   fi
 }
 
@@ -232,5 +236,15 @@ del_var_file() {
 check_for_k1() {
   if grep -Fqs "ID=buildroot" /etc/os-release; then
     is_k1_os="True"
+  fi
+}
+
+check_for_zip_install() {
+  if [ ! -d "${afc_path}/.git" ]; then
+    export git_install="False"
+    print_msg WARNING "AFC-Klipper-Add-On appears to have been installed via ZIP file."
+    print_msg WARNING "Some features may not work as expected without a Git installation."
+    print_msg WARNING "Any updates will require manual reinstallation via ZIP file."
+    read -p "Press Enter to continue..."
   fi
 }

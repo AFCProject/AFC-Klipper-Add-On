@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -67,9 +67,13 @@ main() {
   check_for_hh
   echo "Checking to ensure crudini and jq are present..."
   check_for_prereqs
+  echo "Checking installation method..."
+  check_for_zip_install
   if [ "$test_mode" == "False" ]; then
     check_python_version
-    clone_and_maybe_restart
+    if [ "$git_install" == "True" ]; then
+      clone_and_maybe_restart
+    fi
   fi
   check_existing_install
   echo "Starting installation process.."

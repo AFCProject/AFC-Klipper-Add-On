@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -69,6 +69,11 @@ template_unit_files() {
 
 copy_unit_files() {
   case "$installation_type" in
+  "ViViD")
+    cp "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_Vivid_1.cfg"
+    cp "${afc_path}/templates/AFC_Hardware-AFC.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
+    cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/Vivid.cfg"
+    ;;
   "BoxTurtle (4-Lane)")
     cp "${afc_path}/config/mcu/AFC_Lite.cfg" "${afc_config_dir}/mcu/AFC_Lite.cfg"
     cp "${afc_path}/templates/AFC_Hardware-AFC.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
@@ -139,8 +144,12 @@ install_afc() {
   fi
   copy_unit_files
   # Add our extensions to the klipper gitignore
-  if [ "$test_mode" != "True" ]; then
-    exclude_from_klipper_git
+  if [ "$git_install" == "True" ]; then
+    if [ "$test_mode" == "False" ]; then
+      exclude_from_klipper_git
+    fi
+  else
+    print_msg INFO "Skipping exclude from klipper git for git installations."
   fi
   # Include the AFC configuration files if selected
   if [ "$afc_includes" == True ]; then
@@ -183,7 +192,9 @@ install_afc() {
   fi
   check_and_append_prep "${afc_config_dir}/AFC.cfg"
   replace_varfile_path "${afc_config_dir}/AFC.cfg"
-  update_moonraker_config
+  if [ "$git_install" == "True" ]; then
+    update_moonraker_config
+  fi
 
   export message
   export files_updated_or_installed="True"
@@ -223,6 +234,12 @@ elif [ "$installation_type" == "OpenAMS" ]; then
 - Review and update the ${afc_config_dir}/AFC_AMS_1.cfg file for your AMS unit settings.
 
 - Ensure OpenAMS is properly installed and configured per their instructions.
+ """
+elif [ "$installation_type" == "ViViD" ]; then
+  message+="""
+- Ensure you enter your serial information in the ${afc_config_dir}/AFC_Vivid_1.cfg file
+
+- Review the ${afc_config_dir}/AFC_Hardware.cfg file to reference the proper buffer configuration and pins.
   """
 fi
 

@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Changer
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
+    from configfile import ConfigWrapper
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -98,6 +99,21 @@ def check_and_return( value_str:str, data_values:dict ) -> str:
         value = data_values[value_str]
 
     return value
+
+def section_in_config(config: ConfigWrapper, name: str):
+    """
+    Helper function for searching through config file to see if a config section exists
+
+    :param config: Config file object to search through
+    :param name: Config section name to search for
+
+    :return bool: Returns True if config section name is found in config file
+    """
+    in_cfg = False
+    for s in config.fileconfig.sections():
+        if name in s:
+            in_cfg = True
+    return in_cfg
 
 # Copied from klipper for kalico and older klipper support
 class DebounceButton:

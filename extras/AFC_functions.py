@@ -1,6 +1,6 @@
 # Armored Turtle Automated Filament Control
 #
-# Copyright (C) 2024 Armored Turtle
+# Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
@@ -20,7 +20,7 @@ from configfile import error
 from datetime import datetime
 from pathlib import Path
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Union, Optional
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -33,6 +33,19 @@ except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".f
 
 try: from extras.AFC_respond import AFCprompt
 except: raise error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
+
+try: from extras.AFC_lane import AssistActive, MoveDirection
+except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
+
+try: from extras.AFC_unit import CALI_WARN
+except: raise error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
+
+if TYPE_CHECKING:
+    from extras.AFC import afc
+    from extras.AFC_lane import AFCLane
+    from extras.AFC_stepper import AFCExtruderStepper
+    from extras.AFC_hub import afc_hub
+    from gcode import GCodeCommand
 
 def load_config(config):
     return afcFunction(config)
@@ -60,8 +73,6 @@ class afcFunction:
         self.register_commands(self.show_macros, 'AFC_CALIBRATION', self.cmd_AFC_CALIBRATION,   self.cmd_AFC_CALIBRATION_help)
         self.register_commands(self.show_macros, 'AFC_RESET',       self.cmd_AFC_RESET,         self.cmd_AFC_RESET_help,
                                self.cmd_AFC_RESET_options)
-        self.register_commands(self.show_macros, 'AFC_LANE_RESET',  self.cmd_AFC_LANE_RESET,
-                               self.cmd_AFC_LANE_RESET_help, self.cmd_AFC_LANE_RESET_options)
         self.register_commands(self.show_macros, 'AFC_TEST_LANES', self.cmd_AFC_TEST_LANES,
                                self.cmd_AFC_TEST_LANES_help)
         # Always adding this so it will show up as a button in guis
@@ -106,14 +117,13 @@ class afcFunction:
         self.mcu = self.printer.lookup_object('mcu')
 
         self.auto_var_file = Path(self.afc.VarFile).parent.joinpath("AFC_auto_vars.cfg")
-
         self.afc.gcode.register_command('CALIBRATE_AFC',   self.cmd_CALIBRATE_AFC,   desc=self.cmd_CALIBRATE_AFC_help)
         self.afc.gcode.register_command('ALL_CALIBRATION', self.cmd_ALL_CALIBRATION, desc=self.cmd_ALL_CALIBRATION_help)
-        self.afc.gcode.register_command('AFC_CALI_COMP',   self.cmd_AFC_CALI_COMP,   desc=self.cmd_AFC_CALI_COMP_help)
         self.afc.gcode.register_command('AFC_CALI_FAIL',   self.cmd_AFC_CALI_FAIL,   desc=self.cmd_AFC_CALI_FAIL_help)
         self.afc.gcode.register_command('AFC_HAPPY_P',     self.cmd_AFC_HAPPY_P,     desc=self.cmd_AFC_HAPPY_P_help)
         self.afc.gcode.register_command('TEST_LANE', self.cmd_TEST_LANE, desc=self.cmd_TEST_LANE_help)
         self.afc.gcode.register_command('TEST_LANE_ITERATIONS', self.cmd_TEST_LANE_ITERATIONS, desc=self.cmd_TEST_LANE_ITERATIONS_help)
+        self.afc.gcode.register_command('AFC_LANE_RESET',  self.cmd_AFC_LANE_RESET,  desc=self.cmd_AFC_LANE_RESET_help)
 
     def _rename(self, base_name, rename_name, rename_macro, rename_help):
         """
@@ -256,7 +266,6 @@ class afcFunction:
             return False
         except Exception:
             return False
-
 
     def check_homed(self):
         """
@@ -817,6 +826,160 @@ class afcFunction:
         self.afc.gcode.run_script_from_command(f"G1 E{amount_mm} F{feedrate}")
         self.afc.gcode.run_script_from_command("M82")
 
+    def _lane_calibration(
+            self, lanes: str, unit: Optional[str], tol: float, dis: float
+        ) -> tuple[bool, list[str], list[str]]:
+        """
+        Helper method for calibrating lanes specified by user
+
+        :param lanes: Lane to calibrate, pass in "all" to calibrate all lanes.
+        :param unit: Unit to calibrate, if "all" is passed in as lane then all lanes in unit is
+                     calibrated
+        :param tol: Tolerance to use when calibrating lanes.
+        :return tuple: True/False if calibration was successful,
+                       List of strings for lanes that were successfully calibrated,
+                       Any additional messages to be displayed on popup to user.
+        """
+        calibrated = []
+        additional_msg = []
+        calibrate_lanes: list[AFCLane] = []
+        checked: bool = False
+        self.logger.info('Starting AFC distance Calibrations')
+
+        # When a single lane is specified regardless if UNIT is specified or not
+        if lanes != "all":
+            lane_obj: AFCLane = self.afc.lanes.get(lanes)
+            if lane_obj: calibrate_lanes.append(lane_obj)
+        # When all lanes are specified and UNIT is not specified
+        elif unit is None and lanes == "all":
+            calibrate_lanes += list(self.afc.lanes.values())
+        # When lanes is not specified or specified as "all" and UNIT is specified
+        else:
+            cal_unit = self.afc.units.get(unit)
+            if cal_unit:
+                calibrate_lanes += list(cal_unit.lanes.values())
+
+        calibration_info = {}
+        for lane in calibrate_lanes:
+            if not lane.load_state or not lane.prep_state:
+                self.logger.info("{} not loaded skipping to next loaded lane".format(lane.name))
+                continue
+            if lane.is_direct_hub():
+                checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol)
+            else:
+                checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol)
+            if(not checked):
+                self.afc.error.AFC_error(msg, False)
+                self._afc_cali_fail(cali=lane, dis=pos, reset_lane=(pos!=0),fail_message=msg)
+                return checked, [], []
+            else:
+                if msg == "calibration_lane":
+                    if not calibration_info.get(lane.unit_obj.name):
+                        calibration_info.update({lane.unit_obj.name : {"lanes":[], "msg":""}})
+                        calibration_info[lane.unit_obj.name]["msg"] = lane.unit_obj.calibration_lane_message()
+
+                    calibration_info[lane.unit_obj.name]["lanes"].append(lane.name)
+                else:
+                    calibrated.append(lane.name)
+        # Generating additional messages to be displayed
+        if len(calibration_info.keys()) > 0:
+            for value in calibration_info.values():
+                temp_lanes = ", ".join(value["lanes"])
+                additional_msg.append(value["msg"].format(lanes=temp_lanes))
+
+        self.logger.info("Lane calibration Done!")
+        return checked, calibrated, additional_msg
+
+
+    def _afc_cali_comp(self, cali: str, title: str,
+                       additional_msg: str, gcmd: Optional[GCodeCommand]=None):
+        """
+        This method handles the completion of the AFC calibration process by displaying a prompt to the user, asking
+        whether they want to perform more calibrations.
+
+        :param cali: String of lanes that calibration was completed for.
+        :param title: Title to display in popup
+        :param additional_msg: Any additional messages to display in popup box
+        :param gcmd: GcodeCommand object to pass into AFCPrompt class
+        """
+        prompt = AFCprompt(gcmd, self.logger)
+        buttons = []
+        text = ""
+        if len(cali) > 0:
+            text += 'Calibration was completed for {}.'.format(cali)
+
+        if additional_msg:
+            text += additional_msg
+
+        text += "\nWould you like to do more calibrations?"
+
+        buttons.append(("Yes", "AFC_Calibration", "primary"))
+        buttons.append(("No", "AFC_HAPPY_P STEP='AFC Calibration'", "info"))
+
+        prompt.create_custom_p(title, text, buttons,
+                               True, None)
+
+    def _afc_cali_fail(self, cali: str, dis: str, reset_lane: bool=True,
+                       title: str="AFC Calibration Failed", fail_message: str="",
+                       gcmd: GCodeCommand=None):
+        """
+        This method opens a prompt after an AFC calibration failure. It informs the user about the failure and provides
+        instructions to reset the lane and review the error messages in the console. The user is prompted to take corrective
+        action and re-run the calibration.
+
+        :param cali: Specifies the lane where the calibration failed.
+        :param dis: The distance value that caused the failure.
+        :param reset_lane: Set to True to display reset lane message.
+        :param title: Dynamic title to set in prompt
+        :param fail_message: Dynamic message to display in prompt
+        :param gcmd: GcodeCommand object to pass into AFCPrompt class
+        """
+
+        prompt = AFCprompt(gcmd, self.logger)
+        buttons = []
+        footer = []
+        text = f'{title} for {cali}. '
+        if reset_lane:
+            text += 'First: reset lane, Second: review messages and take necessary action and re-run calibration.'
+            buttons.append(("Reset lane", "AFC_LANE_RESET LANE={} DISTANCE={}".format(cali, dis), "primary"))
+
+        if fail_message:
+            text += f"\nFail message: {fail_message}"
+
+        footer.append(('EXIT', 'prompt_end', 'info'))
+
+        prompt.create_custom_p(title, text, buttons,
+                               True, None)
+
+    def _calc_length(self, config_length, current_length, new_length):
+        """
+        Common function to calculate length for afc_bowden_length, afc_unload_bowden_length, and hub_dist
+
+        :param config_length: Current configuration length that's in config file
+        :param current_length: Current length for bowden or hub_dist
+        :param new_length: New length to set, increase(+), decrease(-), or reset to config value
+
+        :returns length: Calculated length value
+        """
+        length = 0.0
+
+        if new_length.lower() == 'reset':
+            length = config_length
+        else:
+            if new_length[0] in ('+', '-'):
+                try:
+                    bowden_value = float(new_length)
+                    length = current_length + bowden_value
+                except ValueError:
+                    length = current_length
+                    self.logger.error("Invalid length: {}".format(new_length))
+            else:
+                length = float(new_length)
+
+        return length
+    # ---------------------------------------------------------------------------------------------
+    # Macros only below
+    # ---------------------------------------------------------------------------------------------
     cmd_AFC_TEST_LANES_help = 'Run load/unload tests on specified lanes'
     def cmd_AFC_TEST_LANES(self, gcmd):
         """
@@ -914,22 +1077,28 @@ class afcFunction:
             lane_obj = self.afc.lanes.get(lane)
             if lane != 'all':
                 self.afc.logger.info('Running {} iterations for lane: {}'.format(iterations, lane))
-                for _ in range(iterations):
+                for i in range(iterations):
+                    self.afc.save_pos()
                     self.afc.logger.info('Loading lane: {}'.format(lane))
                     self.afc.CHANGE_TOOL(lane_obj)
+
                     if not self.afc.error_state:
-                        self.afc.logger.info("Lane {} loaded successfully".format(lane))
+                        self.afc.logger.info("Lane {} loaded successfully (Iteration {})".format(lane, i + 1))
                     else:
-                        self.afc.logger.error("Failed to load lane {}".format(lane))
+                        self.afc.logger.error("Failed to load lane {} on iteration {}".format(lane, i + 1))
                         self.afc.error.reset_failure()
                         break
+
                     self._safe_extrude(self.afc.test_extrude_amt)
                     self.logger.info("Unloading lane {}".format(lane))
                     self.afc.TOOL_UNLOAD(lane_obj)
+
                     if not self.afc.error_state:
-                        self.afc.logger.info("Lane {} unloaded successfully".format(lane))
+                        self.afc.logger.info(
+                            "Lane {} unloaded successfully for iteration {}/{}".format(lane, i + 1, iterations))
+                        self.afc.restore_pos()
                     else:
-                        self.afc.logger.error("Failed to unload lane {}".format(lane))
+                        self.afc.logger.error("Failed to unload lane {} at iteration {}".format(lane, i + 1))
                         self.afc.error.reset_failure()
                         return
 
@@ -957,7 +1126,6 @@ class afcFunction:
                         self.afc.TOOL_UNLOAD(lane_obj)
         prompt.p_end()
 
-
     cmd_AFC_CALIBRATION_help = 'Open prompt to begin calibration by selecting Unit to calibrate'
     def cmd_AFC_CALIBRATION(self, gcmd):
         """
@@ -977,6 +1145,10 @@ class afcFunction:
         prompt = AFCprompt(gcmd, self.logger)
         buttons = []
         title = 'AFC Calibration'
+        if self.afc.current is not None:
+            text = "Toolhead must be unloaded to calibrate system"
+            prompt.create_custom_p(title, text, None, True, buttons, None)
+            return
         text = ('The following prompts will lead you through the calibration of your AFC unit(s).'
                 ' First, select a unit to calibrate.'
                 ' *All values will be automatically updated in the appropriate config sections.')
@@ -1018,13 +1190,26 @@ class afcFunction:
         prompt = AFCprompt(gcmd, self.logger)
         footer = []
         title = 'Calibrate all'
-        text = 'Press Yes to confirm calibrating all lanes in all units'
+
+        # Check to see if lanes that need to be ejected have already been calibrated and add
+        # message so user knows which lanes will be ejected and then calibrated on next filament
+        # load.
+        eject_lanes = []
+        for unit in self.afc.units.values():
+            cal_lanes = unit.get_calibrated_lanes()
+            if cal_lanes is not None:
+                eject_lanes += cal_lanes
+
+        text = ""
+        if eject_lanes:
+            text += CALI_WARN.format(lanes=", ".join(eject_lanes))
+
+        text += 'Press Yes to confirm calibrating all lanes in all units'
         footer.append(('Back', 'AFC_CALIBRATION', 'info'))
         footer.append(("Yes", "CALIBRATE_AFC LANE=all", "error"))
 
         prompt.create_custom_p(title, text, None,
                                True, None, footer)
-
 
     cmd_CALIBRATE_AFC_help = 'calibrate the dist hub for lane and then afc_bowden_length'
     def cmd_CALIBRATE_AFC(self, gcmd):
@@ -1067,12 +1252,13 @@ class afcFunction:
 
         if self.afc.current is not None:
             self.logger.info(f'current afc {self.afc.current} is not None, cannot calibrate')
-            self.logger.info('Tool must be unloaded to calibrate system')
+            self.logger.error('Tool must be unloaded to calibrate system')
             return
 
         calibrated  = []
         checked     = False
         title       = "AFC Calibration"
+        additional_msg = []
 
         # Check to make sure lane and unit is valid
         if lanes is not None and lanes != 'all' and lanes not in self.afc.lanes:
@@ -1098,71 +1284,7 @@ class afcFunction:
 
         # Determine if a specific lane is provided
         if lanes is not None:
-            self.logger.info('Starting AFC distance Calibrations')
-            if unit is None:
-                if lanes != 'all':
-                    cur_lane = self.afc.lanes[lanes]
-                    checked, msg, pos = cur_lane.unit_obj.calibrate_lane(cur_lane, tol)
-                    if(not checked):
-                        self.afc.error.AFC_error(msg, False)
-                        if pos > 0:
-                            self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
-                        return
-                    else: calibrated.append(lanes)
-                else:
-                    # Calibrate all lanes if no specific lane is provided
-                    for cur_lane in self.afc.lanes.values():
-                        if cur_lane.extruder_obj.no_lanes:
-                            self.logger.info(f"{cur_lane.name} is a standalone lane, skipping calibration".format())
-                            continue
-
-                        if not cur_lane.load_state or not cur_lane.prep_state:
-                            self.logger.info("{} not loaded skipping to next loaded lane".format(cur_lane.name))
-                            continue
-                        # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
-                        if cur_lane.is_direct_hub():
-                            checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(cur_lane, dis, tol)
-                        else:
-                            checked, msg, pos = cur_lane.unit_obj.calibrate_lane(cur_lane, tol)
-                        if(not checked):
-                            self.afc.error.AFC_error(msg, False)
-                            self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
-                            return
-                        else: calibrated.append(cur_lane.name)
-            else:
-                if lanes != 'all':
-                    cur_lane = self.afc.lanes[lanes]
-                    checked, msg, pos = cur_lane.unit_obj.calibrate_lane(cur_lane, tol)
-                    if(not checked):
-                        self.afc.error.AFC_error(msg, False)
-                        self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
-                        return
-                    else: calibrated.append(lanes)
-                else:
-                    CUR_UNIT = self.afc.units[unit]
-                    self.logger.info('{}'.format(CUR_UNIT.name))
-                    # Calibrate all lanes if no specific lane is provided
-                    for cur_lane in CUR_UNIT.lanes.values():
-                        if cur_lane.extruder_obj.no_lanes:
-                            self.logger.info(f"{cur_lane.name} is a standalone lane, skipping calibration".format())
-                            continue
-
-                        if not cur_lane.load_state or  not cur_lane.prep_state:
-                            self.logger.info("{} not loaded skipping to next loaded lane".format(cur_lane.name))
-                            continue
-                        # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
-                        if cur_lane.is_direct_hub():
-                            checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(cur_lane, dis, tol)
-                        else:
-                            checked, msg, pos = CUR_UNIT.calibrate_lane(cur_lane, tol)
-                        if(not checked):
-                            self.afc.error.AFC_error(msg, False)
-                            self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(cur_lane, pos))
-                            return
-                        else: calibrated.append(cur_lane.name)
-
-            self.logger.info("Lane calibration Done!")
-
+            checked, calibrated, additional_msg = self._lane_calibration(lanes, unit, tol, dis)
         else:
             self.logger.info('No lanes selected to calibrate dist_hub')
 
@@ -1189,7 +1311,7 @@ class afcFunction:
                 self.afc.error.AFC_error('{} failed to calibrate bowden length {}'.format(afc_bl, msg), pause=False)
                 self.afc.gcode.run_script_from_command('AFC_CALI_FAIL FAIL={} DISTANCE={}'.format(afc_bl, pos))
                 return
-            else: calibrated.append('Bowden_length:_{}'.format(afc_bl))
+            else: calibrated.append('Bowden_length: {}'.format(afc_bl))
 
             self.logger.info("Bowden length calibration Done!")
 
@@ -1222,38 +1344,13 @@ class afcFunction:
                 calibrated.append(f"'TD1_Bowden_length: {td1}'")
 
         if checked:
-            lanes_calibrated = ','.join(calibrated)
-            self.afc.gcode.run_script_from_command(f"AFC_CALI_COMP TITLE='{title} Completed' CALI={lanes_calibrated}")
+            lanes_calibrated = ', '.join(calibrated)
 
-    cmd_AFC_CALI_COMP_help = 'Opens prompt after calibration is complete'
-    def cmd_AFC_CALI_COMP(self, gcmd):
-        """
-        This function handles the completion of the AFC calibration process by displaying a prompt to the user, asking
-        whether they want to perform more calibrations.
+            msg = ""
+            if additional_msg:
+                msg = " ".join(additional_msg)
 
-        Usage
-        -----
-        `AFC_CALI_COMP CALI=<calibration context>`
-
-        Examples
-        -----
-        ```
-        AFC_CALI_COMP CALI=lane1
-        ```
-        (Shows a prompt indicating that calibration for 'lane1' has been completed)
-        """
-
-        cali = gcmd.get("CALI", None)
-        title = gcmd.get("TITLE", "AFC Calibration Completed")
-
-        prompt = AFCprompt(gcmd, self.logger)
-        buttons = []
-        text = 'Calibration was completed for {}, would you like to do more calibrations?'.format(cali)
-        buttons.append(("Yes", "AFC_Calibration", "primary"))
-        buttons.append(("No", "AFC_HAPPY_P STEP='AFC Calibration'", "info"))
-
-        prompt.create_custom_p(title, text, buttons,
-                               True, None)
+            self._afc_cali_comp(lanes_calibrated, title, msg)
 
     cmd_AFC_HAPPY_P_help = 'Opens prompt after calibration is complete'
     def cmd_AFC_HAPPY_P(self, gcmd):
@@ -1319,22 +1416,7 @@ class afcFunction:
         reset_lane      = bool(gcmd.get_int("RESET", 1))
         title           = gcmd.get("TITLE", "AFC Calibration Failed")
         fail_message    = gcmd.get("MSG", "")
-
-        prompt = AFCprompt(gcmd, self.logger)
-        buttons = []
-        footer = []
-        text = f'{title} for {cali}. '
-        if reset_lane:
-            text += 'First: reset lane, Second: review messages in console and take necessary action and re-run calibration.'
-            buttons.append(("Reset lane", "AFC_LANE_RESET LANE={} DISTANCE={}".format(cali, dis), "primary"))
-
-        if fail_message:
-            text += f" Fail message: {fail_message}"
-
-        footer.append(('EXIT', 'prompt_end', 'info'))
-
-        prompt.create_custom_p(title, text, buttons,
-                               True, None)
+        self._afc_cali_fail(cali, dis, reset_lane, title, fail_message, gcmd)
 
     cmd_AFC_RESET_help = 'Opens prompt to select lane to reset.'
     cmd_AFC_RESET_options = {"DISTANCE": {"default": "30", "type": "float"}}
@@ -1390,7 +1472,7 @@ class afcFunction:
                                   "LANE": {"default": "lane1", "type": "string"}}
     def cmd_AFC_LANE_RESET(self, gcmd):
         """
-        This function resets a specified lane to the hub position in the AFC system. It checks for various error conditions,
+        This macro resets a specified lane to the hub position in the AFC system. It checks for various error conditions,
         such as whether the toolhead is loaded or whether the hub is already clear. The function moves the lane back to the
         hub based on the specified or default distances, ensuring the lane's correct state before completing the reset.
 
@@ -1412,7 +1494,7 @@ class afcFunction:
 
         prompt = AFCprompt(gcmd, self.logger)
         lane = gcmd.get('LANE', None)
-        long_dis = gcmd.get('DISTANCE', None)
+        long_dis = gcmd.get('DISTANCE', 50)
 
         if not lane:
             prompt.p_end()
@@ -1434,8 +1516,8 @@ class afcFunction:
                 self.afc.error.AFC_error("DISTANCE must be a valid number.", pause=False)
                 return
 
-        cur_lane = self.afc.lanes[lane]
-        CUR_HUB = cur_lane.hub_obj
+        cur_lane: Union[AFCLane, AFCExtruderStepper] = self.afc.lanes[lane]
+        CUR_HUB: afc_hub = cur_lane.hub_obj
         short_move = cur_lane.short_move_dis * 2
 
         if not CUR_HUB.state:
@@ -1453,7 +1535,9 @@ class afcFunction:
         fail_state_msg = "'{}' failed to reset to hub, {} switch became false during reset"
 
         if long_dis is not None:
-            cur_lane.move(float(long_dis) * -1, cur_lane.long_moves_speed, cur_lane.long_moves_accel, True)
+            cur_lane.unit_obj.move_to_hub(cur_lane, float(long_dis),
+                                          MoveDirection.NEG, self.afc.homing_enabled,
+                                          AssistActive.YES)
 
         while CUR_HUB.state:
             cur_lane.move(short_move * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
@@ -1471,7 +1555,7 @@ class afcFunction:
                 self.afc.error.AFC_error("'{}' failed to reset to hub".format(cur_lane), pause=False)
                 return
 
-        cur_lane.move(CUR_HUB.move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+        cur_lane.move(CUR_HUB.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
         cur_lane.loaded_to_hub = True
         cur_lane.do_enable(False)
 
@@ -1622,33 +1706,6 @@ class afcFunction:
                 self.logger.error("An incorrect serial number was provided")
         else:
             self.logger.error("An error occurred when trying to send reboot command")
-
-    def _calc_length(self, config_length, current_length, new_length):
-        """
-        Common function to calculate length for afc_bowden_length, afc_unload_bowden_length, and hub_dist
-
-        :param config_length: Current configuration length that's in config file
-        :param current_length: Current length for bowden or hub_dist
-        :param new_length: New length to set, increase(+), decrease(-), or reset to config value
-
-        :returns length: Calculated length value
-        """
-        length = 0.0
-
-        if new_length.lower() == 'reset':
-            length = config_length
-        else:
-            if new_length[0] in ('+', '-'):
-                try:
-                    bowden_value = float(new_length)
-                    length = current_length + bowden_value
-                except ValueError:
-                    length = current_length
-                    self.logger.error("Invalid length: {}".format(new_length))
-            else:
-                length = float(new_length)
-
-        return length
 
     cmd_SET_BOWDEN_LENGTH_help = "Helper to dynamically set length of bowden between hub and toolhead. Pass in HUB if using multiple box turtles"
     def cmd_SET_BOWDEN_LENGTH(self, gcmd):
