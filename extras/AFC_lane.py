@@ -38,6 +38,11 @@ except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.for
 EXCLUDE_TYPES = ["HTLF", "ViViD"]
 # Class for holding different states so its clear what all valid states are
 
+# Names to exclude from search when trying to find unit name in config file
+# These are more for name that could be in config files
+INVALID_UNIT_NAMES = ["AFC_buffer", "AFC_button", "AFC_extruder",
+                      "AFC_hub", "AFC_lane", "AFC_led", "AFC_prep" "AFC_stepper"]
+
 class AssistActive(Enum):
     YES = 1
     NO = 2
@@ -634,7 +639,11 @@ class AFCLane:
         Helper function to get steppers for lane and setup for proper homing
         """
         try:
-            unit_cfg = next(config.getsection(s) for s in config.fileconfig.sections() if self.unit in s and "AFC" in s)
+            unit_cfg = next(
+                config.getsection(s) for s in config.fileconfig.sections()
+                if self.unit in s
+                and "AFC" in s
+                and not any(x in s for x in INVALID_UNIT_NAMES))
             self.unit_obj: afcUnit = self.printer.load_object(config, unit_cfg.get_name())
 
             drive_stepper = self
