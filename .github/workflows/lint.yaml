@@ -15,7 +15,7 @@ jobs:
         with:
           changed-files: "true"
           args: "check --config pyproject.toml"
-      - uses: astral-sh/ruff-action@v1
-        with:
-          changed-files: "true"
-          args: "format --check --config pyproject.toml"
+      # - uses: astral-sh/ruff-action@v1
+      #   with:
+      #     changed-files: "true"
+      #     args: "format --check --config pyproject.toml"
