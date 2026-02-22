@@ -593,15 +593,16 @@ class Espooler:
         else:
             self.stats.start_time = print_time
 
-    def do_assist_move(self, print_time):
+    def do_assist_move(self, print_time=None):
         """
         Helper function to perform assist move while printing
 
         :param print_time: Pre-computed print_time for scheduling assist pins
         """
+
         if self.afc_motor_rwd is None:
             return
-        time = print_time
+        time = print_time = print_time if print_time is not None else self._get_print_time()
         if self.lane_obj.weight < self.enable_assist_weight:
             print_time = self._kick_start(print_time)
 
