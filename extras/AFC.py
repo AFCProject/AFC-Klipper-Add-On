@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import re
 import traceback
+import inspect
 from configfile import error
 
 from typing import Dict, TYPE_CHECKING, Union, Any
@@ -231,6 +232,7 @@ class afc:
         self.debug                  = config.getboolean('debug', False)             # Setting to True turns on more debugging to show on console
         self.log_frame_data         = config.getboolean('log_frame_data', True)
         self.testing                = config.getboolean('testing', False)           # Set to true for testing only so that failure states can be tested without stats being reset
+        self.homing_probe_pos: bool = False
         # Get debug and cast to boolean
         self.logger.set_debug( self.debug )
         self._update_trsync(config)
@@ -346,6 +348,13 @@ class afc:
         self.toolhead   = self.printer.lookup_object('toolhead')
         self.idle       = self.printer.lookup_object('idle_timeout')
         self.gcode_move = self.printer.lookup_object('gcode_move')
+
+        # Looking up to see if manual_home has probe_pos, this is to make AFC work with klipper
+        # starting with new homing update git hash(57c2e0c960f8e25f56a66ba3a1e90e124f207001)
+        phoming = self.printer.lookup_object('homing')
+        phoming_sig = inspect.signature(phoming.manual_home)
+
+        self.homing_probe_pos = True if "probe_pos" in phoming_sig.parameters.keys() else False
 
         # Check if hardware bypass is configured, if not create a virtual bypass sensor
         try:
