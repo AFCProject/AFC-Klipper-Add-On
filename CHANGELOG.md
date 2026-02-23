@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-02-23]
+### Fixed
+- The update-afc.sh script will now check to ensure the printer is returning any status other than `Printing` when checking
+  if it can restart Klipper. This includes the `idle` state, which was not checked before.
+
 ## [2026-02-22]
 ### Fixed
 - Stutters in toolhead movement when print assist kicks in are fixed.
