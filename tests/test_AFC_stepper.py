@@ -102,7 +102,6 @@ class TestSetPosition:
         s.set_position([500.0], "")
         assert s._manual_axis_pos == 0.0
 
-
 # ── get_position ──────────────────────────────────────────────────────────────
 
 class TestGetPosition:

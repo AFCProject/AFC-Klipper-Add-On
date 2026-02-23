@@ -233,6 +233,7 @@ class afc:
         self.log_frame_data         = config.getboolean('log_frame_data', True)
         self.testing                = config.getboolean('testing', False)           # Set to true for testing only so that failure states can be tested without stats being reset
         self.homing_probe_pos: bool = False
+        self._in_unit_test_: bool   = False
         # Get debug and cast to boolean
         self.logger.set_debug( self.debug )
         self._update_trsync(config)
@@ -371,6 +372,7 @@ class afc:
         self.gcode.register_command('SET_AFC_TOOLCHANGES',  self.cmd_SET_AFC_TOOLCHANGES,   desc=self.cmd_SET_AFC_TOOLCHANGES_help)
         self.gcode.register_command('AFC_CLEAR_MESSAGE',    self.cmd_AFC_CLEAR_MESSAGE,     desc=self.cmd_AFC_CLEAR_MESSAGE_help)
         self.gcode.register_command('_AFC_TEST_MESSAGES',   self.cmd__AFC_TEST_MESSAGES,    desc=self.cmd__AFC_TEST_MESSAGES_help)
+        self.gcode.register_command('___IN_UNIT_TEST___',   self.cmd____IN_UNIT_TEST___)
         self.current_state = State.IDLE
 
     def print_version(self, console_only=False):
@@ -2217,3 +2219,16 @@ class afc:
         self.logger.error("Test Message 1")
         self.logger.error("Test Message 2")
         self.logger.error("Test Message 3")
+
+    def cmd____IN_UNIT_TEST___(self, gcmd):
+        """
+        Only should be used in unit tests so that some logic can be skipped if needed
+        example: used to skip over some homing logic so that kalicos test does not halt
+
+		Had copilot choose are large random negative number so someone does not randomly
+		run this macro and set the in unit test flag
+        """
+        magicNum: int = gcmd.get_int("MAGIC_NUM")
+
+        if magicNum == -928447115603882:
+            self._in_unit_test_ = True

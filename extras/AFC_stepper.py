@@ -329,6 +329,8 @@ class AFCExtruderStepper(AFCLane):
         flush_delay: float = DRIP_TIME + STEPCOMPRESS_FLUSH_TIME + toolhead.kin_flush_delay
 
         while toolhead.print_time < max_time:
+            if self.afc._in_unit_test_:
+                break
             if drip_completion.test():
                 break
             curtime: float = self.reactor.monotonic()

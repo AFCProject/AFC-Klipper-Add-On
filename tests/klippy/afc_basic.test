@@ -10,6 +10,9 @@
 DICTIONARY stm32h723.dict
 CONFIG afc_base.cfg
 
+# Let AFC know we are in a unit test environment
+___IN_UNIT_TEST___ MAGIC_NUM=-928447115603882
+
 # AFC_STATUS should succeed and print lane/spool information.
 AFC_STATUS
 

@@ -10,6 +10,9 @@
 DICTIONARY stm32h723.dict
 CONFIG afc_base.cfg
 
+# Let AFC know we are in a unit test environment
+___IN_UNIT_TEST___ MAGIC_NUM=-928447115603882
+
 # --- Tip forming configuration commands ---
 # Read current tip forming config (no hardware required)
 GET_TIP_FORMING
