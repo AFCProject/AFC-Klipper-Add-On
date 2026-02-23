@@ -11,6 +11,8 @@ Covers:
   - update_filament_error_pos / get_extruder_pos
   - start/stop fault timers
   - cmd_QUERY_BUFFER string construction
+  - cmd_ENABLE_BUFFER / cmd_DISABLE_BUFFER GCode commands
+  - cmd_AFC_SET_ERROR_SENSITIVITY GCode command
   - TRAILING_STATE_NAME / ADVANCING_STATE_NAME constants
 """
 
@@ -347,3 +349,160 @@ class TestGetStatus:
         buf = _make_buffer()
         result = buf.get_status()
         assert result["rotation_distance"] is None
+
+
+# ── cmd_ENABLE_BUFFER ─────────────────────────────────────────────────────────
+
+class TestCmdEnableBuffer:
+    def test_delegates_to_enable_buffer(self):
+        """cmd_ENABLE_BUFFER should call enable_buffer() exactly once."""
+        buf = _make_buffer()
+        buf.enable_buffer = MagicMock()
+        buf.cmd_ENABLE_BUFFER(MagicMock())
+        buf.enable_buffer.assert_called_once()
+
+    def test_buffer_is_enabled_after_command(self):
+        """Issuing ENABLE_BUFFER leaves enable set to True."""
+        buf = _make_buffer()
+        buf.set_multiplier = MagicMock()
+        buf.cmd_ENABLE_BUFFER(MagicMock())
+        assert buf.enable is True
+
+
+# ── cmd_DISABLE_BUFFER ────────────────────────────────────────────────────────
+
+class TestCmdDisableBuffer:
+    def test_delegates_to_disable_buffer(self):
+        """cmd_DISABLE_BUFFER should call disable_buffer() exactly once."""
+        buf = _make_buffer()
+        buf.disable_buffer = MagicMock()
+        buf.cmd_DISABLE_BUFFER(MagicMock())
+        buf.disable_buffer.assert_called_once()
+
+    def test_buffer_is_disabled_after_command(self):
+        """Issuing DISABLE_BUFFER leaves enable set to False."""
+        buf = _make_buffer()
+        buf.enable = True
+        buf.reset_multiplier = MagicMock()
+        buf.cmd_DISABLE_BUFFER(MagicMock())
+        assert buf.enable is False
+
+
+# ── cmd_AFC_SET_ERROR_SENSITIVITY ─────────────────────────────────────────────
+
+def _gcmd(sensitivity):
+    """Return a mock gcmd whose get_float returns the given sensitivity."""
+    gcmd = MagicMock()
+    gcmd.get_float.return_value = sensitivity
+    return gcmd
+
+
+class TestCmdSetErrorSensitivity:
+    def test_updates_error_sensitivity(self):
+        """The new sensitivity value is stored on the buffer."""
+        buf = _make_buffer(error_sensitivity=0.0)
+        buf.setup_fault_timer = MagicMock()
+        buf.start_fault_detection = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
+        assert buf.error_sensitivity == 5.0
+
+    def test_updates_fault_sensitivity(self):
+        """fault_sensitivity is recalculated from the new error_sensitivity."""
+        buf = _make_buffer(error_sensitivity=0.0)
+        buf.setup_fault_timer = MagicMock()
+        buf.start_fault_detection = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
+        assert buf.fault_sensitivity == buf.get_fault_sensitivity(5.0)
+
+    # ── 0 → >0 transition ────────────────────────────────────────────────────
+
+    def test_disabled_to_enabled_calls_setup_fault_timer(self):
+        """Transitioning from 0 to >0 calls setup_fault_timer."""
+        buf = _make_buffer(error_sensitivity=0.0)
+        buf.setup_fault_timer = MagicMock()
+        buf.start_fault_detection = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
+        buf.setup_fault_timer.assert_called_once()
+
+    def test_disabled_to_enabled_calls_start_fault_detection(self):
+        """Transitioning from 0 to >0 calls start_fault_detection."""
+        buf = _make_buffer(error_sensitivity=0.0)
+        buf.setup_fault_timer = MagicMock()
+        buf.start_fault_detection = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
+        buf.start_fault_detection.assert_called_once()
+
+    def test_disabled_to_enabled_uses_multiplier_low_when_trailing(self):
+        """Transitioning 0 → >0 with trailing state passes multiplier_low."""
+        buf = _make_buffer(error_sensitivity=0.0)
+        buf.last_state = TRAILING_STATE_NAME
+        buf.setup_fault_timer = MagicMock()
+        buf.start_fault_detection = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
+        _, multiplier = buf.start_fault_detection.call_args[0]
+        assert multiplier == buf.multiplier_low
+
+    def test_disabled_to_enabled_uses_multiplier_high_when_advancing(self):
+        """Transitioning 0 → >0 with advancing state passes multiplier_high."""
+        buf = _make_buffer(error_sensitivity=0.0)
+        buf.last_state = ADVANCING_STATE_NAME
+        buf.setup_fault_timer = MagicMock()
+        buf.start_fault_detection = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
+        _, multiplier = buf.start_fault_detection.call_args[0]
+        assert multiplier == buf.multiplier_high
+
+    # ── >0 → 0 transition ────────────────────────────────────────────────────
+
+    def test_enabled_to_disabled_calls_stop_fault_timer(self):
+        """Transitioning from >0 to 0 calls stop_fault_timer."""
+        buf = _make_buffer(error_sensitivity=5.0)
+        buf.stop_fault_timer = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(0.0))
+        buf.stop_fault_timer.assert_called_once()
+
+    def test_enabled_to_disabled_does_not_call_setup_fault_timer(self):
+        """Transitioning from >0 to 0 does not call setup_fault_timer."""
+        buf = _make_buffer(error_sensitivity=5.0)
+        buf.stop_fault_timer = MagicMock()
+        buf.setup_fault_timer = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(0.0))
+        buf.setup_fault_timer.assert_not_called()
+
+    # ── >0 → >0 transition ───────────────────────────────────────────────────
+
+    def test_enabled_to_enabled_calls_update_filament_error_pos(self):
+        """Transitioning from >0 to another >0 calls update_filament_error_pos."""
+        buf = _make_buffer(error_sensitivity=3.0)
+        buf.update_filament_error_pos = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(7.0))
+        buf.update_filament_error_pos.assert_called_once()
+
+    def test_enabled_to_enabled_does_not_call_stop_fault_timer(self):
+        """Transitioning from >0 to another >0 does not call stop_fault_timer."""
+        buf = _make_buffer(error_sensitivity=3.0)
+        buf.update_filament_error_pos = MagicMock()
+        buf.stop_fault_timer = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(7.0))
+        buf.stop_fault_timer.assert_not_called()
+
+    def test_enabled_to_enabled_does_not_call_setup_fault_timer(self):
+        """Transitioning from >0 to another >0 does not call setup_fault_timer."""
+        buf = _make_buffer(error_sensitivity=3.0)
+        buf.update_filament_error_pos = MagicMock()
+        buf.setup_fault_timer = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(7.0))
+        buf.setup_fault_timer.assert_not_called()
+
+    # ── logging ───────────────────────────────────────────────────────────────
+
+    def test_logs_info_with_new_sensitivity(self):
+        """Setting sensitivity logs an info message containing the new value."""
+        buf = _make_buffer(error_sensitivity=0.0)
+        buf.setup_fault_timer = MagicMock()
+        buf.start_fault_detection = MagicMock()
+        buf.logger = MagicMock()
+        buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
+        buf.logger.info.assert_called_once()
+        msg = buf.logger.info.call_args[0][0]
+        assert "5.0" in msg
