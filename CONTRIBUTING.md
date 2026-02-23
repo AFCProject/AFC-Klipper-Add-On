@@ -133,6 +133,7 @@ git clone --depth 1 https://github.com/Klipper3d/klipper.git klipper
 
 ```shell
 pip install -r klipper/scripts/klippy-requirements.txt
+pip install -r klipper/scripts/tests-requirements.txt
 ```
 
 **3. Install the ARM cross-compiler** needed to compile the STM32H723 firmware

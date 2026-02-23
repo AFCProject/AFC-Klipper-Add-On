@@ -626,12 +626,12 @@ class AFCExtruderStepper(AFCLane):
             start_mcu_pos = self.extruder_stepper.stepper.get_mcu_position()
             with self.assist_move(speed, rewind, assist_active=assist_active):
                 if self.afc.homing_probe_pos:
-                    phoming.manual_home(toolhead=self, endstop=[endstop], pos=pos, speed=speed,
+                    phoming.manual_home(toolhead=self, endstops=[endstop], pos=pos, speed=speed,
                                         probe_pos=False, triggered=triggered,
-                                        check_trigger=check_trigger)
+                                        check_triggered=check_trigger)
                 else:
-                    phoming.manual_home(toolhead=self, endstop=[endstop], pos=pos, speed=speed,
-                                        triggered=triggered, check_trigger=check_trigger)
+                    phoming.manual_home(toolhead=self, endstops=[endstop], pos=pos, speed=speed,
+                                        triggered=triggered, check_triggered=check_trigger)
             end_ts = reactor.monotonic()
             try:
                 # Log distance at trigger using homing trigger positions
