@@ -329,14 +329,12 @@ class AFCExtruderStepper(AFCLane):
         flush_delay: float = DRIP_TIME + STEPCOMPRESS_FLUSH_TIME + toolhead.kin_flush_delay
 
         while toolhead.print_time < max_time:
-            if self.afc._in_unit_test_:
-                break
             if drip_completion.test():
                 break
             curtime: float = self.reactor.monotonic()
             est_print_time: float = toolhead.mcu.estimated_print_time(curtime)
             wait_time: float = toolhead.print_time - est_print_time - flush_delay
-            if wait_time > 0.:
+            if wait_time > 0. and toolhead.can_pause:
                 drip_completion.wait(curtime + wait_time)
                 continue
             npt = min(toolhead.print_time + DRIP_SEGMENT_TIME, max_time)
