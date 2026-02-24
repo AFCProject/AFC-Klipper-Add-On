@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-02-24]
+### Added
+- Added per-toolhead variable overrides for macros via `_AFC_<base>_VARS_<extruder>` companion macros.
+
 ## [2026-02-21]
 ### Added
 - Toolchanger: Merged homing changes from DEV and updated homing code to work properly with toolchanger

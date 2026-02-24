@@ -1286,26 +1286,26 @@ class afc:
                     cur_lane.espooler.do_assist_move()
                     if self.poop:
                         if purge_length is not None:
-                            self.gcode.run_script_from_command("%s %s=%s" % (self.poop_cmd, 'PURGE_LENGTH', purge_length))
+                            self.gcode.run_script_from_command("{} PURGE_LENGTH={} EXTRUDER={}".format(self.poop_cmd, purge_length, cur_extruder.name))
 
                         else:
-                            self.gcode.run_script_from_command(self.poop_cmd)
+                            self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.poop_cmd, cur_extruder.name))
 
                         self.afcDeltaTime.log_with_time("TOOL_LOAD: After poop")
                         self.function.log_toolhead_pos()
 
                         if self.wipe:
-                            self.gcode.run_script_from_command(self.wipe_cmd)
+                            self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.wipe_cmd, cur_extruder.name))
                             self.afcDeltaTime.log_with_time("TOOL_LOAD: After first wipe")
                             self.function.log_toolhead_pos()
 
                     if self.kick:
-                        self.gcode.run_script_from_command(self.kick_cmd)
+                        self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.kick_cmd, cur_extruder.name))
                         self.afcDeltaTime.log_with_time("TOOL_LOAD: After kick")
                         self.function.log_toolhead_pos()
 
                     if self.wipe:
-                        self.gcode.run_script_from_command(self.wipe_cmd)
+                        self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.wipe_cmd, cur_extruder.name))
                         self.afcDeltaTime.log_with_time("TOOL_LOAD: After second wipe")
                         self.function.log_toolhead_pos()
 
@@ -1696,19 +1696,19 @@ class afc:
             # Perform filament cutting and parking if specified.
             if self.tool_cut:
                 cur_lane.extruder_obj.estats.increase_cut_total()
-                self.gcode.run_script_from_command(self.tool_cut_cmd)
+                self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.tool_cut_cmd, cur_extruder.name))
                 self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After cut")
                 self.function.log_toolhead_pos()
 
                 if self.park:
-                    self.gcode.run_script_from_command(self.park_cmd)
+                    self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.park_cmd, cur_extruder.name))
                     self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After park")
                     self.function.log_toolhead_pos()
 
             # Form filament tip if necessary.
             if self.form_tip:
                 if self.park:
-                    self.gcode.run_script_from_command(self.park_cmd)
+                    self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.park_cmd, cur_extruder.name))
                     self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After form tip park")
                     self.function.log_toolhead_pos()
 
