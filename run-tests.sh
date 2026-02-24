@@ -7,6 +7,7 @@
 #   ./run-tests.sh --klippy     # klippy integration tests only (both firmwares)
 #   ./run-tests.sh --klipper    # klippy integration tests vs klipper only
 #   ./run-tests.sh --kalico     # klippy integration tests vs kalico only
+#   ./run-tests.sh -k           # keep temporary files after klippy tests
 
 set -euo pipefail
 
@@ -37,6 +38,7 @@ Options:
   --klippy    Run klippy integration tests only (both klipper and kalico)
   --klipper   Run klippy integration tests against klipper only
   --kalico    Run klippy integration tests against kalico only
+  -k          Keep klippy temporary files (logs, gcode) after tests
   --help      Show this help message and exit
 
 With no options, runs unit tests + klippy integration tests against both
@@ -48,6 +50,7 @@ EOF
 RUN_UNIT=true
 RUN_KLIPPER=true
 RUN_KALICO=true
+KLIPPY_EXTRA_ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
@@ -55,6 +58,7 @@ for arg in "$@"; do
         --klippy)  RUN_UNIT=false; RUN_KLIPPER=true;  RUN_KALICO=true  ;;
         --klipper) RUN_UNIT=false; RUN_KLIPPER=true;  RUN_KALICO=false ;;
         --kalico)  RUN_UNIT=false; RUN_KLIPPER=false; RUN_KALICO=true  ;;
+        -k)        KLIPPY_EXTRA_ARGS+=("--klippy-keep") ;;
         --help)    usage; exit 0 ;;
         *) echo "Unknown option: $arg"; echo; usage; exit 1 ;;
     esac
@@ -109,7 +113,8 @@ run_klippy_tests() {
     fi
 
     if KLIPPER_PATH="$fw_dir" DICTDIR="$DICT_DIR" \
-        $PYTEST tests/klippy/ -v --junitxml="klippy-test-results-$name.xml"; then
+        $PYTEST tests/klippy/ -v --junitxml="klippy-test-results-$name.xml" \
+        "${KLIPPY_EXTRA_ARGS[@]+"${KLIPPY_EXTRA_ARGS[@]}"}"; then
         success "Klippy tests ($name)"
         PASS+=("klippy-$name")
     else

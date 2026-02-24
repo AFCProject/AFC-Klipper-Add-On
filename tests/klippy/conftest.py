@@ -12,6 +12,9 @@ from __future__ import annotations
 # Usage:
 #   KLIPPER_PATH=/path/to/klipper pytest tests/klippy/
 #   DICTDIR=/path/to/dicts pytest tests/klippy/
+#
+# Debugging options:
+#   pytest tests/klippy/ --klippy-keep      Keep temp files after test completion
 
 import os
 import pathlib
@@ -29,6 +32,14 @@ KLIPPER_PATH = pathlib.Path(
 DICT_DIR = pathlib.Path(
     os.environ.get("DICTDIR", str(ROOT / "tests" / "dict"))
 )
+LOG_DIR = ROOT / "tests" / "logs"
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--klippy-keep", action="store_true", default=False,
+        help="Keep temporary files (logs, gcode) after test completion",
+    )
 
 
 def pytest_collect_file(parent, file_path):
@@ -73,6 +84,8 @@ class KlippyTest(pytest.File):
                 else:
                     gcode.append(line.strip())
 
+        keepfiles = self.config.getoption("--klippy-keep")
+
         yield KlippyTestItem.from_parent(
             self,
             name=str(config_file),
@@ -81,6 +94,7 @@ class KlippyTest(pytest.File):
             dictionaries=dictionaries,
             should_fail=should_fail,
             klipper_path=KLIPPER_PATH,
+            keepfiles=keepfiles,
         )
 
 
@@ -93,6 +107,7 @@ class KlippyTestItem(pytest.Item):
         gcode,
         should_fail=False,
         klipper_path,
+        keepfiles=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -100,15 +115,26 @@ class KlippyTestItem(pytest.Item):
         self.dictionaries = dictionaries
         self.gcode = gcode
         self.klipper_path = klipper_path
+        self.keepfiles = keepfiles
         if should_fail:
             self.add_marker(pytest.mark.xfail)
 
     def setup(self):
-        self.tmp_dir = pathlib.Path(tempfile.mkdtemp())
+        # Build a descriptive directory name from the firmware, .test file, and config.
+        firmware = self.klipper_path.name                     # e.g. "klipper" or "kalico"
+        test_file = pathlib.Path(self.parent.path).stem       # e.g. "afc_buffer_commands"
+        config_name = pathlib.Path(self.config_file).stem     # e.g. "afc_with_buffer"
+        prefix = f"{firmware}_{test_file}_{config_name}_"
+
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        self.tmp_dir = pathlib.Path(tempfile.mkdtemp(prefix=prefix, dir=LOG_DIR))
         # AFC_logger writes to AFC.log in the same directory as klippy.log.
         self.afc_log_path = self.tmp_dir / "AFC.log"
 
     def teardown(self):
+        if self.keepfiles:
+            sys.stderr.write(f"  Keeping temp files in: {self.tmp_dir}\n")
+            return
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def runtest(self):
