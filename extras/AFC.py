@@ -232,7 +232,7 @@ class afc:
         self.debug                  = config.getboolean('debug', False)             # Setting to True turns on more debugging to show on console
         self.log_frame_data         = config.getboolean('log_frame_data', True)
         self.testing                = config.getboolean('testing', False)           # Set to true for testing only so that failure states can be tested without stats being reset
-        self.homing_probe_pos: bool = False
+        self.manual_home_has_probe_pos_param: bool = False
 
         # Klippy debuginput start_args can only be passed in when doing tests, this way AFC
         # knows if its running on a printer or a klippy test. This way we can bypass some
@@ -358,9 +358,11 @@ class afc:
         # Looking up to see if manual_home has probe_pos, this is to make AFC work with klipper
         # starting with new homing update git hash(57c2e0c960f8e25f56a66ba3a1e90e124f207001)
         phoming = self.printer.lookup_object('homing')
-        phoming_sig = inspect.signature(phoming.manual_home)
-
-        self.homing_probe_pos = True if "probe_pos" in phoming_sig.parameters.keys() else False
+        try:
+            phoming_sig = inspect.signature(phoming.manual_home)
+            self.manual_home_has_probe_pos_param = True if "probe_pos" in phoming_sig.parameters.keys() else False
+        except:
+            pass
 
         # Check if hardware bypass is configured, if not create a virtual bypass sensor
         try:

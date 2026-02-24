@@ -625,7 +625,12 @@ class AFCExtruderStepper(AFCLane):
         try:
             start_mcu_pos = self.extruder_stepper.stepper.get_mcu_position()
             with self.assist_move(speed, rewind, assist_active=assist_active):
-                if self.afc.homing_probe_pos:
+                if self.afc.manual_home_has_probe_pos_param:
+                    # Explicitly set probe_pos=False to use normal homing coordinates even when
+                    # homing is initiated from a "probing" context. AFC lanes are not bed/Z
+                    # probes, and we do not want Klipper's probe-position bookkeeping here.
+                    # This argument is passed explicitly to remain compatible with newer
+                    # Klipper versions that added the probe_pos parameter.
                     phoming.manual_home(toolhead=self, endstops=[endstop], pos=pos, speed=speed,
                                         probe_pos=False, triggered=triggered,
                                         check_triggered=check_trigger)

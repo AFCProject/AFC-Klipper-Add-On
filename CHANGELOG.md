@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-02-22]
 ### Fixed
 - Stutters in toolhead movement when print assist kicks in are fixed.
-- Issue with new klipper homing with git hash 57c2e0c
+- Fixed compatibility issue with Klipper homing changes introduced in git hash 57c2e0c by detecting and using the new probe_pos parameter when available.
 
 ## [2026-02-20]
 ### Fixed
