@@ -9,6 +9,15 @@ additional_system_menu() {
   local message
   local choice
   local counter board_counter qb_board_counter qb_motor_counter
+  if ! check_existing_unit_installed; then
+    echo ""
+    echo "No existing unit installation found in ${afc_config_dir}."
+    echo "Please install your first unit from the main Install menu before adding additional units."
+    echo ""
+    read -p "Press Enter to return to the main menu..." _
+    main_menu
+    return
+  fi
   message="This menu allows you to add ADDITIONAL unit types. It should NOT be used for your first unit.\n"
   message+="This is a best effort in adding an additional unit. You will probably be required\n"
   message+="to manually edit the configuration files to ensure proper operation.\n"

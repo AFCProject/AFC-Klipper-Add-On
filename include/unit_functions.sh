@@ -135,8 +135,16 @@ replace_unit_name() {
   find "$afc_config_dir/mcu" -type f -name "${old_unit_name}.cfg" -exec mv {} "$afc_config_dir/mcu/${new_unit_name}.cfg" \;
 }
 
+check_existing_unit_installed() {
+  if grep -rql "\[AFC_stepper lane" "$afc_config_dir" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 verify_name_not_in_use() {
   local unit_name="$1"
+  export invalid_name="False"
   if grep -qR "$unit_name" "$afc_config_dir"; then
     export message="Unit $unit_name already exists, please enter a unique unit name."
     export invalid_name="True"
@@ -153,16 +161,23 @@ install_additional_unit() {
     # If we are installing a NightOwl, then copy these files over.
   elif [ "$installation_type" == "NightOwl" ]; then
     cp "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    cp "${afc_path}/config/mcu/ERB_2.0.cfg" "${afc_config_dir}/mcu/"
+    find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/NightOwl/$boxturtle_name/g" {} +
   elif [ "$installation_type" == "ViViD" ]; then
     cp "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
     cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/${boxturtle_name}.cfg"
+    find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/Vivid_1/$boxturtle_name/g" {} +
+    sed -i "s/include mcu\/Vivid_1.cfg/include mcu\/${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    sed -i "s/Vivid_1/$boxturtle_name/g" "${afc_config_dir}/mcu/${boxturtle_name}.cfg"
   elif [ "$installation_type" == "HTLF" ]; then
+    local board_type="$htlf_board_type"
     mkdir -p "${afc_config_dir}/mcu"
-    cp "${afc_path}/config/mcu/HTLF_${htlf_board_type}.cfg" "${afc_config_dir}/mcu/"
-    if [ "$htlf_board_type" == "MMB_1.0" ] || [ "$htlf_board_type" == "MMB_1.1" ]; then
-      htlf_board_type="MMB"
+    cp "${afc_path}/config/mcu/HTLF_${board_type}.cfg" "${afc_config_dir}/mcu/"
+    if [ "$board_type" == "MMB_1.0" ] || [ "$board_type" == "MMB_1.1" ]; then
+      board_type="MMB"
     fi
-    cp "${afc_path}/templates/AFC_HTLF_1-${htlf_board_type}.cfg" "${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}.cfg"
+    cp "${afc_path}/templates/AFC_HTLF_1-${board_type}.cfg" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
+    sed -i "s/HTLF_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
   elif [ "$installation_type" == "QuattroBox" ]; then
     mkdir -p "${afc_config_dir}/macros"
     mkdir -p "${afc_config_dir}/mcu"

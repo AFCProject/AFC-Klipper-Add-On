@@ -54,7 +54,6 @@ main() {
   done
 
   moonraker="${moonraker_address}:${moonraker_port}"
-  moonraker="${moonraker_address}:${moonraker_port}"
   afc_config_dir="${printer_config_dir}/AFC"
   afc_file="${afc_config_dir}/AFC.cfg"
   moonraker_config_file="${printer_config_dir}/moonraker.conf"

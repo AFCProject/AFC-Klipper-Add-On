@@ -10,7 +10,7 @@ cycle_array() {
   local -n index=$2
   local var_name=$3
   index=$(( (index + 1) % ${#arr[@]} ))
-  eval "$var_name=\"\${arr[$index]}\""
+  printf -v "$var_name" "%s" "${arr[$index]}"
   message="$4: ${!var_name}"
 }
 
@@ -21,7 +21,7 @@ toggle_option() {
   local new_value
   local status
 
-  current=$(eval "echo \$$var_name")
+  current="${!var_name}"
 
   if [ "$current" == "True" ]; then
     new_value="False"
@@ -31,7 +31,7 @@ toggle_option() {
     status="Enabled"
   fi
 
-  eval "$var_name=\"$new_value\""
+  printf -v "$var_name" "%s" "$new_value"
   message="$label $status"
 }
 
