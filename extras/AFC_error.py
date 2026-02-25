@@ -120,11 +120,12 @@ class afcError:
         self.afc.error_state = state
         self.afc.current_state = State.ERROR if state else State.IDLE
 
-    def AFC_error(self, msg, pause=True, level=1):
+    def AFC_error(self, msg, pause=True):
         # Print to logger since respond_raw does not write to logger
         logging.warning(msg)
         # Handle AFC errors
-        self.logger.error( message=msg, stack_name=inspect.stack()[level].function )
+        self.logger.error(message=msg,
+                          stack_name=inspect.currentframe().f_back.f_code.co_name )
         if pause: self.pause_print()
 
     cmd_RESET_FAILURE_help = "CLEAR STATUS ERROR"
