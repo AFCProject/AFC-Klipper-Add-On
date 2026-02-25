@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-02-24]
+### Fixed
+- Issue where trying to load another lane while loading a lane could cause klipper to crash
+
 ## [2026-02-23]
 ### Fixed
 - The update-afc.sh script will now check to ensure the printer is returning any status other than `Printing` when checking
