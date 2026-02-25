@@ -194,6 +194,8 @@ class afc:
         self.home_to_hub            = config.getboolean("home_to_hub", True)        # Global setting to auto-home to hub during moves
         self.home_to_tool           = config.getboolean("home_to_tool", True)       # Global setting to auto-home to tool during moves
         self.homing_enabled         = config.getboolean("homing_enabled", True)
+        self.load_then_home         = config.getboolean("load_then_home", True)
+        self.load_undershoot        = config.getfloat("load_undershoot", 50)
 
         self.tool_max_unload_attempts= config.getint('tool_max_unload_attempts', 4) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
         self.tool_max_load_checks   = config.getint('tool_max_load_checks', 4)      # Max number of attempts to check to make sure filament is loaded into toolhead extruder when using buffer as ramming sensor
@@ -1245,6 +1247,7 @@ class afc:
                 if self._check_extruder_temp(cur_lane):
                     self.afcDeltaTime.log_with_time("Done heating toolhead")
 
+                # TODO: add and verify load_then_home logic for direct lanes
                 # Move filament to the hub if it's not already loaded there.
                 if (not cur_lane.loaded_to_hub
                     or cur_lane.hub == 'direct'):
@@ -1286,8 +1289,17 @@ class afc:
 
                 # Move filament towards the toolhead.
                 if cur_lane.hub != 'direct':
-                    _, _, warn = cur_lane.move_to(cur_hub.afc_bowden_length,
-                                    SpeedMode.LONG,
+                    total_length = cur_hub.afc_bowden_length
+                    speed_mode = SpeedMode.LONG
+                    if self.load_then_home:
+                        load_length = total_length - cur_lane.homing_overshoot - self.load_undershoot
+                        cur_lane.move_to(load_length, SpeedMode.LONG,
+                                         assist_active=AssistActive.YES,
+                                         use_homing=False)
+                        total_length -= load_length
+                        speed_mode = SpeedMode.SHORT
+                    _, _, warn = cur_lane.move_to(total_length,
+                                    speed_mode,
                                     assist_active=AssistActive.YES,
                                     endstop=cur_lane.get_toolhead_endstop(),
                                     use_homing=self.homing_enabled and self.home_to_tool)
