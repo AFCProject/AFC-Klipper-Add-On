@@ -75,25 +75,60 @@ class AFCSpool:
 
         map_cmd = map_cmd.upper()
 
-        if map_cmd not in self.afc.tool_cmds:
-            self.logger.error("Invalid map command: {}".format(map_cmd))
-            return
-
-        lane_switch = self.afc.tool_cmds[map_cmd]
-        self.logger.debug("lane to switch is {}".format(lane_switch))
         if lane not in self.afc.lanes:
             self.logger.info('{} Unknown'.format(lane))
             return
         cur_lane = self.afc.lanes[lane]
-        self.afc.tool_cmds[map_cmd]=lane
-        map_switch = cur_lane.map
-        cur_lane.map = map_cmd
-        cur_lane.send_lane_data()
 
-        sw_lane = self.afc.lanes[lane_switch]
-        self.afc.tool_cmds[map_switch] = lane_switch
-        sw_lane.map = map_switch
-        sw_lane.send_lane_data()
+        if map_cmd in self.afc.tool_cmds:
+            # Swap mode: exchange mappings between two lanes
+            lane_switch = self.afc.tool_cmds[map_cmd]
+            self.logger.debug("lane to switch is {}".format(lane_switch))
+
+            if lane_switch == lane:
+                self.logger.info("{} is already mapped to {}".format(lane, map_cmd))
+                return
+
+            sw_lane = self.afc.lanes[lane_switch]
+            map_switch = cur_lane.map
+
+            self.afc.tool_cmds[map_cmd] = lane
+            cur_lane.map = map_cmd
+            cur_lane.send_lane_data()
+
+            self.afc.tool_cmds[map_switch] = lane_switch
+            sw_lane.map = map_switch
+            sw_lane.send_lane_data()
+        else:
+            # Assign mode: map lane to a T command not currently in use
+            old_map = cur_lane.map
+
+            # Unregister old gcode handler and remove from tool_cmds
+            if old_map is not None:
+                try:
+                    self.afc.gcode.register_command(old_map, None)
+                except:
+                    pass
+                if old_map in self.afc.tool_cmds:
+                    del self.afc.tool_cmds[old_map]
+
+            # Check for existing non-AFC gcode handler conflict
+            existing = self.afc.gcode.ready_gcode_handlers.get(map_cmd) if hasattr(self.afc.gcode, 'ready_gcode_handlers') else None
+            if existing:
+                self.logger.error("Error trying to map lane {} to {}, please make sure there are no macros already setup for {}".format(lane, map_cmd, map_cmd))
+                return
+
+            # Register new gcode handler
+            try:
+                self.afc.gcode.register_command(map_cmd, self.afc.cmd_CHANGE_TOOL, desc=self.afc.cmd_CHANGE_TOOL_help)
+            except:
+                self.logger.error("Error trying to map lane {} to {}".format(lane, map_cmd))
+                return
+
+            self.afc.tool_cmds[map_cmd] = lane
+            cur_lane.map = map_cmd
+            cur_lane.send_lane_data()
+
         self.afc.save_vars()
 
     cmd_SET_COLOR_help = "Set filaments color for a lane"
@@ -411,21 +446,45 @@ class AFCSpool:
         ```
         """
 
-        # Gathering existing lane mapping and add to list
-        existing_cmds = [lane.map for lane in self.afc.lanes.values()]
-        # Gather manually assigned mappings and add to list
-        manually_assigned = [ lane._map for lane in self.afc.lanes.values()]
-        # Remove manually assigned mappings from auto assigned mappings
-        existing_cmds = list(set(existing_cmds) - set(manually_assigned))
-        # Sort list in numerical order
-        existing_cmds = sorted(existing_cmds, key=lambda x: int("".join([i for i in x if i.isdigit()])))
+        # Clean stale tool_cmds entries referencing lanes no longer in config
+        stale_keys = [k for k, v in self.afc.tool_cmds.items() if v not in self.afc.lanes]
+        for k in stale_keys:
+            del self.afc.tool_cmds[k]
+
+        # Unregister all current T command gcode handlers for AFC lanes
+        for lane in self.afc.lanes.values():
+            if lane.map is not None:
+                try:
+                    self.afc.gcode.register_command(lane.map, None)
+                except:
+                    pass
+        self.afc.tool_cmds.clear()
+
+        # Collect manually assigned mappings to reserve them
+        manually_assigned = {lane._map for lane in self.afc.lanes.values() if lane._map is not None}
+
+        # Assign sequential T commands, respecting manual assignments
+        auto_index = 0
         for key, unit in self.afc.units.items():
             for lane in unit.lanes.values():
-                # Reassigning manually assigned mapping to lane
                 if lane._map is not None:
                     map_cmd = lane._map
                 else:
-                    map_cmd = existing_cmds.pop(0)
+                    # Find next available sequential T command
+                    while True:
+                        candidate = 'T{}'.format(auto_index)
+                        auto_index += 1
+                        if candidate not in manually_assigned:
+                            existing = self.afc.gcode.ready_gcode_handlers.get(candidate) if hasattr(self.afc.gcode, 'ready_gcode_handlers') else None
+                            if not existing:
+                                map_cmd = candidate
+                                break
+
+                # Register gcode handler for the new mapping
+                try:
+                    self.afc.gcode.register_command(map_cmd, self.afc.cmd_CHANGE_TOOL, desc=self.afc.cmd_CHANGE_TOOL_help)
+                except:
+                    self.logger.info("Error trying to map lane {} to {}".format(lane.name, map_cmd))
 
                 self.afc.tool_cmds[map_cmd] = lane.name
                 self.afc.lanes[lane.name].map = map_cmd

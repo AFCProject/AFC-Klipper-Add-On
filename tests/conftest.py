@@ -263,7 +263,10 @@ class MockGcode:
         self.run_script_from_command = MagicMock()
 
     def register_command(self, name, func, desc=None):
-        self._commands[name] = func
+        if func is None:
+            self._commands.pop(name, None)
+        else:
+            self._commands[name] = func
 
     def register_mux_command(self, cmd, key, value, func, desc=None):
         pass

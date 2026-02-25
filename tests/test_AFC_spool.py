@@ -34,6 +34,8 @@ def _make_spool():
     afc.spoolman = None
     afc.tool_cmds = {}
     afc.lanes = {}
+    afc.cmd_CHANGE_TOOL = MagicMock()
+    afc.cmd_CHANGE_TOOL_help = "Tool change"
 
     spool.printer = printer
     spool.afc = afc
@@ -90,14 +92,14 @@ class TestSetMap:
         assert lane1.map == "T0"
         assert spool.afc.tool_cmds.get("T0") == "lane1"
 
-    def test_set_map_invalid_lane_logs_error(self):
+    def test_set_map_invalid_lane_logs_info(self):
         spool = _make_spool()
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="nonexistent", MAP="T1")
         spool.cmd_SET_MAP(gcmd)
-        # Should log an error about invalid lane
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert len(error_msgs) > 0
+        # Should log info about unknown lane
+        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
+        assert any("nonexistent" in m for m in info_msgs)
 
     def test_no_lane_param_logs_info(self):
         """Covers lines 66-68: lane is None → log info + return."""
@@ -124,6 +126,30 @@ class TestSetMap:
         spool.cmd_SET_MAP(gcmd)
         info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
         assert any("lane1" in m for m in info_msgs)
+
+    def test_set_map_assign_mode_new_t_command(self):
+        """SET_MAP should allow mapping a lane to a T command not currently in
+        tool_cmds (assign mode), registering the new gcode handler and cleaning
+        up the old one.
+
+        Scenario: After removing NightOwl, T2 no longer exists in tool_cmds.
+        SET_MAP LANE=lane3 MAP=T2 should assign T2 to lane3.
+        """
+        spool = _make_spool()
+
+        lane3 = _make_lane("lane3")
+        lane3.map = "T4"
+        lane3._map = None
+
+        spool.afc.lanes = {"lane3": lane3}
+        spool.afc.tool_cmds = {"T4": "lane3"}
+
+        gcmd = _make_gcmd(LANE="lane3", MAP="T2")
+        spool.cmd_SET_MAP(gcmd)
+
+        assert lane3.map == "T2"
+        assert spool.afc.tool_cmds.get("T2") == "lane3"
+        assert "T4" not in spool.afc.tool_cmds
 
 
 # ── cmd_SET_COLOR ──────────────────────────────────────────────────────────────
@@ -379,6 +405,59 @@ class TestResetAFCMapping:
         spool.cmd_RESET_AFC_MAPPING(gcmd)
         # The manually assigned T0 should be applied
         assert spool.afc.tool_cmds.get("T0") == "lane1"
+
+    def test_reset_fills_gaps_after_unit_removal(self):
+        """Bug reproduction: After removing a unit (e.g., NightOwl), lanes that were
+        remapped to higher T commands (T4, T5) should be reassigned to fill gaps
+        (T2, T3) when RESET_AFC_MAPPING is called.
+
+        Scenario:
+        - BoxTurtle had 4 lanes. NightOwl had 2 lanes.
+        - BT lanes 3-4 were remapped to T4, T5 (swapped with NightOwl lanes).
+        - NightOwl is removed from config.
+        - Remaining BT lanes have maps: T0, T1, T4, T5.
+        - RESET_AFC_MAPPING should produce: T0, T1, T2, T3.
+        """
+        spool = _make_spool()
+
+        # 4 BoxTurtle lanes with stale mappings (T4, T5 from removed NightOwl swap)
+        lane1 = self._make_lane_for_reset("lane1", "T0")
+        lane2 = self._make_lane_for_reset("lane2", "T1")
+        lane3 = self._make_lane_for_reset("lane3", "T4")  # was swapped with NightOwl
+        lane4 = self._make_lane_for_reset("lane4", "T5")  # was swapped with NightOwl
+
+        spool.afc.lanes = {
+            "lane1": lane1, "lane2": lane2, "lane3": lane3, "lane4": lane4,
+        }
+        spool.afc.tool_cmds = {
+            "T0": "lane1", "T1": "lane2", "T4": "lane3", "T5": "lane4",
+        }
+
+        # Single unit with all 4 lanes (NightOwl unit is gone)
+        unit_lanes = {}
+        for lane in [lane1, lane2, lane3, lane4]:
+            ul = MagicMock()
+            ul.name = lane.name
+            ul._map = None
+            unit_lanes[lane.name] = ul
+        unit = MagicMock()
+        unit.lanes = unit_lanes
+        spool.afc.units = {"BoxTurtle_1": unit}
+
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+
+        # After reset, lanes should be sequentially mapped T0-T3
+        assert spool.afc.lanes["lane1"].map == "T0"
+        assert spool.afc.lanes["lane2"].map == "T1"
+        assert spool.afc.lanes["lane3"].map == "T2", \
+            f"Expected T2 but got {spool.afc.lanes['lane3'].map} — gap not filled"
+        assert spool.afc.lanes["lane4"].map == "T3", \
+            f"Expected T3 but got {spool.afc.lanes['lane4'].map} — gap not filled"
+        assert spool.afc.tool_cmds == {
+            "T0": "lane1", "T1": "lane2", "T2": "lane3", "T3": "lane4",
+        }
+
 
 
 # ── cmd_SET_NEXT_SPOOL_ID ─────────────────────────────────────────────────────
