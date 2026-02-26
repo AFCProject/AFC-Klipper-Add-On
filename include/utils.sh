@@ -60,9 +60,6 @@ clone_and_maybe_restart() {
       "${afc_path}"
     echo "✓ Clone complete."
   else
-    local current_branch
-    current_branch="$(git -C "${afc_path}" rev-parse --abbrev-ref HEAD)"
-
     echo "→ Switching to branch '${branch}'…"
     git -C "${afc_path}" checkout --quiet "${branch}"
 
@@ -87,9 +84,6 @@ clone_and_maybe_restart() {
       echo "→ New commits detected; rebasing…"
       git -C "${afc_path}" pull --rebase --quiet
       echo "✓ Update applied. Restarting script…"
-      exec "$0" "${original_args[@]}"
-    elif [[ "${current_branch}" != "${branch}" ]]; then
-      echo "✓ Branch changed from '${current_branch}' to '${branch}'. Restarting script…"
       exec "$0" "${original_args[@]}"
     else
       echo "✓ Already up to date."

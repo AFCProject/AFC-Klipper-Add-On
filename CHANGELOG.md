@@ -5,10 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2026-02-26]
-### Fixed
-- Fixed an issue where in running `install-afc.sh -b DEV` on a fresh clone, the DEV branch would not be available until 
-  the script was run a second time. 
 ## [2026-02-25]
 ### Fixed
 - Error where level was removed from AFC_error method, but calling functions were not updated and were still trying to pass in level parameter
