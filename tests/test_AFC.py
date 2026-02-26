@@ -224,3 +224,129 @@ class TestGetStatus:
         obj.message_queue = [("test msg", "warning")]
         msg = obj.get_status()["message"]
         assert msg["message"] == "test msg"
+
+
+# ── _check_extruder_temp ──────────────────────────────────────────────────────
+
+def _make_afc_for_check_extruder_temp(
+    heater_target_temp,
+    actual_temp,
+    target_material_temp,
+    lower_extruder_temp_on_change=True,
+    using_min_value=False,
+):
+    """Build an afc instance wired up for _check_extruder_temp tests."""
+    obj = _make_afc()
+    obj.lower_extruder_temp_on_change = lower_extruder_temp_on_change
+
+    heater = MagicMock()
+    heater.target_temp = heater_target_temp
+    heater.can_extrude = False
+    heater.get_temp = MagicMock(return_value=(actual_temp, 0.0))
+
+    extruder = MagicMock()
+    extruder.get_heater.return_value = heater
+
+    obj.toolhead = MagicMock()
+    obj.toolhead.get_extruder.return_value = extruder
+
+    pheaters = MagicMock()
+    obj.printer._objects["heaters"] = pheaters
+
+    obj.function.is_printing.return_value = False
+    obj._get_default_material_temps = MagicMock(
+        return_value=(float(target_material_temp), using_min_value)
+    )
+
+    return obj, heater, extruder, pheaters
+
+
+class TestCheckExtruderTemp:
+    """Tests for afc._check_extruder_temp().
+
+    Covers the two-action logic:
+      need_lower: set temp > target+5 → lower without waiting
+      need_heat:  set temp < target-5 → heat and wait
+      skip_lower: need_lower AND lower_extruder_temp_on_change=False
+                  AND actual temp already sufficient → skip the lower call
+    """
+
+    # ── Default behaviour (lower_extruder_temp_on_change=True) ───────────────
+
+    def test_lowers_to_target_when_above(self):
+        """Set temp more than 5° above target → lower to target, no wait."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=250, actual_temp=248, target_material_temp=210
+        )
+        result = obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_called_once_with(heater, 210.0, wait=False)
+        assert result is False
+
+    def test_heats_to_target_when_below(self):
+        """Set temp more than 5° below target → heat to target and wait."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        result = obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_called_once_with(heater, 210.0, wait=True)
+        assert result is True
+
+    def test_no_change_when_within_range(self):
+        """Set temp within ±5° of target → no set_temperature call."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=212, actual_temp=210, target_material_temp=210
+        )
+        obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_not_called()
+
+    def test_no_lower_when_using_min_extrude_temp(self):
+        """When using min_extrude_temp fallback, do not lower even if above target+5."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=250, actual_temp=248, target_material_temp=210,
+            using_min_value=True,
+        )
+        obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_not_called()
+
+    # ── lower_extruder_temp_on_change=False ──────────────────────────────────
+
+    def test_skip_lower_when_disabled_and_actual_sufficient(self):
+        """lower=False, actual ≥ target-5 → lowering is skipped entirely."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=250, actual_temp=248, target_material_temp=210,
+            lower_extruder_temp_on_change=False,
+        )
+        obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_not_called()
+
+    def test_lower_not_skipped_when_actual_insufficient(self):
+        """lower=False but actual < target-5 → skip_lower stays False, lower fires."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=250, actual_temp=200, target_material_temp=210,
+            lower_extruder_temp_on_change=False,
+        )
+        obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_any_call(heater, 210.0, wait=False)
+
+    def test_heating_unaffected_by_lower_flag(self):
+        """lower=False does not suppress heating up to a higher target."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210,
+            lower_extruder_temp_on_change=False,
+        )
+        result = obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_called_once_with(heater, 210.0, wait=True)
+        assert result is True
+
+    # ── Early-return guard ────────────────────────────────────────────────────
+
+    def test_no_change_when_printing(self):
+        """can_extrude=True + is_printing=True → early return, no temp change."""
+        obj, heater, extruder, pheaters = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        heater.can_extrude = True
+        obj.function.is_printing.return_value = True
+        result = obj._check_extruder_temp(MagicMock())
+        pheaters.set_temperature.assert_not_called()
+        assert result is None

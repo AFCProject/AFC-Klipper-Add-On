@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-02-26]
+### Added
+- New `lower_extruder_temp_on_change` config option in `AFC.cfg`. When set to `False`, AFC will not lower the extruder temperature during a filament change as long as the current temperature is already sufficient for the target material (within 5°C). Defaults to `True` to preserve existing behaviour.
+
 ## [2026-02-25]
 ### Fixed
 - Error where level was removed from AFC_error method, but calling functions were not updated and were still trying to pass in level parameter
