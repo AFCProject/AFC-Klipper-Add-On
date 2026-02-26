@@ -188,3 +188,19 @@ check_python_version() {
   echo "Python version $VERSION is OK."
   return 0
 }
+
+# There was a small window of time when the klippy/extras/__init__.py might have been accidentally symlinked. This
+# function exists to check for it, and if it was, replace it with the proper __init__.py file from the Klipper source to
+# prevent issues with a dirty repo being present. This function is only called during an update, and only if a prior
+# installation is detected, so it should not cause any issues for users who have not been affected by this issue.
+check_init_symlink() {
+  local link="$klipper_dir/klippy/extras/__init__.py"
+  local target="${afc_path}/extras/__init__.py"
+
+  if [ -L "$link" ] && [ "$(readlink -f "$link")" = "$(readlink -f "$target")" ]; then
+    rm -f "$link"
+    curl -sS -o "$link" "https://raw.githubusercontent.com/Klipper3d/klipper/master/klippy/extras/__init__.py"
+  else
+    echo 1
+  fi
+}

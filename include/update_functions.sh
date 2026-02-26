@@ -29,6 +29,7 @@ AFC Macros update failed.
       fi
     fi
   fi
+  check_init_symlink
   link_extensions
   remove_t_macros
   remove_velocity
