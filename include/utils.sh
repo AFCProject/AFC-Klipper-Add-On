@@ -49,7 +49,7 @@ get_git_version() {
 	cd - > /dev/null || exit
 }
 
-check_for_uncommited_changes() {
+check_for_uncommitted_changes() {
   echo "→ Checking for uncommitted changes…"
     if ! git -C "${afc_path}" diff --quiet || \
        ! git -C "${afc_path}" diff --quiet --cached; then
@@ -79,7 +79,7 @@ clone_and_maybe_restart() {
     echo "→ Switching to branch '${branch}'…"
     git -C "${afc_path}" checkout --quiet "${branch}"
 
-    check_for_uncommited_changes
+    check_for_uncommitted_changes
 
     echo "→ Fetching updates in ${afc_path}…"
     git -C "${afc_path}" fetch --prune --quiet

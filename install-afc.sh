@@ -28,10 +28,10 @@ if [[ -n "${_requested_branch}" && -d "${SCRIPT_DIR}/.git" ]]; then
   if [[ "${_current_branch}" != "${_requested_branch}" ]]; then
     echo "→ Switching to branch '${_requested_branch}' before loading…"
     git -C "${SCRIPT_DIR}" fetch --prune --quiet
-    git -C "${SCRIPT_DIR}" checkout --quiet "${_requested_branch}"
+    git -C "${SCRIPT_DIR}" checkout --quiet -- "${_requested_branch}"
     git -C "${SCRIPT_DIR}" pull --rebase --quiet 2>/dev/null || true
     echo "✓ Branch switched. Restarting script…"
-    exec "$0" "$@"
+    exec "${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")" "$@"
   fi
 fi
 
