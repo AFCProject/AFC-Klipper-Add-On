@@ -33,6 +33,9 @@ AFC Macros update failed.
   remove_t_macros
   remove_velocity
   if [ "$git_install" == "True" ]; then
+    if [ "$test_mode" == "False" ]; then
+      exclude_from_klipper_git
+    fi
     update_message+="""
 AFC Klipper Add-On updated successfully with version v${afc_version}.
 """
