@@ -15,6 +15,7 @@ import random
 import re
 import traceback
 import configparser
+import inspect
 
 from configfile import error
 from datetime import datetime
@@ -252,11 +253,13 @@ class afcFunction:
                         self.afc.gcode.run_script_from_command(self.afc.auto_level_macro)
                         self.afc.toolhead.wait_moves()
                     else:
-                        self.afc.error.AFC_error("Auto level macro defined, but not found in printer configuration.", False, level=2)
+                        self.afc.error.AFC_error("Auto level macro defined, but not found in printer configuration.",
+                                                 False, stack_name=inspect.currentframe().f_back.f_code.co_name)
                         return False
                 return True
             else:
-                self.afc.error.AFC_error("Please home printer before doing a tool load", False, level=2)
+                self.afc.error.AFC_error("Please home printer before doing a tool load",
+                                         False, stack_name=inspect.currentframe().f_back.f_code.co_name)
                 return False
         else:
             return True

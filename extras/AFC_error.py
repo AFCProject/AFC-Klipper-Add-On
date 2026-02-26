@@ -120,12 +120,14 @@ class afcError:
         self.afc.error_state = state
         self.afc.current_state = State.ERROR if state else State.IDLE
 
-    def AFC_error(self, msg, pause=True):
+    def AFC_error(self, msg, pause=True, stack_name=None):
         # Print to logger since respond_raw does not write to logger
         logging.warning(msg)
+        if stack_name is None:
+            stack_name = inspect.currentframe().f_back.f_code.co_name
         # Handle AFC errors
         self.logger.error(message=msg,
-                          stack_name=inspect.currentframe().f_back.f_code.co_name )
+                          stack_name=stack_name )
         if pause: self.pause_print()
 
     cmd_RESET_FAILURE_help = "CLEAR STATUS ERROR"
@@ -257,5 +259,5 @@ class afcError:
         cur_lane.do_enable(False)
         cur_lane.status = AFCLaneState.ERROR
         msg = "{} {}".format(cur_lane.name, message)
-        self.AFC_error(msg, pause, level=2)
+        self.AFC_error(msg, pause, stack_name=inspect.currentframe().f_back.f_code.co_name)
         self.afc.function.afc_led(self.afc.led_fault, cur_lane.led_index)
