@@ -199,8 +199,12 @@ check_init_symlink() {
 
   if [ -L "$link" ] && [ "$(readlink -f "$link")" = "$(readlink -f "$target")" ]; then
     rm -f "$link"
-    curl -sS -o "$link" "https://raw.githubusercontent.com/Klipper3d/klipper/master/klippy/extras/__init__.py"
-  else
-    echo 1
+    cat >> "$link" <<'EOF'
+# Package definition for the extras directory
+#
+# Copyright (C) 2018  Kevin O'Connor <kevin@koconnor.net>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+EOF
   fi
 }

@@ -27,7 +27,7 @@ link_extensions() {
   local message
 
   if [ -d "${klipper_dir}/klippy/extras" ]; then
-    for extension in "${afc_path}"/extras/*.py; do
+    for extension in "${afc_path}"/extras/AFC*.py; do
       ln -sf "${afc_path}/extras/$(basename "${extension}")" "${klipper_dir}/klippy/extras/$(basename "${extension}")"
     done
   else
