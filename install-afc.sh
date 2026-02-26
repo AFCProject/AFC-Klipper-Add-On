@@ -10,6 +10,31 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Parse -b flag early so we can switch branches before sourcing includes.
+# This ensures include files are sourced from the correct branch.
+_requested_branch=""
+_optind_save=$OPTIND
+OPTIND=1
+while getopts "a:k:s:m:n:b:p:y:th" _arg; do
+  case ${_arg} in
+    b) _requested_branch=${OPTARG} ;;
+    *) ;;
+  esac
+done
+OPTIND=$_optind_save
+
+if [[ -n "${_requested_branch}" && -d "${SCRIPT_DIR}/.git" ]]; then
+  _current_branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD)"
+  if [[ "${_current_branch}" != "${_requested_branch}" ]]; then
+    echo "→ Switching to branch '${_requested_branch}' before loading…"
+    git -C "${SCRIPT_DIR}" fetch --prune --quiet
+    git -C "${SCRIPT_DIR}" checkout --quiet "${_requested_branch}"
+    git -C "${SCRIPT_DIR}" pull --rebase --quiet 2>/dev/null || true
+    echo "✓ Branch switched. Restarting script…"
+    exec "$0" "$@"
+  fi
+fi
+
 source include/constants.sh
 
 # Menu functions
