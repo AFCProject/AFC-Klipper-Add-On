@@ -702,11 +702,13 @@ class afcUnit:
                             assist_active=AssistActive.DYNAMIC, use_homing=use_homing)
 
     def load_then_home(self, lane: AFCLane|AFCExtruderStepper, distance: float,
-                       assist_active: AssistActive, endstop: str) -> tuple[bool, float, bool]:
+                       assist_active: AssistActive, endstop: AFCHomingPoints) -> tuple[bool, float|int, bool]:
         """
         Helper method to move filament to toolhead. If load_then_home boolean is set, AFC will do
-        a normal move wihtout homing enabled for a distance of: distance - load_undershoot.
+        a normal move without homing enabled for a distance of: distance - load_undershoot.
         Once this move is done, AFC will them home the rest of the way to toolhead sensor or buffer for ramming.
+
+        If load_then_home is set false, then AFC will do a homing move from hub to toolhead.
 
         :param lane: AFCLane object to move
         :param distance: Total distance in mm to move filament
@@ -722,7 +724,10 @@ class afcUnit:
         speed_mode = SpeedMode.LONG
         # Only do load then home if user has buffer defined and load then home enabled
         home_to_tool = self.afc.homing_enabled and self.afc.home_to_tool
-        if (lane.load_then_home_var
+        # Adding in check to make sure distance is greater than load_undershoot value for lane
+        # when load_then_home is enabled
+        load_and_home = lane.load_then_home_var and distance > lane.load_undershoot
+        if (load_and_home
             and lane.extruder_obj.tool_start == "buffer"):
             load_length = distance - lane.load_undershoot
             home, dist, warn = lane.move_to(load_length, speed_mode, assist_active=assist_active,

@@ -46,6 +46,9 @@ class TestSpeedMode:
 
     def test_calibration_value(self):
         assert SpeedMode.CALIBRATION.value == 5
+    
+    def test_dist_hub_value(self):
+        assert SpeedMode.DIST_HUB.value == 6
 
     def test_all_members_unique(self):
         values = [m.value for m in SpeedMode if m.value is not None]
