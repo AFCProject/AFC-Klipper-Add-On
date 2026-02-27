@@ -151,6 +151,8 @@ class AFCLane:
         self.n20_break_delay_time: float = config.getfloat("n20_break_delay_time", None)        # Time to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.homing_overshoot: float   = config.getfloat("homing_overshoot", None)             # Amount to add to homing distance so that distance is long enough to actually hit endstop
         self.homing_delta: float       = config.getfloat("homing_delta", None)                 # Delta for which to warn if homing move delta is not within this amount from command move distance.
+        self.load_then_home_var: bool  = config.getboolean("load_then_home", None)
+        self.load_undershoot: float    = config.getfloat("load_undershoot", None)
         self.extruder_clear_dis: float = config.getfloat("extruder_clear_dis", None)
 
         self.rev_long_moves_speed_factor: float = config.getfloat("rev_long_moves_speed_factor", None)     # scalar speed factor when reversing filamentalist
@@ -489,6 +491,8 @@ class AFCLane:
         if self.max_move_dis                is None: self.max_move_dis      = self.unit_obj.max_move_dis
         if self.homing_overshoot            is None: self.homing_overshoot  = self.unit_obj.homing_overshoot
         if self.homing_delta                is None: self.homing_delta      = self.unit_obj.homing_delta
+        if self.load_then_home_var          is None: self.load_then_home_var= self.unit_obj.load_then_home_var
+        if self.load_undershoot             is None: self.load_undershoot   = self.unit_obj.load_undershoot
         if self.td1_when_loaded             is None: self.td1_when_loaded   = self.unit_obj.td1_when_loaded
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
         if self.extruder_clear_dis          is None: self.extruder_clear_dis= self.unit_obj.extruder_clear_dis
