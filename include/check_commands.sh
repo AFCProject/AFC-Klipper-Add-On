@@ -199,12 +199,15 @@ check_init_symlink() {
 
   if [ -L "$link" ] && [ "$(readlink -f "$link")" = "$(readlink -f "$target")" ]; then
     rm -f "$link"
-    cat >> "$link" <<'EOF'
+
+    if ! git -C "$klipper_dir" checkout -- "klippy/extras/__init__.py" 2>/dev/null; then
+      cat > "$link" <<'EOF'
 # Package definition for the extras directory
 #
 # Copyright (C) 2018  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 EOF
+    fi
   fi
 }
