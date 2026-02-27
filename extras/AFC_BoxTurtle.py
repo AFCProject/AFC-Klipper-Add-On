@@ -523,7 +523,7 @@ class afcBoxTurtle(afcUnit):
         """
         try:
             if lane.loaded_to_hub:
-                lane.move_to(lane.dist_hub * -1, SpeedMode.HUB,
+                lane.move_to(lane.dist_hub * -1, SpeedMode.DIST_HUB,
                              endstop=lane.load_es, assist_active=AssistActive.DYNAMIC,
                              use_homing=self.afc.homing_enabled)
             max_tries = 0

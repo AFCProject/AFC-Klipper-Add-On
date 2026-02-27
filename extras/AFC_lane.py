@@ -46,6 +46,7 @@ class SpeedMode(Enum):
     HUB = 3
     NIGHT = 4
     CALIBRATION = 5
+    DIST_HUB = 6
 
 class MoveDirection(float):
     POS = 1.
@@ -627,9 +628,10 @@ class AFCLane:
             elif mode == SpeedMode.LONG:
                 return self.long_moves_speed, self.long_moves_accel
             elif (mode == SpeedMode.SHORT
-                  or mode == SpeedMode.CALIBRATION):
+                  or mode == SpeedMode.CALIBRATION
+                  or mode == SpeedMode.HUB):
                 return self.short_moves_speed, self.short_moves_accel
-            elif mode == SpeedMode.HUB:
+            elif (mode == SpeedMode.DIST_HUB):
                 return self.dist_hub_move_speed, self.dist_hub_move_accel
             else:
                 return self.short_moves_speed, self.short_moves_accel
