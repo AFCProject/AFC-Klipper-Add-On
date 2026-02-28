@@ -774,7 +774,7 @@ class afcUnit:
                                " Selector only moves if any lanes selector is currently triggered unless" \
                                " force is passed in."
     cmd_AFC_UNSELECT_LANE_options = {"UNIT": {"type":"string", "default":""},
-                                     "FORCE" : {"type":"int", "default":1}}
+                                     "FORCE" : {"type":"int", "default":0}}
     def cmd_AFC_UNSELECT_LANE(self, gcmd: GCodeCommand):
         """
         Command to move selector to free filament from currently selected lane. Selector only moves
@@ -798,7 +798,8 @@ class afcUnit:
         AFC_UNSELECT_LANE UNIT=ViViD_1 FORCE=1`
         ```
         """
-        force  = gcmd.get("FORCE", 0)
+        force  = gcmd.get_int("FORCE", 0)
         any_selected = any(True if lane._selector_state else False for lane in self.lanes.values())
         if any_selected or force == 1:
             self.unselect_lane()
+            self.logger.info(f"{self.name} selector moved")

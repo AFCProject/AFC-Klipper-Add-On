@@ -1717,6 +1717,8 @@ class AFCLane:
         if not self.remember_spool:
             self.afc.spool.clear_values(self)
         self.unit_obj.lane_unloaded(self)
+        self.logger.info(f"{self.name} reset")
+        self.afc.save_vars()
 
     def get_status(self, eventtime=None, save_to_file=False):
         response = {}
