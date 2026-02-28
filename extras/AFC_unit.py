@@ -785,7 +785,7 @@ class afcUnit:
 
         Usage
         -----
-        `AFC_UNSELECT_LANE UNIT=<unit_name> FORCE<0/1>`
+        `AFC_UNSELECT_LANE UNIT=<unit_name> FORCE<0|1>`
 
         Example
         -----
@@ -798,7 +798,8 @@ class afcUnit:
         AFC_UNSELECT_LANE UNIT=ViViD_1 FORCE=1`
         ```
         """
-        force  = gcmd.get_int("FORCE", 0)
+        force = gcmd.get_int("FORCE", 0)
+        force = force != 0
         any_selected = any(True if lane._selector_state else False for lane in self.lanes.values())
         if any_selected or force == 1:
             self.unselect_lane()

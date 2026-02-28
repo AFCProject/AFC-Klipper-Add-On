@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added load‑then‑home support with new load_then_home and load_undershoot config options at AFC, unit, and lane levels.
 - Added new DIST_HUB speed mode and updated speed/accel selection logic; BoxTurtle now uses DIST_HUB for hub‑distance moves.
 - Adjusted HUB speed‑mode mapping to short‑move parameters and cleaned up related move‑to‑tool logic.
-- Added AFC_UNSELECT_LANE macro to move selector to ungrip filament for units that have selectors 
+- Added AFC_UNSELECT_LANE macro to move selector to ungrip filament for units that have selectors
 - Added AFC_RECOVER_LANE to reset internal lane variables when filament was removed during power off, this should be used as a last resort and it should not be made a habit to remove filament from units when power is not applied and AFC not running.
 
 ## [2026-02-25]

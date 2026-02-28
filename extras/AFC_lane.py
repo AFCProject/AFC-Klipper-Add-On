@@ -1703,15 +1703,12 @@ class AFCLane:
         Example
         -----
         ```
-        AFC_RECOVER_LANE LANE=lane1 REMEMBER_SPOOL=1
+        AFC_RECOVER_LANE LANE=lane1
         ```
         """
         # This will move to common function call once merged with multi_extruder branch
         self.tool_loaded = False
-        self.extruder_obj.lane_loaded = ""
         self.status = AFCLaneState.NONE
-        self.afc.current = None
-        self.afc.current_loading = None
         self.loaded_to_hub = False
         self.td1_data = {}
         if not self.remember_spool:
