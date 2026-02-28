@@ -1730,6 +1730,8 @@ class AFCLane:
         response['map'] = self.map
         response['load'] = self.load_state
         response["prep"] =bool(self.prep_state)
+        if self._selector_state is not None:
+            response["selector"] = bool(self._selector_state)
         response["tool_loaded"] = self.tool_loaded
         response["loaded_to_hub"] = self.loaded_to_hub
         response["material"]=self.material
