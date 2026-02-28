@@ -552,6 +552,9 @@ class afcUnit:
     def calibrate_lane(self, cur_lane, tol):
         self._print_function_not_defined(self.calibrate_lane.__name__)
 
+    def unselect_lane(self):
+        self._print_function_not_defined(self.unselect_lane.__name__)
+
     def calibration_lane_message(self) -> str:
         return ""
 
@@ -766,3 +769,36 @@ class afcUnit:
         else:
             error_string = f"Invalid lane {lane}"
             gcmd.error(error_string)
+
+    cmd_AFC_UNSELECT_LANE_help = "Command to move selector to free filament from currently selected lane." \
+                               " Selector only moves if any lanes selector is currently triggered unless" \
+                               " force is passed in."
+    cmd_AFC_UNSELECT_LANE_options = {"UNIT": {"type":"string", "default":""},
+                                     "FORCE" : {"type":"int", "default":1}}
+    def cmd_AFC_UNSELECT_LANE(self, gcmd: GCodeCommand):
+        """
+        Command to move selector to free filament from currently selected lane. Selector only moves
+        if any lanes selector is currently triggered unless force is passed in.
+
+        Optional Parameter:
+        FORCE: pass in 1 to always move selector
+
+        Usage
+        -----
+        `AFC_UNSELECT_LANE UNIT=<unit_name> FORCE<0/1>`
+
+        Example
+        -----
+        ```
+        AFC_UNSELECT_LANE UNIT=ViViD_1`
+        ```
+        Example
+        -----
+        ```
+        AFC_UNSELECT_LANE UNIT=ViViD_1 FORCE=1`
+        ```
+        """
+        force  = gcmd.get("FORCE", 0)
+        any_selected = any(True if lane._selector_state else False for lane in self.lanes.values())
+        if any_selected or force == 1:
+            self.unselect_lane()

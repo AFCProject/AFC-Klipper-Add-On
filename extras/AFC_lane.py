@@ -13,7 +13,7 @@ from configfile import error
 from datetime import datetime
 from enum import Enum
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC import afc
@@ -261,6 +261,7 @@ class AFCLane:
 
         self.selector_endstop_name = None
         self.selector_endstop = None
+        self._selector_state: Optional[bool] = None
         if self.selector is not None:
             show_sensor = True
             if not self.enable_sensors_in_gui or (self.sensor_to_show is not None and 'selector' not in self.sensor_to_show):
@@ -279,6 +280,8 @@ class AFCLane:
                 err_msg = f"Error trying to register selector endstop for {self.name}.\n Error:{e}"
                 raise error(err_msg)
 
+            buttons.register_buttons([self.selector], self.selector_callback)
+
         self.connect_done = False
         self.prep_active = False
         self.last_prep_time = 0
@@ -288,6 +291,9 @@ class AFCLane:
         self.function.register_mux_command(self.show_macros, 'SET_LANE_LOADED', 'LANE', self.name,
                                            self.cmd_SET_LANE_LOADED, self.cmd_SET_LANE_LOADED_help,
                                            self.cmd_SET_LANE_LOAD_options )
+        self.function.register_mux_command(self.show_macros, 'AFC_RECOVER_LANE', 'LANE', self.name,
+                                           self.cmd_AFC_RECOVER_LANE, self.cmd_AFC_RECOVER_LANE_help,
+                                           self.cmd_AFC_RECOVER_LANE_options )
         self._get_steppers(config)
 
         if getattr(self.unit_obj, "selector_stepper_obj", None):
@@ -813,6 +819,8 @@ class AFCLane:
         else:
             return bool(self._load_state)
 
+    def selector_callback(self, eventtime: float, state):
+        self._selector_state = state
 
     def load_callback(self, eventtime, state):
         self._load_state = state
@@ -1678,6 +1686,37 @@ class AFCLane:
             )
         except Exception as e:
             self.logger.error(f"{self.name} failed to save remember_spool to config: {e}")
+
+    cmd_AFC_RECOVER_LANE_help = "Command to help recover a lane without manually editing files when" \
+                                " filament was removed when power was removed. This should only be called" \
+                                " as last resort."
+    cmd_AFC_RECOVER_LANE_options = {"LANE": {"type":"string", "default":"lane1"}}
+    def cmd_AFC_RECOVER_LANE(self, gcmd):
+        """
+        Command to help recover a lane without manually editing files when filament was removed when
+        power was removed. This should only be called as last resort.
+
+        Usage
+        -----
+        `AFC_RECOVER_LANE LANE=<lane>`
+
+        Example
+        -----
+        ```
+        AFC_RECOVER_LANE LANE=lane1 REMEMBER_SPOOL=1
+        ```
+        """
+        # This will move to common function call once merged with multi_extruder branch
+        self.tool_loaded = False
+        self.extruder_obj.lane_loaded = ""
+        self.status = AFCLaneState.NONE
+        self.afc.current = None
+        self.afc.current_loading = None
+        self.loaded_to_hub = False
+        self.td1_data = {}
+        if not self.remember_spool:
+            self.afc.spool.clear_values(self)
+        self.unit_obj.lane_unloaded(self)
 
     def get_status(self, eventtime=None, save_to_file=False):
         response = {}

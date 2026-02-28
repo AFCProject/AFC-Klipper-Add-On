@@ -78,6 +78,10 @@ class AFC_vivid(afcBoxTurtle):
 
         self._lookup_objects(config)
 
+        self.function.register_mux_command(self.afc.show_macros, 'AFC_UNSELECT_LANE', 'UNIT', self.name,
+                                           self.cmd_AFC_UNSELECT_LANE, self.cmd_AFC_UNSELECT_LANE_help,
+                                           self.cmd_AFC_UNSELECT_LANE_options )
+
     def handle_connect(self):
         super().handle_connect()
         self.logo = '<span class=success--text>ViViD Ready\n</span>'
