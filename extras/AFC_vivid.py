@@ -152,6 +152,12 @@ class AFC_vivid(afcBoxTurtle):
                     endstop_spec=lane.selector_endstop_name,
                     assist_active=False
                 )
+
+                if (lane.selector_cal_dis is not None
+                    and lane.selector_cal_dis != 0.0):
+                    self.selector_stepper_obj.move(lane.selector_cal_dis, lane.short_moves_speed,
+                                                   lane.short_moves_accel, False)
+
                 self.logger.debug(f"ViViD: Homing done, success:{homed}, distance:{distance}")
                 return homed, round(distance, 2)
 
@@ -208,12 +214,12 @@ class AFC_vivid(afcBoxTurtle):
         # Do nothing and return
         return
 
-    def unselect_lane(self):
+    def unselect_lane(self, move_distance: float=50):
         """
         Method for moving the selector 50mm to free filament in a lane, this is useful when
         ejecting filament.
         """
-        self.selector_stepper_obj.move(50, 100, 100, False)
+        self.selector_stepper_obj.move(move_distance, 100, 100, False)
 
     def eject_lane(self, lane: AFCLane):
         """

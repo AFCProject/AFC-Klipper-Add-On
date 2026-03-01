@@ -17,7 +17,7 @@ except:
     err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{trace}"
     raise config_error(err_str)
 
-try: from extras.AFC_lane import AFCLaneState, MoveDirection
+try: from extras.AFC_lane import AFCLaneState, MoveDirection, AFCLane
 except: raise config_error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 try: from extras.AFC_BoxTurtle import afcBoxTurtle
@@ -238,6 +238,14 @@ class AFC_HTLF(afcBoxTurtle):
                 and self.afc.function.is_printing()
                 and cur_lane.status != AFCLaneState.EJECTING
                 and cur_lane.status != AFCLaneState.CALIBRATING)
+
+    def prep_load(self, lane: AFCLane):
+        # HTLF does not have prep switches returning
+        return
+
+    def prep_post_load(self, lane: AFCLane):
+        # HTLF does not have prep switches returning
+        return
 
 def load_config_prefix(config):
     return AFC_HTLF(config)

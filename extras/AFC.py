@@ -1317,9 +1317,12 @@ class afc:
                             warn = False
                         if tool_attempts >= max_attempts:
                             message = 'filament failed to trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
-                            message += '\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.'.format(cur_lane.name)
-                            message += '\nManually move filament with LANE_MOVE macro for {} until filament is right before toolhead extruder gears,'.format(cur_lane.name)
-                            message += '\n then load into extruder gears with extrude button in your gui of choice until the color fully changes'
+                            message += f'\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={cur_lane.name}` macro.'
+                            message += f'\nManually move filament with LANE_MOVE macro for {cur_lane.name} until filament is right before toolhead extruder gears,'
+                            message += ' then load into extruder gears with extrude button in your gui of choice until the color fully changes'
+                            if self.homing_enabled:
+                                message += f"\nFilament can also be reset back to hub by running AFC_RESET command then select {cur_lane.name} to reset"
+                                message += f"back to hub. Once lane is reset try reload lane with {cur_lane.map} macro."
                             if self.function.in_print():
                                 message += '\nOnce filament is fully loaded click resume to continue printing'
                             self.error.handle_lane_failure(cur_lane, message)
@@ -1746,7 +1749,7 @@ class afc:
             cur_lane.status = AFCLaneState.NONE
 
             if cur_lane.hub == 'direct':
-                while cur_lane.load_state:
+                while cur_lane.raw_load_state:
                     cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
                                            assist_active=AssistActive.YES)
                 cur_lane.move_advanced(cur_lane.short_move_dis * -5, SpeedMode.SHORT)

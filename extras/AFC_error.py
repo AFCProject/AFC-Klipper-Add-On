@@ -15,7 +15,7 @@ except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".f
 try: from extras.AFC import State
 except: raise error(ERROR_STR.format(import_lib="AFC", trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import AFCLaneState
+try: from extras.AFC_lane import AFCLaneState, MoveDirection, SpeedMode
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 def load_config(config):
@@ -68,7 +68,7 @@ class afcError:
     def ToolHeadFix(self, cur_lane):
         if cur_lane.get_toolhead_pre_sensor_state():   #toolhead has filament
             if cur_lane.extruder_obj.lane_loaded == cur_lane.name:   #var has right lane loaded
-                if not cur_lane.load_state: #Lane has filament
+                if not cur_lane.raw_load_state: #Lane has filament
                     self.PauseUserIntervention('Filament not loaded in Lane')
                 else:
                     self.PauseUserIntervention('no error detected')
@@ -76,18 +76,27 @@ class afcError:
                 self.PauseUserIntervention('laneloaded does not match extruder')
 
         else: #toolhead empty
-            if cur_lane.load_state: #Lane has filament
-                # TODO: Update this to use better logic
-                while cur_lane.load_state:  # slowly back filament up to lane extruder
-                    cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
-                while not cur_lane.load_state:  # reload lane extruder
-                    cur_lane.move(5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+            if (cur_lane.raw_load_state
+                and cur_lane.hub != 'direct'):
+                self.logger.info(f"Retracting {cur_lane.name} back to load switch")
+                if self.afc.homing_enabled:
+                    total_move_dist = cur_lane.dist_hub + cur_lane.hub_obj.afc_bowden_length + 500
+                    cur_lane.unit_obj.move_to_load(cur_lane, total_move_dist,
+                                                   MoveDirection.NEG, True,
+                                                   SpeedMode.SHORT)
+                else:
+                    while cur_lane.raw_load_state:  # slowly back filament up to lane extruder
+                        cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+                    while not cur_lane.raw_load_state:  # reload lane extruder
+                        cur_lane.move(5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
 
-                cur_lane.tool_load = False
+                cur_lane.set_unloaded()
                 cur_lane.loaded_to_hub = False
-                cur_lane.extruder_obj.lane_loaded = ''
+                cur_lane.unit_obj.prep_load(cur_lane)
+                cur_lane.unit_obj.prep_post_load(cur_lane)
                 self.afc.save_vars()
                 self.pause = False
+                self.logger.info(f"Done resetting {cur_lane.name}")
                 return True
 
             else:

@@ -94,7 +94,9 @@ class afcBoxTurtle(afcUnit):
                 self.afc.function.afc_led(cur_lane.led_spool_illum, cur_lane.led_spool_index)
 
                 if cur_lane.tool_loaded:
-                    if cur_lane.get_toolhead_pre_sensor_state() == True or cur_lane.extruder_obj.tool_start == "buffer" or cur_lane.extruder_obj.tool_end_state:
+                    if (cur_lane.get_toolhead_pre_sensor_state() == True
+                        or cur_lane.extruder_obj.tool_start == "buffer"
+                        or cur_lane.extruder_obj.tool_end_state):
                         if cur_lane.extruder_obj.lane_loaded == cur_lane.name:
                             self.afc.current = cur_lane.name
                             cur_lane.sync_to_extruder()
@@ -420,7 +422,7 @@ class afcBoxTurtle(afcUnit):
                                                   assist_active=AssistActive.YES)
         else:
             pos, checkpoint, success = self.calc_position(cur_lane,
-                                                          lambda: cur_lane.load_state, 0,
+                                                          lambda: cur_lane.raw_load_state, 0,
                                                           cur_lane.short_move_dis,
                                                           tol, move_dis,
                                                           "retract to extruder")

@@ -1305,7 +1305,7 @@ class afcFunction:
 
         # Create buttons for each loaded lane
         for index, LANE in enumerate(self.afc.lanes.values()):
-            if LANE.load_state:
+            if LANE.raw_load_state:
                 button_label = "{}".format(LANE.name)
                 if dis is not None:
                     button_command = "AFC_LANE_RESET LANE={} DISTANCE={}".format(LANE.name, dis)
@@ -1398,7 +1398,7 @@ class afcFunction:
             cur_lane.move(short_move * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
             pos -= short_move
 
-            if not cur_lane.load_state:
+            if not cur_lane.raw_load_state:
                 self.afc.error.AFC_error(fail_state_msg.format(cur_lane, "load"), pause=False)
                 return
 

@@ -262,7 +262,9 @@ class AFCLane:
         self.selector_endstop_name = None
         self.selector_endstop = None
         self._selector_state: Optional[bool] = None
+        self.selector_cal_dis: Optional[float] = None
         if self.selector is not None:
+            self.selector_cal_dis = config.getfloat("selector_cal_distance", 0.0)
             show_sensor = True
             if not self.enable_sensors_in_gui or (self.sensor_to_show is not None and 'selector' not in self.sensor_to_show):
                 show_sensor = False
@@ -819,6 +821,10 @@ class AFCLane:
         else:
             return bool(self._load_state)
 
+    @property
+    def raw_load_state(self) -> bool:
+        return bool(self._load_state)
+
     def selector_callback(self, eventtime: float, state):
         self._selector_state = state
 
@@ -898,18 +904,18 @@ class AFCLane:
             #  before exiting function
             with self.mutex:
                 if self.printer.state_message == 'Printer is ready' and self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
-                    # Check to see if the printer is printing or moving, as trying to load while printer is doing something will crash klipper
-                    if self.afc.function.is_printing(check_movement=True):
-                        self.afc.error.AFC_error(f"Cannot load {self.name} spool while printer is actively moving or homing", False)
-                        self.prep_active = False
-                        return
-
                     # Only try to load when load state trigger is false
-                    if self.prep_state and not self.load_state:
+                    if self.prep_state and not self.raw_load_state:
                         # Checking to make sure last time prep switch was activated was less than 1 second, returning to keep is printing message from spamming
                         # the console since it takes klipper some time to transition to idle when idle_resume=printing
                         if delta_time < 1.0:
                             break
+
+                        # Check to see if the printer is printing or moving, as trying to load while printer is doing something will crash klipper
+                        if self.afc.function.is_printing(check_movement=True):
+                            self.afc.error.AFC_error(f"Cannot load {self.name} spool while printer is actively moving or homing", False)
+                            self.prep_active = False
+                            return
 
                         # Calling common load function
                         self.unit_obj.prep_load(self)
@@ -938,9 +944,14 @@ class AFCLane:
                             # different extruder/hub
                             self._prep_capture_td1()
 
-                    elif self.prep_state == True and self.load_state == True and not self.afc.function.is_printing():
+                    elif (self.prep_state == True
+                          and self.raw_load_state == True
+                          and not self.afc.function.is_printing()):
                         message = 'Cannot load {} load sensor is triggered.'.format(self.name)
                         message += '\n    Make sure filament is not stuck in load sensor or check to make sure load sensor is not stuck triggered.'
+                        if self.unit_obj.type == "ViViD":
+                            message += f'\n    If filament is not stuck in sensor run AFC_RECOVER_LANE LANE={self.name}'
+                            message += " to reset internal AFC state."
                         message += '\n    Once cleared try loading again'
                         self.afc.error.AFC_error(message, pause=False)
         self.prep_active = False
@@ -969,7 +980,7 @@ class AFCLane:
             if (prep_state == False
                 and self.name == self.afc.current
                 and self.afc.function.is_printing()
-                and self.load_state
+                and self.raw_load_state
                 and self.status != AFCLaneState.EJECTING):
                 # Don't run if user disabled sensor in gui
                 if not self.fila_prep.runout_helper.sensor_enabled:
@@ -1270,7 +1281,7 @@ class AFCLane:
 
         # Check upstream sensors: prep, load, hub
         prep_ok = self.prep_state
-        load_ok = self.load_state
+        load_ok = self.raw_load_state
         hub_ok = self.hub_obj.state if self.hub_obj is not None else True
 
         # If all upstream sensors are still True, this is a break/jam at the toolhead
@@ -1297,7 +1308,7 @@ class AFCLane:
 
         # Check upstream sensors: prep, load
         prep_ok = self.prep_state
-        load_ok = self.load_state
+        load_ok = self.raw_load_state
         hub_ok = self.hub_obj.state if self.hub_obj is not None else False
 
         # If both upstream sensors are still True, but hub is not, this is a break/jam at the hub

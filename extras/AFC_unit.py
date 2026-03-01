@@ -682,26 +682,28 @@ class afcUnit:
                             endstop=AFCHomingPoints.HUB, use_homing=use_homing)
 
     def move_to_load(self, lane: AFCLane, dist: float,
-                     dir: MoveDirection, use_homing=True) -> tuple[bool, float|int, bool]:
+                     dir: MoveDirection, use_homing=True,
+                     speedMode:SpeedMode=SpeedMode.LONG) -> tuple[bool, float|int, bool]:
         """
         Helper method to move filament to load sensor, calls lane's move_to method with the load
         sensor endpoint (lane.load_es) as trigger point when homing is enabled.
 
         This can be overridden if needed for unit specific functionality
 
-        Active assist and set to Dynamic and SpeedMode is set to Long when calling lanes move_to
-        method.
+        Active assist is set to Dynamic and SpeedMode is set to Long by default when calling lanes
+        move_to method.
 
         :param lane: AFCLane object to move
         :param dist: Distance in mm to move filament
         :param dir: Direction(+/-) to move filament
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
+        :param speedMode: SpeedMode type to use when moving stepper
 
         :return tuple: Returns if move was successful, distance moved, and boolean set to true if
                        movement moved is not within 300mm of total distance. When homing is
                        disabled, always returns True, 0, False.
         """
-        return lane.move_to(dist * dir, SpeedMode.LONG, endstop=lane.load_es,
+        return lane.move_to(dist * dir, speedMode, endstop=lane.load_es,
                             assist_active=AssistActive.DYNAMIC, use_homing=use_homing)
 
     def load_then_home(self, lane: AFCLane|AFCExtruderStepper, distance: float,
@@ -774,7 +776,8 @@ class afcUnit:
                                " Selector only moves if any lanes selector is currently triggered unless" \
                                " force is passed in."
     cmd_AFC_UNSELECT_LANE_options = {"UNIT": {"type":"string", "default":""},
-                                     "FORCE" : {"type":"int", "default":0}}
+                                     "FORCE" : {"type":"int", "default":0},
+                                     "MOVE_DIST" : {"type":"int", "default":100}}
     def cmd_AFC_UNSELECT_LANE(self, gcmd: GCodeCommand):
         """
         Command to move selector to free filament from currently selected lane. Selector only moves
@@ -782,10 +785,11 @@ class afcUnit:
 
         Optional Parameter:
         FORCE: pass in 1 to always move selector
+        MOVE_DIST: amount to move selector, defaults to 100mm
 
         Usage
         -----
-        `AFC_UNSELECT_LANE UNIT=<unit_name> FORCE<0|1>`
+        `AFC_UNSELECT_LANE UNIT=<unit_name> FORCE=<0|1> MOVE_DIST=<amount to move selector>`
 
         Example
         -----
@@ -799,8 +803,9 @@ class afcUnit:
         ```
         """
         force = gcmd.get_int("FORCE", 0)
+        move_dist = gcmd.get_float("MOVE_DIST")
         force = force != 0
         any_selected = any(True if lane._selector_state else False for lane in self.lanes.values())
         if any_selected or force == 1:
-            self.unselect_lane()
+            self.unselect_lane(move_distance=move_dist)
             self.logger.info(f"{self.name} selector moved")
