@@ -431,7 +431,7 @@ class TestToolHeadFix:
         lane.name = "lane1"
         lane.get_toolhead_pre_sensor_state.return_value = True
         lane.extruder_obj.lane_loaded = "lane1"
-        lane.load_state = False  # load sensor not active
+        lane.raw_load_state = False  # load sensor not active
         err.ToolHeadFix(lane)
         err.PauseUserIntervention.assert_called_with("Filament not loaded in Lane")
 
@@ -442,7 +442,7 @@ class TestToolHeadFix:
         lane.name = "lane1"
         lane.get_toolhead_pre_sensor_state.return_value = True
         lane.extruder_obj.lane_loaded = "lane1"
-        lane.load_state = True
+        lane.raw_load_state = True
         err.ToolHeadFix(lane)
         err.PauseUserIntervention.assert_called_with("no error detected")
 
@@ -461,37 +461,96 @@ class TestToolHeadFix:
         err.PauseUserIntervention = MagicMock()
         lane = MagicMock()
         lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
-        lane.load_state = False  # lane also empty
+        lane.raw_load_state = False  # lane also empty
         result = err.ToolHeadFix(lane)
         err.PauseUserIntervention.assert_called_with("Filament not loaded in Lane")
         assert result is None  # no explicit return
 
-    def test_toolhead_empty_with_lane_filament_returns_true(self):
+    def test_toolhead_empty_with_lane_filament_returns_true_no_homing(self):
         """Filament is retracted to lane and reloaded; returns True."""
         from unittest.mock import PropertyMock
+        from tests.test_AFC_lane import _make_afc_lane
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
-        lane = MagicMock()
+        afc.homing_enabled = False
+        lane = _make_afc_lane()
         lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
         # Sequence: if check(True→enter), while check(True→loop), while check(False→exit),
         #           while-not check(False→enter), while-not check(True→exit)
-        type(lane).load_state = PropertyMock(side_effect=[True, True, False, False, True])
+        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False, False, True])
         result = err.ToolHeadFix(lane)
         assert result is True
         assert err.pause is False
         afc.save_vars.assert_called_once()
 
-    def test_toolhead_empty_with_lane_filament_clears_flags(self):
+    def test_toolhead_empty_with_lane_filament_clears_flags_no_homing(self):
         from unittest.mock import PropertyMock
+        from tests.test_AFC_lane import _make_afc_lane
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
-        lane = MagicMock()
+        afc.homing_enabled = False
+        lane = _make_afc_lane()
         lane.get_toolhead_pre_sensor_state.return_value = False
-        type(lane).load_state = PropertyMock(side_effect=[True, True, False, False, True])
+        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False, False, True])
         err.ToolHeadFix(lane)
-        assert lane.tool_load is False
+        assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
         assert lane.extruder_obj.lane_loaded == ""
+    
+    def test_toolhead_empty_with_lane_filament_returns_true_homing(self):
+        """Filament is retracted to lane and reloaded; returns True."""
+        from unittest.mock import PropertyMock
+        from tests.test_AFC_lane import _make_afc_lane
+        err, afc = _make_afc_error()
+        err.PauseUserIntervention = MagicMock()
+        afc.homing_enabled = True
+        lane = _make_afc_lane()
+        lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.afc_bowden_length = 1300
+        # Sequence: if check(True→enter), while check(True→loop), while check(False→exit),
+        #           while-not check(False→enter), while-not check(True→exit)
+        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False])
+        result = err.ToolHeadFix(lane)
+        assert result is True
+        assert err.pause is False
+        afc.save_vars.assert_called_once()
+
+    def test_toolhead_empty_with_lane_filament_clears_flags_homing(self):
+        from unittest.mock import PropertyMock
+        from tests.test_AFC_lane import _make_afc_lane
+        err, afc = _make_afc_error()
+        err.PauseUserIntervention = MagicMock()
+        afc.homing_enabled = True
+        lane = _make_afc_lane()
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.afc_bowden_length = 1300
+        lane.get_toolhead_pre_sensor_state.return_value = False
+        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False])
+        err.ToolHeadFix(lane)
+        assert lane.tool_loaded is False
+        assert lane.loaded_to_hub is False
+        assert lane.extruder_obj.lane_loaded == ""
+    
+    def test_toolhead_empty_with_lane_filament_returns_false_timed_out_homing(self):
+        """Filament is retracted to lane and reloaded; returns True."""
+        from unittest.mock import PropertyMock
+        from tests.test_AFC_lane import _make_afc_lane
+        err, afc = _make_afc_error()
+        err.PauseUserIntervention = MagicMock()
+        afc.homing_enabled = True
+        lane = _make_afc_lane()
+        lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.afc_bowden_length = 1300
+        # Sequence: if check(True→enter), while check(True→loop), while check(False→exit),
+        #           while-not check(False→enter), while-not check(True→exit)
+        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, True, True, True, True])
+        result = err.ToolHeadFix(lane)
+        assert result is False
+        assert err.pause is False
+        err.PauseUserIntervention.assert_called_with("Failed to retract lane1 to load sensor")
+
 
 
 # ── cmd_AFC_RESUME ────────────────────────────────────────────────────────────

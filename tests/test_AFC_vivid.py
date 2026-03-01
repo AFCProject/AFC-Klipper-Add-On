@@ -382,6 +382,7 @@ class TestGetSelectorEnabledExceptBranch:
 
 class TestPrepLoad:
     def test_calibrated_lane_sets_loaded_to_hub(self):
+        from unittest.mock import PropertyMock
         unit = _make_vivid()
         lane = MagicMock()
         lane.calibrated_lane = True
@@ -390,6 +391,7 @@ class TestPrepLoad:
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
+        type(lane).raw_load_state = PropertyMock(side_effect=[False, True])
 
         unit.prep_load(lane)
 
@@ -415,19 +417,74 @@ class TestPrepLoad:
         unit.afc.function.select_loaded_lane.assert_called_once()
 
     def test_uncalibrated_lane_updates_dist_hub_and_config(self):
+        from unittest.mock import PropertyMock
         unit = _make_vivid()
         lane = MagicMock()
         lane.calibrated_lane = False
+        lane.prep_state = True
         lane.move_to.return_value = (True, 300.0, False)
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
+        type(lane).raw_load_state = PropertyMock(side_effect=[False, True])
 
         unit.prep_load(lane)
 
         assert lane.calibrated_lane is True
         assert lane.dist_hub == round(300.0, 2) + AFC_vivid.LANE_OVERSHOOT
         unit.afc.function.ConfigRewrite.assert_called()
+    
+    def test_uncalibrated_lane_updates_dist_hub_and_config_two_tries(self):
+        from unittest.mock import PropertyMock
+        unit = _make_vivid()
+        lane = MagicMock()
+        lane.calibrated_lane = False
+        lane.prep_state = True
+        lane.move_to.return_value = (True, 300.0, False)
+        unit.lane_loading = MagicMock()
+        unit.select_lane = MagicMock()
+        unit.lane_loaded = MagicMock()
+        type(lane).raw_load_state = PropertyMock(side_effect=[False, False, True])
+
+        unit.prep_load(lane)
+
+        assert lane.calibrated_lane is True
+        assert lane.dist_hub == round(300.0, 2) + AFC_vivid.LANE_OVERSHOOT
+        unit.afc.function.ConfigRewrite.assert_called()
+    
+    def test_uncalibrated_lane_updates_dist_hub_and_config_failed(self):
+        from unittest.mock import PropertyMock
+        unit = _make_vivid()
+        lane = MagicMock()
+        lane.calibrated_lane = False
+        lane.prep_state = True
+        lane.move_to.return_value = (True, 300.0, False)
+        unit.lane_loading = MagicMock()
+        unit.select_lane = MagicMock()
+        unit.lane_loaded = MagicMock()
+        type(lane).raw_load_state = PropertyMock(side_effect=[False, False, False])
+
+        unit.prep_load(lane)
+
+        assert lane.calibrated_lane is True
+        assert lane.dist_hub == round(300.0, 2) + AFC_vivid.LANE_OVERSHOOT
+        unit.afc.function.ConfigRewrite.assert_called()
+    
+    def test_uncalibrated_lane_updates_dist_hub_no_prep(self):
+        from unittest.mock import PropertyMock
+        unit = _make_vivid()
+        lane = MagicMock()
+        lane.calibrated_lane = False
+        lane.prep_state = False
+        lane.move_to.return_value = (True, 300.0, False)
+        unit.lane_loading = MagicMock()
+        unit.select_lane = MagicMock()
+        unit.lane_loaded = MagicMock()
+        type(lane).raw_load_state = PropertyMock(side_effect=[False])
+
+        unit.prep_load(lane)
+
+        assert lane.calibrated_lane is False
 
     def test_not_homed_skips_lane_loaded(self):
         unit = _make_vivid()

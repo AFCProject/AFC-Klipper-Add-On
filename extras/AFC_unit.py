@@ -803,7 +803,7 @@ class afcUnit:
         ```
         """
         force = gcmd.get_int("FORCE", 0)
-        move_dist = gcmd.get_float("MOVE_DIST")
+        move_dist = gcmd.get_float("MOVE_DIST", 100)
         force = force != 0
         any_selected = any(True if lane._selector_state else False for lane in self.lanes.values())
         if any_selected or force == 1:

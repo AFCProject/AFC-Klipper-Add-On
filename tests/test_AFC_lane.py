@@ -24,6 +24,7 @@ from extras.AFC_lane import (
     AFCLane,
     EXCLUDE_TYPES,
 )
+from extras.AFC_assist import Espooler
 
 
 # ── SpeedMode ─────────────────────────────────────────────────────────────────
@@ -187,12 +188,27 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     parts = fullname.split()
     lane.fullname = fullname
     lane.name = parts[-1]
+    lane.afc = MagicMock()
     lane.unit = "Turtle_1"
-    lane.unit_obj = None
+    lane.unit_obj = MagicMock()
     lane.hub_obj = None
     lane.buffer_obj = None
-    lane.extruder_obj = None
-    lane.espooler = None
+    lane.extruder_obj = MagicMock()
+    lane.espooler = MagicMock()
+    lane.espooler.assist.return_value = False
+    lane.hub = "PB1"
+    lane.get_toolhead_pre_sensor_state = MagicMock()
+    lane.weight = 1000
+    lane.empty_spool_weight = 200
+    lane.filament_density = 1.24
+    lane.filament_diameter = 1.75
+    lane.inner_diameter = 75
+    lane.outer_diameter = 200
+    lane.max_motor_rpm = 500
+    lane.rwd_speed_multi = 0.5
+    lane.fwd_speed_multi = 0.5
+    lane.drive_stepper = None
+    lane.dist_hub = 900
     return lane
 
 
@@ -205,9 +221,9 @@ class TestAFCLaneInit:
         lane = _make_afc_lane("AFC_stepper lane1")
         assert lane.fullname == "AFC_stepper lane1"
 
-    def test_initial_unit_obj_is_none(self):
+    def test_initial_unit_obj_is_not_none(self):
         lane = _make_afc_lane()
-        assert lane.unit_obj is None
+        assert lane.unit_obj is not None
 
     def test_initial_hub_obj_is_none(self):
         lane = _make_afc_lane()
@@ -217,9 +233,9 @@ class TestAFCLaneInit:
         lane = _make_afc_lane()
         assert lane.buffer_obj is None
 
-    def test_initial_extruder_obj_is_none(self):
+    def test_initial_extruder_obj_is_not_none(self):
         lane = _make_afc_lane()
-        assert lane.extruder_obj is None
+        assert lane.extruder_obj is not None
 
     def test_update_weight_delay_class_constant(self):
         assert AFCLane.UPDATE_WEIGHT_DELAY == 10.0
