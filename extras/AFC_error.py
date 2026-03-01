@@ -80,10 +80,14 @@ class afcError:
                 and cur_lane.hub != 'direct'):
                 self.logger.info(f"Retracting {cur_lane.name} back to load switch")
                 if self.afc.homing_enabled:
-                    total_move_dist = cur_lane.dist_hub + cur_lane.hub_obj.afc_bowden_length + 500
-                    cur_lane.unit_obj.move_to_load(cur_lane, total_move_dist,
-                                                   MoveDirection.NEG, True,
-                                                   SpeedMode.SHORT)
+                    num_tries = 0
+                    while (num_tries < 5
+                           and cur_lane.raw_load_state):
+                        total_move_dist = cur_lane.dist_hub + cur_lane.hub_obj.afc_bowden_length + 500
+                        cur_lane.unit_obj.move_to_load(cur_lane, total_move_dist,
+                                                    MoveDirection.NEG, True,
+                                                    SpeedMode.SHORT)
+                        num_tries += 1
                 else:
                     while cur_lane.raw_load_state:  # slowly back filament up to lane extruder
                         cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)

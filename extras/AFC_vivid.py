@@ -181,15 +181,20 @@ class AFC_vivid(afcBoxTurtle):
         """
         self.lane_loading(lane)
         self.select_lane(lane, sel_prep=True)
+        num_tries = 0
         if not lane.calibrated_lane:
             distance = self.CALIBRATION_DISTANCE
             move_speed = SpeedMode.SHORT
         else:
             distance = lane.dist_hub
             move_speed = SpeedMode.LONG
-
-        homed, distance, warn = lane.move_to(distance, move_speed, assist_active=AssistActive.NO,
-                                             endstop=lane.load_endstop_name, use_homing=True)
+        homed = False
+        while (num_tries < 2
+               and lane.prep_state
+               and not lane.raw_load_state):
+            homed, distance, warn = lane.move_to(distance, move_speed, assist_active=AssistActive.NO,
+                                                 endstop=lane.load_endstop_name, use_homing=True)
+            num_tries += 1
         if homed:
             lane.loaded_to_hub = True
             if not lane.calibrated_lane:
@@ -202,6 +207,8 @@ class AFC_vivid(afcBoxTurtle):
             # Retract a bit so load sensor is not triggered
             lane.move_to( -10, SpeedMode.SHORT, use_homing=False)
             self.lane_loaded(lane)
+        else:
+            self.logger.error(f"Failed to move {lane.name} to load sensor.")
 
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)

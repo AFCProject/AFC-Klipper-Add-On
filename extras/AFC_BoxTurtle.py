@@ -488,7 +488,9 @@ class afcBoxTurtle(afcUnit):
                          assist_active=AssistActive.NO, endstop=lane.load_es,
                          use_homing=True)
         x = 0
-        while not lane.load_state and lane.prep_state and lane.load is not None:
+        while (not lane.raw_load_state
+               and lane.prep_state
+               and lane.load is not None):
             x += 1
             lane.move(self.short_move_dis,500,400)
             self.reactor.pause(self.reactor.monotonic() + 0.1)
