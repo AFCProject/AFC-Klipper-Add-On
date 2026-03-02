@@ -76,6 +76,7 @@ class afcError:
                 self.PauseUserIntervention('laneloaded does not match extruder')
 
         else: #toolhead empty
+            failed_to_retract_msg = f"Failed to retract {cur_lane.name} to load sensor"
             if (cur_lane.raw_load_state
                 and cur_lane.hub != 'direct'):
                 self.logger.info(f"Retracting {cur_lane.name} back to load switch")
@@ -88,15 +89,27 @@ class afcError:
                                                     SpeedMode.SHORT)
                         num_tries += 1
                         if num_tries >= 5:
-                            self.PauseUserIntervention(
-                                f"Failed to retract {cur_lane.name} to load sensor"
-                            )
+                            self.PauseUserIntervention(failed_to_retract_msg)
                             return False
                 else:
+                    max_length = 5000
                     while cur_lane.raw_load_state:  # slowly back filament up to lane extruder
                         cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+                        if max_length > 0:
+                            max_length -+ 5
+                        else:
+                            self.PauseUserIntervention(failed_to_retract_msg)
+                            return False
+                    max_length = 1000
                     while not cur_lane.raw_load_state:  # reload lane extruder
                         cur_lane.move(5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+                        if max_length > 0:
+                            max_length -+ 5
+                        else:
+                            self.PauseUserIntervention(
+                                f"Failed to move back {cur_lane.name} to load sensor"
+                            )
+                            return False
 
                 cur_lane.set_unloaded()
                 cur_lane.loaded_to_hub = False

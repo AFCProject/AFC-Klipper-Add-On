@@ -458,7 +458,8 @@ class TestPrepLoad:
         lane = MagicMock()
         lane.calibrated_lane = False
         lane.prep_state = True
-        lane.move_to.return_value = (True, 300.0, False)
+        lane.move_to.return_value = (False, 300.0, False)
+        lane.dist_hub = 0.0
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
@@ -466,9 +467,12 @@ class TestPrepLoad:
 
         unit.prep_load(lane)
 
-        assert lane.calibrated_lane is True
-        assert lane.dist_hub == round(300.0, 2) + AFC_vivid.LANE_OVERSHOOT
-        unit.afc.function.ConfigRewrite.assert_called()
+        assert lane.calibrated_lane is False
+        assert lane.dist_hub == 0.0
+        unit.afc.function.ConfigRewrite.assert_not_called()
+        # Failure should be reported/logged
+        error_msgs = [m for lvl, m in unit.logger.messages if lvl == "error"]
+        assert error_msgs
     
     def test_uncalibrated_lane_updates_dist_hub_no_prep(self):
         from unittest.mock import PropertyMock

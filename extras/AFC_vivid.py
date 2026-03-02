@@ -223,8 +223,10 @@ class AFC_vivid(afcBoxTurtle):
 
     def unselect_lane(self, move_distance: float=50):
         """
-        Method for moving the selector 50mm to free filament in a lane, this is useful when
+        Move the selector by a configurable distance to free filament in a lane, e.g. when
         ejecting filament.
+
+        :param move_distance: Distance in millimeters to move the selector. Defaults to 50 mm.
         """
         self.selector_stepper_obj.move(move_distance, 100, 100, False)
 

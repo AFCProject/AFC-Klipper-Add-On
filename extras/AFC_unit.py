@@ -552,7 +552,7 @@ class afcUnit:
     def calibrate_lane(self, cur_lane, tol):
         self._print_function_not_defined(self.calibrate_lane.__name__)
 
-    def unselect_lane(self):
+    def unselect_lane(self, move_distance: float=50):
         self._print_function_not_defined(self.unselect_lane.__name__)
 
     def calibration_lane_message(self) -> str:
@@ -802,8 +802,8 @@ class afcUnit:
         AFC_UNSELECT_LANE UNIT=ViViD_1 FORCE=1`
         ```
         """
-        force = gcmd.get_int("FORCE", 0)
-        move_dist = gcmd.get_float("MOVE_DIST", 100)
+        force: int = gcmd.get_int("FORCE", 0)
+        move_dist: float = gcmd.get_float("MOVE_DIST", 100.0)
         force = force != 0
         any_selected = any(True if lane._selector_state else False for lane in self.lanes.values())
         if any_selected or force == 1:

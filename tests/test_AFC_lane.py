@@ -24,7 +24,6 @@ from extras.AFC_lane import (
     AFCLane,
     EXCLUDE_TYPES,
 )
-from extras.AFC_assist import Espooler
 
 
 # ── SpeedMode ─────────────────────────────────────────────────────────────────
