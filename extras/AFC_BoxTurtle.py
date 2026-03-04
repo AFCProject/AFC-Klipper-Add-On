@@ -61,10 +61,10 @@ class afcBoxTurtle(afcUnit):
     def _move_lane(self, lane: AFCLane|AFCExtruderStepper, delay: float,
                    enable_movement: bool=True) -> bool:
         """
-        Helper method to move BoxTurtles lane forwards than backwards
+        Helper method to move BoxTurtle's lane forward then backward
 
         :param lane: Lane to move and check if filament is present.
-        :param delay: Delay amount to wait between the forward than backwards movement.
+        :param delay: Delay amount to wait between the forward then backward movements.
         :param enable_movement: When True movement is enabled, if False movement is disabled and
                                 a delay happens instead.
         :return: Returns current lanes load state

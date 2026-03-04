@@ -50,6 +50,7 @@ def _make_box_turtle(name="Turtle_1"):
 
 def _make_lane(prep_state=False, load_state=False, tool_loaded=False):
     lane = MagicMock()
+    lane.move = MagicMock()
     lane.name = "lane1"
     lane.prep_state = prep_state
     lane.load_state = load_state

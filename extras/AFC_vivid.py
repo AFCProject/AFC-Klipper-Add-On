@@ -100,6 +100,7 @@ class AFC_vivid(afcBoxTurtle):
         :return: Returns True if homing was successful, False when homing is not successful
         """
         loaded = False
+        homed = False
         if lane.prep_state:
             homed, _, _ = self.move_to_load(lane, lane.dist_hub, MoveDirection.POS,
                                             True, SpeedMode.SHORT)

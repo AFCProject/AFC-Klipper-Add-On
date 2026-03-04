@@ -107,7 +107,7 @@ class Test_MoveLane:
         lane.move_to.return_value = (True, 100.0, False)
         result = unit._move_lane(lane, 1, True)
         assert result is True
-        assert lane.spool_id is 10
+        assert lane.spool_id == 10
     
     def test_returns_prep_true_filament_not_loaded(self):
         unit = _make_vivid()
@@ -122,7 +122,7 @@ class Test_MoveLane:
         assert result is False
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
-        assert lane.spool_id is 10
+        assert lane.spool_id == 10
     
     def test_returns_prep_false_filament_not_loaded(self):
         from extras.AFC_spool import AFCSpool
@@ -139,7 +139,7 @@ class Test_MoveLane:
         assert result is False
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
-        assert lane.spool_id is 10
+        assert lane.spool_id == 10
     
     def test_returns_prep_false_filament_not_loaded_not_remember_spool(self):
         from extras.AFC_spool import AFCSpool
