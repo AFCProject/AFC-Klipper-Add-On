@@ -87,6 +87,41 @@ class AFC_vivid(afcBoxTurtle):
         self.logo = '<span class=success--text>ViViD Ready\n</span>'
         self.logo_error = '<span class=error--text>ViViD Not Ready</span>\n'
 
+    def _move_lane(self, lane: AFCLane, delay: float=1,
+                enable_movement: bool=True) -> bool:
+        """
+        Method to check and see if filament is loaded into lane. This method tries to move filament
+        to load sensor, once successful lane is retracted by hubs `hub_clear_move_dis`. If homing
+        is not successful, internal lane states are reset.
+
+        :param lane: Lane to move and check if filament is present
+        :param delay: Not used
+        :param enable_movement: Not used
+        :return: Returns True if homing was successful, False when homing is not successful
+        """
+        loaded = False
+        if lane.prep_state:
+            homed, _, _ = self.move_to_load(lane, lane.dist_hub, MoveDirection.POS,
+                                            True, SpeedMode.SHORT)
+            if homed:
+                loaded = True
+                lane.loaded_to_hub = True
+                lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
+                             SpeedMode.SHORT, use_homing=False)
+        # Resetting internal states when prep sensor is not triggered but loaded to hub is still
+        # set, or when failed to home to load sensor
+        if ((not lane.prep_state
+             and lane.loaded_to_hub)
+             or not homed):
+            self.lane_unloaded(lane)
+            lane.tool_loaded = False
+            lane.status = AFCLaneState.NONE
+            lane.loaded_to_hub = False
+            lane.td1_data = {}
+            if not lane.remember_spool:
+                lane.afc.spool.clear_values(lane)
+        return loaded
+
     def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
         return super().system_Test( cur_lane, delay, assignTcmd, enable_movement=False)
 
@@ -204,8 +239,9 @@ class AFC_vivid(afcBoxTurtle):
                                                 f"{lane.name} calibrated, updating dist_hub")
                 self.afc.function.ConfigRewrite(lane.fullname, "calibrated_lane",
                                                 lane.calibrated_lane, "")
-            # Retract a bit so load sensor is not triggered
-            lane.move_to( -10, SpeedMode.SHORT, use_homing=False)
+            # Retract so load sensor is not triggered
+            lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
+                         SpeedMode.SHORT, use_homing=False)
             self.lane_loaded(lane)
         else:
             self.logger.error(f"Failed to move {lane.name} to load sensor.")

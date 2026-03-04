@@ -555,6 +555,10 @@ class afcUnit:
     def unselect_lane(self, move_distance: float=50):
         self._print_function_not_defined(self.unselect_lane.__name__)
 
+    def _move_lane(self, lane: AFCLane|AFCExtruderStepper, delay: float,
+                enable_movement: bool=True) -> bool:
+        self._print_function_not_defined(self._move_lane.__name__)
+
     def calibration_lane_message(self) -> str:
         return ""
 

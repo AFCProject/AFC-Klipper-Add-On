@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane, MoveDirection
+    from extras.AFC_stepper import AFCExtruderStepper
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -57,21 +58,35 @@ class afcBoxTurtle(afcUnit):
         self.logo_error+='! \_________/ |___|</span>\n'
         self.logo_error+= '  ' + self.name + '\n'
 
+    def _move_lane(self, lane: AFCLane|AFCExtruderStepper, delay: float,
+                   enable_movement: bool=True) -> bool:
+        """
+        Helper method to move BoxTurtles lane forwards than backwards
+
+        :param lane: Lane to move and check if filament is present.
+        :param delay: Delay amount to wait between the forward than backwards movement.
+        :param enable_movement: When True movement is enabled, if False movement is disabled and
+                                a delay happens instead.
+        :return: Returns current lanes load state
+        """
+        if enable_movement:
+            lane.move(5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+            self.afc.reactor.pause(self.afc.reactor.monotonic() + delay)
+            lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+        else:
+            self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.7)
+        return lane.load_state
+
     def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
         msg = ''
         succeeded = True
 
         # Run test reverse/forward on each lane
         cur_lane.unsync_to_extruder(False)
-        if enable_movement:
-            cur_lane.move(5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
-            self.afc.reactor.pause(self.afc.reactor.monotonic() + delay)
-            cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
-        else:
-            self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.7)
+        loaded = self._move_lane(cur_lane, delay, enable_movement)
 
         if not cur_lane.prep_state:
-            if not cur_lane.load_state:
+            if not loaded:
                 self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
                 msg += 'EMPTY READY FOR SPOOL'
             else:
@@ -84,7 +99,7 @@ class afcBoxTurtle(afcUnit):
         else:
             self.afc.function.afc_led(cur_lane.led_ready, cur_lane.led_index)
             msg +="<span class=success--text>LOCKED</span>"
-            if not cur_lane.load_state:
+            if not loaded:
                 msg +="<span class=error--text> NOT LOADED</span>"
                 self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
                 succeeded = False
