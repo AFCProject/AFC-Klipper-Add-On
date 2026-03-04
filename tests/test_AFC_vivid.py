@@ -103,6 +103,7 @@ class Test_MoveLane:
         lane.prep_state = True
         lane.spool_id = 10
         lane.remember_spool = True
+        lane.tool_loaded = False
         lane.move_to.return_value = (True, 100.0, False)
         result = unit._move_lane(lane, 1, True)
         assert result is True
@@ -115,6 +116,7 @@ class Test_MoveLane:
         lane.loaded_to_hub = True
         lane.spool_id = 10
         lane.remember_spool = True
+        lane.tool_loaded = False
         lane.move_to.return_value = (False, 100.0, False)
         result = unit._move_lane(lane, 1, True)
         assert result is False
@@ -131,6 +133,7 @@ class Test_MoveLane:
         lane.loaded_to_hub = True
         lane.spool_id = 10
         lane.remember_spool = True
+        lane.tool_loaded = False
         lane.move_to.return_value = (False, 100.0, False)
         result = unit._move_lane(lane, 1, True)
         assert result is False
@@ -147,6 +150,7 @@ class Test_MoveLane:
         lane.loaded_to_hub = True
         lane.spool_id = 10
         lane.remember_spool = False
+        lane.tool_loaded = False
         lane.move_to.return_value = (False, 100.0, False)
         result = unit._move_lane(lane, 1, True)
         assert result is False

@@ -106,8 +106,9 @@ class AFC_vivid(afcBoxTurtle):
             if homed:
                 loaded = True
                 lane.loaded_to_hub = True
-                lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
-                             SpeedMode.SHORT, use_homing=False)
+                if not lane.tool_loaded:
+                    lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
+                                SpeedMode.SHORT, use_homing=False)
         # Resetting internal states when prep sensor is not triggered but loaded to hub is still
         # set, or when failed to home to load sensor
         if ((not lane.prep_state
