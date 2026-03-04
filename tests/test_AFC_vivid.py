@@ -95,6 +95,64 @@ class TestVivdConstants:
     def test_is_subclass_of_box_turtle(self):
         assert issubclass(AFC_vivid, afcBoxTurtle)
 
+# ── _move_lane ──────────────────────────────────────────────────
+class Test_MoveLane:
+    def test_returns_prep_true_filament_loaded(self):
+        unit = _make_vivid()
+        lane = _make_lane(has_selector=True)
+        lane.prep_state = True
+        lane.spool_id = 10
+        lane.remember_spool = True
+        lane.move_to.return_value = (True, 100.0, False)
+        result = unit._move_lane(lane, 1, True)
+        assert result is True
+        assert lane.spool_id is 10
+    
+    def test_returns_prep_true_filament_not_loaded(self):
+        unit = _make_vivid()
+        lane = _make_lane(has_selector=True)
+        lane.prep_state = True
+        lane.loaded_to_hub = True
+        lane.spool_id = 10
+        lane.remember_spool = True
+        lane.move_to.return_value = (False, 100.0, False)
+        result = unit._move_lane(lane, 1, True)
+        assert result is False
+        assert lane.tool_loaded is False
+        assert lane.loaded_to_hub is False
+        assert lane.spool_id is 10
+    
+    def test_returns_prep_false_filament_not_loaded(self):
+        from extras.AFC_spool import AFCSpool
+        unit = _make_vivid()
+        lane = _make_lane(has_selector=True)
+        lane.afc.spool = AFCSpool.__new__(AFCSpool)
+        lane.prep_state = False
+        lane.loaded_to_hub = True
+        lane.spool_id = 10
+        lane.remember_spool = True
+        lane.move_to.return_value = (False, 100.0, False)
+        result = unit._move_lane(lane, 1, True)
+        assert result is False
+        assert lane.tool_loaded is False
+        assert lane.loaded_to_hub is False
+        assert lane.spool_id is 10
+    
+    def test_returns_prep_false_filament_not_loaded_not_remember_spool(self):
+        from extras.AFC_spool import AFCSpool
+        unit = _make_vivid()
+        lane = _make_lane(has_selector=True)
+        lane.afc.spool = AFCSpool.__new__(AFCSpool)
+        lane.prep_state = False
+        lane.loaded_to_hub = True
+        lane.spool_id = 10
+        lane.remember_spool = False
+        lane.move_to.return_value = (False, 100.0, False)
+        result = unit._move_lane(lane, 1, True)
+        assert result is False
+        assert lane.tool_loaded is False
+        assert lane.loaded_to_hub is False
+        assert lane.spool_id is None
 
 # ── _get_lane_selector_state ──────────────────────────────────────────────────
 
