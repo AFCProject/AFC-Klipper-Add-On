@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-03-03]
+## Updates
+- Updated PREP logic for ViViD to check if filament is loaded by moving filament to load sensor. ViViD no longer relies on saved `loaded_to_hub` state.
+
 ## [2026-03-01]
 ### Added
 - Added `selector_cal_distance` to AFC_lane for units like ViViD that have selectors. If this value is set AFC will move the selector the supplied distance in mm. This is to help make sure selectors have a good grip on the filament.
