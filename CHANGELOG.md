@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [2026-03-15]
+### Added
+- Added `NEW_EXTRUDER_TEMP` parameter to Tn commands to set temperature before the tool change begins.
+- Added `toolchange_temp_drop` config option to automatically lower the old extruder's temperature during toolchange.
+
 ## [2026-03-07]
 ### Fix
 - Added error checking when homing during a Tool Load or Unload, if a homing error (like communication timeout or something similar) happens during these calls that AFC displays error and returns early.

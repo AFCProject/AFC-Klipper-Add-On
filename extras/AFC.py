@@ -10,7 +10,7 @@ import traceback
 import inspect
 from configfile import error
 
-from typing import Dict, TYPE_CHECKING, Union, Any
+from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -233,6 +233,9 @@ class afc:
             "restore_extruder_temp_on_load_or_unload", False
         )  # Restore extruder target temp after tool load/unload when not printing
         self.lower_extruder_temp_on_change = config.getboolean('lower_extruder_temp_on_change', True)  # When False, AFC will not lower extruder temp during filament change if already above target - 5
+        self.toolchange_temp_drop: float = config.getfloat(
+            "toolchange_temp_drop", 0
+        )  # Degrees to drop the old extruder's temperature (no wait) after a successful toolchange when the extruder changes.
         self.load_to_hub            = config.getboolean("load_to_hub", True)        # Fast loads filament to hub when inserted, set to False to disable. This is a global setting and can be overridden at AFC_stepper
         self.disable_homing_check   = config.getboolean("disable_homing_check", False)# Disables homing check when doing toolchanges. Only use this if you are using a toolchanger and don't need to home to unload toolheads
         self.assisted_unload        = config.getboolean("assisted_unload", True)    # If True, the unload retract is assisted to prevent loose windings, especially on full spools. This can prevent loops from slipping off the spool
@@ -1995,14 +1998,17 @@ class afc:
 
         Optionally setting PURGE_LENGTH parameter to pass a value into poop macro.
 
+        Optionally setting NEW_EXTRUDER_TEMP to set and wait for that temperature on the new extruder before
+        performing the tool change.
+
         Usage
         -----
-        `CHANGE_TOOL LANE=<lane> PURGE_LENGTH=<purge_length>(optional value)`
+        `CHANGE_TOOL LANE=<lane> PURGE_LENGTH=<purge_length>(optional) NEW_EXTRUDER_TEMP=<temp>(optional)`
 
         Example
         ------
         ```
-        CHANGE_TOOL LANE=lane1 PURGE_LENGTH=100
+        CHANGE_TOOL LANE=lane1 PURGE_LENGTH=100 NEW_EXTRUDER_TEMP=220
         ```
         """
         # Check if the bypass filament sensor detects filament; if so, abort the tool change.
@@ -2017,8 +2023,19 @@ class afc:
         # for some sort of backwards compatibility, so for example: T0 PURGE_LENGTH=200, the purge_length would be
         # equal to "=200". So run this check to remove it:
         if purge_length is not None:
-            if purge_length.startswith('='):
-                purge_length = purge_length[1:]
+            try:
+                purge_length = float(purge_length.lstrip('='))
+            except ValueError:
+                self.error.AFC_error("PURGE_LENGTH must be a numeric value", pause=False)
+                return
+
+        new_extruder_temp = gcmd.get('NEW_EXTRUDER_TEMP', None)
+        if new_extruder_temp is not None:
+            try:
+                new_extruder_temp = float(new_extruder_temp.lstrip('='))
+            except ValueError:
+                self.error.AFC_error("NEW_EXTRUDER_TEMP must be a numeric value", pause=False)
+                return
 
         command_line = gcmd.get_commandline()
         self.logger.debug("CHANGE_TOOL: cmd-{}".format(command_line))
@@ -2043,26 +2060,38 @@ class afc:
             self.error.AFC_error("I did not understand the change -- " + cmd, pause=self.function.in_print())
             return
 
-        self.CHANGE_TOOL(self.lanes[self.tool_cmds[Tcmd]], purge_length)
+        self.CHANGE_TOOL(self.lanes[self.tool_cmds[Tcmd]], purge_length, new_extruder_temp=new_extruder_temp)
 
-    def CHANGE_TOOL(self, cur_lane: AFCLane, purge_length=None, restore_pos=True):
+    def CHANGE_TOOL(self, cur_lane: AFCLane, purge_length: Optional[float]=None, restore_pos: bool=True, new_extruder_temp: Optional[float]=None) -> None:
         self.afcDeltaTime.set_start_time()
         # Check if the bypass filament sensor detects filament; if so, abort the tool change.
         if self._check_bypass(unload=False): return
-        infinite_runout = False
 
         self.next_lane_load = cur_lane.name
         next_extruder = cur_lane.extruder_obj.name
+        infinite_runout: bool = cur_lane.status == AFCLaneState.INFINITE_RUNOUT
+        adjusting_temperature: bool = new_extruder_temp is not None or \
+            (infinite_runout and self.function.get_current_extruder() != next_extruder)
 
-        if cur_lane.status == AFCLaneState.INFINITE_RUNOUT and self.function.get_current_extruder() != next_extruder:
-            infinite_runout = True
-            result = self._heat_next_extruder(wait=False)
+        if adjusting_temperature:
+            # Heat the next extruder FIRST so that _heat_next_extruder reads the
+            # current target temperature before it is changed by the cooldown below.
+            next_temp = None if infinite_runout else new_extruder_temp
+            result = self._heat_next_extruder(wait=False, next_temp=next_temp)
             if not result:
                 self.error.fix("Failed to select or heat next extruder", self.next_lane_load)
                 return
-            cur_lane.status = AFCLaneState.LOADED
-            next_heater = result[0]
+            if infinite_runout:
+                cur_lane.status = AFCLaneState.LOADED
+            next_extruder_obj = result[0]
             target_temp = result[1]
+
+            # Now cool down the old extruder (self.current changes during the toolchange,
+            # so capture the reference here after heating is already queued).
+            if self.current is not None:
+                _last_lane = self.lanes.get(self.current)
+                if _last_lane is not None and _last_lane.extruder_obj.name != next_extruder:
+                    self._cooldown_last_extruder(_last_lane.extruder_obj, infinite_runout)
 
         # If the requested lane is not the current lane, proceed with the tool change.
         if cur_lane.name != self.current:
@@ -2090,11 +2119,12 @@ class afc:
                         self.error.fix(msg, self.lanes[self.current])  #send to error handling
                         return
 
-            if infinite_runout:
-                infinite_extruder = cur_lane.extruder_obj
-                self.logger.info("Heating and waiting for {} for infinite runout".format(infinite_extruder.name))
-                self._wait_for_temp_within_tolerance(next_heater, target_temp, infinite_extruder.deadband)
-                self.logger.info("{} heated and ready to print".format(infinite_extruder.name))
+            if adjusting_temperature:
+                self.logger.info("Heating and waiting for {} for {}".format(next_extruder_obj.name,
+                    "infinite runout" if infinite_runout else "tool change"))
+                next_heater = next_extruder_obj.get_heater()
+                self._wait_for_temp_within_tolerance(next_heater, target_temp, next_extruder_obj.deadband)
+                self.logger.info("{} heated and ready to print".format(next_extruder_obj.name))
 
             # Load the new lane and restore the toolhead position if successful.
             if self.TOOL_LOAD(cur_lane, purge_length, set_start_time=False) and not self.error_state:
@@ -2290,12 +2320,17 @@ class afc:
         pheaters.set_temperature(heater, temp, should_wait)
         self.logger.debug("Done setting temp")
 
-    def _heat_next_extruder(self, wait=True):
+    def _heat_next_extruder(self, wait=True, next_temp: Optional[float]=None) -> Union[Tuple[AFCExtruder, float], bool]:
         """
         Heats the next extruder if it is not the current extruder.
         This function checks if the next lane to load is specified and if it is different from the current extruder.
-        If so, it retrieves the extruder object and its heater, then waits for the extruder to reach the desired temperature.
-        Also sets the temperature of the current extruder to 0 to ensure it is not heated while empty.
+        If so, it retrieves the next extruder object and its heater, sets a target temperature for it, and can wait for the
+        extruder to reach that temperature before proceeding with the tool change.
+
+        :param wait: Whether to wait for the next extruder to reach the target temperature before proceeding with the tool change
+        :param next_temp: The temperature to set for the next extruder. If None, uses the current toolhead extruder heater's
+            target temperature as the setpoint for the next extruder.
+        :return: A tuple of the next extruder object and the target temperature if successful, or False if there was an error
         """
         # Check if the current extruder is loaded with the lane to be unloaded.
         if self.next_lane_load is not None:
@@ -2308,22 +2343,39 @@ class afc:
 
         # get the current extruder from the toolhead and it's current temperature
         pheaters = self.printer.lookup_object('heaters')
-        extruder = self.toolhead.get_extruder()
-        current_heater = extruder.get_heater()
-        current_temp = current_heater.get_temp(self.reactor.monotonic())
+        if next_temp is None:
+            extruder = self.toolhead.get_extruder()
+            current_heater = extruder.get_heater()
+            current_temp = current_heater.get_temp(self.reactor.monotonic())
+            set_temp = current_temp[1]
+        else:
+            set_temp = next_temp
         next_heater = next_extruder.get_heater()
-        set_temp = current_temp[1]
         pheaters.set_temperature(next_heater, set_temp, False)
         self.logger.info("Heating next extruder: {} to {}".format(next_extruder.name, set_temp))
-        pheaters.set_temperature(current_heater, 0, False)  # Always set temp of the extruder than ran out to 0
-        self.logger.info("Setting current extruder {} temperature to 0".format(extruder.name))
 
         # If the next extruder is specified and it is not the current extruder, heat the next extruder.
-        if wait and (next_extruder is not None and self.function.get_current_extruder() != next_extruder):
+        if wait and (next_extruder is not None and self.function.get_current_extruder() != next_extruder.name):
             deadband = next_extruder.deadband
             self._wait_for_temp_within_tolerance(next_heater, set_temp, deadband)
 
-        return next_heater, set_temp
+        return next_extruder, set_temp
+
+    def _cooldown_last_extruder(self, last_extruder: AFCExtruder, is_infinite_runout: bool) -> None:
+        """
+        Cools down the last extruder by setting its temperature to the specified value.
+        This function retrieves the heater of the last extruder and sets its temperature to the specified value.
+
+        :param last_extruder: The last/previously used extruder object to be cooled down
+        :param is_infinite_runout: True if this is considered an infinite runout state and should be cooled to 0, or False for toolchange temperature drop
+        :return: None
+        """
+        pheaters = self.printer.lookup_object('heaters')
+        last_heater = last_extruder.get_heater()
+        temperature = 0 if is_infinite_runout \
+            else max(0, last_heater.target_temp - last_extruder.toolchange_temp_drop)
+        self.logger.info("Cooling down last extruder: {} to {}".format(last_extruder.name, temperature))
+        pheaters.set_temperature(last_heater, temperature, False)
 
     def _wait_for_temp_within_tolerance(self, heater, target_temp, tolerance=20):
         """
