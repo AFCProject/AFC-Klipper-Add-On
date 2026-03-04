@@ -148,3 +148,23 @@ class TestSystemTestReactorPause:
         unit.afc.reactor.pause = pause_mock
         unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
         pause_mock.assert_called()
+
+# ── _move_lane ──────────────────────────────────────────────────
+class Test_MoveLane:
+    def test_returns_not_enable_movement_loaded(self):
+        from unittest.mock import PropertyMock
+        unit = _make_box_turtle()
+        lane = _make_lane()
+        type(lane).load_state = PropertyMock(side_effect=[True])
+
+        result = unit._move_lane(lane, delay=1, enable_movement=False)
+        assert result is True
+    
+    def test_returns_not_enable_movement_not_loaded(self):
+        from unittest.mock import PropertyMock
+        unit = _make_box_turtle()
+        lane = _make_lane()
+        type(lane).load_state = PropertyMock(side_effect=[False])
+
+        result = unit._move_lane(lane, delay=1, enable_movement=False)
+        assert result is False
