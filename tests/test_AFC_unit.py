@@ -48,7 +48,7 @@ def _make_unit(name="Turtle_1"):
     unit.type = "Box_Turtle"
     unit.gcode = afc.gcode
     unit.led_logo_index = None
-    unit.skip_buffer_check = False
+    unit.enable_buffer_tool_check = True
 
     return unit
 
@@ -272,12 +272,12 @@ class TestBufferToolheadLoadCheck:
         result = unit._buffer_toolhead_load_check(lane)
         assert result is True
 
-    def test_homing_enabled_skip_buffer_check_loaded(self):
+    def test_homing_enabled_disable_buffer_tool_check_loaded(self):
         unit = _make_unit()
         lane = _make_lane()
         unit.afc.homing_enabled = True
         lane.tool_loaded = True
-        unit.skip_buffer_check = True
+        unit.enable_buffer_tool_check = False
         result = unit._buffer_toolhead_load_check(lane)
         assert result is True
 

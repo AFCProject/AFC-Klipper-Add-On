@@ -122,7 +122,7 @@ class afcBoxTurtle(afcUnit):
                             msg +="<span class=primary--text> in ToolHead</span>"
                             if (cur_lane.extruder_obj.tool_start == "buffer"
                                 and (not self.afc.homing_enabled
-                                     or cur_lane.unit_obj.skip_buffer_check)):
+                                     or cur_lane.unit_obj.enable_buffer_tool_check)):
                                 msg += "<span class=warning--text>\n Ram sensor enabled, confirm tool is loaded</span>"
 
                             if self.afc.function.get_current_lane() == cur_lane.name:
