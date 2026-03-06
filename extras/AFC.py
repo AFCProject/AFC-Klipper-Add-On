@@ -39,7 +39,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_stats import AFCStats
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-AFC_VERSION="1.0.50"
+AFC_VERSION="1.0.51"
 
 # Class for holding different states so its clear what all valid states are
 class State:
