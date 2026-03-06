@@ -96,7 +96,7 @@ class afcUnit:
         self.debug                       = config.getboolean("debug",            False)                      # Turns on/off debug messages to console
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", self.afc.rev_long_moves_speed_factor)
         self.extruder_clear_dis          = config.getfloat("extruder_clear_dis", 50)                        # Amount to move to clear extruder gears when ejecting filament
-        self.enable_buffer_tool_check    = config.getfloat("enable_buffer_tool_check", False)
+        self.enable_buffer_tool_check    = config.getboolean("enable_buffer_tool_check", False)
 
         # Espooler defines
         # Time in seconds to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in AFC.cfg file
@@ -749,10 +749,10 @@ class afcUnit:
     def _buffer_toolhead_load_check(self, lane: AFCLane|AFCExtruderStepper):
         """
         Method for checking if filament is loaded to toolhead when using buffer in ramming mode.
-        If homing is not enabled or enable_buffer_tool_check is enabled, lanes tool_loaded status
+        If homing is not enabled or enable_buffer_tool_check is not enabled, lanes tool_loaded status
         is returned.
 
-        When homing is enabled and enable_buffer_tool_check is not enabled, this method will try to
+        When homing is enabled and enable_buffer_tool_check is enabled, this method will try to
         move the filament so that both advance and trail sensor in buffer are hit. If this is
         successful, then it's deemed that filament is actually loaded to the toolhead.
 
