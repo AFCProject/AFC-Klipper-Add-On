@@ -3,11 +3,19 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
 import traceback
 import logging
 import inspect
 
 from configparser import Error as error
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC_lane import AFCLane
+    from extras.AFC_stepper import AFCExtruderStepper
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -65,7 +73,7 @@ class afcError:
 
         return error_handled
 
-    def ToolHeadFix(self, cur_lane):
+    def ToolHeadFix(self, cur_lane: AFCLane|AFCExtruderStepper):
         if cur_lane.get_toolhead_pre_sensor_state():   #toolhead has filament
             if cur_lane.extruder_obj.lane_loaded == cur_lane.name:   #var has right lane loaded
                 if not cur_lane.raw_load_state: #Lane has filament
@@ -78,7 +86,8 @@ class afcError:
         else: #toolhead empty
             failed_to_retract_msg = f"Failed to retract {cur_lane.name} to load sensor"
             if (cur_lane.raw_load_state
-                and cur_lane.hub != 'direct'):
+                and cur_lane.hub != 'direct'
+                and "buffer" not in  cur_lane.extruder_obj.tool_start):
                 self.logger.info(f"Retracting {cur_lane.name} back to load switch")
                 if self.afc.homing_enabled:
                     num_tries = 0

@@ -13,10 +13,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
-    from extras.AFC_lane import (
-        afc, AFCLane, AssistActive,
-        AFCHomingPoints, MoveDirection
-    )
+    from extras.AFC_lane import afc, AFCLane
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_buffer import AFCTrigger
     from extras.AFC_hub import afc_hub
@@ -33,7 +30,7 @@ except:
 try: from extras.AFC_respond import AFCprompt
 except: raise config_error(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints
+try: from extras.AFC_lane import SpeedMode, AssistActive, AFCHomingPoints, MoveDirection
 except:
     err_str = ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc())
     raise config_error(err_str)
@@ -99,6 +96,7 @@ class afcUnit:
         self.debug                       = config.getboolean("debug",            False)                      # Turns on/off debug messages to console
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", self.afc.rev_long_moves_speed_factor)
         self.extruder_clear_dis          = config.getfloat("extruder_clear_dis", 50)                        # Amount to move to clear extruder gears when ejecting filament
+        self.skip_buffer_check           = config.getfloat("skip_buffer_check", False)
 
         # Espooler defines
         # Time in seconds to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in AFC.cfg file
@@ -747,6 +745,43 @@ class afcUnit:
                                         endstop=endstop, use_homing=home_to_tool)
 
         return home, dist, warn
+
+    def _buffer_toolhead_load_check(self, lane: AFCLane|AFCExtruderStepper):
+        """
+        Method for checking if filament is loaded to toolhead when using buffer in ramming mode.
+        If homing is not enabled or skip_buffer_check is enabled, lanes tool_loaded status is returned.
+
+        When homing is enabled and skip_buffer_check is not enabled, this method will try to move the
+        filament so that both advance and trail sensor in buffer are hit. If this is successful, then
+        it's deemed that filament is actually loaded to the toolhead.
+
+        :param lane: Lane to check if filament is loaded to toolhead.
+        :return: Returns true if check is successful.
+        """
+        loaded = False
+        homed = False
+        if (not self.afc.homing_enabled
+            or self.skip_buffer_check):
+            loaded = lane.tool_loaded
+        else:
+            if lane.buffer_obj.advance_state:
+                # Move buffer back
+                homed, _, _ = lane.move_to(200 * MoveDirection.NEG, SpeedMode.SHORT,
+                                           AFCHomingPoints.BUFFER_TRAIL)
+                if homed:
+                    homed, _, _ = lane.move_to(200, SpeedMode.SHORT, AFCHomingPoints.BUFFER)
+            else:
+                homed, _, _ = lane.move_to(200, SpeedMode.SHORT, AFCHomingPoints.BUFFER)
+                if homed:
+                    homed, _, _ = lane.move_to(200 * MoveDirection.NEG, SpeedMode.SHORT,
+                                               AFCHomingPoints.BUFFER_TRAIL)
+            if not homed:
+                msg = f"Buffer toolhead loaded check failed for {lane.name}. Please verify"
+                msg +=f" than {lane.name} is loaded to toolhead. If lane is not loaded to "
+                msg +=f"toolhead then run AFC_RESET and choose {lane.name} to reset back to hub."
+                self.afc.error.AFC_error(msg, False)
+            loaded = homed
+        return loaded
 
     cmd_AFC_SELECT_LANE_help = "Command to home to lane selector for specified lane in selector style units."
     cmd_AFC_SELECT_LANE_options = {"LANE": {"type":"string", "default":"lane1"}}

@@ -26,11 +26,12 @@ def _make_unit(name="Turtle_1"):
     unit = afcUnit.__new__(afcUnit)
 
     from tests.conftest import MockAFC, MockPrinter, MockLogger
-
+    from extras.AFC_error import afcError
     afc = MockAFC()
     printer = MockPrinter(afc=afc)
     afc.logger = MockLogger()
-
+    afc.error = afcError.__new__(afcError)
+    afc.error.logger = afc.logger
     unit.printer = printer
     unit.afc = afc
     unit.logger = afc.logger
@@ -47,6 +48,7 @@ def _make_unit(name="Turtle_1"):
     unit.type = "Box_Turtle"
     unit.gcode = afc.gcode
     unit.led_logo_index = None
+    unit.skip_buffer_check = False
 
     return unit
 
@@ -250,3 +252,109 @@ class TestSetLogoColor:
         unit = _make_unit()
         unit.set_logo_color("")
         unit.afc.function.afc_led.assert_not_called()
+
+
+# ── _buffer_toolhead_load_check ────────────────────────────────────────────────────────────
+class TestBufferToolheadLoadCheck:
+    def test_homing_not_enabled_not_loaded(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit.afc.homing_enabled = False
+        lane.tool_loaded = False
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is False
+    
+    def test_homing_not_enabled_loaded(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit.afc.homing_enabled = False
+        lane.tool_loaded = True
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is True
+
+    def test_homing_enabled_skip_buffer_check_loaded(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit.afc.homing_enabled = True
+        lane.tool_loaded = True
+        unit.skip_buffer_check = True
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is True
+    
+    def test_homing_enabled_loaded_advance_triggered_fail_retract(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.buffer_obj = MagicMock()
+        unit.afc.homing_enabled = True
+        lane.tool_loaded = True
+        lane.buffer_obj.advance_state = True
+        lane.move_to.return_value = (False, 200, False)
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is False
+        error_msgs = [m for lvl, m in unit.logger.messages if lvl == "error"]
+        assert any(f"Buffer toolhead loaded check failed for {lane.name}. Please verify" in m for m in error_msgs)
+
+    def test_homing_enabled_loaded_advance_triggered_retracted_fail_extend(self):
+        from unittest.mock import PropertyMock
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.buffer_obj = MagicMock()
+        unit.afc.homing_enabled = True
+        lane.tool_loaded = True
+        lane.buffer_obj.advance_state = True
+        lane.move_to.side_effect = [(True, 200, False), (False, 200, False)]
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is False
+        error_msgs = [m for lvl, m in unit.logger.messages if lvl == "error"]
+        assert any(f"Buffer toolhead loaded check failed for {lane.name}. Please verify" in m for m in error_msgs)
+    
+    def test_homing_enabled_loaded_advance_triggered_retracted_extended(self):
+        from unittest.mock import PropertyMock
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.buffer_obj = MagicMock()
+        unit.afc.homing_enabled = True
+        lane.tool_loaded = True
+        lane.buffer_obj.advance_state = True
+        lane.move_to.side_effect = [(True, 200, False), (True, 200, False)]
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is True
+
+    def test_homing_enabled_loaded_fail_extend(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.buffer_obj = MagicMock()
+        unit.afc.homing_enabled = True
+        lane.tool_loaded = True
+        lane.buffer_obj.advance_state = False
+        lane.move_to.return_value = (False, 200, False)
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is False
+        error_msgs = [m for lvl, m in unit.logger.messages if lvl == "error"]
+        assert any(f"Buffer toolhead loaded check failed for {lane.name}. Please verify" in m for m in error_msgs)
+
+    def test_homing_enabled_loaded_extended_failed_retract(self):
+        from unittest.mock import PropertyMock
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.buffer_obj = MagicMock()
+        unit.afc.homing_enabled = True
+        lane.tool_loaded = True
+        lane.buffer_obj.advance_state = False
+        lane.move_to.side_effect = [(True, 200, False), (False, 200, False)]
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is False
+        error_msgs = [m for lvl, m in unit.logger.messages if lvl == "error"]
+        assert any(f"Buffer toolhead loaded check failed for {lane.name}. Please verify" in m for m in error_msgs)
+    
+    def test_homing_enabled_loaded_extended_retracted(self):
+        from unittest.mock import PropertyMock
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.buffer_obj = MagicMock()
+        unit.afc.homing_enabled = True
+        lane.tool_loaded = True
+        lane.buffer_obj.advance_state = False
+        lane.move_to.side_effect = [(True, 200, False), (True, 200, False)]
+        result = unit._buffer_toolhead_load_check(lane)
+        assert result is True
