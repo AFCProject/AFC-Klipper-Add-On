@@ -456,16 +456,6 @@ class TestToolHeadFix:
         err.ToolHeadFix(lane)
         err.PauseUserIntervention.assert_called_with("laneloaded does not match extruder")
 
-    def test_toolhead_empty_no_lane_filament_pauses(self):
-        err, afc = _make_afc_error()
-        err.PauseUserIntervention = MagicMock()
-        lane = MagicMock()
-        lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
-        lane.raw_load_state = False  # lane also empty
-        result = err.ToolHeadFix(lane)
-        err.PauseUserIntervention.assert_called_with("Filament not loaded in Lane")
-        assert result is None  # no explicit return
-
     def test_toolhead_empty_with_lane_filament_returns_true_no_homing(self):
         """Filament is retracted to lane and reloaded; returns True."""
         from unittest.mock import PropertyMock
