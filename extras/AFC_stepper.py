@@ -760,7 +760,7 @@ class AFCExtruderStepper(AFCLane):
         Example
         ----
         ```
-        AFC_STEPPER_HOME STEPPER=lane1 MOVE=10 SPEED=5
+        AFC_STEPPER_HOME STEPPER=lane1 DIST=10 SPEED=5
         ```
         Example
         ----
