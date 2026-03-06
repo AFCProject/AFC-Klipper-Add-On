@@ -764,7 +764,7 @@ class afcUnit:
             or self.skip_buffer_check):
             loaded = lane.tool_loaded
         else:
-            homed, _, _ = lane.move_to(200, SpeedMode.SHORT, AFCHomingPoints.BUFFER)
+            homed, move_dis, _ = lane.move_to(200, SpeedMode.SHORT, AFCHomingPoints.BUFFER)
 
             if not homed:
                 msg = f"Buffer toolhead loaded check failed for {lane.name}. Please verify"
@@ -772,6 +772,9 @@ class afcUnit:
                 msg +=f"toolhead then run AFC_RESET and choose {lane.name} to reset back to hub."
                 msg +=" Once lane is reset run UNSET_LANE_LOADED macro."
                 self.afc.error.AFC_error(msg, False)
+            else:
+                lane.move(move_dis * MoveDirection.NEG, lane.short_moves_speed,
+                          lane.short_moves_accel, False)
             loaded = homed
         return loaded
 

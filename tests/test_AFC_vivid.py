@@ -600,13 +600,16 @@ class TestEjectLane:
         from extras.AFC_lane import MoveDirection
         unit = _make_vivid()
         lane = MagicMock()
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.hub_clear_move_dis = 65
         lane.dist_hub = 600.0  # > 400 → should subtract LANE_OVERSHOOT+100
         unit.select_lane = MagicMock()
         unit.unselect_lane = MagicMock()
 
         unit.eject_lane(lane)
 
-        expected_dist = (600.0 - (AFC_vivid.LANE_OVERSHOOT + 100)) * MoveDirection.NEG
+        expected_dist = (600.0 - (AFC_vivid.LANE_OVERSHOOT + 100) - \
+                         lane.hub_obj.hub_clear_move_dis - lane.homing_overshoot) * MoveDirection.NEG
         call_args = lane.move_to.call_args[0]
         assert call_args[0] == expected_dist
 

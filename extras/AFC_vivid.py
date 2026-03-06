@@ -281,7 +281,8 @@ class AFC_vivid(afcBoxTurtle):
         self.select_lane(lane)
         move_dis = lane.dist_hub
         if move_dis > 400:
-            move_dis = lane.dist_hub - (self.LANE_OVERSHOOT+100)
+            move_dis = lane.dist_hub - (self.LANE_OVERSHOOT+100) - \
+                       lane.hub_obj.hub_clear_move_dis - lane.homing_overshoot
         lane.move_to( move_dis * MoveDirection.NEG, SpeedMode.LONG,
                      endstop=lane.prep_endstop_name,
                      assist_active=AssistActive.NO, use_homing=True)
