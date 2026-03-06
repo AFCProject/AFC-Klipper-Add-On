@@ -111,7 +111,7 @@ class afcBoxTurtle(afcUnit):
                 if (cur_lane.tool_loaded
                     and cur_lane.extruder_obj.lane_loaded == cur_lane.name):
                     ramming_loaded = False
-                    if cur_lane.extruder_obj.tool_start != "buffer":
+                    if cur_lane.extruder_obj.tool_start == "buffer":
                         ramming_loaded = self._buffer_toolhead_load_check(cur_lane)
                     if (cur_lane.get_toolhead_pre_sensor_state() == True
                         or ramming_loaded

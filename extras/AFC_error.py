@@ -129,9 +129,6 @@ class afcError:
                 self.logger.info(f"Done resetting {cur_lane.name}")
                 return True
 
-            else:
-                self.PauseUserIntervention('Filament not loaded in Lane')
-
     def PauseUserIntervention(self,message):
         #pause for user intervention
         self.logger.error(message)
