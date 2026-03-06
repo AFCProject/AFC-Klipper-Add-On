@@ -44,7 +44,7 @@ class afcBoxTurtle(afcUnit):
         firstLeg = '<span class=warning--text>|</span><span class=error--text>_</span>'
         secondLeg = firstLeg + '<span class=warning--text>|</span>'
         self.logo ='<span class=success--text>R  _____     ____\n'
-        self.logo+='E /      \  |  </span><span class=info--text>o</span><span class=success--text> | \n'
+        self.logo+='E /      \\  |  </span><span class=info--text>o</span><span class=success--text> | \n'
         self.logo+='A |       |/ ___/ \n'
         self.logo+='D |_________/     \n'
         self.logo+='Y {first}{second} {first}{second}\n'.format(first=firstLeg, second=secondLeg)
@@ -52,10 +52,10 @@ class afcBoxTurtle(afcUnit):
 
         self.logo_error ='<span class=error--text>E  _ _   _ _\n'
         self.logo_error+='R |_|_|_|_|_|\n'
-        self.logo_error+='R |         \____\n'
-        self.logo_error+='O |              \ \n'
-        self.logo_error+='R |          |\ <span class=secondary--text>X</span> |\n'
-        self.logo_error+='! \_________/ |___|</span>\n'
+        self.logo_error+='R |         \\____\n'
+        self.logo_error+='O |              \\ \n'
+        self.logo_error+='R |          |\\ <span class=secondary--text>X</span> |\n'
+        self.logo_error+='! \\_________/ |___|</span>\n'
         self.logo_error+= '  ' + self.name + '\n'
 
     def _move_lane(self, lane: AFCLane|AFCExtruderStepper, delay: float,

@@ -28,10 +28,10 @@ class afcNightOwl(afcBoxTurtle):
 
         self.logo = '<span class=success--text>Night Owl Ready</span>'
         self.logo ='<span class=success--text>R  ,     ,\n'
-        self.logo+='E  )\___/(\n'
+        self.logo+='E  )\\___/(\n'
         self.logo+='A {(@)v(@)}\n'
         self.logo+='D  {|~~~|}\n'
-        self.logo+='Y  {/^^^\}\n'
+        self.logo+='Y  {/^^^\\}\n'
         self.logo+='!   `m-m`</span>\n'
 
         self.logo_error = '<span class=error--text>Night Owl Not Ready</span>\n'

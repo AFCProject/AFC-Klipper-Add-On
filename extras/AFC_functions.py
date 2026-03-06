@@ -149,7 +149,7 @@ class afcFunction:
         taskdone = False
         sectionfound = False
         # Creating regex pattern based off rawsection
-        pattern = re.compile("^\[\s*{}\s*\]".format(rawsection))
+        pattern = re.compile("^\\[\\s*{}\\s*\\]".format(rawsection))
         for filename in os.listdir(self.afc.cfgloc):
             file_path = os.path.join(self.afc.cfgloc, filename)
             if os.path.isfile(file_path) and filename.endswith(".cfg"):
