@@ -174,8 +174,10 @@ class Test_MoveLane:
         from unittest.mock import PropertyMock
         unit = _make_box_turtle()
         lane = _make_lane()
+        pause_mock = MagicMock()
+        unit.afc.reactor.pause = pause_mock
         type(lane).load_state = PropertyMock(side_effect=[False])
 
         result = unit._move_lane(lane, delay=1, enable_movement=True)
         assert result is False
-        unit.afc.reactor.pause.assert_called()
+        pause_mock.assert_called()

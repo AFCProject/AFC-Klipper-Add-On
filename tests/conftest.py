@@ -233,9 +233,11 @@ class MockReactor:
     def __init__(self, monotonic_value=100.0):
         self._monotonic = monotonic_value
 
-    pause = MagicMock()
     def monotonic(self):
         return self._monotonic
+    
+    def pause(self, until):
+        pass
 
     def mutex(self, is_locked=False):
         return MagicMock()

@@ -769,7 +769,7 @@ class afcUnit:
 
             if not homed:
                 msg = f"Buffer toolhead loaded check failed for {lane.name}. Please verify"
-                msg +=f" than {lane.name} is loaded to toolhead. If lane is not loaded to "
+                msg +=f" that {lane.name} is loaded to toolhead. If lane is not loaded to "
                 msg +=f"toolhead then run AFC_RESET and choose {lane.name} to reset back to hub."
                 msg +=" Once lane is reset run UNSET_LANE_LOADED macro."
                 self.afc.error.AFC_error(msg, False)

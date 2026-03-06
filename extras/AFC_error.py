@@ -87,7 +87,7 @@ class afcError:
             failed_to_retract_msg = f"Failed to retract {cur_lane.name} to load sensor"
             if (cur_lane.raw_load_state
                 and cur_lane.hub != 'direct'
-                and "buffer" not in  cur_lane.extruder_obj.tool_start):
+                and cur_lane.extruder_obj.tool_start != "buffer"):
                 self.logger.info(f"Retracting {cur_lane.name} back to load switch")
                 if self.afc.homing_enabled:
                     num_tries = 0
