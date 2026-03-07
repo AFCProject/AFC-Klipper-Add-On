@@ -680,7 +680,7 @@ class AFCExtruderStepper(AFCLane):
 
     # ------------------ Convenience homing helpers ------------------
     def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed_mode: SpeedMode,
-                triggered=True, check_trigger=True, assist_active=True) -> tuple[bool, float]:
+                triggered=True, check_trigger=True, assist_active=True) -> tuple[bool, float, bool]:
         """
         Home towards an endstop relative to current position by distance (mm).
         If 'distance' is None, callers should prefer the typed helpers which pick a
@@ -695,10 +695,12 @@ class AFCExtruderStepper(AFCLane):
         :param triggered: If True, movement stops when the endstop triggers. Defaults to True.
         :param check_trigger: If True, verify that the endstop is actually triggered at the
                               end of the move. Defaults to True.
-        :return tuple: bool indicated if homing was successful or not, float indicated movement
-                       weather homing was successful or not. When not successful distance
-                       will equal max move distance.
+        :return tuple: bool: indicated if homing was successful or not.
+                       float: indicated movement weather homing was successful or not. When not
+                         successful distance will equal max move distance.
+                       bool: indicate if an error happened while homing
         """
+        error = False
         speed, accel = self.get_speed_accel(speed_mode)
 
         if distance is None:
@@ -714,11 +716,12 @@ class AFCExtruderStepper(AFCLane):
                                                        check_trigger=check_trigger,
                                                        assist_active=assist_active)
         except Exception:
+            error = True
             msg = f"Error occurred when trying to home to {endstop_spec}, PAUSING!"
             self.afc.error.AFC_error(msg, self.afc.function.in_print())
             self.logger.debug(f"{traceback.format_exc()}")
         self.sync_print_time()
-        return homed, move_distance
+        return homed, move_distance, error
 
     cmd_AFC_STEPPER_HOME_help = "Command a manually home stepper to specified endstop"
     cmd_AFC_STEPPER_HOME_options = {"STEPPER": {"type":"string", "default":"lane1"},

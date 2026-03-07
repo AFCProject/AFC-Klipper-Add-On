@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
 try: from extras.AFC_lane import (
-    AFCLaneState, SpeedMode, AssistActive, MoveDirection
+    AFCLaneState, SpeedMode, AssistActive, MoveDirection, AFCMoveWarning
 )
 except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
 
@@ -1261,6 +1261,12 @@ class afc:
                         _, _, warn = cur_lane.unit_obj.load_then_home(cur_lane, dist_to_hub,
                                                                       AssistActive.DYNAMIC,
                                                                       home_endstop)
+                        # Check for error and return, if error state is set then AFC tried pausing
+                        # during the homing
+                        if warn == AFCMoveWarning.ERROR:
+                            self.error.AFC_error("Homing error occurred when trying to move to"\
+                                                 f" hub sensor for {cur_lane.name}")
+                            return False
                     else:
                         cur_lane.unit_obj.move_to_hub(cur_lane, dist_to_hub, MoveDirection.POS,
                                                     self.homing_enabled,
@@ -1293,11 +1299,17 @@ class afc:
                                                                     cur_hub.afc_bowden_length,
                                                                     AssistActive.DYNAMIC,
                                                                     cur_lane.get_toolhead_endstop())
-
+                    # Check for error and return, if error state is set then AFC tried pausing
+                    # during the homing
+                    if warn == AFCMoveWarning.ERROR:
+                        self.error.AFC_error("Homing error occurred when trying to move to"\
+                                             f" toolhead for {cur_lane.name}")
+                        return False
                 # Ensure filament reaches the toolhead.
                 tool_attempts = 0
                 if cur_extruder.tool_start:
-                    while not cur_lane.get_toolhead_pre_sensor_state() or warn:
+                    while (not cur_lane.get_toolhead_pre_sensor_state()
+                           or warn == AFCMoveWarning.WARN):
                         tool_attempts += 1
                         move_distance = cur_lane.short_move_dis
                         max_attempts = int(self.tool_homing_distance/cur_lane.short_move_dis)
@@ -1312,9 +1324,15 @@ class afc:
                         _, dist, warn = cur_lane.move_to(move_distance, SpeedMode.SHORT,
                                                         endstop=cur_lane.get_toolhead_endstop(),
                                                         use_homing=self.homing_enabled and self.home_to_tool)
+                        # Check for error and return, if error state is set then AFC tried pausing
+                        # during the homing
+                        if warn == AFCMoveWarning.ERROR:
+                            self.error.AFC_error("Homing error occurred when trying to slow move to"\
+                                                 f" toolhead for {cur_lane.name}")
+                            return False
                         if (dist > 50.0
                             and self.homing_enabled):
-                            warn = False
+                            warn = AFCMoveWarning.NONE
                         if tool_attempts >= max_attempts:
                             message = 'filament failed to trigger pre extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
                             message += f'\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={cur_lane.name}` macro.'
@@ -1674,14 +1692,26 @@ class afc:
             # Synchronize and move filament out of the hub.
             cur_lane.unsync_to_extruder()
             if cur_lane.hub != 'direct':
-                cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.afc_unload_bowden_length,
-                                            MoveDirection.NEG, self.homing_enabled,
-                                            speedMode=SpeedMode.LONG)
+                _, _, warn = cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.afc_unload_bowden_length,
+                                                           MoveDirection.NEG, self.homing_enabled,
+                                                           speedMode=SpeedMode.LONG)
+                # Check for error and return, if error state is set then AFC tried pausing
+                # during the homing
+                if warn == AFCMoveWarning.ERROR:
+                    self.error.AFC_error("Homing error occurred when trying to move back to"\
+                                         f" hub sensor for {cur_lane.name}")
+                    return False
             else:
-                cur_lane.move_to(cur_lane.dist_hub * -1, SpeedMode.LONG,
-                                assist_active = AssistActive.DYNAMIC,
-                                endstop=cur_lane.load_es,
-                                use_homing=self.homing_enabled)
+                _, _, warn = cur_lane.move_to(cur_lane.dist_hub * -1, SpeedMode.LONG,
+                                              assist_active = AssistActive.DYNAMIC,
+                                              endstop=cur_lane.load_es,
+                                              use_homing=self.homing_enabled)
+                # Check for error and return, if error state is set then AFC tried pausing
+                # during the homing
+                if warn == AFCMoveWarning.ERROR:
+                    self.error.AFC_error("Homing error occurred when trying to move back to"\
+                                         f" load sensor for {cur_lane.name}")
+                    return False
 
             self.afcDeltaTime.log_with_time("Long retract done")
 

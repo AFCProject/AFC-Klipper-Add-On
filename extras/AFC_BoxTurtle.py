@@ -20,7 +20,7 @@ try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
 try: from extras.AFC_lane import (
-    AFCLaneState, SpeedMode, AssistActive, MoveDirection
+    AFCLaneState, SpeedMode, AssistActive, MoveDirection, AFCMoveWarning
 )
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
@@ -180,9 +180,13 @@ class afcBoxTurtle(afcUnit):
                 if self.afc.homing_enabled:
                     dis = fault_dis
                 homed, distance, warn = cur_lane.move_to(distance=dis,
-                                                         speed_mode=SpeedMode.CALIBRATION,
-                                                         endstop=cur_lane.get_toolhead_endstop(),
-                                                         use_homing=self.afc.homing_enabled)
+                                                                speed_mode=SpeedMode.CALIBRATION,
+                                                                endstop=cur_lane.get_toolhead_endstop(),
+                                                                use_homing=self.afc.homing_enabled)
+                # Check for error and return, if error state is set then AFC tried pausing
+                # during the homing
+                if warn == AFCMoveWarning.ERROR:
+                    return False, "Error occurred when trying to move lane", 0
                 bow_pos += distance
                 self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.1)
                 if bow_pos >= fault_dis:
@@ -441,6 +445,10 @@ class afcBoxTurtle(afcUnit):
                                                   speed_mode=SpeedMode.CALIBRATION,
                                                   endstop=cur_lane.load_es,
                                                   assist_active=AssistActive.YES)
+            # Check for error and return, if error state is set then AFC tried pausing
+            # during the homing
+            if warn == AFCMoveWarning.ERROR:
+                return False, "Error occurred when trying to move lane", 0
         else:
             pos, checkpoint, success = self.calc_position(cur_lane,
                                                           lambda: cur_lane.raw_load_state, 0,

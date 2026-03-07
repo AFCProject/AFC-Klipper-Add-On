@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
-    from extras.AFC_lane import afc, AFCLane
+    from extras.AFC_lane import afc, AFCLane, AFCMoveWarning
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_buffer import AFCTrigger
     from extras.AFC_hub import afc_hub
@@ -661,7 +661,7 @@ class afcUnit:
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir:MoveDirection, use_homing=True,
                     speedMode=SpeedMode.HUB,
-                    assist_active=AssistActive.DYNAMIC) -> tuple[bool, float|int, bool]:
+                    assist_active=AssistActive.DYNAMIC) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to hub sensor, calls lanes move_to method with HUB as trigger
         point when homing is enabled.
@@ -676,16 +676,21 @@ class afcUnit:
         :param assist_active: Set appropriate to enabled/disable or use Dynamic logic to enabled/disable
                               spoolers based off move distance.
 
-        :return tuple: Returns if move was successful, distance moved, and boolean set to true if
-                movement moved is not within 300mm of total distance. When homing is
-                disabled, always returns True, 0, False.
+        :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
+
+            - Returns True if move was successful
+            - Total distance moved
+            - AFCMoveWarning.WARN set if movement moved is not within 300mm of total distance,
+                  AFCMoveWarning.ERROR when error is detected during homing, AFCMoveWarning.NONE
+                  when no error or not full movement detected. When homing is disabled, always returns
+                  True, 0, AFCMoveWarning.NONE.
         """
         return lane.move_to(dist * dir, speedMode, assist_active=assist_active,
                             endstop=AFCHomingPoints.HUB, use_homing=use_homing)
 
     def move_to_load(self, lane: AFCLane, dist: float,
                      dir: MoveDirection, use_homing=True,
-                     speedMode:SpeedMode=SpeedMode.LONG) -> tuple[bool, float|int, bool]:
+                     speedMode:SpeedMode=SpeedMode.LONG) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to load sensor, calls lane's move_to method with the load
         sensor endpoint (lane.load_es) as trigger point when homing is enabled.
@@ -701,15 +706,20 @@ class afcUnit:
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
         :param speedMode: SpeedMode type to use when moving stepper
 
-        :return tuple: Returns if move was successful, distance moved, and boolean set to true if
-                       movement moved is not within 300mm of total distance. When homing is
-                       disabled, always returns True, 0, False.
+        :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
+
+            - Returns True if move was successful
+            - Total distance moved
+            - AFCMoveWarning.WARN set if movement moved is not within 300mm of total distance,
+                  AFCMoveWarning.ERROR when error is detected during homing, AFCMoveWarning.NONE
+                  when no error or not full movement detected. When homing is disabled, always returns
+                  True, 0, AFCMoveWarning.NONE.
         """
         return lane.move_to(dist * dir, speedMode, endstop=lane.load_es,
                             assist_active=AssistActive.DYNAMIC, use_homing=use_homing)
 
     def load_then_home(self, lane: AFCLane|AFCExtruderStepper, distance: float,
-                       assist_active: AssistActive, endstop: AFCHomingPoints) -> tuple[bool, float|int, bool]:
+                       assist_active: AssistActive, endstop: AFCHomingPoints) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to toolhead. If load_then_home boolean is set, AFC will do
         a normal move without homing enabled for a distance of: distance - load_undershoot.

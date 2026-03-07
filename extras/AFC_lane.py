@@ -73,6 +73,11 @@ class AFCHomingPoints(str):
     BUFFER      = "buffer"
     BUFFER_TRAIL= "buffer_trailing"
 
+class AFCMoveWarning(Enum):
+    NONE = 0
+    WARN = 1
+    ERROR = 2
+
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
     def __init__(self, config):
@@ -676,7 +681,7 @@ class AFCLane:
 
     def move_to(self, distance: float, speed_mode: SpeedMode,
                 endstop:AFCHomingPoints=AFCHomingPoints.NONE,
-                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int, bool]:
+                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling stepper move_advance or home_to functions based
         off use_homing parameter
@@ -686,11 +691,16 @@ class AFCLane:
         :param endstop: When homing is enabled, used to specify which endstop to home to
         :param assist_active: AssistActive type to enable/disable espoolers when moving stepper
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
-        :return tuple: Returns if move was successful, distance moved, and boolean set to true if
-                movement moved is not within 300mm of total distance. When homing is
-                disabled, always returns True, 0, False.
+        :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
+
+            - Returns True if move was successful
+            - Total distance moved
+            - AFCMoveWarning.WARN set if movement moved is not within 300mm of total distance,
+                  AFCMoveWarning.ERROR when error is detected during homing, AFCMoveWarning.NONE
+                  when no error or not full movement detected. When homing is disabled, always returns
+                  True, 0, AFCMoveWarning.NONE.
         """
-        warn = False
+        warn = AFCMoveWarning.NONE
         if (self.drive_stepper
             or hasattr(self, "extruder_stepper")):
             if use_homing:
@@ -703,15 +713,20 @@ class AFCLane:
                 if distance < 0:
                     new_distance = distance - self.homing_overshoot
                 self.unit_obj.select_lane(self)
-                homed, mov_dis = home_to(endstop, new_distance, speed_mode,
-                        distance > 0, assist_active=self.get_active_assist(distance, assist_active))
-                if (abs(distance) - mov_dis) > self.homing_delta:
-                    warn = True
+                homed, mov_dis, error = home_to(endstop, new_distance, speed_mode,
+                        distance > 0, assist_active=self.get_active_assist(distance, assist_active)
+                )
+                if error:
+                    warn = AFCMoveWarning.ERROR
+                elif (abs(distance) - mov_dis) > self.homing_delta:
+                    warn = AFCMoveWarning.WARN
 
                 return homed, mov_dis, warn
             else:
                 self.move_advanced(distance, speed_mode, assist_active )
                 return True, 0, warn
+        else:
+            return False, 0, AFCMoveWarning.ERROR
 
 
     def move_advanced(self, distance, speed_mode: SpeedMode, assist_active: AssistActive = AssistActive.NO):
