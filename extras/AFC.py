@@ -1232,7 +1232,6 @@ class afc:
             # Verify that printer is in absolute mode
             self.function.check_absolute_mode("TOOL_LOAD")
 
-
             cur_extruder = cur_lane.extruder_obj
             self.current_state = State.LOADING
             self.current_loading = cur_lane.name
@@ -1261,16 +1260,17 @@ class afc:
                         _, _, warn = cur_lane.unit_obj.load_then_home(cur_lane, dist_to_hub,
                                                                       AssistActive.DYNAMIC,
                                                                       home_endstop)
-                        # Check for error and return, if error state is set then AFC tried pausing
-                        # during the homing
-                        if warn == AFCMoveWarning.ERROR:
-                            self.error.AFC_error("Homing error occurred when trying to move to"\
-                                                 f" hub sensor for {cur_lane.name}")
-                            return False
                     else:
-                        cur_lane.unit_obj.move_to_hub(cur_lane, dist_to_hub, MoveDirection.POS,
-                                                    self.homing_enabled,
-                                                    speedMode=SpeedMode.LONG)
+                        _, _, warn = cur_lane.unit_obj.move_to_hub(cur_lane, dist_to_hub,
+                                                                   MoveDirection.POS,
+                                                                   self.homing_enabled,
+                                                                   speedMode=SpeedMode.LONG)
+                    # Check for error and return, if error state is set then AFC tried pausing
+                    # during the homing
+                    if warn == AFCMoveWarning.ERROR:
+                        self.error.AFC_error("Homing error occurred when trying to move to"\
+                                             f" hub sensor for {cur_lane.name}", pause=False)
+                        return False
                     self.afcDeltaTime.log_with_time(
                         f"Loaded to {'hub' if cur_lane.hub != 'direct' else 'toolhead'}"
                     )
@@ -1280,8 +1280,15 @@ class afc:
 
                 # Ensure filament moves past the hub.
                 while not cur_hub.state and cur_lane.hub != 'direct':
-                    cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.move_dis,
-                                                MoveDirection.POS, self.homing_enabled)
+                    _, _, warn = cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.move_dis,
+                                                               MoveDirection.POS,
+                                                               self.homing_enabled)
+                    # Check for error and return, if error state is set then AFC tried pausing
+                    # during the homing
+                    if warn == AFCMoveWarning.ERROR:
+                        self.error.AFC_error("Homing error occurred when trying to short move to"\
+                                             f" hub sensor for {cur_lane.name}", pause=False)
+                        return False
                     hub_attempts += 1
                     if hub_attempts > 20:
                         message = 'filament did not trigger hub sensor, CHECK FILAMENT PATH\n||=====||==>--||-----||\nTRG   LOAD   HUB   TOOL.'
@@ -1303,7 +1310,7 @@ class afc:
                     # during the homing
                     if warn == AFCMoveWarning.ERROR:
                         self.error.AFC_error("Homing error occurred when trying to move to"\
-                                             f" toolhead for {cur_lane.name}")
+                                             f" toolhead for {cur_lane.name}", pause=False)
                         return False
                 # Ensure filament reaches the toolhead.
                 tool_attempts = 0
@@ -1319,8 +1326,9 @@ class afc:
                             max_attempts = 2
                             self.logger.info("Distance stopped short of commanded distance to toolhead, "\
                                             "backing up and retrying load.")
-                            cur_lane.move_to(100 * MoveDirection.NEG, SpeedMode.SHORT,
+                            _, _, warn = cur_lane.move_to(100 * MoveDirection.NEG, SpeedMode.SHORT,
                                             use_homing=False)
+
                         _, dist, warn = cur_lane.move_to(move_distance, SpeedMode.SHORT,
                                                         endstop=cur_lane.get_toolhead_endstop(),
                                                         use_homing=self.homing_enabled and self.home_to_tool)
@@ -1328,7 +1336,7 @@ class afc:
                         # during the homing
                         if warn == AFCMoveWarning.ERROR:
                             self.error.AFC_error("Homing error occurred when trying to slow move to"\
-                                                 f" toolhead for {cur_lane.name}")
+                                                 f" toolhead for {cur_lane.name}", pause=False)
                             return False
                         if (dist > 50.0
                             and self.homing_enabled):
@@ -1728,9 +1736,14 @@ class afc:
                 if self.homing_enabled:
                     max_attempts = 2
                     move_dist = cur_hub.afc_unload_bowden_length
-                cur_lane.unit_obj.move_to_hub(cur_lane, move_dist,
-                                            MoveDirection.NEG, self.homing_enabled)
-
+                _, _, warn = cur_lane.unit_obj.move_to_hub(cur_lane, move_dist,
+                                                           MoveDirection.NEG, self.homing_enabled)
+                # Check for error and return, if error state is set then AFC tried pausing
+                # during the homing
+                if warn == AFCMoveWarning.ERROR:
+                    self.error.AFC_error("Homing error occurred when trying to move back to"\
+                                         f" hub sensor for {cur_lane.name}", pause=False)
+                    return False
                 num_tries += 1
                 if num_tries >= max_attempts:
                     # Handle failure if the filament doesn't clear the hub.

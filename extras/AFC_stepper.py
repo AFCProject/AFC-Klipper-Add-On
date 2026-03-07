@@ -696,7 +696,7 @@ class AFCExtruderStepper(AFCLane):
         :param check_trigger: If True, verify that the endstop is actually triggered at the
                               end of the move. Defaults to True.
         :return tuple: bool: indicated if homing was successful or not.
-                       float: indicated movement weather homing was successful or not. When not
+                       float: indicated movement wheather homing was successful or not. When not
                          successful distance will equal max move distance.
                        bool: indicate if an error happened while homing
         """

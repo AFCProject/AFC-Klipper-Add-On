@@ -663,6 +663,7 @@ class TestMoveTo:
     def test_no_drive_stepper_no_extruder_stepper(self):
         lane = _make_afc_lane()
         lane.drive_stepper = None
+        lane.extruder_stepper = None
         homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
                                           False, False)
         assert homed == False
@@ -788,7 +789,7 @@ class TestMoveTo:
         assert call_args[3] == HOMING
         assert kwargs["assist_active"] == False
     
-    def test_drive_stepper_no_drive_stepper_homing_pos_movement_short(self):
+    def test_extruder_stepper_no_drive_stepper_homing_pos_movement_short(self):
         HOMING_OVERSHOOT = 50
         HOMING_DELTA = 300
         MOVE_DISTANCE = 1000

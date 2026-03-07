@@ -701,8 +701,9 @@ class AFCLane:
                   True, 0, AFCMoveWarning.NONE.
         """
         warn = AFCMoveWarning.NONE
+        extruder_stepper = getattr(self, "extruder_stepper", None)
         if (self.drive_stepper
-            or hasattr(self, "extruder_stepper")):
+            or extruder_stepper):
             if use_homing:
                 if self.drive_stepper:
                     home_to = self.drive_stepper.home_to
