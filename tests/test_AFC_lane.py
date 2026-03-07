@@ -23,7 +23,9 @@ from extras.AFC_lane import (
     AFCHomingPoints,
     AFCLane,
     EXCLUDE_TYPES,
+    AFCMoveWarning
 )
+from extras.AFC_stepper import AFCExtruderStepper
 
 
 # ── SpeedMode ─────────────────────────────────────────────────────────────────
@@ -654,3 +656,162 @@ class TestLoadCallback:
         lane.printer.state_message = "Printer is ready"
         lane.load_callback(100.0, True)
         assert lane.prep_state is False
+
+# ── move_to ───────────────────────────────────────────────────────────────────
+
+class TestMoveTo:
+    def test_no_drive_stepper_no_extruder_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+        homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                          False, False)
+        assert homed == False
+        assert dist == 0
+        assert warn == AFCMoveWarning.ERROR
+    
+    def test_drive_stepper_no_extruder_stepper_no_homing(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
+        lane.move_advanced = MagicMock()
+        homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                          False, False)
+        assert homed == True
+        assert dist == 0
+        assert warn == AFCMoveWarning.NONE
+    
+    def test_drive_stepper_no_extruder_stepper_homing_pos_movement(self):
+        HOMING_OVERSHOOT = 50
+        HOMING_DELTA = 300
+        MOVE_DISTANCE = 1000
+        ASSIST_ACTIVE = AssistActive.NO
+        HOMING = True
+        lane = _make_afc_lane()
+        lane.homing_overshoot = HOMING_OVERSHOOT
+        lane.homing_delta = HOMING_DELTA
+        lane.drive_stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
+        home_to = MagicMock()
+        lane.drive_stepper.home_to = home_to
+        lane.move_advanced = MagicMock()
+        home_to.return_value = (True, MOVE_DISTANCE, False)
+        homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                         ASSIST_ACTIVE, HOMING)
+        call_args = home_to.call_args[0]
+        kwargs = home_to.call_args[1]
+        assert homed == True
+        assert dist == abs(MOVE_DISTANCE)
+        assert warn == AFCMoveWarning.NONE
+        assert call_args[0] == AFCHomingPoints.BUFFER
+        assert call_args[1] == MOVE_DISTANCE + HOMING_OVERSHOOT
+        assert call_args[2] == SpeedMode.SHORT
+        assert call_args[3] == HOMING
+        assert kwargs["assist_active"] == False
+    
+    def test_drive_stepper_no_extruder_stepper_homing_neg_movement(self):
+        HOMING_OVERSHOOT = 50
+        HOMING_DELTA = 300
+        MOVE_DISTANCE = -1000
+        ASSIST_ACTIVE = AssistActive.NO
+        HOMING = True
+        lane = _make_afc_lane()
+        lane.homing_overshoot = HOMING_OVERSHOOT
+        lane.homing_delta = HOMING_DELTA
+        lane.drive_stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
+        home_to = MagicMock()
+        lane.drive_stepper.home_to = home_to
+        lane.move_advanced = MagicMock()
+        home_to.return_value = (True, abs(MOVE_DISTANCE), False)
+        homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                         ASSIST_ACTIVE, HOMING)
+        call_args = home_to.call_args[0]
+        kwargs = home_to.call_args[1]
+        assert homed == True
+        assert dist == abs(MOVE_DISTANCE)
+        assert warn == AFCMoveWarning.NONE
+        assert call_args[0] == AFCHomingPoints.BUFFER
+        assert call_args[1] == MOVE_DISTANCE - HOMING_OVERSHOOT
+        assert call_args[2] == SpeedMode.SHORT
+        assert call_args[3] == False
+        assert kwargs["assist_active"] == False
+
+    def test_drive_stepper_no_extruder_stepper_homing_neg_movement_homing_error(self):
+        HOMING_OVERSHOOT = 50
+        HOMING_DELTA = 300
+        MOVE_DISTANCE = -1000
+        ASSIST_ACTIVE = AssistActive.NO
+        HOMING = True
+        lane = _make_afc_lane()
+        lane.homing_overshoot = HOMING_OVERSHOOT
+        lane.homing_delta = HOMING_DELTA
+        lane.drive_stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
+        home_to = MagicMock()
+        lane.drive_stepper.home_to = home_to
+        lane.move_advanced = MagicMock()
+        home_to.return_value = (False, 0, True)
+        homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                         ASSIST_ACTIVE, HOMING)
+        call_args = home_to.call_args[0]
+        kwargs = home_to.call_args[1]
+        assert homed == False
+        assert dist == 0
+        assert warn == AFCMoveWarning.ERROR
+        assert call_args[0] == AFCHomingPoints.BUFFER
+        assert call_args[1] == MOVE_DISTANCE - HOMING_OVERSHOOT
+        assert call_args[2] == SpeedMode.SHORT
+        assert call_args[3] == False
+        assert kwargs["assist_active"] == False
+
+    def test_drive_stepper_no_extruder_stepper_homing_pos_movement_short(self):
+        HOMING_OVERSHOOT = 50
+        HOMING_DELTA = 300
+        MOVE_DISTANCE = 1000
+        ASSIST_ACTIVE = AssistActive.NO
+        HOMING = True
+        MOVE_SHORT = 300
+        lane = _make_afc_lane()
+        lane.homing_overshoot = HOMING_OVERSHOOT
+        lane.homing_delta = HOMING_DELTA
+        lane.drive_stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
+        home_to = MagicMock()
+        lane.drive_stepper.home_to = home_to
+        lane.move_advanced = MagicMock()
+        home_to.return_value = (False, MOVE_SHORT, False)
+        homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                         ASSIST_ACTIVE, HOMING)
+        call_args = home_to.call_args[0]
+        kwargs = home_to.call_args[1]
+        assert homed == False
+        assert dist == MOVE_SHORT
+        assert warn == AFCMoveWarning.WARN
+        assert call_args[0] == AFCHomingPoints.BUFFER
+        assert call_args[1] == MOVE_DISTANCE + HOMING_OVERSHOOT
+        assert call_args[2] == SpeedMode.SHORT
+        assert call_args[3] == HOMING
+        assert kwargs["assist_active"] == False
+    
+    def test_drive_stepper_no_drive_stepper_homing_pos_movement_short(self):
+        HOMING_OVERSHOOT = 50
+        HOMING_DELTA = 300
+        MOVE_DISTANCE = 1000
+        ASSIST_ACTIVE = AssistActive.NO
+        HOMING = True
+        MOVE_SHORT = 300
+        lane = _make_afc_lane()
+        lane.homing_overshoot = HOMING_OVERSHOOT
+        lane.homing_delta = HOMING_DELTA
+        lane.extruder_stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
+        home_to = MagicMock()
+        lane.home_to = home_to
+        lane.move_advanced = MagicMock()
+        home_to.return_value = (False, MOVE_SHORT, False)
+        homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                         ASSIST_ACTIVE, HOMING)
+        call_args = home_to.call_args[0]
+        kwargs = home_to.call_args[1]
+        assert homed == False
+        assert dist == MOVE_SHORT
+        assert warn == AFCMoveWarning.WARN
+        assert call_args[0] == AFCHomingPoints.BUFFER
+        assert call_args[1] == MOVE_DISTANCE + HOMING_OVERSHOOT
+        assert call_args[2] == SpeedMode.SHORT
+        assert call_args[3] == HOMING
+        assert kwargs["assist_active"] == False

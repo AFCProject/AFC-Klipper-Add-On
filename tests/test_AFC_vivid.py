@@ -327,24 +327,24 @@ class TestUnselectLane:
 
 class TestMoveToHub:
     def test_delegates_to_lane_move_to(self):
-        from extras.AFC_lane import SpeedMode, MoveDirection, AssistActive
+        from extras.AFC_lane import SpeedMode, MoveDirection, AssistActive, AFCMoveWarning
         unit = _make_vivid()
         lane = MagicMock()
-        lane.move_to.return_value = (True, 100.0, False)
+        lane.move_to.return_value = (True, 100.0, AFCMoveWarning.NONE)
         lane.load_es = "load_endstop"
         result = unit.move_to_hub(lane, 100.0, MoveDirection.POS)
         lane.move_to.assert_called_once()
-        assert result == (True, 100.0, False)
+        assert result == (True, 100.0, AFCMoveWarning.NONE)
 
     def test_returns_homed_distance_warn_tuple(self):
-        from extras.AFC_lane import SpeedMode, MoveDirection
+        from extras.AFC_lane import SpeedMode, MoveDirection, AFCMoveWarning
         unit = _make_vivid()
         lane = MagicMock()
-        lane.move_to.return_value = (False, 50.0, True)
+        lane.move_to.return_value = (False, 50.0, AFCMoveWarning.WARN)
         lane.load_es = "load_endstop"
         homed, dist, warn = unit.move_to_hub(lane, 50.0, MoveDirection.NEG)
         assert homed is False
-        assert warn is True
+        assert warn is AFCMoveWarning.WARN
 
 
 # ── select_lane ───────────────────────────────────────────────────────────────
