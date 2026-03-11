@@ -495,7 +495,8 @@ class afcUnit:
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_ready, lane.led_index)
+        color = self._get_lane_color(lane, lane.led_ready)
+        self.afc.function.afc_led(color, lane.led_index)
 
     def lane_unloading(self, lane):
         """
@@ -528,8 +529,9 @@ class afcUnit:
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_tool_loaded, lane.led_index)
-        lane.extruder_obj.set_status_led(lane.led_tool_loaded)
+        color = self._get_lane_color(lane, lane.led_tool_loaded)
+        self.afc.function.afc_led(color, lane.led_index)
+        lane.extruder_obj.set_status_led(color)
 
     def lane_tool_unloaded(self, lane: AFCLane):
         """
@@ -538,7 +540,8 @@ class afcUnit:
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_ready, lane.led_index)
+        color = self._get_lane_color(lane, lane.led_ready)
+        self.afc.function.afc_led(color, lane.led_index)
         lane.extruder_obj.set_status_led(lane.led_tool_unloaded)
 
     def lane_tool_loaded_idle(self, lane):
@@ -549,8 +552,15 @@ class afcUnit:
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_tool_loaded_idle, lane.led_index)
-        lane.extruder_obj.set_status_led(lane.led_tool_loaded_idle)
+        color = self._get_lane_color(lane, lane.led_tool_loaded_idle)
+        self.afc.function.afc_led(color, lane.led_index)
+        lane.extruder_obj.set_status_led(color)
+
+    def _get_lane_color(self, lane, fallback):
+        """Use Spoolman filament color if available, otherwise use the default LED color."""
+        if lane.color:
+            return self.afc.function.HexToLedString(lane.color.replace("#", ""))
+        return fallback
 
     def lane_illuminate_spool(self, lane):
         """
