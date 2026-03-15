@@ -167,6 +167,7 @@ class afc:
         self.led_trailing           = config.get('led_buffer_trailing','0,1,0,0')      # LED color to set when buffer is trailing
         self.led_buffer_disabled    = config.get('led_buffer_disable', '0,0,0,0.25')   # LED color to set when buffer is disabled
         self.led_spool_illum        = config.get('led_spool_illuminate', "1,1,1,1")    # LED color to illuminate under spool
+        self.use_filament_color     = config.getboolean('use_filament_color', False)   # When True, uses filament color from color field for lane LEDs instead of configured LED colors
 
         # TOOL Cutting Settings
         self.tool                   = ''

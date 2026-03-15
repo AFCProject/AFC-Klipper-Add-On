@@ -90,6 +90,7 @@ class afcUnit:
         self.led_logo_index              = config.get('led_logo_index', None)                                # LED Logo index
         self.led_logo_color              = self.afc.function.HexConvert(config.get('led_logo_color', '0,0,0,0'))# Default logo color when nothing is loaded
         self.led_logo_loading            = self.afc.function.HexConvert(config.get('led_logo_loading', self.led_loading ))
+        self.use_filament_color          = config.getboolean('use_filament_color', self.afc.use_filament_color)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
 
         self.long_moves_speed            = config.getfloat("long_moves_speed", self.afc.long_moves_speed)   # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in AFC.cfg file
         self.long_moves_accel            = config.getfloat("long_moves_accel", self.afc.long_moves_accel)   # Acceleration in mm/s squared when doing long moves. Setting value here overrides values set in AFC.cfg file
@@ -531,7 +532,7 @@ class afcUnit:
         """
         color = self._get_lane_color(lane, lane.led_tool_loaded)
         self.afc.function.afc_led(color, lane.led_index)
-        lane.extruder_obj.set_status_led(color)
+        lane.extruder_obj.set_status_led(lane.led_tool_loaded)
 
     def lane_tool_unloaded(self, lane: AFCLane):
         """
@@ -554,12 +555,14 @@ class afcUnit:
         """
         color = self._get_lane_color(lane, lane.led_tool_loaded_idle)
         self.afc.function.afc_led(color, lane.led_index)
-        lane.extruder_obj.set_status_led(color)
+        lane.extruder_obj.set_status_led(lane.led_tool_loaded_idle)
 
     def _get_lane_color(self, lane, fallback):
-        """Use Spoolman filament color if available, otherwise use the default LED color."""
-        if lane.color:
-            return self.afc.function.HexToLedString(lane.color.replace("#", ""))
+        """Use filament color if available, otherwise use the default LED color."""
+        if lane.use_filament_color and lane.color:
+            hex_str = lane.color.replace("#", "").strip().upper()
+            if len(hex_str) in (6, 8) and all(c in "0123456789ABCDEF" for c in hex_str):
+                return self.afc.function.HexToLedString(hex_str)
         return fallback
 
     def lane_illuminate_spool(self, lane):
