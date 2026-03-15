@@ -1,0 +1,35 @@
+# AFC buffer commands integration test
+#
+# Verifies that AFC_buffer GCode commands register and execute correctly
+# in a Klipper environment with one TurtleNeck-style buffer (buf1) configured.
+# No lane needs to be loaded — commands that depend on an active lane are
+# safe no-ops when get_current_lane_obj() returns None.
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_with_buffer.cfg
+
+# --- Query buffer state ---
+# Reports current enable state, last_state, and fault-detection info.
+QUERY_BUFFER BUFFER=buf1
+
+# --- Enable / disable buffer ---
+# No active lane, so the internal set_multiplier call is a no-op.
+ENABLE_BUFFER BUFFER=buf1 LANE=lane1
+DISABLE_BUFFER BUFFER=buf1 LANE=lane1
+
+# --- Fault detection sensitivity transitions ---
+# 0 → 5: registers extruder position timer and starts fault detection.
+AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=5.0
+# 5 → 7: both non-zero — updates filament error position threshold only.
+AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=7.0
+# 7 → 0: stops the fault detection timer.
+AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=0
+
+# --- Multiplier adjustment ---
+# Buffer is disabled and no lane is loaded, so these are logged no-ops.
+SET_BUFFER_MULTIPLIER BUFFER=buf1 MULTIPLIER=HIGH FACTOR=1.15
+SET_BUFFER_MULTIPLIER BUFFER=buf1 MULTIPLIER=LOW FACTOR=0.85

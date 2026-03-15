@@ -1,0 +1,33 @@
+# AFC lane-specific commands integration test
+#
+# Verifies GCode commands that require at least one AFC lane to be configured.
+# Uses a minimal BoxTurtle unit (unit_1) with one lane (lane1) and one hub
+# (hub_1), all wired to simulated STM32H723 pins (PC0–PC5).
+#
+# Prerequisites:
+#   - test/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_vivid_unit.cfg
+
+# --- Per-lane metadata commands ---
+# SET_COLOR / SET_MATERIAL / SET_WEIGHT: update lane state then call save_vars
+# (save_vars returns early when prep_done=False) and send_lane_data
+# (which is a no-op when lane.map is None — no moonraker call).
+SET_COLOR LANE=lane1 COLOR=FF0000
+SET_MATERIAL LANE=lane1 MATERIAL=PLA
+SET_WEIGHT LANE=lane1 WEIGHT=500
+
+# Set position extremely negative so that homing endstop in kalico does not halt the test
+AFC_STEPPER_HOME STEPPER=Vivid_1_drive ENABLE=1 SPEED=100 ACCEL=100 STOP_ON_ENDSTOP=1 DIST=500 ENDSTOP=lane1_load SYNC=1
+AFC_STEPPER_HOME STEPPER=Vivid_1_selector ENABLE=1 SPEED=100 ACCEL=100 STOP_ON_ENDSTOP=1 DIST=500 ENDSTOP=lane1_selector SYNC=1
+
+# Test non-homing move
+AFC_STEPPER_HOME STEPPER=Vivid_1_drive ENABLE=1 SPEED=100 ACCEL=100 STOP_ON_ENDSTOP=0 DIST=500 ENDSTOP=load SYNC=1
+AFC_STEPPER_HOME STEPPER=Vivid_1_drive ENABLE=1 SPEED=100 ACCEL=100 STOP_ON_ENDSTOP=0 DIST=500 ENDSTOP=load SYNC=0
+
+AFC_RECOVER_LANE LANE=lane1
+AFC_UNSELECT_LANE UNIT=Vivid_1 FORCE=0
+AFC_UNSELECT_LANE UNIT=Vivid_1 FORCE=1
+AFC_UNSELECT_LANE UNIT=Vivid_1 FORCE=1 MOVE_DIST=200

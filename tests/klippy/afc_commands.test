@@ -1,0 +1,47 @@
+# AFC GCode commands integration test — no lanes/units required
+#
+# Verifies that AFC configuration/state commands work correctly in a minimal
+# environment with no BoxTurtle units or stepper lanes configured.
+#
+# Prerequisites:
+#   - test/dict/stm32h723.dict must exist (built from test/klippy/stm32h723.config)
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_base.cfg
+
+# --- Tip forming configuration commands ---
+# Read current tip forming config (no hardware required)
+GET_TIP_FORMING
+# Modify tip forming parameters
+SET_TIP_FORMING COOLING_TUBE_POSITION=40 COOLING_MOVES=6
+# Verify the change applied
+GET_TIP_FORMING
+
+# --- Quiet mode ---
+# Enable quiet mode at a custom speed
+AFC_QUIET_MODE SPEED=75 ENABLE=1
+# Disable quiet mode (restore default)
+AFC_QUIET_MODE ENABLE=0
+
+# --- Macro toggle flags ---
+# Toggle tool_cut on then off (just sets boolean flags, no hardware)
+AFC_TOGGLE_MACRO TOOL_CUT=1
+AFC_TOGGLE_MACRO TOOL_CUT=0
+
+# --- Toolchange counter ---
+SET_AFC_TOOLCHANGES TOOLCHANGES=5
+
+# --- Message queue ---
+# Clear from an empty message queue — should succeed silently
+AFC_CLEAR_MESSAGE
+
+# --- Error state reset ---
+RESET_FAILURE
+
+# --- Spool ID state ---
+SET_NEXT_SPOOL_ID SPOOL_ID=12345
+
+# --- Stats reset with no EXTRUDER/LANE specified ---
+# Command logs a message and returns cleanly without error
+AFC_RESET_STATS

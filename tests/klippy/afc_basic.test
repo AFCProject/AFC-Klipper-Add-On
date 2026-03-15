@@ -1,0 +1,14 @@
+# Basic AFC integration test
+#
+# Verifies that AFC modules load under a real Klipper environment and that
+# core GCode commands are registered and respond without error.
+#
+# Prerequisites:
+#   - test/dict/stm32h723.dict must exist (built from test/klippy/stm32h723.config)
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_base.cfg
+
+AFC_CLEAR_MESSAGE
+
