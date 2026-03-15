@@ -118,7 +118,7 @@ class AFCExtruderStepper(AFCLane):
         self.extruder_stepper.stepper.set_position((0., 0., 0.))
         axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, speed, accel)
         self.trapq_append(self.trapq, movetime, accel_t, cruise_t, accel_t,
-                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel)
+                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel, 0) # TODO: put in proper fix for zero
         return accel_t + cruise_t + accel_t
 
     def _move(self, distance: float, speed: float, accel: float, assist_active: bool=False,

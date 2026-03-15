@@ -23,9 +23,10 @@ class AFC_QueueListener(QueueListener):
         except:
             super().__init__(filename)
 
-        logging.handlers.TimedRotatingFileHandler.__init__(
-            self, filename, when="S", interval=60 * 60 * 24, backupCount=5
-        )
+        if issubclass(QueueListener, logging.handlers.TimedRotatingFileHandler):
+            logging.handlers.TimedRotatingFileHandler.__init__(
+                self, filename, when="S", interval=60 * 60 * 24, backupCount=5
+            )
 
         # Commenting out log rollover for now as it causes more of a hassle when getting users logs
         # and causes information to disappear if a user restart alot
