@@ -54,6 +54,17 @@ class afcPrep:
             if not self.dis_unload_macro:
                 self.afc.function._rename(self.afc.BASE_UNLOAD_FILAMENT, self.afc.RENAMED_UNLOAD_FILAMENT, self.afc.cmd_TOOL_UNLOAD, self.afc.cmd_TOOL_UNLOAD_help)
 
+    def _tc_restore(self) -> None:
+        """Re-query toolchanger detection pin states after a restart.
+
+        During PREP, we force a call note_detect_change() to re-query the
+        detection pins and update detected_tool. This way later calls to
+        INITIALIZE_TOOLCHANGER will set the correct tool as active.
+        """
+        tc = self.printer.lookup_object('toolchanger', default=None)
+        if tc is not None and tc.active_tool is None and tc.has_detection:
+            tc.note_detect_change(None)
+
     def _td1_prep(self, overrall_status):
         '''
         Helper function to perform TD-1 data capture during PREP
@@ -119,6 +130,9 @@ class afcPrep:
             error_string = 'Error: {}.unit file not found. Please check the path in the '.format(self.afc.VarFile)
             error_string += 'AFC.cfg file and make sure the file and path exists.'
             self.afc.error.AFC_error(error_string, False)
+
+        # run any toolchanger startup checks
+        self._tc_restore()
 
         # check if Lane is supposed to be loaded in tool head from saved file
         for extruder in self.afc.tools.keys():

@@ -168,3 +168,43 @@ class TestTd1Prep:
         prep.afc.lanes = {"lane1": lane}
         prep._td1_prep(overrall_status=False)
         lane.get_td1_data.assert_not_called()
+
+
+# ── _tc_restore ───────────────────────────────────────────────────────────────
+
+class TestTcRestore:
+    def _make_tc(self, active_tool=None, has_detection=True):
+        tc = MagicMock()
+        tc.active_tool = active_tool
+        tc.has_detection = has_detection
+        return tc
+
+    def test_no_toolchanger_does_nothing(self):
+        """lookup_object returns None → method is a no-op and does not raise."""
+        prep = _make_prep()
+        # printer._objects has no 'toolchanger' entry → lookup_object returns None
+        prep._tc_restore()  # must not raise
+
+    def test_active_tool_already_set_skips_restore(self):
+        """If active_tool is already populated, note_detect_change must not be called."""
+        prep = _make_prep()
+        tc = self._make_tc(active_tool=MagicMock())
+        prep.printer._objects["toolchanger"] = tc
+        prep._tc_restore()
+        tc.note_detect_change.assert_not_called()
+
+    def test_no_detection_pins_skips_restore(self):
+        """If has_detection is False, note_detect_change must not be called."""
+        prep = _make_prep()
+        tc = self._make_tc(has_detection=False)
+        prep.printer._objects["toolchanger"] = tc
+        prep._tc_restore()
+        tc.note_detect_change.assert_not_called()
+
+    def test_detection_present_calls_note_detect_change(self):
+        """active_tool=None and has_detection=True → note_detect_change(None) called."""
+        prep = _make_prep()
+        tc = self._make_tc()  # active_tool=None, has_detection=True
+        prep.printer._objects["toolchanger"] = tc
+        prep._tc_restore()
+        tc.note_detect_change.assert_called_once_with(None)
