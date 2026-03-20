@@ -440,7 +440,7 @@ class afcFunction:
             error_string = "Error: Cannot find [{}] in config, make sure led_index in config is correct".format(afc_object)
         return error_string, led
 
-    def _get_led_indexes(self, index_values):
+    def _get_led_indexes(self, index_values: str) -> list[str]:
         """
         Helper function for creating a list for index values that have dashes and commas
         so the led's can be set correctly.
@@ -459,12 +459,13 @@ class afcFunction:
                 led_indexes += range(low, high+1)
         return led_indexes
 
-    def _parse_led_groups(self, idx):
+    def parse_led_groups(self, idx: str) -> list[str, str]:
         """
         Parse an LED index string into groups of (led_name, index_string).
 
         Supports both single-LED format (``AFC_Indicator:1-4,9,10``) and
-        multi-LED format (``RGB1:1-4,RGB2:4-6,RGB3:5``).
+        multi-LED format (``RGB1:1-4,RGB2:4-6,RGB3:5``) naming needs to be
+        AFC_led config name.
 
         When a comma-separated segment contains a colon it starts a new LED
         group; otherwise it is appended to the current group's indexes.
@@ -489,17 +490,17 @@ class afcFunction:
                     )
         return groups
 
-    def afc_led (self, status, idx=None):
+    def afc_led (self, status: list[str]|str, idx=None):
         if idx is None:
             return
 
-        for led_name, index_str in self._parse_led_groups(idx):
+        for led_name, index_str in self.parse_led_groups(idx):
             error_string, led = self.verify_led_object(led_name)
             if led is not None:
                 range_index = self._get_led_indexes(index_str)
                 led.led_change(range_index, status)
             else:
-                self.logger.info( error_string )
+                self.logger.error( error_string )
 
     def get_filament_status(self, cur_lane):
         if cur_lane.prep_state:

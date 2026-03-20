@@ -419,9 +419,10 @@ class AFCLane:
 
         if self.led_index is not None:
             # Verify that LED config is found
-            error_string, led = self.afc.function.verify_led_object(self.led_index)
-            if led is None:
-                raise error(error_string)
+            for led_name, index_str in self.afc.function.parse_led_groups(self.led_index):
+                error_string, led = self.afc.function.verify_led_object(led_name)
+                if led is None:
+                    raise error(error_string)
         self.espooler.handle_ready()
 
         # Setting debounce delay after ready so that callback does not get triggered when initially loading
