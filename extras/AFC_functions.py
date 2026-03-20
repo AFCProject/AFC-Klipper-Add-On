@@ -427,7 +427,7 @@ class afcFunction:
         """
         Helper function to lookup AFC_led object.
 
-        :params led_name: name of AFC_led object to lookup
+        :params led_name: name of AFC_led object to lookup (e.g. "AFC_Indicator:1-4" or "AFC_Indicator")
 
         :return (string, object): error_string if AFC_led object is not found, led object if found
         """
@@ -437,7 +437,7 @@ class afcFunction:
         try:
             led = self.printer.lookup_object(afc_object)
         except:
-            error_string = "Error: Cannot find [{}] in config, make sure led_index in config is correct for AFC_stepper {}".format(afc_object, led_name.split(':')[-1])
+            error_string = "Error: Cannot find [{}] in config, make sure led_index in config is correct".format(afc_object)
         return error_string, led
 
     def _get_led_indexes(self, index_values):
@@ -478,10 +478,15 @@ class afcFunction:
                 led_name, index_str = part.split(":", 1)
                 groups.append((led_name.strip(), index_str.strip()))
             else:
-                # Continuation of the previous group's indexes
                 if groups:
+                    # Continuation of the previous group's indexes
                     prev_name, prev_idx = groups[-1]
                     groups[-1] = (prev_name, prev_idx + "," + part.strip())
+                else:
+                    self.logger.info(
+                        "Warning: led_index segment '{}' has no LED name "
+                        "and no prior group to attach to, skipping".format(part.strip())
+                    )
         return groups
 
     def afc_led (self, status, idx=None):
@@ -489,7 +494,7 @@ class afcFunction:
             return
 
         for led_name, index_str in self._parse_led_groups(idx):
-            error_string, led = self.verify_led_object(led_name + ":")
+            error_string, led = self.verify_led_object(led_name)
             if led is not None:
                 range_index = self._get_led_indexes(index_str)
                 led.led_change(range_index, status)

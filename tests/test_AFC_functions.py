@@ -169,6 +169,52 @@ class TestParseLedGroups:
         result = func._parse_led_groups("RGB1: 1-4, RGB2: 5")
         assert result == [("RGB1", "1-4"), ("RGB2", "5")]
 
+    def test_orphan_segment_logs_warning(self):
+        func = _make_func()
+        result = func._parse_led_groups("42,RGB1:1")
+        # Orphan "42" is skipped, only the valid group is returned
+        assert result == [("RGB1", "1")]
+        assert any("42" in msg for _, msg in func.logger.messages)
+
+
+# ── afc_led (integration) ───────────────────────────────────────────────────
+
+class TestAfcLed:
+    def test_none_idx_is_noop(self):
+        func = _make_func()
+        # Should not raise
+        func.afc_led("1,0,0,0", idx=None)
+
+    def test_single_led_group(self):
+        led_mock = MagicMock()
+        func = _make_func()
+        func.printer.lookup_object.return_value = led_mock
+        func.afc_led("1,0,0,0", idx="AFC_Indicator:1-4")
+        func.printer.lookup_object.assert_called_once_with("AFC_led AFC_Indicator")
+        led_mock.led_change.assert_called_once_with([1, 2, 3, 4], "1,0,0,0")
+
+    def test_multi_led_groups(self):
+        led1 = MagicMock()
+        led2 = MagicMock()
+        led3 = MagicMock()
+        lookup_map = {
+            "AFC_led RGB1": led1,
+            "AFC_led RGB2": led2,
+            "AFC_led RGB3": led3,
+        }
+        func = _make_func()
+        func.printer.lookup_object.side_effect = lambda name: lookup_map[name]
+        func.afc_led("0,1,0,0", idx="RGB1:1-4,RGB2:4-6,RGB3:5")
+        led1.led_change.assert_called_once_with([1, 2, 3, 4], "0,1,0,0")
+        led2.led_change.assert_called_once_with([4, 5, 6], "0,1,0,0")
+        led3.led_change.assert_called_once_with([5], "0,1,0,0")
+
+    def test_missing_led_logs_error(self):
+        func = _make_func()
+        func.printer.lookup_object.side_effect = Exception("not found")
+        func.afc_led("1,0,0,0", idx="BadLed:1")
+        assert any("BadLed" in msg for _, msg in func.logger.messages)
+
 
 # ── _calc_length ──────────────────────────────────────────────────────────────
 
