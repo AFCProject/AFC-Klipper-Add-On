@@ -459,17 +459,42 @@ class afcFunction:
                 led_indexes += range(low, high+1)
         return led_indexes
 
+    def _parse_led_groups(self, idx):
+        """
+        Parse an LED index string into groups of (led_name, index_string).
+
+        Supports both single-LED format (``AFC_Indicator:1-4,9,10``) and
+        multi-LED format (``RGB1:1-4,RGB2:4-6,RGB3:5``).
+
+        When a comma-separated segment contains a colon it starts a new LED
+        group; otherwise it is appended to the current group's indexes.
+
+        :param idx: raw led_index config string
+        :return: list of (led_name, index_string) tuples
+        """
+        groups = []
+        for part in idx.split(","):
+            if ":" in part:
+                led_name, index_str = part.split(":", 1)
+                groups.append((led_name.strip(), index_str.strip()))
+            else:
+                # Continuation of the previous group's indexes
+                if groups:
+                    prev_name, prev_idx = groups[-1]
+                    groups[-1] = (prev_name, prev_idx + "," + part.strip())
+        return groups
+
     def afc_led (self, status, idx=None):
         if idx is None:
             return
 
-        error_string, led = self.verify_led_object(idx)
-        if led is not None:
-            led_indexes = idx.split(":")[1]
-            range_index = self._get_led_indexes(led_indexes)
-            led.led_change(range_index, status)
-        else:
-            self.logger.info( error_string )
+        for led_name, index_str in self._parse_led_groups(idx):
+            error_string, led = self.verify_led_object(led_name + ":")
+            if led is not None:
+                range_index = self._get_led_indexes(index_str)
+                led.led_change(range_index, status)
+            else:
+                self.logger.info( error_string )
 
     def get_filament_status(self, cur_lane):
         if cur_lane.prep_state:

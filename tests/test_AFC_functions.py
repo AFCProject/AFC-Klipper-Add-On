@@ -139,6 +139,37 @@ class TestGetLedIndexes:
         assert func._get_led_indexes("3-3") == [3]
 
 
+# ── _parse_led_groups ────────────────────────────────────────────────────────
+
+class TestParseLedGroups:
+    def test_single_led_single_index(self):
+        func = _make_func()
+        assert func._parse_led_groups("AFC_Indicator:1") == [("AFC_Indicator", "1")]
+
+    def test_single_led_range(self):
+        func = _make_func()
+        assert func._parse_led_groups("AFC_Indicator:1-4") == [("AFC_Indicator", "1-4")]
+
+    def test_single_led_range_and_singles(self):
+        func = _make_func()
+        assert func._parse_led_groups("AFC_Indicator:1-4,9,10") == [("AFC_Indicator", "1-4,9,10")]
+
+    def test_multi_led_groups(self):
+        func = _make_func()
+        result = func._parse_led_groups("RGB1:1-4,RGB2:4-6,RGB3:5")
+        assert result == [("RGB1", "1-4"), ("RGB2", "4-6"), ("RGB3", "5")]
+
+    def test_multi_led_with_mixed_indexes(self):
+        func = _make_func()
+        result = func._parse_led_groups("RGB1:1-4,9,RGB2:4-6")
+        assert result == [("RGB1", "1-4,9"), ("RGB2", "4-6")]
+
+    def test_whitespace_handling(self):
+        func = _make_func()
+        result = func._parse_led_groups("RGB1: 1-4, RGB2: 5")
+        assert result == [("RGB1", "1-4"), ("RGB2", "5")]
+
+
 # ── _calc_length ──────────────────────────────────────────────────────────────
 
 class TestCalcLength:
