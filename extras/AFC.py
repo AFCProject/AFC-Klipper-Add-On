@@ -1232,8 +1232,8 @@ class afc:
             return
 
         cur_lane = self.lanes[lane]
-        if cur_lane.extruder_obj.lane_loaded:
-            self.error.AFC_error("Cannot load {}, {} currently loaded".format(lane, cur_lane.extruder_obj.lane_loaded), pause=self.function.in_print())
+        if cur_lane.extruder_obj.lane_loaded == cur_lane.name:
+            self.error.AFC_error("Not loading {}, already loaded".format(lane), pause=self.function.in_print())
             return
 
         purge_length = gcmd.get('PURGE_LENGTH', None)
@@ -1277,11 +1277,26 @@ class afc:
         # Verify that printer is in absolute mode
         self.function.check_absolute_mode("TOOL_LOAD")
 
-        # TODO: add check to make sure current extruder is not loaded with a lane, mainly for scenarios with multuple toolheads
-
         # If the current extruder is not the one associated with the lane, switch to it.
         if self.function.get_current_extruder() != cur_lane.extruder_obj.name:
             cur_lane.tool_swap()
+
+        # After a tool swap the newly active extruder may already have a different lane
+        # loaded (e.g. after a restart). Unload it before attempting to load the new lane.
+        cur_extruder_obj = cur_lane.extruder_obj
+        if cur_extruder_obj.lane_loaded is not None and cur_extruder_obj.lane_loaded != cur_lane.name:
+            lane_name = cur_extruder_obj.lane_loaded
+            if lane_name not in self.lanes:
+                self.error.AFC_error(
+                    'Extruder "{}" has lane {} that is not in configured lanes.'.format(
+                        cur_extruder_obj.name, lane_name),
+                    pause=self.function.in_print())
+                return False
+            if not self.TOOL_UNLOAD(self.lanes[lane_name], set_start_time=False):
+                msg = ('Failed to unload currently loaded lane {} from extruder {} before loading new lane {}.'.format(
+                    lane_name, cur_extruder_obj.name, cur_lane.name))
+                self.error.fix(msg, self.lanes[lane_name])
+                return False
 
         if cur_lane.name != self.current:
             # Lookup extruder and hub objects associated with the lane.
