@@ -167,7 +167,7 @@ class AFCLane:
         self.led_tool_unloaded    = config.get('led_tool_unloaded', None)               # LED color to set when lanes extruder is unloaded
         self.led_spool_index      = config.get('led_spool_index', None)                 # LED index to illuminate under spool
         self.led_spool_illum      = config.get('led_spool_illuminate', None)            # LED color to illuminate under spool
-        self.led_use_filament_color = config.getboolean('led_use_filament_color', None)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
+        self.led_use_filament_color: bool = config.getboolean('led_use_filament_color', None)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
 
         self.long_moves_speed: float   = config.getfloat("long_moves_speed", None)             # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.long_moves_accel: float   = config.getfloat("long_moves_accel", None)             # Acceleration in mm/s squared when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section

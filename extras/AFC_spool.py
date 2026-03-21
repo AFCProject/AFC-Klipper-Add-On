@@ -127,7 +127,7 @@ class AFCSpool:
         cur_lane.send_lane_data()
         # Refresh LED only if filament is loaded — empty lanes keep their state color
         if cur_lane.load_state and cur_lane.unit in self.afc.units:
-            unit = self.afc.units[cur_lane.unit]
+            unit = cur_lane.unit_obj
             self.afc.function.afc_led(unit._get_lane_color(cur_lane, cur_lane.led_ready), cur_lane.led_index)
         self.afc.save_vars()
 
@@ -356,7 +356,7 @@ class AFCSpool:
                     cur_lane.send_lane_data()
                     # Refresh LED only if filament is loaded — empty lanes keep their state color
                     if cur_lane.load_state and cur_lane.unit in self.afc.units:
-                        unit = self.afc.units[cur_lane.unit]
+                        unit = cur_lane.unit_obj
                         self.afc.function.afc_led(unit._get_lane_color(cur_lane, cur_lane.led_ready), cur_lane.led_index)
 
                 except Exception as e:

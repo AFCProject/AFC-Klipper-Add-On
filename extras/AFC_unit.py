@@ -89,7 +89,7 @@ class afcUnit:
         self.led_logo_color              = self.afc.function.HexConvert(config.get('led_logo_color', '0,0,0,0'))# Default logo color when nothing is loaded
         self.led_logo_loading            = self.afc.function.HexConvert(config.get('led_logo_loading', self.led_loading ))
 
-        self.led_use_filament_color      = config.getboolean('led_use_filament_color', self.afc.led_use_filament_color)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
+        self.led_use_filament_color:bool  = config.getboolean('led_use_filament_color', self.afc.led_use_filament_color)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
 
         self.long_moves_speed            = config.getfloat("long_moves_speed", self.afc.long_moves_speed)   # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in AFC.cfg file
         self.long_moves_accel            = config.getfloat("long_moves_accel", self.afc.long_moves_accel)   # Acceleration in mm/s squared when doing long moves. Setting value here overrides values set in AFC.cfg file
@@ -492,7 +492,7 @@ class afcUnit:
         """
         self.afc.function.afc_led(lane.led_not_ready, lane.led_index)
 
-    def _get_lane_color(self, lane, fallback):
+    def _get_lane_color(self, lane: AFCLane, fallback: str) -> str:
         """
         Use filament color if available, otherwise use the default LED color.
         When a spool has a color set (via SET_COLOR or SET_SPOOL_ID) and
