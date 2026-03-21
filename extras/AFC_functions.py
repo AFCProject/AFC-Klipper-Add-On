@@ -555,12 +555,7 @@ class afcFunction:
 
         # Switch spoolman ID
         self.afc.spool.set_active_spool(cur_lane_loaded.spool_id)
-        # Set lanes tool loaded led
-        # TODO: Add check to see if users want to change status led to spool color if set
-        # if cur_lane_loaded.color is not None and cur_lane_loaded.color:
-        #     led_color = self.HexToLedString(cur_lane_loaded.color.replace("#", ""))
-        #     self.afc_led( led_color, cur_lane_loaded.led_index )
-        # else:
+        # Set lanes tool loaded led (uses filament color when available via _get_lane_color)
         cur_lane_loaded.unit_obj.lane_tool_loaded( cur_lane_loaded )
         # Enable stepper
         cur_lane_loaded.do_enable(True)
