@@ -123,7 +123,7 @@ class AFCLane:
         self.spool_id           = None
         self.color              = None
         self.weight             = 0
-        self._auto_switch_triggered = False
+        self.auto_switch_triggered = False
         self._material          = None
         self.extruder_temp      = None
         self.bed_temp           = None
@@ -1310,13 +1310,13 @@ class AFCLane:
 
             # Check if weight-based auto spool switch should trigger
             if (self.afc.auto_spool_switch
-                and not self._auto_switch_triggered
+                and not self.auto_switch_triggered
                 and self.weight > 0
                 and self.weight <= self.afc.auto_spool_switch_threshold
                 and self.name == self.afc.current
                 and self.afc.function.is_printing()
                 and not self.afc.error_state):
-                self._auto_switch_triggered = True
+                self.auto_switch_triggered = True
                 self.logger.info(
                     "Auto spool switch: {} weight ({:.1f}g) at or below "
                     "threshold ({:.1f}g), triggering switch".format(

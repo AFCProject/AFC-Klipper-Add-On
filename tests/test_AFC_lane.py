@@ -846,7 +846,7 @@ def _make_lane_for_auto_switch(weight=20.0, threshold=25.0, enabled=True,
     lane.reactor.register_callback = MagicMock()
     lane.logger = MockLogger()
     lane.weight = weight
-    lane._auto_switch_triggered = False
+    lane.auto_switch_triggered = False
     lane.filament_diameter = 1.75
     lane.filament_density = 1.24
     lane.past_extruder_position = 50.0
@@ -865,25 +865,25 @@ class TestAutoSpoolSwitchWeightCheck:
         lane = _make_lane_for_auto_switch(weight=20.0, enabled=False)
         lane.update_weight_callback(None)
         lane.reactor.register_callback.assert_not_called()
-        assert lane._auto_switch_triggered is False
+        assert lane.auto_switch_triggered is False
 
-    def test_auto_switch_triggered_at_threshold(self):
+    def testauto_switch_triggered_at_threshold(self):
         lane = _make_lane_for_auto_switch(weight=25.5, threshold=25.0)
         lane.afc.function.get_extruder_pos.return_value = 100.0
         lane.past_extruder_position = -400.0  # 500mm delta to push weight below threshold
         lane.update_weight_callback(None)
-        assert lane._auto_switch_triggered is True
+        assert lane.auto_switch_triggered is True
         lane.reactor.register_callback.assert_called_once()
 
     def test_auto_switch_not_triggered_above_threshold(self):
         lane = _make_lane_for_auto_switch(weight=500.0, threshold=25.0)
         lane.update_weight_callback(None)
         lane.reactor.register_callback.assert_not_called()
-        assert lane._auto_switch_triggered is False
+        assert lane.auto_switch_triggered is False
 
     def test_auto_switch_debounce_prevents_second_trigger(self):
         lane = _make_lane_for_auto_switch(weight=10.0, threshold=25.0)
-        lane._auto_switch_triggered = True
+        lane.auto_switch_triggered = True
         lane.update_weight_callback(None)
         lane.reactor.register_callback.assert_not_called()
 
@@ -911,7 +911,7 @@ class TestAutoSpoolSwitchWeightCheck:
         lane = _make_lane_for_auto_switch(weight=10.0, threshold=25.0)
         lane.afc.function.get_extruder_pos.return_value = 51.0
         lane.update_weight_callback(None)
-        assert lane._auto_switch_triggered is True
+        assert lane.auto_switch_triggered is True
         log_messages = [msg for level, msg in lane.logger.messages if level == "info"]
         assert any("Auto spool switch" in msg and "threshold" in msg for msg in log_messages)
 

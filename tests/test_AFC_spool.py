@@ -770,18 +770,18 @@ class TestAutoSwitchFlagReset:
     def test_set_values_resets_auto_switch_flag(self):
         spool = _make_spool()
         lane = _make_lane("lane1")
-        lane._auto_switch_triggered = True
+        lane.auto_switch_triggered = True
         lane.remember_spool = False
         spool._set_values(lane)
-        assert lane._auto_switch_triggered is False
+        assert lane.auto_switch_triggered is False
 
     def test_clear_values_resets_auto_switch_flag(self):
         spool = _make_spool()
         lane = _make_lane("lane1")
-        lane._auto_switch_triggered = True
+        lane.auto_switch_triggered = True
         lane.clear_lane_data = MagicMock()
         spool.clear_values(lane)
-        assert lane._auto_switch_triggered is False
+        assert lane.auto_switch_triggered is False
 
     def test_set_spoolID_resets_auto_switch_flag(self):
         spool = _make_spool()
@@ -801,8 +801,8 @@ class TestAutoSwitchFlagReset:
             'initial_weight': 1000,
         }
         lane = _make_lane("lane1")
-        lane._auto_switch_triggered = True
+        lane.auto_switch_triggered = True
         lane.espooler = MagicMock()
         lane.espooler.espooler_values = MagicMock()
         spool.set_spoolID(lane, "123")
-        assert lane._auto_switch_triggered is False
+        assert lane.auto_switch_triggered is False
