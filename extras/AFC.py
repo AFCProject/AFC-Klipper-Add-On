@@ -150,6 +150,11 @@ class afc:
 
         self.disable_weight_check   = config.getboolean("disable_weight_check", False) # Set to True to disable weight check when loading filament into lane/toolhead
         self.disable_ooze_check     = config.getboolean("disable_ooze_check", False) # Disable ooze check for lanes being on the same extruder in M104/M109 commands
+
+        # Auto spool switch settings
+        self.auto_spool_switch              = config.getboolean("auto_spool_switch", False)              # Trigger spool switch based on remaining filament weight
+        self.auto_spool_switch_threshold    = config.getfloat("auto_spool_switch_threshold", 25.0, minval=0.)  # Weight threshold in grams
+        self.auto_spool_switch_infinite_only = config.getboolean("auto_spool_switch_infinite_only", True) # Only auto-switch when runout_lane is configured
         #LED SETTINGS
         # All variables use: (R,G,B,W) 0 = off, 1 = full brightness.
         self.ind_lights = None

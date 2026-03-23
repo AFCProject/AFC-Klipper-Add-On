@@ -287,6 +287,7 @@ class AFCSpool:
         if not cur_lane.remember_spool:
             cur_lane.material = self.afc.default_material_type
             cur_lane.weight = 1000 # Defaulting weight to 1000 upon load
+            cur_lane._auto_switch_triggered = False
 
         if self.afc.spoolman is not None and self.next_spool_id is not None:
             spool_id = self.next_spool_id
@@ -301,6 +302,7 @@ class AFCSpool:
         cur_lane.material = ''
         cur_lane.color = ''
         cur_lane.weight = 0
+        cur_lane._auto_switch_triggered = False
         cur_lane.extruder_temp = None
         cur_lane.bed_temp = None
         cur_lane.clear_lane_data()
@@ -311,6 +313,7 @@ class AFCSpool:
                 try:
                     result = self.afc.moonraker.get_spool(SpoolID)
                     cur_lane.spool_id = SpoolID
+                    cur_lane._auto_switch_triggered = False
 
                     cur_lane.material           = self._get_filament_values(result['filament'], 'material')
                     if not self.afc.ignore_spoolman_material_temps:

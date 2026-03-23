@@ -123,6 +123,7 @@ class AFCLane:
         self.spool_id           = None
         self.color              = None
         self.weight             = 0
+        self._auto_switch_triggered = False
         self._material          = None
         self.extruder_temp      = None
         self.bed_temp           = None
@@ -938,6 +939,23 @@ class AFCLane:
             # Set LED to not ready
             self.unit_obj.lane_not_ready(self)
 
+    def _handle_auto_spool_switch(self):
+        """
+        Handle automatic spool switch triggered by weight threshold.
+        Called via reactor.register_callback from update_weight_callback.
+        """
+        if self.afc.error_state or not self.afc.function.is_printing():
+            return
+
+        if self.runout_lane is not None:
+            self._perform_infinite_runout()
+        elif not self.afc.auto_spool_switch_infinite_only:
+            self._perform_pause_runout()
+        else:
+            self.logger.info(
+                "Auto spool switch: {} has no runout_lane set and "
+                "auto_spool_switch_infinite_only is True, skipping".format(self.name))
+
     def _perform_pause_runout(self):
         """
         Common function to pause print when runout occurs, fully unloads and ejects spool if specified by user
@@ -1293,6 +1311,22 @@ class AFCLane:
         if extruder_pos > self.past_extruder_position:
             self.update_remaining_weight(delta_length)
             self.past_extruder_position = extruder_pos
+
+            # Check if weight-based auto spool switch should trigger
+            if (self.afc.auto_spool_switch
+                and not self._auto_switch_triggered
+                and self.weight > 0
+                and self.weight <= self.afc.auto_spool_switch_threshold
+                and self.name == self.afc.current
+                and self.afc.function.is_printing()
+                and not self.afc.error_state):
+                self._auto_switch_triggered = True
+                self.logger.info(
+                    "Auto spool switch: {} weight ({:.1f}g) at or below "
+                    "threshold ({:.1f}g), triggering switch".format(
+                        self.name, self.weight, self.afc.auto_spool_switch_threshold))
+                self.reactor.register_callback(
+                    lambda et: self._handle_auto_spool_switch())
 
             # self.logger.debug(f"{self.name} Weight Timer Callback: New weight {self.weight}")
 

@@ -762,3 +762,47 @@ class TestCmdSetSpoolID:
         spool.set_active_spool = MagicMock()
         spool.cmd_SET_SPOOL_ID(gcmd)
         spool.set_active_spool.assert_called_once_with(lane1.spool_id)
+
+
+# ── Auto switch debounce flag reset ──────────────────────────────────────────
+
+class TestAutoSwitchFlagReset:
+    def test_set_values_resets_auto_switch_flag(self):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        lane._auto_switch_triggered = True
+        lane.remember_spool = False
+        spool._set_values(lane)
+        assert lane._auto_switch_triggered is False
+
+    def test_clear_values_resets_auto_switch_flag(self):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        lane._auto_switch_triggered = True
+        lane.clear_lane_data = MagicMock()
+        spool.clear_values(lane)
+        assert lane._auto_switch_triggered is False
+
+    def test_set_spoolID_resets_auto_switch_flag(self):
+        spool = _make_spool()
+        spool.afc.spoolman = "http://spoolman:7912"
+        spool.afc.moonraker = MagicMock()
+        spool.afc.moonraker.get_spool.return_value = {
+            'filament': {
+                'material': 'PLA',
+                'settings_extruder_temp': 210,
+                'settings_bed_temp': 60,
+                'density': 1.24,
+                'diameter': 1.75,
+                'color_hex': 'FF0000',
+            },
+            'remaining_weight': 800,
+            'spool_weight': 190,
+            'initial_weight': 1000,
+        }
+        lane = _make_lane("lane1")
+        lane._auto_switch_triggered = True
+        lane.espooler = MagicMock()
+        lane.espooler.espooler_values = MagicMock()
+        spool.set_spoolID(lane, "123")
+        assert lane._auto_switch_triggered is False
