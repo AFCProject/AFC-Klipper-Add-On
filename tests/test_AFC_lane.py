@@ -830,16 +830,14 @@ class TestMoveTo:
 # ── Auto Spool Switch ────────────────────────────────────────────────────────
 
 def _make_lane_for_auto_switch(weight=20.0, threshold=25.0, enabled=True,
-                                infinite_only=True, current=True,
-                                printing=True, error_state=False,
-                                runout_lane="lane2"):
+                                current=True, printing=True,
+                                error_state=False, runout_lane="lane2"):
     """Build an AFCLane configured for auto spool switch testing."""
     from tests.conftest import MockAFC, MockLogger, MockReactor
     lane = _make_afc_lane("AFC_stepper lane1")
     lane.afc = MockAFC()
     lane.afc.auto_spool_switch = enabled
     lane.afc.auto_spool_switch_threshold = threshold
-    lane.afc.auto_spool_switch_infinite_only = infinite_only
     lane.afc.current = "lane1" if current else "other_lane"
     lane.afc.error_state = error_state
     lane.afc.function.is_printing.return_value = printing
@@ -927,19 +925,11 @@ class TestHandleAutoSpoolSwitch:
         lane._perform_infinite_runout.assert_called_once()
         lane._perform_pause_runout.assert_not_called()
 
-    def test_calls_pause_runout_when_not_infinite_only(self):
-        lane = _make_lane_for_auto_switch(runout_lane=None, infinite_only=False)
+    def test_calls_pause_runout_when_no_runout_lane(self):
+        lane = _make_lane_for_auto_switch(runout_lane=None)
         lane._handle_auto_spool_switch()
         lane._perform_pause_runout.assert_called_once()
         lane._perform_infinite_runout.assert_not_called()
-
-    def test_skips_when_infinite_only_and_no_runout_lane(self):
-        lane = _make_lane_for_auto_switch(runout_lane=None, infinite_only=True)
-        lane._handle_auto_spool_switch()
-        lane._perform_infinite_runout.assert_not_called()
-        lane._perform_pause_runout.assert_not_called()
-        log_messages = [msg for level, msg in lane.logger.messages if level == "info"]
-        assert any("no runout_lane set" in msg for msg in log_messages)
 
     def test_skips_when_error_state(self):
         lane = _make_lane_for_auto_switch(error_state=True, runout_lane="lane2")

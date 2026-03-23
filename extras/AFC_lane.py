@@ -659,18 +659,11 @@ class AFCLane:
         Helper function to get steppers for lane and setup for proper homing
         """
         try:
-            # Debug: log all sections being considered
-            for s in config.fileconfig.sections():
-                match = (self.unit in s
-                         and s.startswith("AFC_")
-                         and not any(x in s for x in INVALID_UNIT_NAMES))
-                self.logger.info(f"Section: {s}, unit: {self.unit}, match: {match}")
             unit_cfg = next(
                 config.getsection(s) for s in config.fileconfig.sections()
                 if self.unit in s
                 and s.startswith("AFC_")
                 and not any(x in s for x in INVALID_UNIT_NAMES))
-            self.logger.info(f"Matched unit config: {unit_cfg.get_name()}")
             self.unit_obj: afcUnit = self.printer.load_object(config, unit_cfg.get_name())
 
             drive_stepper = self
@@ -956,12 +949,8 @@ class AFCLane:
 
         if self.runout_lane is not None:
             self._perform_infinite_runout()
-        elif not self.afc.auto_spool_switch_infinite_only:
-            self._perform_pause_runout()
         else:
-            self.logger.info(
-                "Auto spool switch: {} has no runout_lane set and "
-                "auto_spool_switch_infinite_only is True, skipping".format(self.name))
+            self._perform_pause_runout()
 
     def _perform_pause_runout(self):
         """
