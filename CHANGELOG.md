@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-03-23]
 ### Added
 - Adds support for weight based spool runout to help support spools with hooked ends. See documentation for more details.
-=======
 ## [2026-03-21]
 ### Fixed
 - Fixed initial load failure when an extruder is loaded with a different lane than the first in the print.
