@@ -13,7 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-03-21]
 ### Fixed
 - Fixed initial load failure when an extruder is loaded with a different lane than the first in the print.
->>>>>>> multi_extruder
 
 ## [2026-03-20]
 ### Added
