@@ -10,6 +10,7 @@ Covers:
   - afc._cooldown_last_extruder: old-extruder temp-drop logic
   - afc._heat_next_extruder: explicit next_temp path
   - afc.CHANGE_TOOL: adjusting_temperature with new_extruder_temp
+  - afc.TOOL_LOAD: unload when destination extruder already has a different lane loaded
   - afc.cmd_CHANGE_TOOL: NEW_EXTRUDER_TEMP parameter parsing
 """
 
@@ -766,4 +767,204 @@ class TestCmdChangeTool_NewExtruderTempParsing:
         obj.CHANGE_TOOL.assert_not_called()
 
 
+# ── TOOL_LOAD: destination extruder already has a different lane loaded ───────
 
+def _make_afc_for_dest_extruder_loaded():
+    """
+    Build an afc instance simulating a post-restart state where:
+      - The active extruder is 'extruder1' (already current, no swap needed)
+      - 'extruder1' still has lane4 marked as loaded
+      - The print wants to load lane2 (also on extruder1)
+
+    afc.current is a property backed by get_current_lane(); stubbing
+    get_current_lane() to return 'lane2' makes self.current equal the
+    target so that after the pre-load unload check TOOL_LOAD
+    short-circuits without needing to mock the full load sequence.
+    """
+    from tests.test_AFC_lane import _make_afc_lane
+
+    obj = _make_afc()
+    obj.afcDeltaTime = MagicMock()
+    obj.afc_stats = MagicMock()
+    obj.testing = True
+    obj.TOOL_UNLOAD = MagicMock(return_value=True)
+    obj._check_bypass = MagicMock(return_value=False)
+    obj.error = MagicMock()
+    obj.verify_macro_positions = MagicMock(return_value="")
+
+    # Destination extruder — has lane4 already loaded
+    dest_extruder = MagicMock()
+    dest_extruder.name = "extruder1"
+    dest_extruder.lane_loaded = "lane4"
+    dest_extruder.estats = MagicMock()
+
+    # The lane that is already loaded on the extruder
+    loaded_lane = _make_afc_lane("AFC_stepper lane4")
+    loaded_lane.extruder_obj = dest_extruder
+    obj.lanes["lane4"] = loaded_lane
+
+    # The target lane on the same extruder
+    target_lane = _make_afc_lane("AFC_stepper lane2")
+    target_lane.extruder_obj = dest_extruder
+    obj.lanes["lane2"] = target_lane
+
+    # Current extruder is already extruder1 — no tool swap
+    obj.function.get_current_extruder.return_value = "extruder1"
+    # self.current == target lane so the full load body is skipped
+    obj.function.get_current_lane.return_value = "lane2"
+    obj.function.check_homed.return_value = True
+    obj.function.in_print.return_value = False
+    obj.function.is_paused.return_value = False
+    obj.function.log_toolhead_pos = MagicMock()
+
+    return obj, target_lane, loaded_lane, dest_extruder
+
+
+class TestToolLoad_DestExtruderAlreadyLoaded:
+    """
+    Tests for the pre-load unload check in TOOL_LOAD.
+
+    Reproduces the post-restart scenario where the destination extruder still
+    has a lane marked as loaded while a different lane is being requested.
+    """
+
+    def test_aborts_with_clear_error_when_stale_lane_not_in_lanes(self):
+        """If the stale loaded lane name is not in self.lanes, report an explicit error and abort."""
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        # Remove lane4 from lanes so it is unmapped
+        del obj.lanes["lane4"]
+        result = obj.TOOL_LOAD(target_lane)
+        assert result is False
+        obj.error.AFC_error.assert_called_once()
+        error_msg = obj.error.AFC_error.call_args.args[0]
+        assert "extruder1" in error_msg
+        assert "lane4" in error_msg
+        obj.TOOL_UNLOAD.assert_not_called()
+
+    def test_unloads_when_extruder_already_has_different_lane_loaded(self):
+        """TOOL_UNLOAD is called for the already-loaded lane before proceeding."""
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        obj.TOOL_LOAD(target_lane)
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False)
+
+    def test_aborts_if_unload_fails(self):
+        """If TOOL_UNLOAD returns False, TOOL_LOAD returns False immediately."""
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        obj.TOOL_UNLOAD.return_value = False
+        result = obj.TOOL_LOAD(target_lane)
+        assert result is False
+
+    def test_no_unload_when_extruder_already_has_target_lane_loaded(self):
+        """If the extruder already has the target lane loaded, no unload is triggered."""
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        dest_extruder.lane_loaded = "lane2"   # already the target
+        obj.TOOL_LOAD(target_lane)
+        obj.TOOL_UNLOAD.assert_not_called()
+
+    def test_no_unload_when_extruder_has_nothing_loaded(self):
+        """If the extruder has lane_loaded=None, no unload is triggered."""
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        dest_extruder.lane_loaded = None
+        obj.TOOL_LOAD(target_lane)
+        obj.TOOL_UNLOAD.assert_not_called()
+
+    def test_unloads_stale_lane_after_tool_swap(self):
+        """
+        The realistic restart scenario: active extruder is different from the
+        destination, so tool_swap() fires first, and only THEN the stale-lane
+        check runs.
+
+        Specifically:
+          - The printer restarts with extruder1 having lane4 still saved as loaded.
+          - The active toolhead comes up as 'extruder' (primary, nothing loaded).
+          - TOOL_LOAD is called for lane2 (on extruder1).
+          - get_current_extruder() != extruder1 → tool_swap() fires.
+          - extruder1.lane_loaded = 'lane4' != 'lane2' → stale unload triggers.
+
+        This path is distinct from the other stale-lane tests which start with
+        the active extruder already being extruder1 (no swap needed).
+        """
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+
+        # Override: active extruder is 'extruder', not 'extruder1' — swap needed
+        obj.function.get_current_extruder.return_value = "extruder"
+        target_lane.tool_swap = MagicMock()
+
+        call_order = []
+        target_lane.tool_swap.side_effect = lambda: call_order.append("swap")
+        obj.TOOL_UNLOAD.side_effect = lambda *a, **kw: (call_order.append("unload"), True)[1]
+
+        obj.TOOL_LOAD(target_lane)
+
+        assert "swap" in call_order, "tool_swap was not called"
+        assert "unload" in call_order, "TOOL_UNLOAD was not called for the stale lane"
+        assert call_order.index("swap") < call_order.index("unload"), (
+            f"tool_swap must precede TOOL_UNLOAD; order was {call_order}"
+        )
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False)
+
+
+# ── cmd_TOOL_LOAD: lane_loaded guard ─────────────────────────────────────────
+
+class TestCmdToolLoad_LaneLoadedGuard:
+    """
+    Tests for the cmd_TOOL_LOAD GCode handler guard.
+
+    The guard should only block when the extruder already has the *target* lane
+    loaded (already done). If a *different* lane is loaded, cmd_TOOL_LOAD should
+    pass through to TOOL_LOAD which handles the auto-unload.
+    """
+
+    def _make_cmd_afc(self):
+        from tests.test_AFC_lane import _make_afc_lane
+        obj = _make_afc()
+        obj.TOOL_LOAD = MagicMock(return_value=True)
+        obj.error = MagicMock()
+        obj.function.in_print.return_value = False
+
+        extruder = MagicMock()
+        extruder.name = "extruder"
+
+        lane = _make_afc_lane("AFC_stepper lane1")
+        lane.extruder_obj = extruder
+        obj.lanes["lane1"] = lane
+        return obj, lane, extruder
+
+    def test_blocks_when_same_lane_already_loaded(self):
+        """If the target lane is already loaded, report an error and do not call TOOL_LOAD."""
+        obj, lane, extruder = self._make_cmd_afc()
+        extruder.lane_loaded = "lane1"  # same as target
+
+        gcmd = MagicMock()
+        gcmd.get = lambda key, default=None: {"LANE": "lane1", "PURGE_LENGTH": None}.get(key, default)
+
+        obj.cmd_TOOL_LOAD(gcmd)
+
+        obj.error.AFC_error.assert_called_once()
+        obj.TOOL_LOAD.assert_not_called()
+
+    def test_passes_through_when_different_lane_loaded(self):
+        """If a different lane is already loaded, cmd_TOOL_LOAD should call TOOL_LOAD (not error)."""
+        obj, lane, extruder = self._make_cmd_afc()
+        extruder.lane_loaded = "lane2"  # different lane — stale, let TOOL_LOAD handle it
+
+        gcmd = MagicMock()
+        gcmd.get = lambda key, default=None: {"LANE": "lane1", "PURGE_LENGTH": None}.get(key, default)
+
+        obj.cmd_TOOL_LOAD(gcmd)
+
+        obj.error.AFC_error.assert_not_called()
+        obj.TOOL_LOAD.assert_called_once_with(lane, None)
+
+    def test_passes_through_when_nothing_loaded(self):
+        """Normal case: nothing loaded, cmd_TOOL_LOAD proceeds."""
+        obj, lane, extruder = self._make_cmd_afc()
+        extruder.lane_loaded = None
+
+        gcmd = MagicMock()
+        gcmd.get = lambda key, default=None: {"LANE": "lane1", "PURGE_LENGTH": None}.get(key, default)
+
+        obj.cmd_TOOL_LOAD(gcmd)
+
+        obj.error.AFC_error.assert_not_called()
+        obj.TOOL_LOAD.assert_called_once_with(lane, None)
