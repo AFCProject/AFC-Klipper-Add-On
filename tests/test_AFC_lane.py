@@ -942,3 +942,35 @@ class TestHandleAutoSpoolSwitch:
         lane._handle_auto_spool_switch()
         lane._perform_infinite_runout.assert_not_called()
         lane._perform_pause_runout.assert_not_called()
+
+
+# ── Pause Runout ─────────────────────────────────────────────────────────────
+
+def _make_lane_for_pause_runout(auto_switch_triggered=False, unload_on_runout=False):
+    lane = _make_afc_lane("AFC_stepper lane1")
+    lane.afc = MagicMock()
+    lane.afc.error_state = False
+    lane.unit_obj = MagicMock()
+    lane.unit_obj.unload_on_runout = unload_on_runout
+    lane.auto_switch_triggered = auto_switch_triggered
+    return lane
+
+
+class TestPerformPauseRunout:
+
+    def test_msg_shows_weight_based_when_auto_switch_triggered(self):
+        lane = _make_lane_for_pause_runout(auto_switch_triggered=True)
+        lane._perform_pause_runout()
+        msg = lane.afc.error.AFC_error.call_args[0][0]
+        print(msg)
+        assert "Minimum weight" in msg
+        assert lane.name in msg
+
+    def test_msg_shows_runout_when_not_auto_switch_triggered(self):
+        lane = _make_lane_for_pause_runout(auto_switch_triggered=False)
+        lane._perform_pause_runout()
+        msg = lane.afc.error.AFC_error.call_args[0][0]
+        print(msg)
+        assert "Runout" in msg
+        assert "Minimum weight" not in msg
+        assert lane.name in msg

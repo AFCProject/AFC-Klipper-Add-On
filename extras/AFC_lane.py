@@ -967,8 +967,12 @@ class AFCLane:
                 self.afc.LANE_UNLOAD(self)
         # Pause print
         self.status = AFCLaneState.NONE
-        msg = "Runout triggered for lane {} and runout lane is not setup to switch to another lane".format(self.name)
-        msg += "\nPlease manually load next spool into toolhead and then hit resume to continue"
+        if self.auto_switch_triggered:
+            runout_method = "Minimum weight threshold reached"
+        else:
+            runout_method = "Runout triggered"
+        msg = "{} for lane {} and runout lane is not setup to switch to another lane.".format(runout_method, self.name)
+        msg += "\nPlease manually load next spool into toolhead and then hit resume to continue."
         self.unit_obj.lane_not_ready(self)
         self.afc.error.AFC_error(msg)
 
