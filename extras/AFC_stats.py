@@ -381,7 +381,7 @@ class AFCStats:
             if short: string = f"|{string:{' '}^{MAX_SPAN}}|\n"
             if len(espooler_stats) > 0:
                 if short: string += f"|{espooler_stats:{' '}^{MAX_WIDTH}}|\n"
-                else: string += f"    {espooler_stats}"
+                else: string += f"  {espooler_stats}"
             strings.append(string)
 
         if short:

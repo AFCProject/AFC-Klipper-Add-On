@@ -183,6 +183,8 @@ class afc:
         self.tool_cut_cmd           = config.get('tool_cut_cmd', None)              # Macro to use when doing toolhead cutting. Change macro name if you would like to use your own cutting macro
 
         # CHOICES
+        self.park_pre_load:str      = config.getboolean("park_pre_load", False)
+        self.park_pre_load_cmd:str  = config.get("park_pre_load_cmd", None)
         self.park                   = config.getboolean("park", False)              # Set to True to enable parking during unload
         self.park_cmd               = config.get('park_cmd', None)                  # Macro to use when parking. Change macro name if you would like to use your own park macro
         self.kick                   = config.getboolean("kick", False)              # Set to True to enable poop kicking after lane loads
@@ -1346,6 +1348,7 @@ class afc:
 
                 temp_state = self.capture_toolhead_temp()
                 try:
+
                     # Run the load sequence, which may include custom gcode commands.
                     success = self.load_sequence(cur_lane, cur_hub, cur_extruder)
                     if not success:
@@ -1378,6 +1381,9 @@ class afc:
                         self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.wipe_cmd, cur_extruder.name))
                         self.afcDeltaTime.log_with_time("TOOL_LOAD: After second wipe")
                         self.function.log_toolhead_pos()
+
+                    # Wait for moves to finish
+                    self.toolhead.wait_moves()
 
                     cur_lane.enable_fault_detection()
                     # Update lane and extruder state for tracking.
@@ -1427,6 +1433,9 @@ class afc:
         :param cur_hub: The hub object associated with the lane.
         :param cur_extruder: The extruder object associated with the lane.
         """
+        if self.park_pre_load:
+            self.gcode.run_script_from_command(self.park_pre_load_cmd)
+
         # Placeholder for custom load sequence
         if cur_lane.custom_load_cmd:
             self.logger.info("Running custom load command for lane {}".format(cur_lane.name))

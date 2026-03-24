@@ -392,7 +392,6 @@ class AFCExtruder:
         """
         self.reactor = self.afc.reactor
         self.afc.tools[self.name] = self
-
         
         self.toolhead_extruder = self.printer.lookup_object(self.name)
         if not self.toolhead_extruder:
@@ -479,8 +478,8 @@ class AFCExtruder:
         self._handle_toolhead_sensor_runout(self.fila_tool_start.runout_helper.filament_present, "tool_start")
         self.fila_tool_start.runout_helper.min_event_systime = self.reactor.monotonic() + self.fila_tool_start.runout_helper.event_delay
 
-    def note_tool_start_callback(self, state):
-        self.orig_note_filament_present(state)
+    def note_tool_start_callback(self, state, force=False):
+        self.orig_note_filament_present(state, force)
         self.tool_start_callback(0, state)
 
     def tool_start_callback(self, eventtime, state):
@@ -611,7 +610,7 @@ class AFCExtruder:
         axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, self.tool_load_speed, 5)
         print_time = toolhead.get_last_move_time()
         self.trapq_append(self.trapq, print_time, accel_t, cruise_t, accel_t,
-                            0., 0., 0., axis_r, 0., 0., 0., cruise_v, 5)
+                            0., 0., 0., axis_r, 0., 0., 0., cruise_v, 5, 0) # TODO: add a check for the zero
         print_time = print_time + accel_t + cruise_t + accel_t
 
         if self.motion_queuing is None:
