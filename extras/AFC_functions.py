@@ -629,7 +629,7 @@ class afcFunction:
             self.logger.debug("Printer extruder not in absolute mode, setting to absolute mode")
             self.afc.gcode_move.absolute_extrude = True
 
-    def get_extruder_pos(self, eventtime=None, past_extruder_position=None):
+    def get_extruder_pos(self, eventtime=None, past_extruder_position=None, extruder=None):
         """
         This function find the last position of the filament and only returns a value if it greater than
         the previous passed in position.
@@ -641,7 +641,8 @@ class afcFunction:
         if eventtime is None:
             eventtime = self.afc.reactor.monotonic()
         print_time = self.mcu.estimated_print_time(eventtime)
-        extruder = self.afc.toolhead.get_extruder()
+        if extruder is None:
+            extruder = self.afc.toolhead.get_extruder()
         last_extruder_position = extruder.find_past_position(print_time)
 
         if past_extruder_position is None or last_extruder_position > past_extruder_position:

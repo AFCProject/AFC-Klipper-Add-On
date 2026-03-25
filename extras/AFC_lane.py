@@ -1279,7 +1279,9 @@ class AFCLane:
         Helper function to enable weight callback timer, should be called once a lane is loaded
         to extruder or extruder is switched for multi-toolhead setups.
         """
-        self.past_extruder_position = self.afc.function.get_extruder_pos( None, self.past_extruder_position )
+        self.past_extruder_position = self.afc.function.get_extruder_pos(
+            None, self.past_extruder_position, self.extruder_obj.toolhead_extruder
+        )
         self.reactor.update_timer( self.cb_update_weight, self.reactor.monotonic() + self.UPDATE_WEIGHT_DELAY)
 
     def disable_weight_timer(self):
@@ -1301,7 +1303,9 @@ class AFCLane:
         :param eventtime: Current eventtime for timer callback
         :return int: Next time to call timer callback. Current time + UPDATE_WEIGHT_DELAY
         """
-        extruder_pos = self.afc.function.get_extruder_pos( eventtime, self.past_extruder_position )
+        extruder_pos = self.afc.function.get_extruder_pos(
+            eventtime, self.past_extruder_position, self.extruder_obj.toolhead_extruder
+        )
         delta_length = extruder_pos - self.past_extruder_position
 
         if -1 == self.past_extruder_position:
