@@ -68,6 +68,7 @@ def _make_lane(name="lane1", color="#FF0000"):
     lane.led_tool_loaded = "0,1,0.5,0"
     lane.led_index = "1"
     lane.led_spool_index = "2"
+    lane.led_use_filament_color = False
     return lane
 
 
