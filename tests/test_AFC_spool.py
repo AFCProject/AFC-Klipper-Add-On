@@ -239,6 +239,61 @@ class TestSetWeight:
         assert any("LANE" in m for m in info_msgs)
 
 
+# ── cmd_AFC_SET_SPOOL_TEMP ─────────────────────────────────────────────────────
+
+class TestAFCSetSpoolTemp:
+    def test_sets_bed_and_nozzle_temp(self):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        spool.afc.lanes = {"lane1": lane}
+        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=70, NOZZLE_TEMP=230)
+        spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
+        assert lane.bed_temp == 70
+        assert lane.nozzle_temp == 230
+
+    def test_uses_default_temps_when_not_provided(self):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        spool.afc.lanes = {"lane1": lane}
+        gcmd = _make_gcmd(LANE="lane1")
+        spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
+        assert lane.bed_temp == 60
+        assert lane.nozzle_temp == 210
+
+    def test_saves_vars(self):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        spool.afc.lanes = {"lane1": lane}
+        spool.afc.save_vars = MagicMock()
+        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=60, NOZZLE_TEMP=210)
+        spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
+        spool.afc.save_vars.assert_called()
+
+    def test_calls_send_lane_data(self):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        spool.afc.lanes = {"lane1": lane}
+        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=60, NOZZLE_TEMP=210)
+        spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
+        lane.send_lane_data.assert_called()
+
+    def test_no_lane_param_logs_info(self):
+        spool = _make_spool()
+        gcmd = _make_gcmd()
+        spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
+        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
+        assert any("LANE" in m for m in info_msgs)
+
+
+    def test_unknown_lane_logs_info(self):
+        spool = _make_spool()
+        spool.afc.lanes = {}
+        gcmd = _make_gcmd(LANE="ghost", BED_TEMP=60, NOZZLE_TEMP=210)
+        spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
+        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
+        assert any("ghost" in m for m in info_msgs)
+
+
 # ── cmd_SET_RUNOUT ─────────────────────────────────────────────────────────────
 
 class TestSetRunout:
@@ -446,12 +501,12 @@ class TestHandleConnect:
 
 
 class TestRegisterLaneMacros:
-    def test_registers_six_mux_commands(self):
+    def test_registers_seven_mux_commands(self):
         spool = _make_spool()
         spool.gcode.register_mux_command = MagicMock()
         lane = _make_lane("lane1")
         spool.register_lane_macros(lane)
-        assert spool.gcode.register_mux_command.call_count == 6
+        assert spool.gcode.register_mux_command.call_count == 7
 
     def test_all_commands_use_correct_lane_name(self):
         spool = _make_spool()

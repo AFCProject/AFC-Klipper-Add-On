@@ -46,6 +46,37 @@ class AFCSpool:
         self.gcode.register_mux_command('SET_SPOOL_ID',         "LANE", lane_obj.name, self.cmd_SET_SPOOL_ID,           desc=self.cmd_SET_SPOOL_ID_help)
         self.gcode.register_mux_command('SET_RUNOUT',           "LANE", lane_obj.name, self.cmd_SET_RUNOUT,             desc=self.cmd_SET_RUNOUT_help)
         self.gcode.register_mux_command('SET_MAP',              "LANE", lane_obj.name, self.cmd_SET_MAP,                desc=self.cmd_SET_MAP_help)
+        self.gcode.register_mux_command('AFC_SET_SPOOL_TEMP',   "LANE", lane_obj.name, self.cmd_AFC_SET_SPOOL_TEMP,     desc=self.cmd_AFC_SET_SPOOL_TEMP_help)
+
+    cmd_AFC_SET_SPOOL_TEMP_help = "Set spool temperatures for a lane"
+    def cmd_AFC_SET_SPOOL_TEMP(self, gcmd):
+        """
+        This function handles setting the bed and nozzle temperatures for a specified lane's spool.
+
+        Usage
+        -----
+        `AFC_SET_SPOOL_TEMP LANE=<lane> BED_TEMP=<temp> NOZZLE_TEMP=<temp>`
+
+        Example
+        -----
+        ```
+        AFC_SET_SPOOL_TEMP LANE=lane1 BED_TEMP=60 NOZZLE_TEMP=210
+        ```
+        """
+        lane = gcmd.get('LANE', None)
+        if lane is None:
+            self.logger.info("No LANE Defined")
+            return
+        bed_temp = gcmd.get_int('BED_TEMP', 60, minval=0)
+        nozzle_temp = gcmd.get_int('NOZZLE_TEMP', 210, minval=0)
+        if lane not in self.afc.lanes:
+            self.logger.info('{} Unknown'.format(lane))
+            return
+        cur_lane = self.afc.lanes[lane]
+        cur_lane.bed_temp = bed_temp
+        cur_lane.nozzle_temp = nozzle_temp
+        cur_lane.send_lane_data()
+        self.afc.save_vars()
 
     cmd_SET_MAP_help = "Changes T(n) mapping for a lane"
     def cmd_SET_MAP(self, gcmd):
