@@ -71,7 +71,10 @@ def _make_gcmd(**kwargs):
         val = kwargs.get(key, default)
         return float(val) if val is not None else None
     gcmd.get_float = _get_float
-    gcmd.get_int = lambda key, default=0, **kw: int(kwargs.get(key, default))
+    def _get_int(key, default=0, **kw):
+        val = kwargs.get(key, default)
+        return int(val) if val is not None else None
+    gcmd.get_int = _get_int
     return gcmd
 
 
@@ -243,30 +246,30 @@ class TestSetWeight:
 # ── cmd_AFC_SET_SPOOL_TEMP ─────────────────────────────────────────────────────
 
 class TestAFCSetSpoolTemp:
-    def test_sets_bed_and_nozzle_temp(self):
+    def test_sets_bed_and_extruder_temp(self):
         spool = _make_spool()
         lane = _make_lane("lane1")
         spool.afc.lanes = {"lane1": lane}
-        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=70, NOZZLE_TEMP=230)
+        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=70, EXTRUDER_TEMP=230)
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
         assert lane.bed_temp == 70
-        assert lane.nozzle_temp == 230
+        assert lane.extruder_temp == 230
 
-    def test_uses_default_temps_when_not_provided(self):
+    def test_sets_none_temps_when_not_provided(self):
         spool = _make_spool()
         lane = _make_lane("lane1")
         spool.afc.lanes = {"lane1": lane}
         gcmd = _make_gcmd(LANE="lane1")
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
-        assert lane.bed_temp == 60
-        assert lane.nozzle_temp == 210
+        assert lane.bed_temp is None
+        assert lane.extruder_temp is None
 
     def test_saves_vars(self):
         spool = _make_spool()
         lane = _make_lane("lane1")
         spool.afc.lanes = {"lane1": lane}
         spool.afc.save_vars = MagicMock()
-        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=60, NOZZLE_TEMP=210)
+        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=60, EXTRUDER_TEMP=210)
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
         spool.afc.save_vars.assert_called()
 
@@ -274,7 +277,7 @@ class TestAFCSetSpoolTemp:
         spool = _make_spool()
         lane = _make_lane("lane1")
         spool.afc.lanes = {"lane1": lane}
-        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=60, NOZZLE_TEMP=210)
+        gcmd = _make_gcmd(LANE="lane1", BED_TEMP=60, EXTRUDER_TEMP=210)
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
         lane.send_lane_data.assert_called()
 
@@ -289,7 +292,7 @@ class TestAFCSetSpoolTemp:
     def test_unknown_lane_logs_info(self):
         spool = _make_spool()
         spool.afc.lanes = {}
-        gcmd = _make_gcmd(LANE="ghost", BED_TEMP=60, NOZZLE_TEMP=210)
+        gcmd = _make_gcmd(LANE="ghost", BED_TEMP=60, EXTRUDER_TEMP=210)
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
         info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
         assert any("ghost" in m for m in info_msgs)
