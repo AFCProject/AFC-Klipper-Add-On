@@ -217,7 +217,7 @@ class AFCExtruder:
 
         self.toolhead_extruder: PrinterExtruder
         self.fullname                   = config.get_name()
-        self.mutex                      = self.reactor.mutex()
+        # self.mutex                      = self.reactor.mutex()
 
         self.name: str                  = self.fullname.split(' ')[-1]
         self.tool_start                 = config.get('pin_tool_start', None)                                            # Pin for sensor before(pre) extruder gears
@@ -471,26 +471,25 @@ class AFCExtruder:
         :param eventtime: Event time from the button press
         :param state: Boolean indicating sensor state (True = filament present, False = runout)
         """
-        with self.mutex:
-            if state != self.tool_start_state:
-                if self.tc_unit_name and self.no_lanes:
-                    self.tc_lane._load_state = state
-                    self.tc_lane.prep_state = state
+        if state != self.tool_start_state:
+            if self.tc_unit_name and self.no_lanes:
+                self.tc_lane._load_state = state
+                self.tc_lane.prep_state = state
 
-                    if (self.printer.state_message == READY and
-                        self.tc_lane._afc_prep_done):
-                        if state:
-                            if not self.load_active:
-                                self.load_unload_sequence(self.tool_stn)
-                        else:
-                            self.tc_lane.set_tool_unloaded()
-                            self.tc_lane.set_unloaded()
+                if (self.printer.state_message == READY and
+                    self.tc_lane._afc_prep_done):
+                    if state:
+                        if not self.load_active:
+                            self.load_unload_sequence(self.tool_stn)
+                    else:
+                        self.tc_lane.set_tool_unloaded()
+                        self.tc_lane.set_unloaded()
 
-                        self.afc.save_vars()
-            else:
-                self.logger.info("Not loading State matches tool_start_state")
+                    self.afc.save_vars()
+        else:
+            self.logger.info("Not loading State matches tool_start_state")
 
-            self.tool_start_state = state
+        self.tool_start_state = state
 
 
     def buffer_trailing_callback(self, eventtime, state):
@@ -787,8 +786,9 @@ class AFCExtruder:
             return True
 
         if hasattr(self.tool_obj, "detect_state"):
+            from extras.toolchanger import DETECT_PRESENT
             return (
-                self.tool_obj.detect_state == 1 or
+                self.tool_obj.detect_state == DETECT_PRESENT or
                 self.tool_obj.main_toolchanger.get_selected_tool() == self.tool_obj
             )
         else:
