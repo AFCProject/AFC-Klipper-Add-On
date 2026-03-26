@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 import pytest
+import sys
+import types
 
 from extras.AFC_extruder import AFCExtruderStats, AFCExtruder
 
@@ -221,6 +223,10 @@ def _make_afc_extruder(name="extruder"):
     ext.reactor = reactor
     ext.fullname = f"AFC_extruder {name}"
     ext.name = name
+    # Toolchanger fields – default mirrors single-toolhead state
+    ext.tool_obj     = None
+    ext.tc_unit_name = None
+    ext.tool         = None
     ext.lane_loaded = None
     ext.lanes = {}
     ext.tool_start = None
@@ -599,3 +605,305 @@ class TestGetStatus:
         ext.lanes = {"lane1": lane}
         result = ext.get_status()
         assert "lane1" in result["lanes"]
+
+# ── on_shuttle ────────────────────────────────────────────────────────────────
+# Sentinel value that mirrors the real DETECT_PRESENT constant
+_DETECT_PRESENT = "detect_present"
+def _make_toolchanger_module():
+    """Return a minimal fake extras.toolchanger module."""
+    mod = types.ModuleType("extras.toolchanger")
+    mod.DETECT_PRESENT = _DETECT_PRESENT
+    return mod
+
+
+def _tool_with_detect_state(detect_state_value, is_selected=False):
+    """Mock tool object that has detect_state."""
+    tool = MagicMock()
+    tool.detect_state = detect_state_value
+    selected = tool if is_selected else MagicMock()
+    tool.main_toolchanger.get_selected_tool.return_value = selected
+    return tool
+
+
+def _tool_without_detect_state():
+    """Mock tool object that does NOT have detect_state (spec=[] prevents any attr)."""
+    return MagicMock(spec=[])
+
+
+# ── Branch 1: single toolhead (both None) ────────────────────────────────────
+
+class TestOnShuttle_SingleToolhead:
+    """tool_obj=None AND tc_unit_name=None → always returns True."""
+
+    def test_returns_true_when_both_none(self):
+        ext = _make_afc_extruder()
+        assert ext.on_shuttle() is True
+
+    def test_still_true_after_repeated_calls(self):
+        ext = _make_afc_extruder()
+        assert ext.on_shuttle() is True
+        assert ext.on_shuttle() is True
+
+
+# ── Branch 2: toolchanger unit set, no tool object (custom macros) ────────────
+
+class TestOnShuttle_CustomMacros:
+    """tc_unit_name is set but tool_obj=None → returns True."""
+
+    def test_returns_true_with_unit_name_no_tool(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "toolchanger_0"
+        assert ext.on_shuttle() is True
+
+    def test_returns_true_for_various_unit_names(self):
+        for name in ["unit_1", "my_toolchanger", "T0"]:
+            ext = _make_afc_extruder()
+            ext.tc_unit_name = name
+            assert ext.on_shuttle() is True, f"Expected True for tc_unit_name={name!r}"
+
+
+# ── Branch 3: tool_obj has detect_state ──────────────────────────────────────
+
+class TestOnShuttle_WithDetectState:
+    """tool_obj carries detect_state; result depends on sensor or tool selection."""
+
+    @pytest.fixture(autouse=True)
+    def patch_toolchanger_module(self):
+        """Inject a fake extras.toolchanger so the in-method import resolves."""
+        fake_mod = _make_toolchanger_module()
+        with patch.dict(sys.modules, {"extras.toolchanger": fake_mod}):
+            yield
+
+    def test_returns_true_when_detect_state_is_present(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(_DETECT_PRESENT, is_selected=False)
+        assert ext.on_shuttle() is True
+
+    def test_returns_true_when_tool_is_selected_but_not_present(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state("detect_absent", is_selected=True)
+        assert ext.on_shuttle() is True
+
+    def test_returns_true_when_both_present_and_selected(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(_DETECT_PRESENT, is_selected=True)
+        assert ext.on_shuttle() is True
+
+    def test_returns_false_when_not_present_and_not_selected(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state("detect_absent", is_selected=False)
+        assert ext.on_shuttle() is False
+
+    def test_get_selected_tool_called_once_per_invocation(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state("detect_absent", is_selected=False)
+        ext.on_shuttle()
+        ext.tool_obj.main_toolchanger.get_selected_tool.assert_called_once()
+
+
+# ── Branch 4: tool_obj exists but lacks detect_state ─────────────────────────
+
+class TestOnShuttle_WithoutDetectState:
+    """tool_obj present but no detect_state attr → returns False."""
+
+    def test_returns_false_when_no_detect_state(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_without_detect_state()
+        assert ext.on_shuttle() is False
+
+    def test_returns_false_with_no_tc_unit_name(self):
+        """tool_obj set but tc_unit_name=None still reaches detect_state check."""
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = None
+        ext.tool_obj = _tool_without_detect_state()
+        assert ext.on_shuttle() is False
+
+# ── tool_start_callback helpers ───────────────────────────────────────────────
+
+def _make_ext_for_tool_start(name="extruder"):
+    """Extend _make_afc_extruder with the extra fields tool_start_callback touches."""
+    ext = _make_afc_extruder(name)
+    ext.no_lanes          = False
+    ext.load_active       = False
+    ext.load_unload_sequence = MagicMock()
+
+    # tc_lane mock with the attributes the method writes/reads
+    tc_lane               = MagicMock()
+    tc_lane._load_state   = False
+    tc_lane.prep_state    = False
+    tc_lane._afc_prep_done = False
+    ext.tc_lane           = tc_lane
+
+    return ext
+
+# ── tool_start_callback: state unchanged ──────────────────────────────────────
+
+class TestToolStartCallback_StateUnchanged:
+    """state == tool_start_state: logs, still updates tool_start_state."""
+
+    def test_logs_info_when_state_unchanged(self):
+        ext = _make_ext_for_tool_start()
+        ext.tool_start_state = False
+        ext.tool_start_callback(100.0, False)
+        info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert any("Not loading" in m for m in info_msgs)
+
+    def test_state_still_set_when_unchanged(self):
+        ext = _make_ext_for_tool_start()
+        ext.tool_start_state = True
+        ext.tool_start_callback(100.0, True)
+        assert ext.tool_start_state is True
+
+    def test_load_unload_sequence_not_called_when_state_unchanged(self):
+        ext = _make_ext_for_tool_start()
+        ext.tool_start_state = False
+        ext.tool_start_callback(100.0, False)
+        ext.load_unload_sequence.assert_not_called()
+
+
+# ── tool_start_callback: state changed, no toolchanger / no_lanes ─────────────
+
+class TestToolStartCallback_StateChanged_NoToolchanger:
+    """State changes but tc_unit_name=None or no_lanes=False: just updates state."""
+
+    def test_updates_state_to_true_no_tc_unit(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = None
+        ext.tool_start_state = False
+        ext.tool_start_callback(100.0, True)
+        assert ext.tool_start_state is True
+
+    def test_updates_state_to_false_no_tc_unit(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = None
+        ext.tool_start_state = True
+        ext.tool_start_callback(100.0, False)
+        assert ext.tool_start_state is False
+
+    def test_no_sequence_called_without_tc_unit(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = None
+        ext.tool_start_state = False
+        ext.tool_start_callback(100.0, True)
+        ext.load_unload_sequence.assert_not_called()
+
+    def test_no_sequence_called_when_no_lanes_false(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False          # toolchanger set but multi-lane
+        ext.tool_start_state = False
+        ext.tool_start_callback(100.0, True)
+        ext.load_unload_sequence.assert_not_called()
+
+    def test_tc_lane_not_updated_when_no_lanes_false(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.tool_start_callback(100.0, True)
+        assert ext.tc_lane._load_state is False  # untouched
+
+
+# ── tool_start_callback: state changed, toolchanger active ────────────────────
+
+class TestToolStartCallback_StateChanged_WithToolchanger:
+    """tc_unit_name set + no_lanes=True: tc_lane state is always updated."""
+
+    def _make_tc_ext(self, printer_ready=False, prep_done=False,
+                     state=True, load_active=False):
+        from klippy import message_ready as READY
+        ext                  = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = True
+        ext.tool_start_state = not state      # ensure state != tool_start_state
+        ext.load_active      = load_active
+        ext.printer.state_message = READY if printer_ready else "startup"
+        ext.tc_lane._afc_prep_done = prep_done
+        return ext
+
+    def test_tc_lane_load_state_updated(self):
+        ext = self._make_tc_ext(state=True)
+        ext.tool_start_callback(100.0, True)
+        assert ext.tc_lane._load_state is True
+
+    def test_tc_lane_prep_state_updated(self):
+        ext = self._make_tc_ext(state=False)
+        ext.tool_start_callback(100.0, False)
+        assert ext.tc_lane.prep_state is False
+
+    def test_tool_start_state_updated(self):
+        ext = self._make_tc_ext(state=True)
+        ext.tool_start_callback(100.0, True)
+        assert ext.tool_start_state is True
+
+    # printer not ready ─────────────────────────────────────────────────────
+
+    def test_no_sequence_when_printer_not_ready(self):
+        ext = self._make_tc_ext(printer_ready=False, prep_done=True, state=True)
+        ext.tool_start_callback(100.0, True)
+        ext.load_unload_sequence.assert_not_called()
+
+    def test_save_vars_not_called_when_printer_not_ready(self):
+        ext = self._make_tc_ext(printer_ready=False, prep_done=True, state=True)
+        ext.tool_start_callback(100.0, True)
+        ext.afc.save_vars.assert_not_called()
+
+    # prep not done ─────────────────────────────────────────────────────────
+
+    def test_no_sequence_when_prep_not_done(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=False, state=True)
+        ext.tool_start_callback(100.0, True)
+        ext.load_unload_sequence.assert_not_called()
+
+    def test_save_vars_not_called_when_prep_not_done(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=False, state=True)
+        ext.tool_start_callback(100.0, True)
+        ext.afc.save_vars.assert_not_called()
+
+    # ready + prep done + filament present ──────────────────────────────────
+
+    def test_load_sequence_called_when_ready_and_filament_present(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True,
+                                state=True, load_active=False)
+        ext.tool_start_callback(100.0, True)
+        ext.load_unload_sequence.assert_called_once_with(ext.tool_stn)
+
+    def test_load_sequence_not_called_when_load_already_active(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True,
+                                state=True, load_active=True)
+        ext.tool_start_callback(100.0, True)
+        ext.load_unload_sequence.assert_not_called()
+
+    def test_save_vars_called_after_load_sequence(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True,
+                                state=True, load_active=False)
+        ext.tool_start_callback(100.0, True)
+        ext.afc.save_vars.assert_called_once()
+
+    # ready + prep done + filament absent (runout) ──────────────────────────
+
+    def test_set_tool_unloaded_called_on_runout(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
+        ext.tool_start_callback(100.0, False)
+        ext.tc_lane.set_tool_unloaded.assert_called_once()
+
+    def test_set_unloaded_called_on_runout(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
+        ext.tool_start_callback(100.0, False)
+        ext.tc_lane.set_unloaded.assert_called_once()
+
+    def test_save_vars_called_after_runout(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
+        ext.tool_start_callback(100.0, False)
+        ext.afc.save_vars.assert_called_once()
+
+    def test_load_sequence_not_called_on_runout(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
+        ext.tool_start_callback(100.0, False)
+        ext.load_unload_sequence.assert_not_called()

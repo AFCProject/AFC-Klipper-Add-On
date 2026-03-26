@@ -386,6 +386,7 @@ class MockAFC:
         self.led_off = "0,0,0,0"
         # function mock helpers
         self.function.HexConvert = lambda x: x
+        self.toolhead = MagicMock()
 
 
 class MockPrinter:
