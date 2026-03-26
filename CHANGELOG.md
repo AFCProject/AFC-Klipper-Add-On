@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Adds support for a new `AFC_SET_SPOOL_TEMP` in order to manually set extruder/bed temps for a lane when not using Spoolman.
 
+## [2026-03-25]
+### Fixed
+- Issue where spool weight calculation would be wrong in AFC when using multiple toolheads
+
 ## [2026-03-23]
 ### Added
 - Adds support for weight based spool runout to help support spools with hooked ends. See documentation for more details.
