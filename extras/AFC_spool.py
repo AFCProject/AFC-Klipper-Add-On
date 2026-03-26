@@ -51,30 +51,36 @@ class AFCSpool:
     cmd_AFC_SET_SPOOL_TEMP_help = "Set spool temperatures for a lane"
     def cmd_AFC_SET_SPOOL_TEMP(self, gcmd):
         """
-        This function handles setting the bed and nozzle temperatures for a specified lane's spool.
+        This function handles setting the bed and extruder temperatures for a specified lane's spool.
 
         Usage
         -----
-        `AFC_SET_SPOOL_TEMP LANE=<lane> BED_TEMP=<temp> NOZZLE_TEMP=<temp>`
+        `AFC_SET_SPOOL_TEMP LANE=<lane> BED_TEMP=<temp> EXTRUDER_TEMP=<temp>`
 
         Example
         -----
         ```
-        AFC_SET_SPOOL_TEMP LANE=lane1 BED_TEMP=60 NOZZLE_TEMP=210
+        AFC_SET_SPOOL_TEMP LANE=lane1 BED_TEMP=60 EXTRUDER_TEMP=210
         ```
         """
         lane = gcmd.get('LANE', None)
         if lane is None:
-            self.logger.info("No LANE Defined")
+            self.logger.info("No LANE parameter provided, please specify a valid LANE parameter.")
             return
-        bed_temp = gcmd.get_int('BED_TEMP', 60, minval=0)
-        nozzle_temp = gcmd.get_int('NOZZLE_TEMP', 210, minval=0)
-        if lane not in self.afc.lanes:
+        try:
+            bed_temp = gcmd.get_int('BED_TEMP', None, minval=0)
+        except gcmd.error:
+            raise self.logger.error("BED_TEMP must be a valid integer")
+        try:
+            extruder_temp = gcmd.get_int('EXTRUDER_TEMP', None, minval=0)
+        except gcmd.error:
+            raise self.logger.error("EXTRUDER_TEMP must be a valid integer")
+        cur_lane = self.afc.lanes.get(lane)
+        if cur_lane is None:
             self.logger.info('{} Unknown'.format(lane))
             return
-        cur_lane = self.afc.lanes[lane]
         cur_lane.bed_temp = bed_temp
-        cur_lane.nozzle_temp = nozzle_temp
+        cur_lane.extruder_temp = extruder_temp
         cur_lane.send_lane_data()
         self.afc.save_vars()
 
