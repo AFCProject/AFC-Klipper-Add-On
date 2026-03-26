@@ -70,11 +70,11 @@ class AFCSpool:
         try:
             bed_temp = gcmd.get_int('BED_TEMP', None, minval=0)
         except gcmd.error:
-            raise self.logger.error("BED_TEMP must be a valid integer")
+            return self.logger.error("BED_TEMP must be a valid integer")
         try:
             extruder_temp = gcmd.get_int('EXTRUDER_TEMP', None, minval=0)
         except gcmd.error:
-            raise self.logger.error("EXTRUDER_TEMP must be a valid integer")
+            return self.logger.error("EXTRUDER_TEMP must be a valid integer")
         cur_lane = self.afc.lanes.get(lane)
         if cur_lane is None:
             self.logger.info('{} Unknown'.format(lane))
