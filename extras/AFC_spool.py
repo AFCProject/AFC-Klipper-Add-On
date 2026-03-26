@@ -68,20 +68,12 @@ class AFCSpool:
         if lane is None:
             self.logger.info("No LANE parameter provided, please specify a valid LANE parameter.")
             return
-        try:
-            bed_temp = gcmd.get_int('BED_TEMP', None, minval=0)
-        except gcmd.error:
-            return self.logger.error("BED_TEMP must be a valid integer")
-        try:
-            extruder_temp = gcmd.get_int('EXTRUDER_TEMP', None, minval=0)
-        except gcmd.error:
-            return self.logger.error("EXTRUDER_TEMP must be a valid integer")
         cur_lane = self.afc.lanes.get(lane)
         if cur_lane is None:
             self.logger.info('{} Unknown'.format(lane))
             return
-        cur_lane.bed_temp = bed_temp
-        cur_lane.extruder_temp = extruder_temp
+        cur_lane.bed_temp = gcmd.get_int('BED_TEMP', cur_lane.bed_temp, minval=0)
+        cur_lane.extruder_temp = gcmd.get_int('EXTRUDER_TEMP', cur_lane.extruder_temp, minval=0)
         cur_lane.send_lane_data()
         self.afc.save_vars()
 
