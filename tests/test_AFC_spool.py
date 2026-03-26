@@ -255,14 +255,16 @@ class TestAFCSetSpoolTemp:
         assert lane.bed_temp == 70
         assert lane.extruder_temp == 230
 
-    def test_sets_none_temps_when_not_provided(self):
+    def test_keeps_existing_temps_when_not_provided(self):
         spool = _make_spool()
         lane = _make_lane("lane1")
+        lane.bed_temp = 60
+        lane.extruder_temp = 210
         spool.afc.lanes = {"lane1": lane}
         gcmd = _make_gcmd(LANE="lane1")
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
-        assert lane.bed_temp is None
-        assert lane.extruder_temp is None
+        assert lane.bed_temp == 60
+        assert lane.extruder_temp == 210
 
     def test_saves_vars(self):
         spool = _make_spool()
