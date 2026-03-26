@@ -135,7 +135,7 @@ class AFC_logger:
             self.logger.error( self._format(f"{'ERROR:':^6}{stack_name}{line}", code) )
         self.send_callback( "!! {}".format(message) )
 
-        self.afc.message_queue.append((message, "error"))
+        self.afc.message_queue.append((message.lstrip(), "error"))
 
         if traceback is not None:
             for line in traceback.lstrip().rstrip().split("\n"):

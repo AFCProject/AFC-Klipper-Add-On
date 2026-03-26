@@ -13,5 +13,13 @@
     ],
     "python.analysis.extraPaths": [
         "${workspaceFolder}/klipper/klippy"
-    ]
+    ],
+    "[python]": {
+        "editor.rulers": [
+            {
+                "column": 100,
+                "color": "#ec3507"
+            }
+        ]
+    }
 }

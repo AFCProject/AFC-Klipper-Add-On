@@ -87,6 +87,17 @@ name_additional_unit() {
         echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
       fi
     done
+  elif [ "$installation_type" == "OpenAMS" ]; then
+    while true; do
+      read -p "Enter name for unit (Default: AMS_1): " boxturtle_name
+      boxturtle_name=${boxturtle_name:-AMS_1}
+
+      if [[ "$boxturtle_name" =~ ^[a-zA-Z0-9_-]+$ ]] && [[ ${#boxturtle_name} -le 24 ]]; then
+        break
+      else
+        echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
+      fi
+    done
   fi
   export turtle_renamed="True"
   export boxturtle_name
@@ -215,5 +226,9 @@ install_additional_unit() {
       fi
     fi
     find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/QuattroBox_1/$boxturtle_name/g" {} +
+  elif [ "$installation_type" == "OpenAMS" ]; then
+    mkdir -p "${afc_config_dir}/macros"
+    cp "${afc_path}/templates/AFC_AMS_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    sed -i "s/AMS_1/${boxturtle_name}/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
   fi
 }

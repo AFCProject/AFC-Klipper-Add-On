@@ -3,9 +3,15 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
 
 import os
 import json
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC import afc
 
 class afcPrep:
     def __init__(self, config):
@@ -27,23 +33,9 @@ class afcPrep:
         This function is called when the printer connects. It looks up AFC info
         and assigns it to the instance variable `self.AFC`.
         """
-        self.afc = self.printer.lookup_object('AFC')
+        self.afc: afc = self.printer.lookup_object('AFC')
         self.afc.gcode.register_command('PREP', self.PREP, desc=None)
         self.logger = self.afc.logger
-
-    def _rename(self, base_name, rename_name, rename_macro, rename_help):
-        """
-        Helper function to get stock macros, rename to something and replace stock macro with AFC functions
-        """
-        # Renaming users Resume macro so that RESUME calls AFC_Resume function instead
-        prev_cmd = self.afc.gcode.register_command(base_name, None)
-        if prev_cmd is not None:
-            pdesc = "Renamed builtin of '%s'" % (base_name,)
-            self.afc.gcode.register_command(rename_name, prev_cmd, desc=pdesc)
-        else:
-            self.logger.debug("{}Existing command {} not found in gcode_macros{}".format("<span class=warning--text>", base_name, "</span>",))
-        self.logger.debug("PREP-renaming macro {}".format(base_name))
-        self.afc.gcode.register_command(base_name, rename_macro, desc=rename_help)
 
     def _rename_macros(self):
         """
@@ -55,12 +47,12 @@ class afcPrep:
         # Checking to see if rename has already been done, don't want to rename again if prep was already ran
         if not self.rename_occurred:
             self.rename_occurred = True
-            self._rename(self.afc.error.BASE_RESUME_NAME, self.afc.error.AFC_RENAME_RESUME_NAME, self.afc.error.cmd_AFC_RESUME, self.afc.error.cmd_AFC_RESUME_help)
-            self._rename(self.afc.error.BASE_PAUSE_NAME, self.afc.error.AFC_RENAME_PAUSE_NAME, self.afc.error.cmd_AFC_PAUSE, self.afc.error.cmd_AFC_RESUME_help)
+            self.afc.function._rename(self.afc.error.BASE_RESUME_NAME, self.afc.error.AFC_RENAME_RESUME_NAME, self.afc.error.cmd_AFC_RESUME, self.afc.error.cmd_AFC_RESUME_help)
+            self.afc.function._rename(self.afc.error.BASE_PAUSE_NAME, self.afc.error.AFC_RENAME_PAUSE_NAME, self.afc.error.cmd_AFC_PAUSE, self.afc.error.cmd_AFC_RESUME_help)
 
             # Check to see if the user does not want to rename UNLOAD_FILAMENT macro
             if not self.dis_unload_macro:
-                self._rename(self.afc.BASE_UNLOAD_FILAMENT, self.afc.RENAMED_UNLOAD_FILAMENT, self.afc.cmd_TOOL_UNLOAD, self.afc.cmd_TOOL_UNLOAD_help)
+                self.afc.function._rename(self.afc.BASE_UNLOAD_FILAMENT, self.afc.RENAMED_UNLOAD_FILAMENT, self.afc.cmd_TOOL_UNLOAD, self.afc.cmd_TOOL_UNLOAD_help)
 
     def _td1_prep(self, overrall_status):
         '''
@@ -91,7 +83,8 @@ class afcPrep:
                 else:
                     self.logger.info("Capturing TD-1 data for all loaded lanes")
                     for lane in self.afc.lanes.values():
-                        if lane.load_state and lane.prep_state:
+                        if (lane.td1_device_id
+                            and lane.load_state and lane.prep_state):
                             return_status, msg = lane.get_td1_data()
                             if not return_status:
                                 break
@@ -129,15 +122,21 @@ class afcPrep:
 
         # check if Lane is supposed to be loaded in tool head from saved file
         for extruder in self.afc.tools.keys():
-            PrinterObject=self.afc.tools[extruder]
-            self.afc.tools[PrinterObject.name]=PrinterObject
+            extruder_obj=self.afc.tools[extruder]
+            extruder_obj.set_status_led( self.afc.led_tool_unloaded )
+            if extruder_obj.on_shuttle():
+                # Calls ACTIVATE_EXTRUDER if current toolhead on shuttle is not the active extruder
+                if self.afc.function.get_current_extruder() != extruder_obj.name:
+                    self.afc.gcode.run_script_from_command(
+                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.name}"
+                    )
             if 'system' in units and "extruders" in units["system"]:
                 # Check to see if lane_loaded is in dictionary and its not an empty string
-                if PrinterObject.name in units["system"]["extruders"] and \
-                  'lane_loaded' in units["system"]["extruders"][PrinterObject.name] and \
-                  units["system"]["extruders"][PrinterObject.name]['lane_loaded']:
-                    PrinterObject.lane_loaded = units["system"]["extruders"][PrinterObject.name]['lane_loaded']
-                    self.afc.current = PrinterObject.lane_loaded
+                if extruder_obj.name in units["system"]["extruders"] and \
+                  'lane_loaded' in units["system"]["extruders"][extruder_obj.name] and \
+                  units["system"]["extruders"][extruder_obj.name]['lane_loaded']:
+                    extruder_obj.lane_loaded = units["system"]["extruders"][extruder_obj.name]['lane_loaded']
+
 
         for lane in self.afc.lanes.keys():
             cur_lane = self.afc.lanes[lane]
@@ -224,7 +223,7 @@ class afcPrep:
         # have selectors to make sure the selector is on the correct lane
         current_lane = self.afc.function.get_current_lane_obj()
         if current_lane is not None:
-            current_lane.unit_obj.select_lane(current_lane)
+            current_lane.unit_obj.select_lane(current_lane, True)
             current_lane.sync_to_extruder()
 
         # Restore previous bypass state if virtual bypass is active

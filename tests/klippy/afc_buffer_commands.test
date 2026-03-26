@@ -18,8 +18,8 @@ QUERY_BUFFER BUFFER=buf1
 
 # --- Enable / disable buffer ---
 # No active lane, so the internal set_multiplier call is a no-op.
-ENABLE_BUFFER BUFFER=buf1
-DISABLE_BUFFER BUFFER=buf1
+ENABLE_BUFFER BUFFER=buf1 LANE=lane1
+DISABLE_BUFFER BUFFER=buf1 LANE=lane1
 
 # --- Fault detection sensitivity transitions ---
 # 0 → 5: registers extruder position timer and starts fault detection.

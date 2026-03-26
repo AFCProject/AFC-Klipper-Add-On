@@ -377,13 +377,17 @@ class TestFix:
         afc.function.afc_led.assert_not_called()
 
     def test_fix_toolhead_failure_calls_led_fault(self):
+        from extras.AFC_unit import afcUnit
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=False)
         lane = MagicMock()
         lane.led_index = "1"
-        err.fix("toolhead", lane)
-        afc.function.afc_led.assert_called_with(afc.led_fault, lane.led_index)
+        lane.unit_obj = afcUnit.__new__(afcUnit)
+        lane.unit_obj.afc = afc
+        result = err.fix("toolhead", lane)
+        assert result is False
+        afc.function.afc_led.assert_called_with(lane.led_fault, lane.led_index)
 
     def test_fix_other_problem_calls_pause_user_intervention(self):
         err, afc = _make_afc_error()
@@ -485,7 +489,7 @@ class TestToolHeadFix:
         err.ToolHeadFix(lane)
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
-        assert lane.extruder_obj.lane_loaded == ""
+        assert lane.extruder_obj.lane_loaded == None
     
     def test_toolhead_empty_with_lane_filament_returns_true_homing(self):
         """Filament is retracted to lane and reloaded; returns True."""
@@ -520,7 +524,7 @@ class TestToolHeadFix:
         err.ToolHeadFix(lane)
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
-        assert lane.extruder_obj.lane_loaded == ""
+        assert lane.extruder_obj.lane_loaded == None
     
     def test_toolhead_empty_with_lane_filament_returns_false_timed_out_homing(self):
         """Filament is retracted to lane and reloaded; returns True."""

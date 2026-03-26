@@ -9,6 +9,7 @@ class AFCSpool:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
+        self.SPOOLMAN_REMOTE_METHOD = 'spoolman_set_active_spool'
 
         # Temporary status variables
         self.next_spool_id      = None
@@ -250,7 +251,7 @@ class AFCSpool:
 
             args = {'spool_id' : id }
             try:
-                webhooks.call_remote_method("spoolman_set_active_spool", **args)
+                webhooks.call_remote_method(self.SPOOLMAN_REMOTE_METHOD, **args)
             except self.printer.command_error as e:
                 self.logger.error("Error trying to set active spool \n{}".format(e))
 
@@ -319,6 +320,8 @@ class AFCSpool:
         """
         Helper function for setting lane spool values
         """
+        # Always reset debounce on spool change
+        cur_lane.auto_switch_triggered = False
         # set defaults if there's no spool id, or the spoolman lookup fails
         if not cur_lane.remember_spool:
             cur_lane.material = self.afc.default_material_type
@@ -337,6 +340,7 @@ class AFCSpool:
         cur_lane.material = ''
         cur_lane.color = ''
         cur_lane.weight = 0
+        cur_lane.auto_switch_triggered = False
         cur_lane.extruder_temp = None
         cur_lane.bed_temp = None
         cur_lane.clear_lane_data()
@@ -347,6 +351,7 @@ class AFCSpool:
                 try:
                     result = self.afc.moonraker.get_spool(SpoolID)
                     cur_lane.spool_id = SpoolID
+                    cur_lane.auto_switch_triggered = False
 
                     cur_lane.material           = self._get_filament_values(result['filament'], 'material')
                     if not self.afc.ignore_spoolman_material_temps:

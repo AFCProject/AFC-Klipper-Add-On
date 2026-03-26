@@ -139,6 +139,83 @@ class TestGetLedIndexes:
         assert func._get_led_indexes("3-3") == [3]
 
 
+# ── parse_led_groups ────────────────────────────────────────────────────────
+
+class TestParseLedGroups:
+    def test_single_led_single_index(self):
+        func = _make_func()
+        assert func.parse_led_groups("AFC_Indicator:1") == [("AFC_Indicator", "1")]
+
+    def test_single_led_range(self):
+        func = _make_func()
+        assert func.parse_led_groups("AFC_Indicator:1-4") == [("AFC_Indicator", "1-4")]
+
+    def test_single_led_range_and_singles(self):
+        func = _make_func()
+        assert func.parse_led_groups("AFC_Indicator:1-4,9,10") == [("AFC_Indicator", "1-4,9,10")]
+
+    def test_multi_led_groups(self):
+        func = _make_func()
+        result = func.parse_led_groups("RGB1:1-4,RGB2:4-6,RGB3:5")
+        assert result == [("RGB1", "1-4"), ("RGB2", "4-6"), ("RGB3", "5")]
+
+    def test_multi_led_with_mixed_indexes(self):
+        func = _make_func()
+        result = func.parse_led_groups("RGB1:1-4,9,RGB2:4-6")
+        assert result == [("RGB1", "1-4,9"), ("RGB2", "4-6")]
+
+    def test_whitespace_handling(self):
+        func = _make_func()
+        result = func.parse_led_groups("RGB1: 1-4, RGB2: 5")
+        assert result == [("RGB1", "1-4"), ("RGB2", "5")]
+
+    def test_orphan_segment_logs_warning(self):
+        func = _make_func()
+        result = func.parse_led_groups("42,RGB1:1")
+        # Orphan "42" is skipped, only the valid group is returned
+        assert result == [("RGB1", "1")]
+        assert any("42" in msg for _, msg in func.logger.messages)
+
+
+# ── afc_led (integration) ───────────────────────────────────────────────────
+
+class TestAfcLed:
+    def test_none_idx_is_noop(self):
+        func = _make_func()
+        # Should not raise
+        func.afc_led("1,0,0,0", idx=None)
+
+    def test_single_led_group(self):
+        led_mock = MagicMock()
+        func = _make_func()
+        func.printer.lookup_object.return_value = led_mock
+        func.afc_led("1,0,0,0", idx="AFC_Indicator:1-4")
+        func.printer.lookup_object.assert_called_once_with("AFC_led AFC_Indicator")
+        led_mock.led_change.assert_called_once_with([1, 2, 3, 4], "1,0,0,0")
+
+    def test_multi_led_groups(self):
+        led1 = MagicMock()
+        led2 = MagicMock()
+        led3 = MagicMock()
+        lookup_map = {
+            "AFC_led RGB1": led1,
+            "AFC_led RGB2": led2,
+            "AFC_led RGB3": led3,
+        }
+        func = _make_func()
+        func.printer.lookup_object.side_effect = lambda name: lookup_map[name]
+        func.afc_led("0,1,0,0", idx="RGB1:1-4,RGB2:4-6,RGB3:5")
+        led1.led_change.assert_called_once_with([1, 2, 3, 4], "0,1,0,0")
+        led2.led_change.assert_called_once_with([4, 5, 6], "0,1,0,0")
+        led3.led_change.assert_called_once_with([5], "0,1,0,0")
+
+    def test_missing_led_logs_error(self):
+        func = _make_func()
+        func.printer.lookup_object.side_effect = Exception("not found")
+        func.afc_led("1,0,0,0", idx="BadLed:1")
+        assert any("BadLed" in msg for _, msg in func.logger.messages)
+
+
 # ── _calc_length ──────────────────────────────────────────────────────────────
 
 class TestCalcLength:
@@ -295,3 +372,35 @@ class TestAfcDeltaTime:
         dt.last_time = None
         # Should not raise (caught internally)
         dt.log_with_time("safe call")
+
+
+# ── _rename ───────────────────────────────────────────────────────────────────
+
+class TestRename:
+    def test_rename_calls_register_command_for_base(self):
+        func = _make_func()
+        func.afc.gcode.register_command = MagicMock(return_value=MagicMock())
+        mock_func = MagicMock()
+        func._rename("RESUME", "_AFC_RENAMED_RESUME_", mock_func, "help text")
+        calls = func.afc.gcode.register_command.call_args_list
+        # Should call at least: register_command("RESUME", None) and
+        # register_command("RESUME", mock_func, ...)
+        names = [c[0][0] for c in calls]
+        assert "RESUME" in names
+
+    def test_rename_registers_afc_function_under_base_name(self):
+        func = _make_func()
+        mock_func = MagicMock()
+        prev_cmd = MagicMock()
+        # _rename calls register_command 3 times: unregister, re-register old, register new
+        func.afc.gcode.register_command = MagicMock(side_effect=[prev_cmd, None, None])
+        func._rename("RESUME", "_AFC_RENAMED_RESUME_", mock_func, "help")
+        final_call = func.afc.gcode.register_command.call_args_list[-1]
+        assert final_call[0][1] is mock_func
+
+    def test_rename_logs_debug_when_command_not_found(self):
+        func = _make_func()
+        func.afc.gcode.register_command = MagicMock(return_value=None)
+        func._rename("RESUME", "_AFC_RENAMED_RESUME_", MagicMock(), "help")
+        debug_msgs = [m for lvl, m in func.logger.messages if lvl == "debug"]
+        assert any("RESUME" in m for m in debug_msgs)

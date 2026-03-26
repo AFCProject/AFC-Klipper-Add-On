@@ -9,7 +9,6 @@ import traceback
 
 from configparser import Error as error
 from datetime import datetime
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -90,23 +89,23 @@ class afcBoxTurtle(afcUnit):
                 self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
                 msg += 'EMPTY READY FOR SPOOL'
             else:
-                self.afc.function.afc_led(cur_lane.led_fault, cur_lane.led_index)
+                self.lane_fault(cur_lane)
                 msg +="<span class=error--text> NOT READY</span>"
                 cur_lane.do_enable(False)
                 msg = '<span class=error--text>CHECK FILAMENT Prep: False - Load: True</span>'
                 succeeded = False
 
         else:
-            self.afc.function.afc_led(cur_lane.led_ready, cur_lane.led_index)
+            self.lane_loaded(cur_lane)
             msg +="<span class=success--text>LOCKED</span>"
             if not loaded:
                 msg +="<span class=error--text> NOT LOADED</span>"
-                self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+                self.lane_not_ready(cur_lane)
                 succeeded = False
             else:
                 cur_lane.status = AFCLaneState.LOADED
                 msg +="<span class=success--text> AND LOADED</span>"
-                self.afc.function.afc_led(cur_lane.led_spool_illum, cur_lane.led_spool_index)
+                self.lane_illuminate_spool(cur_lane)
 
                 if (cur_lane.tool_loaded
                     and cur_lane.extruder_obj.lane_loaded == cur_lane.name):
@@ -117,18 +116,24 @@ class afcBoxTurtle(afcUnit):
                         or ramming_loaded
                         or cur_lane.extruder_obj.tool_end_state):
                         if cur_lane.extruder_obj.lane_loaded == cur_lane.name:
-                            self.afc.current = cur_lane.name
                             cur_lane.sync_to_extruder()
-                            msg +="<span class=primary--text> in ToolHead</span>"
+                            on_shuttle = ""
+                            if (cur_lane.extruder_obj.tool_obj
+                                and cur_lane.extruder_obj.tc_unit_name):
+                                on_shuttle = " and toolhead on shuttle" if cur_lane.extruder_obj.on_shuttle() else ""
+                            msg += f"<span class=primary--text> in ToolHead{on_shuttle}</span>"
+
                             if (cur_lane.extruder_obj.tool_start == "buffer"
                                 and (not self.afc.homing_enabled
                                      or not cur_lane.unit_obj.enable_buffer_tool_check)):
                                 msg += "<span class=warning--text>\n Ram sensor enabled, confirm tool is loaded</span>"
 
-                            if self.afc.function.get_current_lane() == cur_lane.name:
+                            if self.afc.current == cur_lane.name:
                                 self.afc.spool.set_active_spool(cur_lane.spool_id)
-                                cur_lane.unit_obj.lane_tool_loaded( cur_lane )
+                                self.lane_tool_loaded(cur_lane)
                                 cur_lane.status = AFCLaneState.TOOLED
+                            else:
+                                self.lane_tool_loaded_idle(cur_lane)
 
                             cur_lane.enable_buffer()
                         else:
@@ -154,18 +159,48 @@ class afcBoxTurtle(afcUnit):
     def calibrate_bowden(self, cur_lane, dis, tol):
         cur_extruder = cur_lane.extruder_obj
         cur_hub = cur_lane.hub_obj
-        self.logger.raw('Calibrating Bowden Length with {}'.format(cur_lane.name))
-        # move to hub and retrieve that distance, the checkpoint returned and if successful
-        if not self.afc.homing_enabled:
-            hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state,
-                                                                 cur_hub.move_dis, tol,
-                                                                 cur_lane.short_move_dis,
-                                                                 0, cur_lane.dist_hub + 200,
-                                                                 "Moving to hub")
+        if cur_lane.is_direct_hub():
+            self.logger.raw(f'Calibrating dist_hub Length for {cur_lane.name}')
         else:
-            success, hub_pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane, cur_lane.dist_hub+200,
-                                                                MoveDirection.POS,
-                                                                self.afc.homing_enabled)
+            self.logger.raw(f'Calibrating Bowden Length with {cur_lane.name}')
+
+        checkpoint = "Moving to hub"
+        if not cur_lane.is_direct_hub():
+            # move to hub and retrieve that distance, the checkpoint returned and if successful
+
+            if not self.afc.homing_enabled:
+                hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state,
+                                                                     cur_hub.move_dis, tol,
+                                                                     cur_lane.short_move_dis,
+                                                                     0, cur_lane.dist_hub + 200,
+                                                                     checkpoint)
+            else:
+                success, hub_pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane, cur_lane.dist_hub+200,
+                                                                    MoveDirection.POS,
+                                                                    self.afc.homing_enabled,
+                                                                    speed_mode=SpeedMode.CALIBRATION)
+            bowden_length = cur_hub.afc_bowden_length
+            variable_name = "afc_bowden_length"
+            fullname = cur_hub.fullname
+            fault_dis = bowden_length + 500
+        else:
+            checkpoint = "retract to extruder"
+            if not self.afc.homing_enabled:
+                hub_pos, checkpoint, success = self.calc_position(cur_lane,
+                                                                  lambda: cur_lane.raw_load_state, 0,
+                                                                  cur_lane.short_move_dis,
+                                                                  tol, cur_lane.dist_hub + 100,
+                                                                  checkpoint)
+            else:
+                success, hub_pos, _ = cur_lane.unit_obj.move_to_load(cur_lane, cur_lane.dist_hub+100,
+                                                                     MoveDirection.NEG,
+                                                                     self.afc.homing_enabled,
+                                                                     speed_mode=SpeedMode.CALIBRATION)
+
+            bowden_length = cur_lane.dist_hub
+            variable_name = "dist_hub"
+            fullname = cur_lane.fullname
+            fault_dis = bowden_length + 500
 
         if not success:
             # if movement does not succeed fault and return values to calibration macro
@@ -176,13 +211,12 @@ class afcBoxTurtle(afcUnit):
         if cur_extruder.tool_start:
             # if tool_start is defined move and confirm distance
             while not cur_lane.get_toolhead_pre_sensor_state():
-                fault_dis = cur_hub.afc_bowden_length + 500
                 if self.afc.homing_enabled:
                     dis = fault_dis
                 homed, distance, warn = cur_lane.move_to(distance=dis,
-                                                                speed_mode=SpeedMode.CALIBRATION,
-                                                                endstop=cur_lane.get_toolhead_endstop(),
-                                                                use_homing=self.afc.homing_enabled)
+                                                         speed_mode=SpeedMode.CALIBRATION,
+                                                         endstop=cur_lane.get_toolhead_endstop(),
+                                                         use_homing=self.afc.homing_enabled)
                 # Check for error and return, if error state is set then AFC tried pausing
                 # during the homing
                 if warn == AFCMoveWarning.ERROR:
@@ -194,7 +228,10 @@ class afcBoxTurtle(afcUnit):
                     msg = 'while moving to toolhead. Failed after {}mm'.format(bow_pos)
                     msg += '\n if filament stopped short of the toolhead sensor/ramming during calibration'
                     msg += '\n use the following command to increase bowden length'
-                    msg += '\n SET_BOWDEN_LENGTH HUB={} LENGTH=+(distance the filament was short from the toolhead)'.format(cur_hub.name)
+                    if not cur_lane.is_direct_hub():
+                        msg += '\n SET_BOWDEN_LENGTH HUB={} LENGTH=+(distance the filament was short from the toolhead)'.format(cur_hub.name)
+                    else:
+                        msg += '\n SET_HUB_DIST LANE={} LENGTH=+(distance the filament was short from the toolhead)'.format(cur_lane.name)
                     return False, msg, bow_pos
 
             if (cur_extruder.tool_start != 'buffer'
@@ -208,21 +245,30 @@ class afcBoxTurtle(afcUnit):
                 msg = 'Failed {} after {}mm'.format(checkpoint, bow_pos)
                 return False, msg, bow_pos
 
-            success, _, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos, MoveDirection.NEG,
-                                                          self.afc.homing_enabled,
-                                                          speedMode=SpeedMode.LONG)
+            if not cur_lane.is_direct_hub():
+                success, _, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos, MoveDirection.NEG,
+                                                              self.afc.homing_enabled,
+                                                              speed_mode=SpeedMode.LONG)
+            else:
+                success, _, _ = cur_lane.unit_obj.move_to_load(cur_lane, bow_pos, MoveDirection.NEG,
+                                                               self.afc.homing_enabled)
             if not success:
                 return False, "Failed to home filament back to hub", 0
 
-            if not self.afc.homing_enabled:
+            if (not self.afc.homing_enabled
+                and not cur_lane.is_direct_hub()):
                 success, message, hub_dis = self.calibrate_hub(cur_lane, tol)
 
                 if not success:
                     return False, message, hub_dis
 
-            # Always run hub clear move
-            cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed,
-                          cur_lane.short_moves_accel, True)
+            if not cur_lane.is_direct_hub():
+                cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed,
+                              cur_lane.short_moves_accel, True)
+            else:
+                # When direct lane move forwards so that load sensor is still triggered
+                cur_lane.move(cur_lane.short_move_dis*4, cur_lane.short_moves_speed,
+                              cur_lane.short_moves_accel, True)
 
             bowden_dist = round(bow_pos, 2)
             if not self.afc.homing_enabled:
@@ -231,31 +277,37 @@ class afcBoxTurtle(afcUnit):
                 else:
                     bowden_dist = round(bow_pos - cur_lane.short_move_dis, 2)
 
-            unload_dist = bowden_dist
+            unload_cal_msg = ''
+            cal_msg = f'\n {variable_name}: New: {bowden_dist} Old: {bowden_length}'
+            if not cur_lane.is_direct_hub():
+                unload_cal_msg = f'\n afc_unload_bowden_length: New: {bowden_dist} Old: {cur_lane.hub_obj.afc_unload_bowden_length}'
+                cur_lane.hub_obj.afc_unload_bowden_length = cur_lane.hub_obj.afc_bowden_length = bowden_dist
+            else:
+                bowden_dist = bow_pos - cur_lane.short_move_dis
 
-            cal_msg = '\n afc_bowden_length: New: {} Old: {}'.format(bowden_dist, cur_lane.hub_obj.afc_bowden_length)
-            unload_cal_msg = '\n afc_unload_bowden_length: New: {} Old: {}'.format(unload_dist, cur_lane.hub_obj.afc_unload_bowden_length)
-            cur_lane.hub_obj.afc_bowden_length = bowden_dist
-            cur_lane.hub_obj.afc_unload_bowden_length = unload_dist
+
+            unload_cal_msg = ''
+            cal_msg = f'\n {variable_name}: New: {bowden_dist} Old: {bowden_length}'
+            if not cur_lane.is_direct_hub():
+                unload_cal_msg = f'\n afc_unload_bowden_length: New: {bowden_dist} Old: {cur_lane.hub_obj.afc_unload_bowden_length}'
+                cur_lane.hub_obj.afc_unload_bowden_length = cur_lane.hub_obj.afc_bowden_length = bowden_dist
+            else:
+                cur_lane.dist_hub = bowden_dist
 
             if bowden_dist < 0:
                 self.afc.error.AFC_error(
                     "'{}' is not a valid length. Please check your setup and re-run calibration.".format(bowden_dist),
                     pause=False)
                 return False, "Invalid bowden length", bowden_dist
+            self.afc.function.ConfigRewrite(fullname, variable_name, bowden_dist, cal_msg)
+            if not cur_lane.is_direct_hub():
+                self.afc.function.ConfigRewrite(fullname, "afc_unload_bowden_length", cur_lane.hub_obj.afc_unload_bowden_length, unload_cal_msg)
+                cur_lane.loaded_to_hub  = True
 
-            if unload_dist < 0:
-                self.afc.error.AFC_error(
-                    "'{}' is not a valid unload length. Please check your setup and re-run calibration.".format(unload_dist),
-                    pause=False)
-                return False, "Invalid unload bowden length", unload_dist
-
-            self.afc.function.ConfigRewrite(cur_hub.fullname, "afc_bowden_length", bowden_dist, cal_msg)
-            self.afc.function.ConfigRewrite(cur_hub.fullname, "afc_unload_bowden_length", unload_dist, unload_cal_msg)
-            cur_lane.loaded_to_hub  = True
             cur_lane.do_enable(False)
+            cur_lane.unit_obj.return_to_home()
             self.afc.save_vars()
-            return True, "afc_bowden_length successful", bowden_dist
+            return True, f"{variable_name} successful", bowden_dist
         else:
             self.logger.info('CALIBRATE_AFC is not currently supported without tool start sensor')
             return False, "CALIBRATE_AFC is not currently supported without tool start sensor", 0
@@ -274,29 +326,41 @@ class afcBoxTurtle(afcUnit):
         bow_pos = 0
         cur_hub = cur_lane.hub_obj
 
-        # Verify TD-1 is still connected before trying to get data
-        if not self.afc.td1_present:
-            msg = "TD-1 device not detected anymore, please check before continuing to calibrate TD-1 bowden length"
+        if cur_lane.td1_device_id is None:
+            msg = f"Cannot calibrate TD-1 for {cur_lane.name}, td1_device_id is a required "
+            msg += "field in AFC_hub or per AFC_lane"
             return False, msg, 0
 
-        if cur_lane.td1_device_id:
-            valid, msg = self.afc.function.check_for_td1_id(cur_lane.td1_device_id)
-            if not valid:
-                return valid, msg, 0
+        # Verify TD-1 is still connected before trying to get data
+        valid, msg = self.afc.function.check_for_td1_id(cur_lane.td1_device_id)
+        if not valid:
+            msg = f"TD-1 device(SN: {cur_lane.td1_device_id}) not detected anymore, "
+            msg += "please check before continuing to calibrate TD-1 bowden length"
+            return valid, msg, 0
 
         self.logger.raw(f"Calibrating bowden length to TD-1 device with {cur_lane.name}")
-        hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state, cur_hub.move_dis, tol,
-                                                             cur_lane.short_move_dis, 0, cur_lane.dist_hub + cur_lane.hub_obj.move_dis + 200, "Moving to hub")
+        if not cur_lane.is_direct_hub():
+            fault_dis = cur_lane.dist_hub + cur_lane.hub_obj.move_dis + 200
+            hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_hub.state,
+                                                                 cur_hub.move_dis, tol,
+                                                                 cur_lane.short_move_dis, 0,
+                                                                 fault_dis,
+                                                                 "Moving to hub")
 
-        if not success:
-            # if movement does not succeed fault and return values to calibration macro
-            msg = 'Failed {} after {}mm'.format(checkpoint, hub_pos)
-            cur_lane.do_enable(False)
-            return False, msg, hub_pos
+            if not success:
+                # if movement does not succeed fault and return values to calibration macro
+                msg = 'Failed {} after {}mm'.format(checkpoint, hub_pos)
+                cur_lane.do_enable(False)
+                return False, msg, hub_pos
 
         compare_time = datetime.now()
+        max_bowden_length = 0
+        if cur_lane.is_direct_hub():
+            max_bowden_length = cur_lane.dist_hub
+        else:
+            max_bowden_length = cur_hub.afc_bowden_length
         while not self.get_td1_data(cur_lane, compare_time):
-            if bow_pos > cur_hub.afc_bowden_length:
+            if bow_pos > max_bowden_length:
                 # fault if move to TD-1 is not detected
                 msg = 'TD-1 failed to detect filament after moving {}mm'.format(bow_pos)
                 cur_lane.do_enable(False)
@@ -307,26 +371,41 @@ class afcBoxTurtle(afcUnit):
 
             cur_lane.move(dis, self.short_moves_speed, self.short_moves_accel)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
+        if not cur_lane.is_direct_hub():
+            success, _, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
+                                                          MoveDirection.NEG,
+                                                          self.afc.homing_enabled,
+                                                          speed_mode=SpeedMode.LONG)
+        else:
+            success, _, _ = cur_lane.unit_obj.move_to_load(cur_lane, bow_pos,
+                                                           MoveDirection.NEG,
+                                                           self.afc.homing_enabled)
 
-        cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
-                                      MoveDirection.NEG,
-                                      self.afc.homing_enabled,
-                                      speedMode=SpeedMode.LONG)
-
-        # Reset to hub
-        if not self.afc.homing_enabled:
+        if (not self.afc.homing_enabled
+            and not cur_lane.is_direct_hub()):
+            # Reset to hub
             self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, 0,
-                            cur_lane.short_move_dis, tol, 200, checkpoint)
+                                 cur_lane.short_move_dis, tol, 200, checkpoint)
 
-        cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+            cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+        else:
+            # When direct lane move forwards so that load sensor is still triggered
+            cur_lane.move(cur_lane.short_move_dis*4, cur_lane.short_moves_speed,
+                            cur_lane.short_moves_accel, True)
 
-        cal_msg = f"\n td1_bowden_length: New: {bow_pos} Old: {cur_hub.td1_bowden_length}"
-        cur_hub.td1_bowden_length = bow_pos
-        self.afc.function.ConfigRewrite(cur_hub.fullname, "td1_bowden_length", bow_pos, cal_msg)
+        cal_msg = f"\n td1_bowden_length: New: {bow_pos} Old: {cur_lane.td1_bowden_length}"
 
+        if cur_lane.is_direct_hub():
+            cur_lane.td1_bowden_length = bow_pos
+            fullname = cur_lane.fullname
+        else:
+            cur_hub.td1_bowden_length = bow_pos
+            fullname = cur_hub.fullname
+
+        self.afc.function.ConfigRewrite(fullname, "td1_bowden_length", bow_pos, cal_msg)
         cur_lane.do_enable(False)
+        cur_lane.unit_obj.return_to_home()
         self.afc.save_vars()
-        # self.logger.info(f"td1_bowden_length: {bow_pos}")
         return True, "td1_bowden_length calibration successful", bow_pos
 
     # Helper functions for movement and calibration
@@ -336,8 +415,10 @@ class afcBoxTurtle(afcUnit):
         hub_fault_dis = cur_lane.dist_hub + 150
         checkpoint = 'hub calibration {}'.format(cur_lane.name)
         # move until hub sensor is triggered and get information
-        hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_lane.hub_obj.state, cur_lane.hub_obj.move_dis,
-                                                             tol, cur_lane.short_move_dis, hub_pos, hub_fault_dis, checkpoint)
+        hub_pos, checkpoint, success = self.move_until_state(cur_lane, lambda: cur_lane.hub_obj.state,
+                                                             cur_lane.hub_obj.move_dis, tol,
+                                                             cur_lane.short_move_dis, hub_pos,
+                                                             hub_fault_dis, checkpoint)
 
         if not success:
             # fault if check is not successful
@@ -348,8 +429,9 @@ class afcBoxTurtle(afcUnit):
 
         hub_dist = cur_lane.dist_hub + 500
         # verify hub distance
-        tuned_hub_pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, hub_pos,
-                                                                cur_lane.short_move_dis, tol, hub_dist, checkpoint)
+        tuned_hub_pos, checkpoint, success = self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state,
+                                                                hub_pos, cur_lane.short_move_dis,
+                                                                tol, hub_dist, checkpoint)
 
         if not success:
             # fault if check is not successful
@@ -474,6 +556,7 @@ class afcBoxTurtle(afcUnit):
             if self.afc.homing_enabled:
                 success, hub_pos, _ = cur_lane.unit_obj.move_to_hub(cur_lane, move_dis,
                                                                     MoveDirection.POS,
+                                                                    speed_mode=SpeedMode.CALIBRATION,
                                                                     assist_active=AssistActive.NO)
                 message = f'\nFailed to calibrate dist_hub for {cur_lane.name} after moving {hub_pos}mm. '
                 message += 'If filament stopped short of the hub during calibration use the following command to increase dist_hub value'

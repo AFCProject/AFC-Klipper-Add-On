@@ -113,6 +113,7 @@ def section_in_config(config: ConfigWrapper, name: str):
     for s in config.fileconfig.sections():
         if name in s:
             in_cfg = True
+            break
     return in_cfg
 
 # Copied from klipper for kalico and older klipper support

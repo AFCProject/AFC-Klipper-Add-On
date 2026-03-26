@@ -10,6 +10,5 @@
 DICTIONARY stm32h723.dict
 CONFIG afc_base.cfg
 
-# AFC_STATUS should succeed and print lane/spool information.
-AFC_STATUS
+AFC_CLEAR_MESSAGE
 

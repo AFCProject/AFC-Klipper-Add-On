@@ -54,7 +54,9 @@ def _make_unit(name="Turtle_1"):
 
 
 def _make_lane(name="lane1", hub="hub1", extruder="ext1", buffer_name="buf1"):
-    lane = MagicMock()
+    from extras.AFC_lane import AFCLane
+    lane = AFCLane.__new__(AFCLane)
+    lane.unit_obj = MagicMock()
     lane.name = name
     lane.hub = hub
     lane.extruder_name = extruder
@@ -63,9 +65,12 @@ def _make_lane(name="lane1", hub="hub1", extruder="ext1", buffer_name="buf1"):
     lane.led_not_ready = "0,0,0,0.25"
     lane.led_loading = "0,0,1,0"
     lane.led_tool_loaded = "0,1,0,0"
+    lane.led_tool_unloaded = "0,1,0,0"
     lane.led_index = "1"
     lane.led_spool_illum = "1,1,1,0"
-    lane.load_state = True
+    lane._load_state = True
+    lane.short_moves_speed = 50
+    lane.short_moves_accel = 50
     return lane
 
 
@@ -156,6 +161,20 @@ class TestGetStatus:
         status = unit.get_status()
         assert "my_hub" in status["hubs"]
 
+    def test_hub_name_collected_from_lanes_direct_hub(self):
+        unit = _make_unit()
+        lane = _make_lane("lane1", hub="direct")
+        unit.lanes = {"lane1": lane}
+        status = unit.get_status()
+        assert "direct" not in status["hubs"]
+
+    def test_hub_name_collected_from_lanes_direct_load_hub(self):
+        unit = _make_unit()
+        lane = _make_lane("lane1", hub="direct_load")
+        unit.lanes = {"lane1": lane}
+        status = unit.get_status()
+        assert "direct_load" not in status["hubs"]
+
     def test_buffer_name_collected_from_lanes(self):
         unit = _make_unit()
         lane = _make_lane("lane1", buffer_name="my_buffer")
@@ -187,7 +206,7 @@ class TestGetStatus:
 class TestCheckRunout:
     def test_returns_false(self):
         unit = _make_unit()
-        assert unit.check_runout() is False
+        assert unit.check_runout("lane") is False
 
 
 # ── return_to_home ────────────────────────────────────────────────────────────
@@ -223,14 +242,18 @@ class TestLaneStatusLeds:
     def test_lane_tool_loaded_calls_afc_led_with_tool_loaded_color(self):
         unit = _make_unit()
         lane = _make_lane()
+        lane.extruder_obj = MagicMock()
         unit.lane_tool_loaded(lane)
         unit.afc.function.afc_led.assert_called_once_with(lane.led_tool_loaded, lane.led_index)
+        lane.extruder_obj.set_status_led.assert_called_once_with(lane.led_tool_loaded)
 
     def test_lane_tool_unloaded_calls_afc_led_with_ready_color(self):
         unit = _make_unit()
         lane = _make_lane()
+        lane.extruder_obj = MagicMock()
         unit.lane_tool_unloaded(lane)
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
+        lane.extruder_obj.set_status_led.assert_called_once_with(lane.led_tool_unloaded)
 
 
 # ── set_logo_color ────────────────────────────────────────────────────────────
@@ -288,6 +311,7 @@ class TestBufferToolheadLoadCheck:
         unit.afc.homing_enabled = True
         lane.tool_loaded = True
         lane.buffer_obj.advance_state = False
+        lane.move_to = MagicMock()
         lane.move_to.return_value = (False, 200, False)
         result = unit._buffer_toolhead_load_check(lane)
         assert result is False
@@ -303,6 +327,8 @@ class TestBufferToolheadLoadCheck:
         unit.afc.homing_enabled = True
         lane.tool_loaded = True
         lane.buffer_obj.advance_state = False
+        lane.move_to = MagicMock()
+        lane.move = MagicMock()
         lane.move_to.side_effect = [(True, SIDE_EFFECT_DIST, False)]
         result = unit._buffer_toolhead_load_check(lane)
         call_args = lane.move.call_args[0]

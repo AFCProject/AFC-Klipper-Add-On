@@ -39,6 +39,14 @@ function copy_config() {
   cp -R "${afc_path}/config/macros" "${afc_config_dir}/"
 }
 
+function copy_openams_config() {
+  mkdir -p "${afc_config_dir}"
+  cp ${afc_path}/config/AFC.cfg "${afc_config_dir}/"
+  cp ${afc_path}/config/AFC_Macro_Vars.cfg "${afc_config_dir}/"
+  mkdir -p "${afc_config_dir}/mcu"
+  cp -R ${afc_path}/config/macros "${afc_config_dir}/"
+}
+
 get_git_version() {
   local git_hash
   local afc_py_version

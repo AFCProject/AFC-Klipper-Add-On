@@ -11,8 +11,7 @@
 DICTIONARY stm32h723.dict
 CONFIG afc_with_lane.cfg
 
-# --- Status with a real lane present ---
-AFC_STATUS
+AFC_CLEAR_MESSAGE
 
 # --- Per-lane metadata commands ---
 # SET_COLOR / SET_MATERIAL / SET_WEIGHT: update lane state then call save_vars

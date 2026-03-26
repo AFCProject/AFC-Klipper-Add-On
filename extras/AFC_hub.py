@@ -33,6 +33,7 @@ class afc_hub:
         self.lanes: Dict[str, AFCLane] = {}
         self._state: bool = False
 
+        self.switch_pin = config.get('switch_pin', None)
         # HUB Cut variables
         # Next two variables are used in AFC
         self.switch_pin             = config.get('switch_pin')                      # Pin hub sensor it connected to
@@ -62,9 +63,10 @@ class afc_hub:
 
         if self.switch_pin.lower() != "virtual":
             buttons = self.printer.load_object(config, "buttons")
-            self.fila, self.debounce_button = add_filament_switch( f"{self.name}_Hub", self.switch_pin, self.printer,
-                                                                    self.enable_sensors_in_gui, self.handle_runout, self.enable_runout,
-                                                                    self.debounce_delay)
+            self.fila, self.debounce_button = add_filament_switch(f"{self.name}_Hub", self.switch_pin,
+                                                                  self.printer, self.enable_sensors_in_gui,
+                                                                  self.handle_runout, self.enable_runout,
+                                                                  self.debounce_delay)
             buttons.register_buttons([self.switch_pin], self.switch_pin_callback)
 
         # Adding self to AFC hubs

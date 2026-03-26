@@ -353,7 +353,7 @@ class TestSelectLane:
     def test_returns_none_when_no_selector_endstop(self):
         unit = _make_vivid()
         lane = _make_lane("lane1", has_selector=False)
-        lane.selector_endstop = None
+        lane.selector_endstop_name = None
         result = unit.select_lane(lane)
         assert result is None
 

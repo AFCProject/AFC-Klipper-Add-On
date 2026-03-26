@@ -237,6 +237,13 @@ def _make_afc_extruder(name="extruder"):
     ext.common_save_msg = f"\nRun SAVE_EXTRUDER_VALUES EXTRUDER={name} once done."
     ext.estats = MagicMock()
     ext.function = afc.function
+
+    # Toolchanger stuff
+    ext.tool_obj = None
+    ext.tc_unit_name = None
+    ext.tool = None
+    ext.toolhead_leds = None
+    ext.mutex = MagicMock()
     return ext
 
 

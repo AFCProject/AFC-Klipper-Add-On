@@ -27,6 +27,7 @@ from extras.AFC_buffer import (
     ADVANCING_STATE_NAME,
     CHECK_RUNOUT_TIMEOUT,
 )
+from tests.test_AFC_lane import _make_afc_lane
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -74,6 +75,11 @@ def _make_buffer(name="TN", error_sensitivity=0.0):
 
     return buf
 
+def _make_lane(buf):
+    lane = _make_afc_lane()
+    lane.buffer_obj = buf
+    buf.lanes[lane.name] = lane
+    return lane
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -158,14 +164,20 @@ class TestBufferStatus:
 
 class TestBufferToggle:
     def test_disable_buffer_sets_enable_false(self):
+        lane = _make_afc_lane()
         buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.current_lane = lane
         buf.enable = True
+        buf.lane = lane
         buf.reset_multiplier = MagicMock()
         buf.disable_buffer()
         assert buf.enable is False
 
     def test_disable_buffer_calls_reset_multiplier(self):
         buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.current_lane = lane
         buf.enable = True
         buf.reset_multiplier = MagicMock()
         buf.disable_buffer()
@@ -173,23 +185,33 @@ class TestBufferToggle:
 
     def test_enable_buffer_sets_enable_true(self):
         buf = _make_buffer()
+        lane = _make_lane(buf)
         buf.set_multiplier = MagicMock()
-        buf.enable_buffer()
+        buf.enable_buffer(lane)
         assert buf.enable is True
+    
+    def test_enable_buffer_sets_current_lane(self):
+        buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.set_multiplier = MagicMock()
+        buf.enable_buffer(lane)
+        assert buf.current_lane == lane
 
     def test_enable_buffer_applies_multiplier_trailing(self):
         buf = _make_buffer()
+        lane = _make_lane(buf)
         buf.set_multiplier = MagicMock()
         buf.last_state = TRAILING_STATE_NAME
-        buf.enable_buffer()
+        buf.enable_buffer(lane)
         call_arg = buf.set_multiplier.call_args[0][0]
         assert call_arg < 1.0  # should be multiplier_low or derivative
 
     def test_enable_buffer_applies_multiplier_advancing(self):
         buf = _make_buffer()
         buf.set_multiplier = MagicMock()
+        lane = _make_lane(buf)
         buf.last_state = ADVANCING_STATE_NAME
-        buf.enable_buffer()
+        buf.enable_buffer(lane)
         call_arg = buf.set_multiplier.call_args[0][0]
         assert call_arg > 1.0  # should be multiplier_high or derivative
 
@@ -357,16 +379,23 @@ class TestCmdEnableBuffer:
     def test_delegates_to_enable_buffer(self):
         """cmd_ENABLE_BUFFER should call enable_buffer() exactly once."""
         buf = _make_buffer()
+        lane = _make_lane(buf)
+        gcmd = MagicMock()
+        gcmd.get.return_value = "lane1"
         buf.enable_buffer = MagicMock()
-        buf.cmd_ENABLE_BUFFER(MagicMock())
+        buf.cmd_ENABLE_BUFFER(gcmd)
         buf.enable_buffer.assert_called_once()
 
     def test_buffer_is_enabled_after_command(self):
         """Issuing ENABLE_BUFFER leaves enable set to True."""
         buf = _make_buffer()
+        lane = _make_lane(buf)
         buf.set_multiplier = MagicMock()
-        buf.cmd_ENABLE_BUFFER(MagicMock())
+        gcmd = MagicMock()
+        gcmd.get.return_value = "lane1"
+        buf.cmd_ENABLE_BUFFER(gcmd)
         assert buf.enable is True
+        assert buf.current_lane == lane
 
 
 # ── cmd_DISABLE_BUFFER ────────────────────────────────────────────────────────
@@ -375,6 +404,8 @@ class TestCmdDisableBuffer:
     def test_delegates_to_disable_buffer(self):
         """cmd_DISABLE_BUFFER should call disable_buffer() exactly once."""
         buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.current_lane = lane
         buf.disable_buffer = MagicMock()
         buf.cmd_DISABLE_BUFFER(MagicMock())
         buf.disable_buffer.assert_called_once()
@@ -382,6 +413,8 @@ class TestCmdDisableBuffer:
     def test_buffer_is_disabled_after_command(self):
         """Issuing DISABLE_BUFFER leaves enable set to False."""
         buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.current_lane = lane
         buf.enable = True
         buf.reset_multiplier = MagicMock()
         buf.cmd_DISABLE_BUFFER(MagicMock())

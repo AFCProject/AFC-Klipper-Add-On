@@ -3,9 +3,18 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
 import traceback
 
 from configparser import Error as error
+
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from extras.AFC_lane import AFCLane
+    from extras.AFC_stepper import AFCExtruderStepper
+    from gcode import GCodeCommand
 
 try: from extras.AFC_utils import add_filament_switch
 except: raise error("Error when trying to import AFC_utils.add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
@@ -27,7 +36,7 @@ class AFCTrigger:
         self.lanes      = {}
         self.last_state = "Unknown"
         self.enable     = False
-        self.current    = ''
+        self.current_lane: Optional[AFCLane|AFCExtruderStepper] = None
         self.advance_state = False
         self.trailing_state = False
 
@@ -250,10 +259,11 @@ class AFCTrigger:
                 msg += '\nAFC NOT FEEDING'
             self.afc.error.AFC_error( msg, True )
 
-    def enable_buffer(self):
+    def enable_buffer(self, lane: AFCLane):
         """
         Enable the buffer and set appropriate multiplier based on current state.
         """
+        self.current_lane = lane
         if self.led:
             self.afc.function.afc_led(self.led_buffer_disabled, self.led_index)
         self.enable = True
@@ -271,20 +281,22 @@ class AFCTrigger:
             self.start_fault_detection(0, multiplier)
         else:
             self.set_multiplier( multiplier )
-        self.logger.debug("{} buffer enabled".format(self.name))
+        self.logger.debug(f"{self.name} buffer enabled for {self.current_lane.name}")
 
     def disable_buffer(self):
         """
         Disable the buffer, reset multiplier, and stop fault detection if running.
         """
         self.enable = False
-        self.logger.debug("{} buffer disabled".format(self.name))
+        if self.current_lane is None: return
+        self.logger.debug(f"{self.name} buffer disabled for {self.current_lane.name}")
         if self.led:
             self.afc.function.afc_led(self.led_buffer_disabled, self.led_index)
         self.reset_multiplier()
         if self.error_sensitivity > 0 and self.extruder_pos_timer is not None:
             eventtime = self.reactor.monotonic()
             self.stop_fault_timer(eventtime)
+        self.current_lane = None
 
     def set_multiplier(self, multiplier):
         """
@@ -293,10 +305,12 @@ class AFCTrigger:
         :param multiplier: Float value to multiply rotation distance (>1 advances, <1 trails)
         """
         if not self.enable: return
-        cur_stepper = self.afc.function.get_current_lane_obj()
-        if cur_stepper is None: return
+        if self.current_lane is None: return
+        if self.current_lane.extruder_stepper is None: return
 
-        cur_stepper.update_rotation_distance( multiplier )
+        cur_stepper = self.current_lane.extruder_stepper.stepper
+
+        self.current_lane.update_rotation_distance( multiplier )
         if multiplier > 1:
             self.last_state = ADVANCING_STATE_NAME
             if self.led:
@@ -305,7 +319,10 @@ class AFCTrigger:
             self.last_state = TRAILING_STATE_NAME
             if self.led:
                 self.afc.function.afc_led(self.led_advancing, self.led_index)
-        self.logger.debug("New rotation distance after applying factor: {:.4f}".format(cur_stepper.extruder_stepper.stepper.get_rotation_distance()[0]))
+        self.logger.debug("New rotation distance for {} after applying factor: {:.4f}".format(
+                            self.current_lane.name,
+                            cur_stepper.get_rotation_distance()[0])
+                         )
 
     def reset_multiplier(self):
         """
@@ -313,11 +330,17 @@ class AFCTrigger:
         """
         self.logger.debug("Buffer multiplier reset")
 
-        cur_stepper = self.afc.function.get_current_lane_obj()
-        if cur_stepper is None: return
+        if self.current_lane is None: return
+        if self.current_lane.extruder_stepper is None: return
 
-        cur_stepper.update_rotation_distance( 1 )
-        self.logger.info("Rotation distance reset : {:.4f}".format(cur_stepper.extruder_stepper.stepper.get_rotation_distance()[0]))
+        cur_stepper = self.current_lane.extruder_stepper.stepper
+
+        self.current_lane.update_rotation_distance( 1 )
+        self.logger.info(
+            "Rotation distance reset for {} : {:.4f}".format(
+                self.current_lane.name,
+                cur_stepper.get_rotation_distance()[0])
+            )
 
     def advance_callback(self, eventtime, state):
         """
@@ -328,9 +351,8 @@ class AFCTrigger:
         """
         self.advance_state = state
         if self.printer.state_message == 'Printer is ready' and self.enable:
-            cur_lane = self.afc.function.get_current_lane_obj()
 
-            if cur_lane is not None and state:
+            if self.current_lane is not None and state:
                 if self.fault_detection_enabled():
                     multiplier_extra_low = (self.multiplier_low * 2) / 5
                     self.start_fault_detection(eventtime, multiplier_extra_low)
@@ -354,9 +376,8 @@ class AFCTrigger:
         """
         self.trailing_state = state
         if self.printer.state_message == 'Printer is ready' and self.enable:
-            cur_lane = self.afc.function.get_current_lane_obj()
 
-            if cur_lane is not None and state:
+            if self.current_lane is not None and state:
                 if self.fault_detection_enabled():
                     multiplier_extra_high = (self.multiplier_high * 1.5)
                     self.start_fault_detection(eventtime, multiplier_extra_high)
@@ -441,8 +462,7 @@ class AFCTrigger:
         SET_BUFFER_MULTIPLIER BUFFER=TN MULTIPLIER=HIGH FACTOR=1.2
         ```
         """
-        cur_stepper = self.afc.function.get_current_lane_obj()
-        if cur_stepper is not None and self.enable:
+        if self.current_lane is not None and self.enable:
             chg_multiplier = gcmd.get('MULTIPLIER', None)
             if chg_multiplier is None:
                 self.logger.info("Multiplier must be provided, HIGH or LOW")
@@ -490,8 +510,7 @@ class AFCTrigger:
         SET_ROTATION_FACTOR BUFFER=TN FACTOR=1.2
         ```
         """
-        cur_stepper = self.afc.function.get_current_lane_obj()
-        if cur_stepper is not None and self.enable:
+        if self.current_lane is not None and self.enable:
             change_factor = gcmd.get_float('FACTOR', 1.0)
             if change_factor <= 0:
                 self.logger.info("FACTOR must be greater than 0")
@@ -539,33 +558,52 @@ class AFCTrigger:
         state_info = "{}{}".format(buffer_status, state_mapping.get(buffer_status, ''))
 
         if self.enable:
-            lane = self.afc.function.get_current_lane_obj()
-            if lane is not None:
-                stepper = lane.extruder_stepper.stepper
+            if self.current_lane is not None:
+                stepper = self.current_lane.extruder_stepper.stepper
                 rotation_dist = stepper.get_rotation_distance()[0]
-                state_info += ("\n{} Rotation distance: {:.4f}".format(lane.name, rotation_dist))
+                state_info += ("\n{} Rotation distance: {:.4f}".format(self.current_lane.name,
+                                                                       rotation_dist))
             if self.error_sensitivity > 0:
                 state_info += "\nFault detection enabled, sensitivity {}".format(self.error_sensitivity)
 
         self.logger.info("{} : {}".format(self.name, state_info))
 
-    def cmd_ENABLE_BUFFER(self, gcmd):
+    def cmd_ENABLE_BUFFER(self, gcmd: GCodeCommand):
         """
-        Manually enables the buffer. This command is useful for debugging and testing purposes.
+        Manually enables the buffer for passed in lane. This command is useful for debugging and
+        testing purposes.
 
         Usage
         -----
-        `ENABLE_BUFFER`
+        `ENABLE_BUFFER BUFFER=<buffer_name> LANE=<lane_name>`
+
+        Example
+        ------
+        ```
+        ENABLE_BUFFER BUFFER=Turtle_1 LANE=lane2
+        ```
         """
-        self.enable_buffer()
+        lane = gcmd.get("LANE")
+        lane_obj = self.lanes.get(lane, None)
+        if not lane_obj:
+            raise gcmd.error(f"{lane} not assigned to {self.name} buffer")
+
+        self.enable_buffer(lane_obj)
 
     def cmd_DISABLE_BUFFER(self, gcmd):
         """
-        Manually disables the buffer. This command is useful for debugging and testing purposes.
+        Manually disables the buffer for currently active lane. This command is useful for debugging
+        and testing purposes.
 
         Usage
         -----
-        `DISABLE_BUFFER`
+        `DISABLE_BUFFER BUFFER=<buffer_name>`
+
+        Example
+        ------
+        ```
+        DISABLE_BUFFER BUFFER=Turtle_1
+        ```
         """
         self.disable_buffer()
 
@@ -577,12 +615,14 @@ class AFCTrigger:
 
         # Add current rotation distance if buffer is enabled and lane is loaded
         if self.enable:
-            lane = self.afc.function.get_current_lane_obj()
-            if lane is not None:
-                stepper = lane.extruder_stepper.stepper
+            if (self.current_lane is not None
+                and self.current_lane.name in self.lanes):
+                stepper = self.current_lane.extruder_stepper.stepper
                 self.response['rotation_distance'] = stepper.get_rotation_distance()[0]
+                self.response['active_lane'] = self.current_lane.name
         else:
             self.response['rotation_distance'] = None
+            self.response['active_lane'] = None
 
         # Add fault detection information
         self.response['fault_detection_enabled'] = self.error_sensitivity > 0

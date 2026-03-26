@@ -195,6 +195,7 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane.hub_obj = None
     lane.buffer_obj = None
     lane.extruder_obj = MagicMock()
+    lane.endstops = {}
     lane.espooler = MagicMock()
     lane.espooler.assist.return_value = False
     lane.hub = "PB1"
@@ -210,6 +211,9 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane.fwd_speed_multi = 0.5
     lane.drive_stepper = None
     lane.dist_hub = 900
+    lane.remember_spool = False
+    lane.short_moves_speed = 50
+    lane.short_moves_accel = 100
     return lane
 
 
@@ -334,17 +338,17 @@ class TestAFCLaneLoadEs:
     def test_only_lane_true_returns_endstop_name(self):
         lane = _make_afc_lane()
         lane.only_lane = True
-        lane.load_endstop_name = "lane1_load"
+        lane.endstops.update({AFCHomingPoints.LOAD: {"endstop" : "PIN123", "endstop_name": "lane1_load"}})
         assert lane.load_es == "lane1_load"
 
     def test_only_lane_true_unique_endstop_per_lane(self):
         lane_a = _make_afc_lane("AFC_stepper laneA")
         lane_a.only_lane = True
-        lane_a.load_endstop_name = "laneA_load"
+        lane_a.endstops.update({AFCHomingPoints.LOAD: {"endstop" : "PIN123", "endstop_name": "laneA_load"}})
 
         lane_b = _make_afc_lane("AFC_stepper laneB")
         lane_b.only_lane = True
-        lane_b.load_endstop_name = "laneB_load"
+        lane_a.endstops.update({AFCHomingPoints.LOAD: {"endstop" : "PIN123", "endstop_name": "laneB_load"}})
 
         assert lane_a.load_es != lane_b.load_es
 
@@ -703,8 +707,9 @@ class TestMoveTo:
         assert warn == AFCMoveWarning.NONE
         assert call_args[0] == AFCHomingPoints.BUFFER
         assert call_args[1] == MOVE_DISTANCE + HOMING_OVERSHOOT
-        assert call_args[2] == SpeedMode.SHORT
-        assert call_args[3] == HOMING
+        assert call_args[2] == lane.short_moves_speed
+        assert call_args[3] == lane.short_moves_accel
+        assert call_args[4] == bool(MOVE_DISTANCE > 0)
         assert kwargs["assist_active"] == False
     
     def test_drive_stepper_no_extruder_stepper_homing_neg_movement(self):
@@ -730,8 +735,9 @@ class TestMoveTo:
         assert warn == AFCMoveWarning.NONE
         assert call_args[0] == AFCHomingPoints.BUFFER
         assert call_args[1] == MOVE_DISTANCE - HOMING_OVERSHOOT
-        assert call_args[2] == SpeedMode.SHORT
-        assert call_args[3] == False
+        assert call_args[2] == lane.short_moves_speed
+        assert call_args[3] == lane.short_moves_accel
+        assert call_args[4] == bool(MOVE_DISTANCE > 0)
         assert kwargs["assist_active"] == False
 
     def test_drive_stepper_no_extruder_stepper_homing_neg_movement_homing_error(self):
@@ -757,8 +763,9 @@ class TestMoveTo:
         assert warn == AFCMoveWarning.ERROR
         assert call_args[0] == AFCHomingPoints.BUFFER
         assert call_args[1] == MOVE_DISTANCE - HOMING_OVERSHOOT
-        assert call_args[2] == SpeedMode.SHORT
-        assert call_args[3] == False
+        assert call_args[2] == lane.short_moves_speed
+        assert call_args[3] == lane.short_moves_accel
+        assert call_args[4] == bool(MOVE_DISTANCE > 0)
         assert kwargs["assist_active"] == False
 
     def test_drive_stepper_no_extruder_stepper_homing_pos_movement_short(self):
@@ -785,8 +792,9 @@ class TestMoveTo:
         assert warn == AFCMoveWarning.WARN
         assert call_args[0] == AFCHomingPoints.BUFFER
         assert call_args[1] == MOVE_DISTANCE + HOMING_OVERSHOOT
-        assert call_args[2] == SpeedMode.SHORT
-        assert call_args[3] == HOMING
+        assert call_args[2] == lane.short_moves_speed
+        assert call_args[3] == lane.short_moves_accel
+        assert call_args[4] == HOMING
         assert kwargs["assist_active"] == False
     
     def test_extruder_stepper_no_drive_stepper_homing_pos_movement_short(self):
@@ -813,6 +821,156 @@ class TestMoveTo:
         assert warn == AFCMoveWarning.WARN
         assert call_args[0] == AFCHomingPoints.BUFFER
         assert call_args[1] == MOVE_DISTANCE + HOMING_OVERSHOOT
-        assert call_args[2] == SpeedMode.SHORT
-        assert call_args[3] == HOMING
+        assert call_args[2] == lane.short_moves_speed
+        assert call_args[3] == lane.short_moves_accel
+        assert call_args[4] == HOMING
         assert kwargs["assist_active"] == False
+
+
+# ── Auto Spool Switch ────────────────────────────────────────────────────────
+
+def _make_lane_for_auto_switch(weight=20.0, threshold=25.0, enabled=True,
+                                current=True, printing=True,
+                                error_state=False, runout_lane="lane2"):
+    """Build an AFCLane configured for auto spool switch testing."""
+    from tests.conftest import MockAFC, MockLogger, MockReactor
+    lane = _make_afc_lane("AFC_stepper lane1")
+    lane.afc = MockAFC()
+    lane.afc.auto_spool_switch = enabled
+    lane.afc.auto_spool_switch_threshold = threshold
+    lane.afc.current = "lane1" if current else "other_lane"
+    lane.afc.error_state = error_state
+    lane.afc.function.is_printing.return_value = printing
+    lane.afc.function.get_extruder_pos.return_value = 100.0
+    lane.reactor = MockReactor()
+    lane.reactor.register_callback = MagicMock()
+    lane.logger = MockLogger()
+    lane.weight = weight
+    lane.auto_switch_triggered = False
+    lane.filament_diameter = 1.75
+    lane.filament_density = 1.24
+    lane.past_extruder_position = 50.0
+    lane.save_counter = 0
+    lane.UPDATE_WEIGHT_DELAY = 10.0
+    lane.runout_lane = runout_lane
+    lane._perform_infinite_runout = MagicMock()
+    lane._perform_pause_runout = MagicMock()
+    return lane
+
+
+class TestAutoSpoolSwitchWeightCheck:
+    """Tests for the weight threshold check in update_weight_callback."""
+
+    def test_auto_switch_not_triggered_when_disabled(self):
+        lane = _make_lane_for_auto_switch(weight=20.0, enabled=False)
+        lane.update_weight_callback(None)
+        lane.reactor.register_callback.assert_not_called()
+        assert lane.auto_switch_triggered is False
+
+    def testauto_switch_triggered_at_threshold(self):
+        lane = _make_lane_for_auto_switch(weight=25.5, threshold=25.0)
+        lane.afc.function.get_extruder_pos.return_value = 100.0
+        lane.past_extruder_position = -400.0  # 500mm delta to push weight below threshold
+        lane.update_weight_callback(None)
+        assert lane.auto_switch_triggered is True
+        lane.reactor.register_callback.assert_called_once()
+
+    def test_auto_switch_not_triggered_above_threshold(self):
+        lane = _make_lane_for_auto_switch(weight=500.0, threshold=25.0)
+        lane.update_weight_callback(None)
+        lane.reactor.register_callback.assert_not_called()
+        assert lane.auto_switch_triggered is False
+
+    def test_auto_switch_debounce_prevents_second_trigger(self):
+        lane = _make_lane_for_auto_switch(weight=10.0, threshold=25.0)
+        lane.auto_switch_triggered = True
+        lane.update_weight_callback(None)
+        lane.reactor.register_callback.assert_not_called()
+
+    def test_auto_switch_not_triggered_when_not_current(self):
+        lane = _make_lane_for_auto_switch(weight=10.0, current=False)
+        lane.update_weight_callback(None)
+        lane.reactor.register_callback.assert_not_called()
+
+    def test_auto_switch_not_triggered_when_not_printing(self):
+        lane = _make_lane_for_auto_switch(weight=10.0, printing=False)
+        lane.update_weight_callback(None)
+        lane.reactor.register_callback.assert_not_called()
+
+    def test_auto_switch_not_triggered_when_error_state(self):
+        lane = _make_lane_for_auto_switch(weight=10.0, error_state=True)
+        lane.update_weight_callback(None)
+        lane.reactor.register_callback.assert_not_called()
+
+    def test_auto_switch_not_triggered_when_weight_zero(self):
+        lane = _make_lane_for_auto_switch(weight=0.0, threshold=25.0)
+        lane.update_weight_callback(None)
+        lane.reactor.register_callback.assert_not_called()
+
+    def test_auto_switch_logs_message(self):
+        lane = _make_lane_for_auto_switch(weight=10.0, threshold=25.0)
+        lane.afc.function.get_extruder_pos.return_value = 51.0
+        lane.update_weight_callback(None)
+        assert lane.auto_switch_triggered is True
+        log_messages = [msg for level, msg in lane.logger.messages if level == "info"]
+        assert any("Auto spool switch" in msg and "threshold" in msg for msg in log_messages)
+
+
+class TestHandleAutoSpoolSwitch:
+    """Tests for _handle_auto_spool_switch method."""
+
+    def test_calls_infinite_runout_when_runout_lane_set(self):
+        lane = _make_lane_for_auto_switch(runout_lane="lane2")
+        lane._handle_auto_spool_switch()
+        lane._perform_infinite_runout.assert_called_once()
+        lane._perform_pause_runout.assert_not_called()
+
+    def test_calls_pause_runout_when_no_runout_lane(self):
+        lane = _make_lane_for_auto_switch(runout_lane=None)
+        lane._handle_auto_spool_switch()
+        lane._perform_pause_runout.assert_called_once()
+        lane._perform_infinite_runout.assert_not_called()
+
+    def test_skips_when_error_state(self):
+        lane = _make_lane_for_auto_switch(error_state=True, runout_lane="lane2")
+        lane._handle_auto_spool_switch()
+        lane._perform_infinite_runout.assert_not_called()
+        lane._perform_pause_runout.assert_not_called()
+
+    def test_skips_when_not_printing(self):
+        lane = _make_lane_for_auto_switch(printing=False, runout_lane="lane2")
+        lane._handle_auto_spool_switch()
+        lane._perform_infinite_runout.assert_not_called()
+        lane._perform_pause_runout.assert_not_called()
+
+
+# ── Pause Runout ─────────────────────────────────────────────────────────────
+
+def _make_lane_for_pause_runout(auto_switch_triggered=False, unload_on_runout=False):
+    lane = _make_afc_lane("AFC_stepper lane1")
+    lane.afc = MagicMock()
+    lane.afc.error_state = False
+    lane.unit_obj = MagicMock()
+    lane.unit_obj.unload_on_runout = unload_on_runout
+    lane.auto_switch_triggered = auto_switch_triggered
+    return lane
+
+
+class TestPerformPauseRunout:
+
+    def test_msg_shows_weight_based_when_auto_switch_triggered(self):
+        lane = _make_lane_for_pause_runout(auto_switch_triggered=True)
+        lane._perform_pause_runout()
+        msg = lane.afc.error.AFC_error.call_args[0][0]
+        print(msg)
+        assert "Minimum weight" in msg
+        assert lane.name in msg
+
+    def test_msg_shows_runout_when_not_auto_switch_triggered(self):
+        lane = _make_lane_for_pause_runout(auto_switch_triggered=False)
+        lane._perform_pause_runout()
+        msg = lane.afc.error.AFC_error.call_args[0][0]
+        print(msg)
+        assert "Runout" in msg
+        assert "Minimum weight" not in msg
+        assert lane.name in msg

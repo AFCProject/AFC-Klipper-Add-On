@@ -19,7 +19,7 @@ except:
     raise_string = "Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc())
     raise error(raise_string)
 
-try: from extras.AFC_lane import AFCLane, SpeedMode, AFCHomingPoints
+try: from extras.AFC_lane import AFCLane, AFCHomingPoints
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
@@ -452,7 +452,7 @@ class AFCExtruderStepper(AFCLane):
         hub_pin = self.hub_endstop
         if hub_pin is None:
             hub_name = getattr(self, 'hub', None)
-            if not hub_name or hub_name == 'direct':
+            if not hub_name or 'direct' in hub_name:
                 hub_name = self._inherit_from_unit('hub')
             hub_pin = self._get_section_value('AFC_hub', hub_name, 'switch_pin')
 
@@ -469,7 +469,8 @@ class AFCExtruderStepper(AFCLane):
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
 
         # Check to verify that hub is not a virtual sensor
-        if hub_pin.lower() != "virtual":
+        if (hub_pin
+            and hub_pin.lower() != "virtual"):
             self._add_endstop('hub', hub_pin, 'hub')
         if tool_start_pin != 'buffer':
             self._add_endstop('tool_start', tool_start_pin, 'tool_start')
@@ -585,7 +586,8 @@ class AFCExtruderStepper(AFCLane):
         Perform's a homing move using the specified endstop, speed/accel and distance.
 
         :param movepos: target absolute position along the filament axis
-        :param speed/accel: motion params (fallbacks applied if None)
+        :param speed: The speed of the movement.
+        :param accel: The acceleration of the movement.
         :param endstop_spec: 'load' | raw pin string
         :param triggered/check_trigger: same semantics as manual_stepper
         :param assist_active: When true espoolers(if configured) activate during homing move
@@ -679,7 +681,7 @@ class AFCExtruderStepper(AFCLane):
             raise self.gcode.error(str(e))
 
     # ------------------ Convenience homing helpers ------------------
-    def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed_mode: SpeedMode,
+    def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed: float, accel: float,
                 triggered=True, check_trigger=True, assist_active=True) -> tuple[bool, float, bool]:
         """
         Home towards an endstop relative to current position by distance (mm).
@@ -690,18 +692,20 @@ class AFCExtruderStepper(AFCLane):
                              or a logical name such as 'load', 'toolhead', etc.
         :param distance: Relative distance to move toward the endstop in millimeters.
                          Required unless using a helper method.
+        :param speed: The speed of the movement.
+        :param accel: The acceleration of the movement.
         :param speed_mode: Enum or configuration selecting the speed and acceleration
                            profile to use for this move. Defaults to `SpeedMode`.
         :param triggered: If True, movement stops when the endstop triggers. Defaults to True.
         :param check_trigger: If True, verify that the endstop is actually triggered at the
                               end of the move. Defaults to True.
-        :return tuple: bool: indicated if homing was successful or not.
-                       float: indicated movement wheather homing was successful or not. When not
-                         successful distance will equal max move distance.
-                       bool: indicate if an error happened while homing
+        :return :return tuple: 3-tuple consisting of:
+                        bool: indicated if homing was successful or not.
+                        float: indicated movement wheather homing was successful or not. When not
+                               successful distance will equal max move distance.
+                        bool: indicate if an error happened while homing
         """
         error = False
-        speed, accel = self.get_speed_accel(speed_mode)
 
         if distance is None:
             raise self.gcode.error("home_to requires an explicit distance; use home_to_hub/toolhead/buffer for sensible defaults")

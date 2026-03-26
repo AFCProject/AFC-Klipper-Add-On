@@ -178,7 +178,10 @@ class AFC_HTLF(afcBoxTurtle):
             if not self.afc.homing_enabled:
                 move_distance = 1
             self._move_selector_home(move_distance)
-            total_moved += 1
+            if self.afc.homing_enabled:
+                total_moved += self._homed_distance
+            else:
+                total_moved += move_distance
             if total_moved > (self.mm_move_per_rotation/360)*(self.MAX_ANGLE_MOVEMENT+self.cam_angle):
                 self.failed_to_home = True
                 self.afc.error.AFC_error("Failed to home {}".format(self.name), False)
@@ -204,28 +207,34 @@ class AFC_HTLF(afcBoxTurtle):
         self.logger.debug("HTLF: Lobe Movement angle : {}".format(angle_movement))
         return (self.mm_move_per_rotation/360)*angle_movement
 
-    def select_lane( self, lane ) -> tuple[bool, float|int]:
+    def select_lane( self, lane, disable_selector: bool=False ) -> tuple[bool, float|int]:
         """
         Moves lobe selector to specified lane based off lanes index
 
         :param lane: Lane object to move selector to
+        :param disable_selector: When True disables selectors motor after selecting a lane
+        :return boolean: Returns True if movement of selector succeeded
         """
         if "stepper" in lane.fullname.lower():
             return False, 0.0
+        try:
+            if self.current_selected_lane != lane:
+                self.logger.debug("HTLF: {} Homing to endstop.".format(self.name))
+                if self.return_to_home( disable_selector=False ):
+                    self.selector_stepper_obj.move(self.calculate_lobe_movement( lane.index ),
+                                                   self.selector_movement_speed,
+                                                   self.selector_movement_accel,
+                                                   False)
+                    self.logger.debug("HTLF: Selecting {}".format(lane))
+                    self.current_selected_lane = lane
+                    return True, self._homed_distance
+                else:
+                    self.logger.error(f"HTLF: failed to home when selecting {lane.name}")
+                    return False, 0.0
+        finally:
+            if disable_selector:
+                self.selector_stepper_obj.do_enable(False)
 
-        if self.current_selected_lane != lane:
-            self.logger.debug("HTLF: {} Homing to endstop.".format(self.name))
-            if self.return_to_home( disable_selector=False ):
-                self.selector_stepper_obj.move(self.calculate_lobe_movement( lane.index ),
-                                               self.selector_movement_speed,
-                                               self.selector_movement_accel,
-                                               False)
-                self.logger.debug("HTLF: Selecting {}".format(lane))
-                self.current_selected_lane = lane
-                return True, self._homed_distance
-            else:
-                self.logger.error(f"HTLF: failed to home when selecting {lane.name}")
-                return False, 0.0
         return True, 0.0
 
     def check_runout(self, cur_lane):

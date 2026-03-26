@@ -129,13 +129,23 @@ copy_unit_files() {
       fi
     fi
     ;;
+
+  "OpenAMS")
+    cp "${afc_path}/templates/AFC_Hardware-AFC.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
+    cp "${afc_path}/templates/AFC_AMS_1.cfg" "${afc_config_dir}/AFC_AMS_1.cfg"
+    ;;
+
 esac
 }
 
 install_afc() {
   # Link the python extensions
   link_extensions
-  copy_config
+  if [ "$installation_type" != "OpenAMS" ]; then
+    copy_config
+  else
+    copy_openams_config
+  fi
   copy_unit_files
   # Add our extensions to the klipper gitignore
   if [ "$git_install" == "True" ]; then
@@ -161,7 +171,11 @@ install_afc() {
   if [ "$toolhead_sensor" == "Sensor" ]; then
     update_switch_pin "${afc_config_dir}/AFC_Hardware.cfg" "${toolhead_sensor_pin}"
   elif [ "$toolhead_sensor" == "Ramming" ]; then
-    update_switch_pin "${afc_config_dir}/AFC_Hardware.cfg" "buffer"
+    if [ "$installation_type" != "OpenAMS" ]; then
+      update_switch_pin "${afc_config_dir}/AFC_Hardware.cfg" "buffer"
+    elif [ "$installation_type" == "OpenAMS" ]; then
+      update_switch_pin "${afc_config_dir}/AFC_Hardware.cfg" "AMS_extruder"
+    fi
   fi
 
   # When using Boxturtle as Installation Type then insert selected buffer configuration
@@ -218,6 +232,12 @@ elif [ "$installation_type" == "QuattroBox" ]; then
 - You must update the ${afc_config_dir}/AFC_Hardware.cfg file to reference the proper buffer configuration and pins.
 
 - Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_QuattroBox_1.cfg file
+  """
+elif [ "$installation_type" == "OpenAMS" ]; then
+  message+="""
+- Review and update the ${afc_config_dir}/AFC_AMS_1.cfg file for your AMS unit settings.
+
+- Ensure OpenAMS is properly installed and configured per their instructions.
   """
 elif [ "$installation_type" == "ViViD" ]; then
   message+="""

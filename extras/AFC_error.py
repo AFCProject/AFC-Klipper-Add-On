@@ -69,7 +69,7 @@ class afcError:
         else:
             self.PauseUserIntervention(problem)
         if not error_handled:
-            self.afc.function.afc_led(self.afc.led_fault, LANE.led_index)
+            LANE.unit_obj.lane_fault(LANE)
 
         return error_handled
 
@@ -86,7 +86,7 @@ class afcError:
         else: #toolhead empty
             failed_to_retract_msg = f"Failed to retract {cur_lane.name} to load sensor"
             if (cur_lane.raw_load_state
-                and cur_lane.hub != 'direct'
+                and not cur_lane.is_direct_hub()
                 and cur_lane.extruder_obj.tool_start != "buffer"):
                 self.logger.info(f"Retracting {cur_lane.name} back to load switch")
                 if self.afc.homing_enabled:
@@ -94,8 +94,8 @@ class afcError:
                     while (cur_lane.raw_load_state):
                         total_move_dist = cur_lane.dist_hub + cur_lane.hub_obj.afc_bowden_length + 500
                         cur_lane.unit_obj.move_to_load(cur_lane, total_move_dist,
-                                                    MoveDirection.NEG, True,
-                                                    SpeedMode.SHORT)
+                                                       MoveDirection.NEG, True,
+                                                       SpeedMode.SHORT)
                         num_tries += 1
                         if num_tries >= 5:
                             self.PauseUserIntervention(failed_to_retract_msg)
@@ -120,7 +120,7 @@ class afcError:
                             )
                             return False
 
-                cur_lane.set_unloaded()
+                cur_lane.set_tool_unloaded()
                 cur_lane.loaded_to_hub = False
                 cur_lane.unit_obj.prep_load(cur_lane)
                 cur_lane.unit_obj.prep_post_load(cur_lane)
