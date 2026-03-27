@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Adds support for specifying multiple LED objects/RGB ports in a single led_index string (e.g. `AFC_Indicator1:4,RGB1:1-4,RGB2:4-6`)
 
+## [2026-03-17]
+### Fix
+- Corrected pin for [board_pins Vivid_1] From RFID0_CS=PD14 to RFID0_CS=PB14
+
 ## [2026-03-15]
 ### Added
 - Added `NEW_EXTRUDER_TEMP` parameter to Tn commands to set temperature before the tool change begins.
