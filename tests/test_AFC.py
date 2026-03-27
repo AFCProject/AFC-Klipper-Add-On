@@ -904,6 +904,169 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
         obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False)
 
 
+# ── td1_present property ─────────────────────────────────────────────────────
+
+def _make_afc_for_td1(*, td1_present=False, last_td1_query=0.0,
+                       current_time=100.0, printer_ready=True,
+                       moonraker=True, is_printing=False,
+                       moonraker_td1_result=True):
+    """
+    Build an afc instance pre-configured for td1_present property tests.
+
+    Parameters
+    ----------
+    td1_present        : initial value of _td1_present
+    last_td1_query     : initial value of _last_td1_query (seconds, monotonic)
+    current_time       : value reactor.monotonic() will return
+    printer_ready      : if True, printer.state_message == 'Printer is ready'
+    moonraker          : if True, attach a MagicMock moonraker; if False leave None
+    is_printing        : return value of function.is_printing(check_movement=True)
+    moonraker_td1_result : value moonraker.check_for_td1() returns as [1] index
+    """
+    obj = _make_afc()
+    obj._td1_present = td1_present
+    obj._last_td1_query = last_td1_query
+    obj.reactor.monotonic = MagicMock(return_value=current_time)
+    obj.printer.state_message = 'Printer is ready' if printer_ready else 'Startup'
+    obj.function.is_printing = MagicMock(return_value=is_printing)
+
+    if moonraker:
+        obj.moonraker = MagicMock()
+        obj.moonraker.check_for_td1.return_value = (None, moonraker_td1_result)
+    else:
+        obj.moonraker = None
+
+    return obj
+
+
+class TestTd1Present:
+    """Tests for the afc.td1_present property."""
+
+    # ── cached-value paths (no moonraker call) ────────────────────────────────
+
+    def test_returns_cached_when_printer_not_ready(self):
+        """Returns _td1_present without querying moonraker when printer is not ready."""
+        obj = _make_afc_for_td1(td1_present=True, printer_ready=False)
+        assert obj.td1_present is True
+
+    def test_returns_cached_when_moonraker_is_none(self):
+        """Returns _td1_present without error when moonraker is None."""
+        obj = _make_afc_for_td1(td1_present=False, moonraker=False)
+        assert obj.td1_present is False
+
+    def test_returns_cached_when_query_interval_too_short(self):
+        """Returns _td1_present when less than 30 s have elapsed since last query."""
+        # current_time - last_td1_query == 10 s (< 30 s threshold)
+        obj = _make_afc_for_td1(td1_present=True, current_time=100.0, last_td1_query=90.0)
+        assert obj.td1_present is True
+    
+    def test_returns_cached_when_query_interval_too_short_td1_false(self):
+        """Does not refresh when printer is ready and interval has passed but a print is active."""
+        obj = _make_afc_for_td1(
+            td1_present=False,
+            current_time=100.0,
+            last_td1_query=90.0,
+            is_printing=True,
+            moonraker_td1_result=True,
+        )
+        assert obj.td1_present is False
+
+    def test_returns_cached_when_exactly_30s_elapsed(self):
+        """Interval must be *greater than* 30 s; exactly 30 s still returns cached value."""
+        obj = _make_afc_for_td1(td1_present=True, current_time=100.0, last_td1_query=70.0)
+        assert obj.td1_present is True
+
+    def test_returns_cached_when_is_printing(self):
+        """Does not refresh when printer is ready and interval has passed but a print is active."""
+        obj = _make_afc_for_td1(
+            td1_present=False,
+            current_time=100.0,
+            last_td1_query=0.0,
+            is_printing=True,
+            moonraker_td1_result=True,
+        )
+        assert obj.td1_present is False
+
+    # ── moonraker not called paths ────────────────────────────────────────────
+
+    def test_moonraker_not_called_when_printer_not_ready(self):
+        """moonraker.check_for_td1 is never invoked when the printer is not ready."""
+        obj = _make_afc_for_td1(printer_ready=False)
+        _ = obj.td1_present
+        obj.moonraker.check_for_td1.assert_not_called()
+
+    def test_moonraker_not_called_when_interval_too_short(self):
+        """moonraker.check_for_td1 is never invoked when the cooldown has not expired."""
+        obj = _make_afc_for_td1(current_time=100.0, last_td1_query=90.0)
+        _ = obj.td1_present
+        obj.moonraker.check_for_td1.assert_not_called()
+
+    def test_moonraker_not_called_when_is_printing(self):
+        """moonraker.check_for_td1 is never invoked during an active print."""
+        obj = _make_afc_for_td1(current_time=100.0, last_td1_query=0.0, is_printing=True)
+        _ = obj.td1_present
+        obj.moonraker.check_for_td1.assert_not_called()
+
+    # ── refresh paths ─────────────────────────────────────────────────────────
+
+    def test_returns_moonraker_value_when_all_conditions_met(self):
+        """Returns the fresh value from moonraker when printer is ready, interval > 30 s, not printing."""
+        obj = _make_afc_for_td1(
+            td1_present=False,
+            current_time=100.0,
+            last_td1_query=0.0,
+            is_printing=False,
+            moonraker_td1_result=True,
+        )
+        assert obj.td1_present is True
+
+    def test_updates_internal_td1_present_after_refresh(self):
+        """_td1_present is updated to the moonraker result after a successful refresh."""
+        obj = _make_afc_for_td1(
+            td1_present=False,
+            current_time=100.0,
+            last_td1_query=0.0,
+            moonraker_td1_result=True,
+        )
+        _ = obj.td1_present
+        assert obj._td1_present is True
+
+    def test_updates_last_query_time_after_refresh(self):
+        """_last_td1_query is updated to current_time after a successful refresh."""
+        obj = _make_afc_for_td1(current_time=100.0, last_td1_query=0.0)
+        _ = obj.td1_present
+        assert obj._last_td1_query == 100.0
+
+    def test_last_query_time_unchanged_when_not_refreshed(self):
+        """_last_td1_query is not modified when the refresh is skipped (interval too short)."""
+        obj = _make_afc_for_td1(current_time=100.0, last_td1_query=90.0)
+        _ = obj.td1_present
+        assert obj._last_td1_query == 90.0
+
+    def test_moonraker_called_once_per_refresh(self):
+        """moonraker.check_for_td1 is called exactly once when a refresh is due."""
+        obj = _make_afc_for_td1(current_time=100.0, last_td1_query=0.0)
+        _ = obj.td1_present
+        obj.moonraker.check_for_td1.assert_called_once()
+
+    def test_is_printing_called_with_check_movement(self):
+        """is_printing is invoked with check_movement=True when the refresh gate is reached."""
+        obj = _make_afc_for_td1(current_time=100.0, last_td1_query=0.0)
+        _ = obj.td1_present
+        obj.function.is_printing.assert_called_once_with(check_movement=True)
+
+    def test_refresh_stores_false_from_moonraker(self):
+        """A False result from moonraker is correctly stored and returned."""
+        obj = _make_afc_for_td1(
+            td1_present=True,
+            current_time=100.0,
+            last_td1_query=0.0,
+            moonraker_td1_result=False,
+        )
+        assert obj.td1_present is False
+        assert obj._td1_present is False
+
+
 # ── cmd_TOOL_LOAD: lane_loaded guard ─────────────────────────────────────────
 
 class TestCmdToolLoad_LaneLoadedGuard:
