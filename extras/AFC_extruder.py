@@ -217,7 +217,6 @@ class AFCExtruder:
 
         self.toolhead_extruder: PrinterExtruder
         self.fullname                   = config.get_name()
-        # self.mutex                      = self.reactor.mutex()
 
         self.name: str                  = self.fullname.split(' ')[-1]
         self.tool_start                 = config.get('pin_tool_start', None)                                            # Pin for sensor before(pre) extruder gears

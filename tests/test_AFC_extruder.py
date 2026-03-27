@@ -608,11 +608,28 @@ class TestGetStatus:
 
 # ── on_shuttle ────────────────────────────────────────────────────────────────
 # Sentinel value that mirrors the real DETECT_PRESENT constant
-_DETECT_PRESENT = "detect_present"
+_DETECT_PRESENT = "mounted"
+_DETECT_ABSENT  = "absent"
+_DETECT_UNAVAILABLE = "unavailable"
+
+_DETECT_PRESENT_OLD = 1
+_DETECT_ABSENT_OLD  = 0
+_DETECT_UNAVAILABLE_OLD = -1
+
 def _make_toolchanger_module():
     """Return a minimal fake extras.toolchanger module."""
     mod = types.ModuleType("extras.toolchanger")
     mod.DETECT_PRESENT = _DETECT_PRESENT
+    mod.DETECT_ABSENT = _DETECT_ABSENT
+    mod.DETECT_UNAVAILABLE = _DETECT_UNAVAILABLE
+    return mod
+
+def _make_toolchanger_module_old():
+    """Return a minimal fake extras.toolchanger module."""
+    mod = types.ModuleType("extras.toolchanger")
+    mod.DETECT_PRESENT = _DETECT_PRESENT_OLD
+    mod.DETECT_ABSENT = _DETECT_ABSENT_OLD
+    mod.DETECT_UNAVAILABLE = _DETECT_UNAVAILABLE_OLD
     return mod
 
 
@@ -677,31 +694,84 @@ class TestOnShuttle_WithDetectState:
     def test_returns_true_when_detect_state_is_present(self):
         ext = _make_afc_extruder()
         ext.tc_unit_name = "unit_0"
-        ext.tool_obj = _tool_with_detect_state(_DETECT_PRESENT, is_selected=False)
+        ext.tool_obj = _tool_with_detect_state("mounted", is_selected=False)
         assert ext.on_shuttle() is True
 
     def test_returns_true_when_tool_is_selected_but_not_present(self):
         ext = _make_afc_extruder()
         ext.tc_unit_name = "unit_0"
-        ext.tool_obj = _tool_with_detect_state("detect_absent", is_selected=True)
+        ext.tool_obj = _tool_with_detect_state("absent", is_selected=True)
         assert ext.on_shuttle() is True
 
     def test_returns_true_when_both_present_and_selected(self):
         ext = _make_afc_extruder()
         ext.tc_unit_name = "unit_0"
-        ext.tool_obj = _tool_with_detect_state(_DETECT_PRESENT, is_selected=True)
+        ext.tool_obj = _tool_with_detect_state("mounted", is_selected=True)
         assert ext.on_shuttle() is True
 
     def test_returns_false_when_not_present_and_not_selected(self):
         ext = _make_afc_extruder()
         ext.tc_unit_name = "unit_0"
-        ext.tool_obj = _tool_with_detect_state("detect_absent", is_selected=False)
+        ext.tool_obj = _tool_with_detect_state("absent", is_selected=False)
+        assert ext.on_shuttle() is False
+    
+    def test_returns_false_when_not_present_and_not_selected_unavailable(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state("unavailable", is_selected=False)
         assert ext.on_shuttle() is False
 
     def test_get_selected_tool_called_once_per_invocation(self):
         ext = _make_afc_extruder()
         ext.tc_unit_name = "unit_0"
-        ext.tool_obj = _tool_with_detect_state("detect_absent", is_selected=False)
+        ext.tool_obj = _tool_with_detect_state("absent", is_selected=False)
+        ext.on_shuttle()
+        ext.tool_obj.main_toolchanger.get_selected_tool.assert_called_once()
+
+class TestOnShuttle_WithDetectStateOld:
+    """tool_obj carries detect_state; result depends on sensor or tool selection."""
+
+    @pytest.fixture(autouse=True)
+    def patch_toolchanger_module(self):
+        """Inject a fake extras.toolchanger so the in-method import resolves."""
+        fake_mod = _make_toolchanger_module_old()
+        with patch.dict(sys.modules, {"extras.toolchanger": fake_mod}):
+            yield
+
+    def test_returns_true_when_detect_state_is_present(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(1, is_selected=False)
+        assert ext.on_shuttle() is True
+
+    def test_returns_true_when_tool_is_selected_but_not_present(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(0, is_selected=True)
+        assert ext.on_shuttle() is True
+
+    def test_returns_true_when_both_present_and_selected(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(1, is_selected=True)
+        assert ext.on_shuttle() is True
+
+    def test_returns_false_when_not_present_and_not_selected(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(0, is_selected=False)
+        assert ext.on_shuttle() is False
+    
+    def test_returns_false_when_not_present_and_not_selected_unavailable(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(-1, is_selected=False)
+        assert ext.on_shuttle() is False
+
+    def test_get_selected_tool_called_once_per_invocation(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = "unit_0"
+        ext.tool_obj = _tool_with_detect_state(0, is_selected=False)
         ext.on_shuttle()
         ext.tool_obj.main_toolchanger.get_selected_tool.assert_called_once()
 
