@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-03-26]
 ### Added
 - Adds support for a new `AFC_SET_SPOOL_TEMP` in order to manually set extruder/bed temps for a lane when not using Spoolman.
+### Fixed
+- Fixed issue found where AFC was querying moonraker 4 times a second for TD1 data and could take up to 25% CPU usage from lower end SOCs
 
 ## [2026-03-23]
 ### Added
