@@ -169,6 +169,8 @@ class afcPrep:
                                 cur_lane.weight = int(cur_lane.weight)
                             else:
                                 cur_lane.weight = 0
+                        if 'bed_temp' in units[cur_lane.unit][cur_lane.name]: cur_lane.bed_temp = units[cur_lane.unit][cur_lane.name]['bed_temp']
+                        if 'extruder_temp' in units[cur_lane.unit][cur_lane.name]: cur_lane.extruder_temp = units[cur_lane.unit][cur_lane.name]['extruder_temp']
 
                     if 'runout_lane' in units[cur_lane.unit][cur_lane.name]: cur_lane.runout_lane = units[cur_lane.unit][cur_lane.name]['runout_lane']
                     if cur_lane.runout_lane == '' or cur_lane.runout_lane == 'NONE': cur_lane.runout_lane = None
