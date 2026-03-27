@@ -637,7 +637,7 @@ class afc:
 
         return wait
 
-    def _capture_toolhead_temp(self):
+    def _capture_toolhead_temp(self, extruder: AFCExtruder=None, async_capture: bool=False) -> Optional[dict]:
         """
         Helper function to capture current toolhead target temperature when not printing.
 
@@ -645,13 +645,16 @@ class afc:
         """
         if not self.restore_extruder_temp_on_load_or_unload:
             return None
-        if self.function.is_printing():
+        if (self.function.is_printing()
+            and not async_capture):
             return None
-        extruder = self.toolhead.get_extruder()
+
+        if extruder is None:
+            extruder = self.toolhead.get_extruder()
         heater = extruder.get_heater()
         return {"extruder": extruder, "target_temp": heater.target_temp}
 
-    def _restore_toolhead_temp(self, temp_state):
+    def _restore_toolhead_temp(self, temp_state:dict, async_restore: bool=False):
         """
         Helper function to restore toolhead target temperature after load/unload when not printing AND restore_extruder_temp_on_load_or_unload is True
 
@@ -661,12 +664,14 @@ class afc:
             return
         if not temp_state:
             return
-        if self.function.is_printing():
+        if (self.function.is_printing()
+            and not async_restore):
             return
+
         try:
             pheaters = self.printer.lookup_object('heaters')
             pheaters.set_temperature(temp_state["extruder"].get_heater(), temp_state["target_temp"], wait=False)
-            self.logger.info("Restoring extruder temperature to {}".format(temp_state["target_temp"]))
+            self.logger.info(f"Restoring extruder temperature to {temp_state['target_temp']} for {temp_state['extruder'].name}")
         except Exception:
             self.logger.debug("Unable to restore extruder temperature", exc_info=True)
 

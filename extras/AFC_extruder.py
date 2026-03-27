@@ -240,6 +240,7 @@ class AFCExtruder:
         self.set_status_color_fn        = None
         self.check_transmit_status_fn   = None
         self.status_led_count:int       = 0
+        self._captured_toolhead_temp: dict|None = None
 
         if self.toolhead_status_index:
             self.toolhead_status_index  = self.afc.function._get_led_indexes(self.toolhead_status_index)
@@ -556,6 +557,7 @@ class AFCExtruder:
         else:
             self.tc_lane.status = AFCLaneState.TOOL_UNLOADING
 
+        self._captured_toolhead_temp = self.afc._capture_toolhead_temp( extruder=self, async_capture=True)
         self.afc._check_extruder_temp(self.tc_lane, no_wait=True)
         self.reactor.update_timer(self.temp_check_timer,
                                 self.reactor.monotonic() +1 )
@@ -622,6 +624,10 @@ class AFCExtruder:
 
         self.function.do_enable(False, self.name)
         self.load_active = False
+
+        self.afc._restore_toolhead_temp(temp_state=self._captured_toolhead_temp, async_restore=True)
+        self._captured_toolhead_temp = None
+
         info_str = "loading" if self.current_move_distance > 0 else "unloading"
         self.logger.info(f"{self.name} {info_str} done")
         self.tc_lane.status = AFCLaneState.NONE
