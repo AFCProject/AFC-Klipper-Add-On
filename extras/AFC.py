@@ -637,9 +637,14 @@ class afc:
 
         return wait
 
-    def _capture_toolhead_temp(self, extruder: AFCExtruder=None, async_capture: bool=False) -> Optional[dict]:
+    def capture_toolhead_temp(self, extruder: AFCExtruder=None, async_capture: bool=False) -> Optional[dict]:
         """
         Helper function to capture current toolhead target temperature when not printing.
+
+        :param extruder: Pass in extruder to capture current toolhead temperature for, if no extruder
+            is passed in, defaults to current active extruder.
+        :param async_capture: Set to True to capure temp while printing, this is useful for capturing
+            other toolhead hotends on toolchangers.
 
         :return dict with extruder and target_temp, or None if printing or restore_extruder_temp_on_load_or_unload is False
         """
@@ -654,11 +659,13 @@ class afc:
         heater = extruder.get_heater()
         return {"extruder": extruder, "target_temp": heater.target_temp}
 
-    def _restore_toolhead_temp(self, temp_state:dict, async_restore: bool=False):
+    def restore_toolhead_temp(self, temp_state:dict, async_restore: bool=False):
         """
         Helper function to restore toolhead target temperature after load/unload when not printing AND restore_extruder_temp_on_load_or_unload is True
 
         :param temp_state: Dictionary containing extruder object and target_temp, or None
+        :param async_restore: Set to True to restore while printing, this is useful for restoring
+            other toolhead hotends on toolchangers.
         """
         if not self.restore_extruder_temp_on_load_or_unload:
             return
@@ -1333,7 +1340,7 @@ class afc:
                 self.save_vars()
                 cur_lane.unit_obj.lane_loading( cur_lane )
 
-                temp_state = self._capture_toolhead_temp()
+                temp_state = self.capture_toolhead_temp()
                 try:
                     # Run the load sequence, which may include custom gcode commands.
                     success = self.load_sequence(cur_lane, cur_hub, cur_extruder)
@@ -1388,7 +1395,7 @@ class afc:
                         self.gcode.run_script_from_command(self.post_load_macro)
                         # TODO: Add afcDeltaTime log
                 finally:
-                    self._restore_toolhead_temp(temp_state)
+                    self.restore_toolhead_temp(temp_state)
 
             else:
                 # Handle errors if the hub is not clear or the lane is not ready for loading.
@@ -1731,14 +1738,14 @@ class afc:
             # Lookup current hub object using the lane's information.
             cur_hub = cur_lane.hub_obj
 
-            temp_state = self._capture_toolhead_temp()
+            temp_state = self.capture_toolhead_temp()
             try:
                 # Run the unload sequence, which may include custom gcode commands.
                 success = self.unload_sequence(cur_lane, cur_hub, cur_extruder)
                 if not success:
                     return success
             finally:
-                self._restore_toolhead_temp(temp_state)
+                self.restore_toolhead_temp(temp_state)
 
             unload_time = self.afcDeltaTime.log_major_delta("Lane {} unload done".format(cur_lane.name if cur_lane is not None else "None"))
             self.afc_stats.average_tool_unload_time.average_time(unload_time)

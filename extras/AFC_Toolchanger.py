@@ -81,7 +81,7 @@ class AfcToolchanger(afcUnit):
                     assist_active: AssistActive=AssistActive.DYNAMIC
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
-        Overriding function from AFC_unit
+        Overriding method from AFC_unit
 
         return: True, 0, AFCMoveWarning.NONE
         """
@@ -92,7 +92,7 @@ class AfcToolchanger(afcUnit):
                      speed_mode:SpeedMode=SpeedMode.LONG
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
-        Overriding function from AFC_unit
+        Overriding method from AFC_unit
 
         return: True, 0, AFCMoveWarning.NONE
         """
@@ -102,7 +102,7 @@ class AfcToolchanger(afcUnit):
                        assist_active: AssistActive, endstop: AFCHomingPoints
                     ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
-        Overriding function from AFC_unit
+        Overriding method from AFC_unit
 
         return: True, 0, AFCMoveWarning.NONE
         """

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-03-27]
+## Added
+- Restoring previous temperature when asynchronously loading standalone toolheads
+## Fixed
+- Issue where standalone toolheads would cause a homing error when trying to load/unload filament
+- Fixing indention issue found in `prep_callback` method in AFC_lane.py
+
 ## [2026-03-26]
 ### Added
 - Adds support for a new `AFC_SET_SPOOL_TEMP` in order to manually set extruder/bed temps for a lane when not using Spoolman.

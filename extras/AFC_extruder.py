@@ -556,7 +556,7 @@ class AFCExtruder:
         else:
             self.tc_lane.status = AFCLaneState.TOOL_UNLOADING
 
-        self._captured_toolhead_temp = self.afc._capture_toolhead_temp( extruder=self, async_capture=True)
+        self._captured_toolhead_temp = self.afc.capture_toolhead_temp( extruder=self, async_capture=True)
         self.afc._check_extruder_temp(self.tc_lane, no_wait=True)
         self.reactor.update_timer(self.temp_check_timer,
                                 self.reactor.monotonic() +1 )
@@ -624,7 +624,7 @@ class AFCExtruder:
         self.function.do_enable(False, self.name)
         self.load_active = False
 
-        self.afc._restore_toolhead_temp(temp_state=self._captured_toolhead_temp, async_restore=True)
+        self.afc.restore_toolhead_temp(temp_state=self._captured_toolhead_temp, async_restore=True)
         self._captured_toolhead_temp = None
 
         info_str = "loading" if self.current_move_distance > 0 else "unloading"
@@ -799,6 +799,12 @@ class AFCExtruder:
             return False
 
     def is_standalone(self):
+        """
+        Method for returning if extruder is a standalone lane (no unit system attached to it)
+
+        :return bool: Returns True if no unit system is attached to extruder, False if units/lanes
+            are attached.
+        """
         return self.no_lanes
 
     cmd_UPDATE_TOOLHEAD_SENSORS_help = "Gives ability to update tool_stn, tool_stn_unload, tool_sensor_after_extruder values without restarting klipper"
