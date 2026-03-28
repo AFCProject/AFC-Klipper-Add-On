@@ -1108,38 +1108,38 @@ class AFCLane:
                         self.status = AFCLaneState.NONE
                         self.logger.debug(f"Prep: Load Done-{self.name}")
 
-                    # Verify that load state is still true as this would still trigger if prep sensor was triggered and then filament was removed
-                    #   This is only really a issue when using direct_load and still using load sensor
-                    if self.hub == 'direct_load' and self.prep_state:
-                        self.logger.debug(f"Prep: direct load logic-{self.name}-{self.hub}")
-                        self.afc.TOOL_LOAD(self)
-                        self.afc.spool._set_values(self)
-                        self.logger.debug(f"Prep: direct load logic done-{self.name}-{self.hub}")
-                        break
+                        # Verify that load state is still true as this would still trigger if prep sensor was triggered and then filament was removed
+                        #   This is only really a issue when using direct_load and still using load sensor
+                        if self.hub == 'direct_load' and self.prep_state:
+                            self.logger.debug(f"Prep: direct load logic-{self.name}-{self.hub}")
+                            self.afc.TOOL_LOAD(self)
+                            self.afc.spool._set_values(self)
+                            self.logger.debug(f"Prep: direct load logic done-{self.name}-{self.hub}")
+                            break
 
-                    self.unit_obj.prep_post_load(self)
+                        self.unit_obj.prep_post_load(self)
 
-                    self.do_enable(False)
-                    if (self.load_state
-                        and self.prep_state):
-                        self.set_loaded()
-                        self._post_prep_user_macro()
-                        # Check if user wants to get TD-1 data when loading
-                        # TODO: When implementing multi-extruder this could still happen if a lane is loaded for a
-                        # different extruder/hub
-                        if self.td1_device_id:
-                            self._prep_capture_td1()
+                        self.do_enable(False)
+                        if (self.load_state
+                            and self.prep_state):
+                            self.set_loaded()
+                            self._post_prep_user_macro()
+                            # Check if user wants to get TD-1 data when loading
+                            # TODO: When implementing multi-extruder this could still happen if a lane is loaded for a
+                            # different extruder/hub
+                            if self.td1_device_id:
+                                self._prep_capture_td1()
 
-                elif (self.prep_state == True
-                      and self.raw_load_state == True
-                      and not self.afc.function.is_printing()):
-                    message = 'Cannot load {} load sensor is triggered.'.format(self.name)
-                    message += '\n    Make sure filament is not stuck in load sensor or check to make sure load sensor is not stuck triggered.'
-                    if self.unit_obj.type == "ViViD":
-                        message += f'\n    If filament is not stuck in sensor run AFC_RECOVER_LANE LANE={self.name}'
-                        message += " to reset internal AFC state."
-                    message += '\n    Once cleared try loading again'
-                    self.afc.error.AFC_error(message, pause=False)
+                    elif (self.prep_state == True
+                        and self.raw_load_state == True
+                        and not self.afc.function.is_printing()):
+                        message = 'Cannot load {} load sensor is triggered.'.format(self.name)
+                        message += '\n    Make sure filament is not stuck in load sensor or check to make sure load sensor is not stuck triggered.'
+                        if self.unit_obj.type == "ViViD":
+                            message += f'\n    If filament is not stuck in sensor run AFC_RECOVER_LANE LANE={self.name}'
+                            message += " to reset internal AFC state."
+                        message += '\n    Once cleared try loading again'
+                        self.afc.error.AFC_error(message, pause=False)
         self.prep_active = False
         self.afc.save_vars()
 
