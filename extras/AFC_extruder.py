@@ -368,7 +368,6 @@ class AFCExtruder:
                     f"buffer is not valid config for pin_tool_start when using {self.name} as a standalone extruder"
                 )
 
-
     def handle_connect(self):
         """
         Handle the connection event.
@@ -472,7 +471,7 @@ class AFCExtruder:
         :param state: Boolean indicating sensor state (True = filament present, False = runout)
         """
         if state != self.tool_start_state:
-            if self.tc_unit_name and self.no_lanes:
+            if self.tc_unit_name and self.is_standalone():
                 self.tc_lane._load_state = state
                 self.tc_lane.prep_state = state
 
@@ -798,6 +797,9 @@ class AFCExtruder:
             )
         else:
             return False
+
+    def is_standalone(self):
+        return self.no_lanes
 
     cmd_UPDATE_TOOLHEAD_SENSORS_help = "Gives ability to update tool_stn, tool_stn_unload, tool_sensor_after_extruder values without restarting klipper"
     cmd_UPDATE_TOOLHEAD_SENSORS_options = {

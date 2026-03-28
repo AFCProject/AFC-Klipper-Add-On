@@ -888,7 +888,7 @@ class afcFunction:
 
         calibration_info = {}
         for lane in calibrate_lanes:
-            if lane.extruder_obj.no_lanes:
+            if lane.extruder_obj.is_standalone():
                 self.logger.info(f"{lane.name} is a standalone lane, skipping calibration")
                 continue
             if not lane.load_state or not lane.prep_state:
@@ -1189,7 +1189,7 @@ class afcFunction:
                 continue
 
             # Filtering out units that only have standalone lanes (toolchanger extruders without assist)
-            if all( lane.extruder_obj.no_lanes for lane in self.afc.units.get(key).lanes.values() ):
+            if all( lane.extruder_obj.is_standalone() for lane in self.afc.units.get(key).lanes.values() ):
                 continue
 
             # Create a button for each unit
@@ -1298,7 +1298,7 @@ class afcFunction:
 
         if (lanes is not None
             and lanes != 'all'
-            and self.afc.lanes.get(lanes).extruder_obj.no_lanes):
+            and self.afc.lanes.get(lanes).extruder_obj.is_standalone()):
             self.afc.error.AFC_error(f"{lanes} is a standalone lane, cannot calibrate", pause=False)
             return
 

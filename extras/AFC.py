@@ -1189,7 +1189,7 @@ class afc:
 
         # TODO: add a check for multi-tools to verify lane is not loaded to toolhead before trying to unload
         if (cur_lane.name != cur_lane.extruder_obj.lane_loaded
-		    and not cur_lane.extruder_obj.no_lanes
+		    and not cur_lane.extruder_obj.is_standalone()
 			and not cur_lane.is_direct_hub()):
             # Setting status as ejecting so if filament is removed and de-activates the prep sensor while
             # extruder motors are still running it does not trigger infinite spool or pause logic
@@ -1211,7 +1211,7 @@ class afc:
             self.spool.set_spoolID(cur_lane, None)
             self.logger.info("LANE {} eject done".format(cur_lane.name))
             cur_lane.unit_obj.lane_not_ready(cur_lane)
-        elif cur_lane.extruder_obj.no_lanes and cur_lane.extruder_obj.lane_loaded:
+        elif cur_lane.extruder_obj.is_standalone() and cur_lane.extruder_obj.lane_loaded:
             cur_lane.status = AFCLaneState.EJECTING
             cur_lane.extruder_obj.load_unload_sequence(cur_lane.extruder_obj.tool_stn_unload*-1)
 
@@ -1893,7 +1893,7 @@ class afc:
                     self.function.log_toolhead_pos("Sensor move after ")
                     # For "standalone" toolheads, break out of the loop since sensor will always
                     # be triggered
-                    if cur_lane.extruder_obj.no_lanes:
+                    if cur_lane.extruder_obj.is_standalone():
                         break
 
             self.afcDeltaTime.log_with_time("Unloaded from toolhead")
@@ -2000,7 +2000,8 @@ class afc:
             cur_lane.unit_obj.lane_tool_unloaded(cur_lane)
             cur_lane.status = AFCLaneState.NONE
 
-            if cur_lane.is_direct_hub():
+            if (cur_lane.is_direct_hub()
+                and not cur_lane.extruder_obj.is_standalone()):
                 while cur_lane.raw_load_state:
                     cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
                                            assist_active=AssistActive.YES)
