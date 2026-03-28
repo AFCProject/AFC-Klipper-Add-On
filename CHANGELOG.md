@@ -6,11 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2026-03-27]
-## Added
+### Added
 - Restoring previous temperature when asynchronously loading standalone toolheads
-## Fixed
+### Fixed
 - Issue where standalone toolheads would cause a homing error when trying to load/unload filament
-- Fixing indention issue found in `prep_callback` method in AFC_lane.py
+- Fixing indentation issue found in `prep_callback` method in AFC_lane.py
 
 ## [2026-03-26]
 ### Added

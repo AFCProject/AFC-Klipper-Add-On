@@ -637,19 +637,21 @@ class afc:
 
         return wait
 
-    def capture_toolhead_temp(self, extruder: AFCExtruder=None, async_capture: bool=False) -> Optional[dict]:
+    def capture_toolhead_temp(self, extruder: Optional[AFCExtruder]=None,
+                              async_capture: bool=False) -> Optional[dict]:
         """
         Helper function to capture current toolhead target temperature when not printing.
 
         :param extruder: Pass in extruder to capture current toolhead temperature for, if no extruder
             is passed in, defaults to current active extruder.
-        :param async_capture: Set to True to capure temp while printing, this is useful for capturing
+        :param async_capture: Set to True to capture temp while printing, this is useful for capturing
             other toolhead hotends on toolchangers.
 
         :return dict with extruder and target_temp, or None if printing or restore_extruder_temp_on_load_or_unload is False
         """
         if not self.restore_extruder_temp_on_load_or_unload:
             return None
+
         if (self.function.is_printing()
             and not async_capture):
             return None
@@ -659,7 +661,7 @@ class afc:
         heater = extruder.get_heater()
         return {"extruder": extruder, "target_temp": heater.target_temp}
 
-    def restore_toolhead_temp(self, temp_state:dict, async_restore: bool=False):
+    def restore_toolhead_temp(self, temp_state:dict, async_restore: bool=False) -> None:
         """
         Helper function to restore toolhead target temperature after load/unload when not printing AND restore_extruder_temp_on_load_or_unload is True
 
@@ -669,8 +671,7 @@ class afc:
         """
         if not self.restore_extruder_temp_on_load_or_unload:
             return
-        if not temp_state:
-            return
+
         if (self.function.is_printing()
             and not async_restore):
             return

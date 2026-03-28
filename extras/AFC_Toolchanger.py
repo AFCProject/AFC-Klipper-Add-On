@@ -88,8 +88,8 @@ class AfcToolchanger(afcUnit):
         return True, 0, AFCMoveWarning.NONE
 
     def move_to_load(self, lane: AFCLane, dist: float,
-                     dir: MoveDirection, use_homing=True,
-                     speed_mode:SpeedMode=SpeedMode.LONG
+                     dir: MoveDirection, use_homing: bool=True,
+                     speed_mode: SpeedMode=SpeedMode.LONG
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Overriding method from AFC_unit

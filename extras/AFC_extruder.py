@@ -240,7 +240,7 @@ class AFCExtruder:
         self.set_status_color_fn        = None
         self.check_transmit_status_fn   = None
         self.status_led_count:int       = 0
-        self._captured_toolhead_temp: dict|None = None
+        self._captured_toolhead_temp: Optional[dict] = None
 
         if self.toolhead_status_index:
             self.toolhead_status_index  = self.afc.function._get_led_indexes(self.toolhead_status_index)
