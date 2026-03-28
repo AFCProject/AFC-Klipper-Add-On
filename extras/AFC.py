@@ -1891,7 +1891,7 @@ class afc:
                         self.move_e_pos( cur_extruder.tool_stn_unload * -1, cur_extruder.tool_unload_speed, "Sensor move", wait_tool=True)
 
                     self.function.log_toolhead_pos("Sensor move after ")
-                    # For "standalone" toolheads, break out of the loop since sensor will always 
+                    # For "standalone" toolheads, break out of the loop since sensor will always
                     # be triggered
                     if cur_lane.extruder_obj.no_lanes:
                         break

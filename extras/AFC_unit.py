@@ -753,9 +753,10 @@ class afcUnit:
         self._print_function_not_defined(self.eject_lane.__name__)
 
     def move_to_hub(self, lane: AFCLane, dist: float,
-                    dir:MoveDirection, use_homing=True,
-                    speed_mode=SpeedMode.HUB,
-                    assist_active=AssistActive.DYNAMIC) -> tuple[bool, float|int, AFCMoveWarning]:
+                    dir: MoveDirection, use_homing: bool=True,
+                    speed_mode: SpeedMode=SpeedMode.HUB,
+                    assist_active: AssistActive=AssistActive.DYNAMIC
+                ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to hub sensor, calls lanes move_to method with HUB as trigger
         point when homing is enabled.
@@ -783,8 +784,9 @@ class afcUnit:
                             endstop=lane.hub_endstop_name, use_homing=use_homing)
 
     def move_to_load(self, lane: AFCLane, dist: float,
-                     dir: MoveDirection, use_homing=True,
-                     speed_mode:SpeedMode=SpeedMode.LONG) -> tuple[bool, float|int, AFCMoveWarning]:
+                     dir: MoveDirection, use_homing: bool=True,
+                     speed_mode: SpeedMode=SpeedMode.LONG
+                ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to load sensor, calls lane's move_to method with the load
         sensor endpoint (lane.load_es) as trigger point when homing is enabled.
@@ -813,7 +815,8 @@ class afcUnit:
                             assist_active=AssistActive.DYNAMIC, use_homing=use_homing)
 
     def load_then_home(self, lane: AFCLane|AFCExtruderStepper, distance: float,
-                       assist_active: AssistActive, endstop: AFCHomingPoints) -> tuple[bool, float|int, AFCMoveWarning]:
+                       assist_active: AssistActive, endstop: AFCHomingPoints
+                    ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to toolhead. If load_then_home boolean is set, AFC will do
         a normal move without homing enabled for a distance of: distance - load_undershoot.

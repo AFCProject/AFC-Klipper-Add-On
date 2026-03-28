@@ -290,9 +290,11 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
 
-    def move_to_hub(self, lane: AFCLane, dist: float, dir:MoveDirection, use_homing=True,
-                    speed_mode=SpeedMode.HUB, assist_active=AssistActive.DYNAMIC
-                    ) -> tuple[bool, float|int, AFCMoveWarning]:
+    def move_to_hub(self, lane: AFCLane, dist: float,
+                    dir: MoveDirection, use_homing: bool=True,
+                    speed_mode: SpeedMode=SpeedMode.HUB,
+                    assist_active: AssistActive=AssistActive.DYNAMIC
+                ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
         point when homing is enabled.
