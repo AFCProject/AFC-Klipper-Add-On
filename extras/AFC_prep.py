@@ -163,14 +163,22 @@ class afcPrep:
                             cur_lane.filament_diameter= units[cur_lane.unit][cur_lane.name]["diameter"]
                         if 'empty_spool_weight' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.empty_spool_weight= units[cur_lane.unit][cur_lane.name]["empty_spool_weight"]
-
-                        if not isinstance(cur_lane.weight, int):
-                            if cur_lane.weight:
-                                cur_lane.weight = int(cur_lane.weight)
-                            else:
-                                cur_lane.weight = 0
                         if 'bed_temp' in units[cur_lane.unit][cur_lane.name]: cur_lane.bed_temp = units[cur_lane.unit][cur_lane.name]['bed_temp']
                         if 'extruder_temp' in units[cur_lane.unit][cur_lane.name]: cur_lane.extruder_temp = units[cur_lane.unit][cur_lane.name]['extruder_temp']
+
+                        for attr_name in ("bed_temp", "extruder_temp", "weight"):
+                            value = getattr(cur_lane, attr_name, None)
+                            if value == "" or value == "NONE":
+                                setattr(cur_lane, attr_name, None)
+                            else:
+                                try:
+                                    if not isinstance(value, float):
+                                        if value:
+                                            setattr(cur_lane, attr_name, float(value))
+                                        else:
+                                            setattr(cur_lane, attr_name, 0)
+                                except (ValueError, TypeError):
+                                    setattr(cur_lane, attr_name, 0)
 
                     if 'runout_lane' in units[cur_lane.unit][cur_lane.name]: cur_lane.runout_lane = units[cur_lane.unit][cur_lane.name]['runout_lane']
                     if cur_lane.runout_lane == '' or cur_lane.runout_lane == 'NONE': cur_lane.runout_lane = None

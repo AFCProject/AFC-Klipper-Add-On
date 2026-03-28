@@ -961,12 +961,12 @@ class TestTd1Present:
         assert obj.td1_present is True
     
     def test_returns_cached_when_query_interval_too_short_td1_false(self):
-        """Does not refresh when printer is ready and interval has passed but a print is active."""
+        """Does not refresh when printer is ready and interval has not passed."""
         obj = _make_afc_for_td1(
             td1_present=False,
             current_time=100.0,
             last_td1_query=90.0,
-            is_printing=True,
+            is_printing=False,
             moonraker_td1_result=True,
         )
         assert obj.td1_present is False
