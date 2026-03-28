@@ -1132,3 +1132,246 @@ class TestCmdToolLoad_LaneLoadedGuard:
 
         obj.error.AFC_error.assert_not_called()
         obj.TOOL_LOAD.assert_called_once_with(lane, None)
+
+
+# ── capture_toolhead_temp ─────────────────────────────────────────────────────
+
+def _make_afc_for_capture_restore(
+    *,
+    restore_enabled: bool = True,
+    is_printing: bool = False,
+    target_temp: float = 200.0,
+):
+    """
+    Build an afc instance pre-configured for capture_toolhead_temp /
+    restore_toolhead_temp tests.
+
+    Parameters
+    ----------
+    restore_enabled : value of restore_extruder_temp_on_load_or_unload
+    is_printing     : return value of function.is_printing()
+    target_temp     : heater.target_temp on the mock extruder
+    """
+    obj = _make_afc()
+    obj.restore_extruder_temp_on_load_or_unload = restore_enabled
+    obj.function.is_printing = MagicMock(return_value=is_printing)
+    obj.logger = MagicMock()
+
+    # Build a mock extruder with a heater whose target_temp is controllable
+    mock_heater = MagicMock()
+    mock_heater.target_temp = target_temp
+
+    mock_extruder = MagicMock()
+    mock_extruder.name = "extruder"
+    mock_extruder.get_heater.return_value = mock_heater
+
+    # toolhead.get_extruder() returns the same mock extruder by default
+    mock_toolhead = MagicMock()
+    mock_toolhead.get_extruder.return_value = mock_extruder
+    obj.toolhead = mock_toolhead
+
+    # printer.lookup_object('heaters') returns a mock pheaters
+    mock_pheaters = MagicMock()
+    obj.printer.lookup_object = MagicMock(return_value=mock_pheaters)
+
+    return obj, mock_extruder, mock_heater, mock_pheaters
+
+
+class TestCaptureToolheadTemp:
+    """Tests for afc.capture_toolhead_temp."""
+
+    # ── early-return paths ────────────────────────────────────────────────────
+
+    def test_returns_none_when_restore_disabled(self):
+        """Returns None immediately when restore_extruder_temp_on_load_or_unload is False."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore(restore_enabled=False)
+        assert obj.capture_toolhead_temp() is None
+
+    def test_returns_none_when_printing_and_not_async(self):
+        """Returns None when is_printing() is True and async_capture is False (default)."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore(is_printing=True)
+        assert obj.capture_toolhead_temp() is None
+
+    def test_returns_none_when_printing_explicit_async_false(self):
+        """Returns None when printing and async_capture is explicitly False."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore(is_printing=True)
+        assert obj.capture_toolhead_temp(async_capture=False) is None
+
+    # ── successful capture paths ──────────────────────────────────────────────
+
+    def test_returns_dict_when_not_printing(self):
+        """Returns a dict (not None) when the printer is idle."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore(is_printing=False)
+        result = obj.capture_toolhead_temp()
+        assert result is not None
+
+    def test_returns_dict_when_printing_and_async_capture(self):
+        """Returns a dict when printing but async_capture=True bypasses the guard."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore(is_printing=True)
+        result = obj.capture_toolhead_temp(async_capture=True)
+        assert result is not None
+
+    def test_returned_dict_has_extruder_key(self):
+        """The returned dict contains the 'extruder' key."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore()
+        result = obj.capture_toolhead_temp()
+        assert "extruder" in result
+
+    def test_returned_dict_has_target_temp_key(self):
+        """The returned dict contains the 'target_temp' key."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore()
+        result = obj.capture_toolhead_temp()
+        assert "target_temp" in result
+
+    def test_target_temp_matches_heater(self):
+        """target_temp in the returned dict equals heater.target_temp."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore(target_temp=215.0)
+        result = obj.capture_toolhead_temp()
+        assert result["target_temp"] == 215.0
+
+    def test_uses_toolhead_extruder_when_none_passed(self):
+        """When no extruder is passed, uses toolhead.get_extruder()."""
+        obj, extruder, heater, _ = _make_afc_for_capture_restore()
+        result = obj.capture_toolhead_temp()
+        obj.toolhead.get_extruder.assert_called_once()
+        assert result["extruder"] is extruder
+
+    def test_uses_passed_extruder_over_toolhead(self):
+        """When an extruder is passed explicitly, it is used instead of toolhead.get_extruder()."""
+        obj, _, _, _ = _make_afc_for_capture_restore()
+
+        custom_heater = MagicMock()
+        custom_heater.target_temp = 240.0
+        custom_extruder = MagicMock()
+        custom_extruder.get_heater.return_value = custom_heater
+
+        result = obj.capture_toolhead_temp(extruder=custom_extruder)
+
+        obj.toolhead.get_extruder.assert_not_called()
+        assert result["extruder"] is custom_extruder
+        assert result["target_temp"] == 240.0
+
+    def test_restore_disabled_skips_is_printing_check(self):
+        """When restore is disabled, is_printing is never consulted."""
+        obj, _, _, _ = _make_afc_for_capture_restore(restore_enabled=False)
+        obj.capture_toolhead_temp()
+        obj.function.is_printing.assert_not_called()
+
+
+# ── restore_toolhead_temp ─────────────────────────────────────────────────────
+
+class TestRestoreToolheadTemp:
+    """Tests for afc.restore_toolhead_temp."""
+
+    def _make_valid_temp_state(self, target_temp: float = 200.0):
+        """Return a minimal temp_state dict with a mock extruder."""
+        mock_heater = MagicMock()
+        mock_extruder = MagicMock()
+        mock_extruder.name = "extruder"
+        mock_extruder.get_heater.return_value = mock_heater
+        return {"extruder": mock_extruder, "target_temp": target_temp}
+
+    # ── early-return paths ────────────────────────────────────────────────────
+
+    def test_returns_early_when_restore_disabled(self):
+        """Does nothing when restore_extruder_temp_on_load_or_unload is False."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore(restore_enabled=False)
+        temp_state = self._make_valid_temp_state()
+        obj.restore_toolhead_temp(temp_state)
+        pheaters.set_temperature.assert_not_called()
+
+    def test_returns_early_when_temp_state_is_none(self):
+        """Does nothing when temp_state is None."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore()
+        obj.restore_toolhead_temp(None)
+        pheaters.set_temperature.assert_not_called()
+
+    def test_returns_early_when_temp_state_is_empty_dict(self):
+        """Does nothing when temp_state is an empty dict (falsy)."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore()
+        obj.restore_toolhead_temp({})
+        pheaters.set_temperature.assert_not_called()
+
+    def test_returns_early_when_printing_and_not_async(self):
+        """Does nothing when is_printing() is True and async_restore is False (default)."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore(is_printing=True)
+        temp_state = self._make_valid_temp_state()
+        obj.restore_toolhead_temp(temp_state)
+        pheaters.set_temperature.assert_not_called()
+
+    def test_returns_early_when_printing_explicit_async_false(self):
+        """Does nothing when printing and async_restore is explicitly False."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore(is_printing=True)
+        temp_state = self._make_valid_temp_state()
+        obj.restore_toolhead_temp(temp_state, async_restore=False)
+        pheaters.set_temperature.assert_not_called()
+
+    # ── successful restore paths ──────────────────────────────────────────────
+
+    def test_calls_set_temperature_when_not_printing(self):
+        """Calls pheaters.set_temperature when all conditions allow a restore."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore(is_printing=False)
+        temp_state = self._make_valid_temp_state(target_temp=210.0)
+        obj.restore_toolhead_temp(temp_state)
+        pheaters.set_temperature.assert_called_once()
+
+    def test_restores_correct_temperature(self):
+        """set_temperature is called with the target_temp from temp_state."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore()
+        temp_state = self._make_valid_temp_state(target_temp=225.0)
+        obj.restore_toolhead_temp(temp_state)
+        _, call_kwargs = pheaters.set_temperature.call_args
+        assert call_kwargs.get("wait") is False
+        positional = pheaters.set_temperature.call_args.args
+        assert positional[1] == 225.0
+
+    def test_restores_using_extruder_heater(self):
+        """set_temperature receives the heater obtained from temp_state['extruder']."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore()
+        temp_state = self._make_valid_temp_state()
+        mock_heater = temp_state["extruder"].get_heater()
+        obj.restore_toolhead_temp(temp_state)
+        positional = pheaters.set_temperature.call_args.args
+        assert positional[0] is mock_heater
+
+    def test_restores_when_printing_and_async_restore(self):
+        """Restores temperature when printing but async_restore=True bypasses the guard."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore(is_printing=True)
+        temp_state = self._make_valid_temp_state()
+        obj.restore_toolhead_temp(temp_state, async_restore=True)
+        pheaters.set_temperature.assert_called_once()
+
+    def test_logs_info_after_restore(self):
+        """logger.info is called with extruder name and target temp after a successful restore."""
+        obj, _, _, _ = _make_afc_for_capture_restore()
+        temp_state = self._make_valid_temp_state(target_temp=200.0)
+        obj.restore_toolhead_temp(temp_state)
+        obj.logger.info.assert_called_once()
+        log_msg = obj.logger.info.call_args.args[0]
+        assert "extruder" in log_msg
+        assert "200" in log_msg
+
+    def test_restore_disabled_skips_is_printing_check(self):
+        """When restore is disabled, is_printing is never consulted."""
+        obj, _, _, _ = _make_afc_for_capture_restore(restore_enabled=False)
+        temp_state = self._make_valid_temp_state()
+        obj.restore_toolhead_temp(temp_state)
+        obj.function.is_printing.assert_not_called()
+
+    # ── exception handling ────────────────────────────────────────────────────
+
+    def test_logs_debug_on_exception(self):
+        """If set_temperature raises, logger.debug is called and no exception propagates."""
+        obj, _, _, pheaters = _make_afc_for_capture_restore()
+        pheaters.set_temperature.side_effect = RuntimeError("heater fault")
+        temp_state = self._make_valid_temp_state()
+        obj.restore_toolhead_temp(temp_state)   # must not raise
+        obj.logger.debug.assert_called_once()
+
+    def test_no_exception_propagated_on_lookup_failure(self):
+        """If printer.lookup_object raises, the exception is swallowed."""
+        obj, _, _, _ = _make_afc_for_capture_restore()
+        obj.printer.lookup_object.side_effect = KeyError("heaters")
+        temp_state = self._make_valid_temp_state()
+        obj.restore_toolhead_temp(temp_state)   # must not raise
+        obj.logger.debug.assert_called_once()
