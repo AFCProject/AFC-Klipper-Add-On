@@ -868,7 +868,10 @@ class AFCLane:
                 self.move_advanced(distance, speed_mode, assist_active )
                 return True, 0, warn
         else:
-            return False, 0, AFCMoveWarning.ERROR
+            if self.extruder_obj.no_lanes:
+                return True, 0, AFCMoveWarning.NONE
+            else:
+                return False, 0, AFCMoveWarning.ERROR
 
 
     def move_advanced(self, distance, speed_mode: SpeedMode, assist_active: AssistActive = AssistActive.NO):
