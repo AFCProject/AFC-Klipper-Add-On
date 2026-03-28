@@ -100,6 +100,7 @@ def _make_afc():
     obj.position_saved = False
     obj.spoolman = None
     obj._td1_present = False
+    obj._last_td1_query = 0.0
     obj.lane_data_enabled = False
     obj.units = {}
     obj.lanes = {}

@@ -668,11 +668,23 @@ class TestMoveTo:
         lane = _make_afc_lane()
         lane.drive_stepper = None
         lane.extruder_stepper = None
+        lane.extruder_obj.is_standalone.return_value=False
         homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
                                           False, False)
         assert homed == False
         assert dist == 0
         assert warn == AFCMoveWarning.ERROR
+    
+    def test_no_drive_stepper_no_extruder_stepper_standalone_extruder(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+        lane.extruder_stepper = None
+        lane.extruder_obj.is_standalone.return_value=True
+        homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
+                                          False, False)
+        assert homed == True
+        assert dist == 0
+        assert warn == AFCMoveWarning.NONE
     
     def test_drive_stepper_no_extruder_stepper_no_homing(self):
         lane = _make_afc_lane()
