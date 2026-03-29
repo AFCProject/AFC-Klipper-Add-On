@@ -35,7 +35,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_assist", trace=traceback.fo
 try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-EXCLUDE_TYPES = ["HTLF", "ViViD"]
+EXCLUDE_TYPES = ["HTLF", "HTLFBBE", "ViViD"]
 # Class for holding different states so its clear what all valid states are
 
 # Names to exclude from search when trying to find unit name in config file
@@ -1058,7 +1058,8 @@ class AFCLane:
 
     def load_callback(self, eventtime, state):
         self._load_state = state
-        if self.printer.state_message == 'Printer is ready' and self.unit_obj.type == "HTLF":
+        if (self.printer.state_message == 'Printer is ready'
+            and self.unit_obj.type.startswith("HTLF")):
             self.prep_state = state
 
     def handle_load_runout(self, eventtime, load_state):
@@ -1079,7 +1080,7 @@ class AFCLane:
             self.load_debounce_button._old_note_filament_present(eventtime, load_state)
 
         if (self.printer.state_message == 'Printer is ready' and
-            self.unit_obj.type == "HTLF" and
+            self.unit_obj.type.startswith("HTLF") and
             True == self._afc_prep_done):
             if load_state:
                 self.set_loaded()
