@@ -35,18 +35,25 @@ safe_copy() {
   # Safe copy that prompts the user before overwriting existing files/directories.
   # Usage: safe_copy <source> <destination>
   # Drop-in replacement for cp / cp -R.
+  # Returns: 0 on success (including skip), 1 on error.
+  # Sets safe_copy_result: "copied" | "skipped" after each call.
   local src="$1"
   local dst="$2"
   local effective_dst="$dst"
   local is_dir_copy="false"
+  safe_copy_result="copied"
 
   # Determine if source is a directory
   if [ -d "$src" ]; then
     is_dir_copy="true"
   fi
 
-  # Resolve effective destination path (e.g., cp file dir/ -> dir/file)
-  if [ "$is_dir_copy" = "false" ] && [ -d "$dst" ]; then
+  # Resolve effective destination path
+  # cp behaves the same for files and directories: when the destination is an
+  # existing directory, the source is placed *inside* it.
+  #   cp file dir/       -> dir/file
+  #   cp -R src_dir dir/ -> dir/src_dir
+  if [ -d "$dst" ]; then
     effective_dst="${dst%/}/$(basename "$src")"
   fi
 
@@ -68,6 +75,9 @@ safe_copy() {
     choice="${choice,,}"
     case "$choice" in
       o)
+        # Remove existing destination first so directory copies don't
+        # merge into stale content.
+        rm -rf "$effective_dst"
         if [ "$is_dir_copy" = "true" ]; then
           cp -R "$src" "$dst"
         else
@@ -78,6 +88,7 @@ safe_copy() {
         ;;
       s)
         print_msg INFO "Skipped: ${effective_dst}"
+        safe_copy_result="skipped"
         return 0
         ;;
       b)

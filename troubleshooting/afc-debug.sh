@@ -158,7 +158,9 @@ temp_dir_creation() {
 }
 
 clean_up_temp_dir() {
-	rm -rf -- "$temp_dir"
+	if [ -n "${temp_dir:-}" ]; then
+		rm -rf -- "$temp_dir"
+	fi
 }
 
 extract_klipper_logs() {
@@ -185,7 +187,12 @@ clean_up_temp_log() {
 	fi
 }
 
-trap clean_up_temp_log EXIT
+clean_up_all() {
+	clean_up_temp_dir
+	clean_up_temp_log
+}
+
+trap clean_up_all EXIT
 
 get_afc_version() {
 	local git_hash
@@ -238,6 +245,8 @@ echo "This script will collect diagnostic information and upload it to Armored T
 echo "Please review the script if you have concerns about its contents."
 echo "Klipper will be stopped during this process — do not run this while printing."
 echo ""
+
+check_prereqs
 
 read -p "Do you wish to continue? [y/n]: " yn < /dev/tty
 case $yn in
@@ -353,5 +362,3 @@ else
 fi
 
 start_klipper
-clean_up_temp_dir
-clean_up_temp_log

@@ -18,18 +18,31 @@ update_afc() {
       for macro in "Brush" "Cut" "Kick" "Park" "Poop" "AFC_macros"; do
         rm -rf "${afc_config_dir}/macros/${macro}.cfg"
       done
-      local _macro_ok=true
-      for cfg in "${afc_path}/config/macros/"*.cfg; do
-        safe_copy "$cfg" "${afc_config_dir}/macros/" || _macro_ok=false
-      done
-      if [ "$_macro_ok" = true ]; then
+      local _macro_copied=0
+      local _macro_skipped=0
+      local _cfg_files=("${afc_path}/config/macros/"*.cfg)
+      if [ ! -e "${_cfg_files[0]}" ]; then
         update_message+="""
-AFC Macros updated successfully.
+No macro files found to update.
         """
       else
-        update_message+="""
-AFC Macros update failed.
-        """
+        for cfg in "${_cfg_files[@]}"; do
+          safe_copy "$cfg" "${afc_config_dir}/macros/"
+          if [ "$safe_copy_result" = "copied" ]; then
+            _macro_copied=$(( _macro_copied + 1 ))
+          else
+            _macro_skipped=$(( _macro_skipped + 1 ))
+          fi
+        done
+        if [ "$_macro_copied" -gt 0 ]; then
+          update_message+="""
+AFC Macros updated successfully (${_macro_copied} copied, ${_macro_skipped} skipped).
+          """
+        else
+          update_message+="""
+AFC Macros update skipped (all ${_macro_skipped} files kept as-is).
+          """
+        fi
       fi
     fi
   fi
