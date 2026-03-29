@@ -31,20 +31,86 @@ function show_help() {
   echo " $0 [-a <moonraker address>] [-k <klipper_path>] [-s <klipper_service_name>] [-m <moonraker_config_path>] [-n <moonraker_port>] [-p <printer_config_dir>] [-p <printer_config_dir>] [-b <branch>] [-y <klipper venv dir>] [-h] "
 }
 
+safe_copy() {
+  # Safe copy that prompts the user before overwriting existing files/directories.
+  # Usage: safe_copy <source> <destination>
+  # Drop-in replacement for cp / cp -R.
+  local src="$1"
+  local dst="$2"
+  local effective_dst="$dst"
+  local is_dir_copy="false"
+
+  # Determine if source is a directory
+  if [ -d "$src" ]; then
+    is_dir_copy="true"
+  fi
+
+  # Resolve effective destination path (e.g., cp file dir/ -> dir/file)
+  if [ "$is_dir_copy" = "false" ] && [ -d "$dst" ]; then
+    effective_dst="${dst%/}/$(basename "$src")"
+  fi
+
+  # If destination doesn't exist, just copy
+  if [ ! -e "$effective_dst" ]; then
+    if [ "$is_dir_copy" = "true" ]; then
+      cp -R "$src" "$dst"
+    else
+      cp "$src" "$dst"
+    fi
+    return 0
+  fi
+
+  # Destination exists — prompt the user
+  local choice
+  print_msg WARNING "Destination already exists: ${effective_dst}"
+  while true; do
+    read -p "  (o)verwrite / (s)kip / (b)ackup and copy? [o/s/b]: " choice
+    choice="${choice,,}"
+    case "$choice" in
+      o)
+        if [ "$is_dir_copy" = "true" ]; then
+          cp -R "$src" "$dst"
+        else
+          cp "$src" "$dst"
+        fi
+        print_msg INFO "Overwritten: ${effective_dst}"
+        return 0
+        ;;
+      s)
+        print_msg INFO "Skipped: ${effective_dst}"
+        return 0
+        ;;
+      b)
+        mv "$effective_dst" "${effective_dst}.bak.${backup_date}"
+        print_msg INFO "Backed up to: ${effective_dst}.bak.${backup_date}"
+        if [ "$is_dir_copy" = "true" ]; then
+          cp -R "$src" "$dst"
+        else
+          cp "$src" "$dst"
+        fi
+        return 0
+        ;;
+      *)
+        echo "  Invalid choice. Please enter o, s, or b."
+        ;;
+    esac
+  done
+}
+
 function copy_config() {
   mkdir -p "${afc_config_dir}"
-  cp "${afc_path}/config/AFC.cfg" "${afc_config_dir}/"
-  cp "${afc_path}/config/AFC_Macro_Vars.cfg" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/AFC.cfg" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/AFC_Macro_Vars.cfg" "${afc_config_dir}/"
   mkdir -p "${afc_config_dir}/mcu"
-  cp -R "${afc_path}/config/macros" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/macros" "${afc_config_dir}/"
 }
 
 function copy_openams_config() {
   mkdir -p "${afc_config_dir}"
-  cp ${afc_path}/config/AFC.cfg "${afc_config_dir}/"
-  cp ${afc_path}/config/AFC_Macro_Vars.cfg "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/AFC.cfg" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/AFC_Macro_Vars.cfg" "${afc_config_dir}/"
   mkdir -p "${afc_config_dir}/mcu"
-  cp -R ${afc_path}/config/macros "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/macros" "${afc_config_dir}/"
 }
 
 get_git_version() {

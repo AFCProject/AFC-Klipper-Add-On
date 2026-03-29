@@ -165,70 +165,70 @@ verify_name_not_in_use() {
 
 install_additional_unit() {
   if [ "$installation_type" == "BoxTurtle (4-Lane)" ]; then
-    cp "${afc_path}/templates/AFC_Turtle_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    safe_copy "${afc_path}/templates/AFC_Turtle_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
     find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/Turtle_1/$boxturtle_name/g" {} +
-    cp "${afc_path}"/config/mcu/AFC_Lite.cfg "${afc_config_dir}"/mcu/AFC_"${boxturtle_name}"_mcu.cfg
+    safe_copy "${afc_path}/config/mcu/AFC_Lite.cfg" "${afc_config_dir}/mcu/AFC_${boxturtle_name}_mcu.cfg"
     sed -i "s/include mcu\/AFC_Lite.cfg/include mcu\/AFC_${boxturtle_name}_mcu.cfg/g" "${afc_config_dir}"/AFC_"${boxturtle_name}".cfg
     # If we are installing a NightOwl, then copy these files over.
   elif [ "$installation_type" == "NightOwl" ]; then
-    cp "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-    cp "${afc_path}/config/mcu/ERB_2.0.cfg" "${afc_config_dir}/mcu/"
+    safe_copy "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    safe_copy "${afc_path}/config/mcu/ERB_2.0.cfg" "${afc_config_dir}/mcu/"
     find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/NightOwl/$boxturtle_name/g" {} +
   elif [ "$installation_type" == "ViViD" ]; then
-    cp "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-    cp "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/${boxturtle_name}.cfg"
+    safe_copy "${afc_path}/templates/AFC_Vivid_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    safe_copy "${afc_path}/config/mcu/Vivid.cfg" "${afc_config_dir}/mcu/${boxturtle_name}.cfg"
     find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/Vivid_1/$boxturtle_name/g" {} +
     sed -i "s/include mcu\/Vivid_1.cfg/include mcu\/${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
     sed -i "s/Vivid_1/$boxturtle_name/g" "${afc_config_dir}/mcu/${boxturtle_name}.cfg"
   elif [ "$installation_type" == "HTLF" ]; then
     local board_type="$htlf_board_type"
     mkdir -p "${afc_config_dir}/mcu"
-    cp "${afc_path}/config/mcu/HTLF_${board_type}.cfg" "${afc_config_dir}/mcu/"
+    safe_copy "${afc_path}/config/mcu/HTLF_${board_type}.cfg" "${afc_config_dir}/mcu/"
     if [ "$board_type" == "MMB_1.0" ] || [ "$board_type" == "MMB_1.1" ]; then
       board_type="MMB"
     fi
-    cp "${afc_path}/templates/AFC_HTLF_1-${board_type}.cfg" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
+    safe_copy "${afc_path}/templates/AFC_HTLF_1-${board_type}.cfg" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
     sed -i "s/HTLF_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
   elif [ "$installation_type" == "QuattroBox" ]; then
     mkdir -p "${afc_config_dir}/macros"
     mkdir -p "${afc_config_dir}/mcu"
-    cp "${afc_path}/templates/qb_macros/Eject_buttons.cfg" "${afc_config_dir}/macros/Eject_buttons.cfg"
+    safe_copy "${afc_path}/templates/qb_macros/Eject_buttons.cfg" "${afc_config_dir}/macros/Eject_buttons.cfg"
     sed -i "s/QuattroBox_1/${boxturtle_name}/g" "${afc_config_dir}/macros/Eject_buttons.cfg"
     if [ "${qb_motor_type}" == "NEMA_14" ]; then
-      cp "${afc_path}/templates/AFC_QuattroBox_14.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+      safe_copy "${afc_path}/templates/AFC_QuattroBox_14.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
       if [ "${qb_board_type}" == "MMB_1.0" ]; then
         sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-        cp "${afc_path}/config/mcu/MMB_1.0_QB.cfg" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
+        safe_copy "${afc_path}/config/mcu/MMB_1.0_QB.cfg" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
         sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
       elif [ "${qb_board_type}" == "MMB_1.1" ]; then
         sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.1_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-        cp "${afc_path}/config/mcu/MMB_1.1_QB.cfg" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
+        safe_copy "${afc_path}/config/mcu/MMB_1.1_QB.cfg" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
         sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
       elif [ "${qb_board_type}" == "MMB_2.0" ]; then
         sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_2.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-        cp "${afc_path}/config/mcu/MMB_2.0_QB.cfg" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
+        safe_copy "${afc_path}/config/mcu/MMB_2.0_QB.cfg" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
         sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
       fi
     elif [ "${qb_motor_type}" == "NEMA_17" ]; then
-      cp "${afc_path}/templates/AFC_QuattroBox_17.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+      safe_copy "${afc_path}/templates/AFC_QuattroBox_17.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
       if [ "${qb_board_type}" == "MMB_1.0" ]; then
         sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-        cp "${afc_path}/config/mcu/MMB_1.0_QB.cfg" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
+        safe_copy "${afc_path}/config/mcu/MMB_1.0_QB.cfg" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
         sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.0_QB_${boxturtle_name}.cfg"
       elif [ "${qb_board_type}" == "MMB_1.1" ]; then
         sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_1.1_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-        cp "${afc_path}/config/mcu/MMB_1.1_QB.cfg" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
+        safe_copy "${afc_path}/config/mcu/MMB_1.1_QB.cfg" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
         sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_1.1_QB_${boxturtle_name}.cfg"
       elif [ "${qb_board_type}" == "MMB_2.0" ]; then
         sed -i "s/include mcu\/MMB_QB.cfg/include mcu\/MMB_2.0_QB_${boxturtle_name}.cfg/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-        cp "${afc_path}/config/mcu/MMB_2.0_QB.cfg" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
+        safe_copy "${afc_path}/config/mcu/MMB_2.0_QB.cfg" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
         sed -i "s/mcu: QuattroBox_1/mcu: ${boxturtle_name}/g" "${afc_config_dir}/mcu/MMB_2.0_QB_${boxturtle_name}.cfg"
       fi
     fi
     find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/QuattroBox_1/$boxturtle_name/g" {} +
   elif [ "$installation_type" == "OpenAMS" ]; then
     mkdir -p "${afc_config_dir}/macros"
-    cp "${afc_path}/templates/AFC_AMS_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    safe_copy "${afc_path}/templates/AFC_AMS_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
     sed -i "s/AMS_1/${boxturtle_name}/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
   fi
 }

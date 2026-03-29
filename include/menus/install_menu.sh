@@ -255,7 +255,7 @@ fi
           printf "F. QuattroBox Motor Type : %s \n" "$qb_motor_type"
           ;;
       esac
-      printf "${BOLD_GREEN}I. Install system with current selections${RESET}\n"
+      printf "\n${BOLD_GREEN}I. Install system with current selections${RESET}\n"
     fi
 
     printf "M. Return to Main Menu\n"

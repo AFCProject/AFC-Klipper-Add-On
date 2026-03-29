@@ -59,7 +59,7 @@ EOF
 
   # Add [include mcu/TurtleNeckv2.cfg] to AFC_Hardware.cfg if buffer_type is TurtleNeckV2 and not already present
   if [ "$buffer_type" == "TurtleNeckV2" ]; then
-    cp "${afc_path}/config/mcu/TurtleNeckv2.cfg" "$afc_config_dir/mcu/"
+    safe_copy "${afc_path}/config/mcu/TurtleNeckv2.cfg" "$afc_config_dir/mcu/"
     if ! grep -qF "[include mcu/TurtleNeckv2.cfg]" "$afc_config_dir/AFC_Hardware.cfg"; then
       echo -e "\n[include mcu/TurtleNeckv2.cfg]" >> "$afc_config_dir/AFC_Hardware.cfg"
     fi

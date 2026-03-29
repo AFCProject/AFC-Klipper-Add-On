@@ -18,7 +18,11 @@ update_afc() {
       for macro in "Brush" "Cut" "Kick" "Park" "Poop" "AFC_macros"; do
         rm -rf "${afc_config_dir}/macros/${macro}.cfg"
       done
-      if cp "${afc_path}/config/macros/"*.cfg "${afc_config_dir}/macros/"; then
+      local _macro_ok=true
+      for cfg in "${afc_path}/config/macros/"*.cfg; do
+        safe_copy "$cfg" "${afc_config_dir}/macros/" || _macro_ok=false
+      done
+      if [ "$_macro_ok" = true ]; then
         update_message+="""
 AFC Macros updated successfully.
         """

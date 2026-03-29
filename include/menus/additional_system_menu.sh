@@ -247,7 +247,7 @@ fi
     fi
     echo ""
     if [ "$files_updated_or_installed" == "False" ]; then
-      printf "I. Install system with current selections\n"
+      printf "${GREEN}I. Install system with current selections${NC}\n"
     fi
     printf "M. Return to Main Menu\n"
     printf "Q. Quit\n"
