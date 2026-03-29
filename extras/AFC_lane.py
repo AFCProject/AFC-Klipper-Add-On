@@ -35,7 +35,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_assist", trace=traceback.fo
 try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-EXCLUDE_TYPES = ["HTLF", "HTLFBBE", "ViViD"]
+EXCLUDE_TYPES = ["HTLF", "HTLFclaymore", "ViViD"]
 # Class for holding different states so its clear what all valid states are
 
 # Names to exclude from search when trying to find unit name in config file

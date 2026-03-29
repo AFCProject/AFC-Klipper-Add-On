@@ -35,12 +35,12 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC_lane import AFCLane, AFCMoveWarning
 
-class AFC_HTLFBBE(AFC_vivid):
+class AFC_HTLFclaymore(AFC_vivid):
     CALIBRATION_DISTANCE = 5000
     LANE_OVERSHOOT = 200
     def __init__(self, config: ConfigWrapper):
         super().__init__(config)
-        self.type: str = config.get('type', 'HTLFBBE')
+        self.type: str = config.get('type', 'HTLFclaymore')
 
     def handle_connect(self):
         """
@@ -51,9 +51,9 @@ class AFC_HTLFBBE(AFC_vivid):
 
         super().handle_connect()
 
-        self.logo = '<span class=success--text>HTLF BBE Ready\n</span>'
-        self.logo_error = '<span class=error--text>HTLF BBE Not Ready</span>\n'
-    
+        self.logo = f'<span class=success--text>{self.type} Ready\n</span>'
+        self.logo_error = f'<span class=error--text>{self.type} Not Ready</span>\n'
+
     def _move_lane(self, lane: AFCLane, delay: float=1,
             enable_movement: bool=True) -> bool:
         return lane.load_state
@@ -129,4 +129,4 @@ class AFC_HTLFBBE(AFC_vivid):
         return afcBoxTurtle.calibration_lane_message(self)
 
 def load_config_prefix(config):
-    return AFC_HTLFBBE(config)
+    return AFC_HTLFclaymore(config)
