@@ -321,6 +321,11 @@ fi
 uploaded_files=()
 
 if [ "$NO_NC" = true ]; then
+    if ! command -v zip > /dev/null 2>&1; then
+        echo "zip is required but not found. Please install it and rerun the script."
+        exit 1
+    fi
+
     echo "NetCat is unavailable. Creating a zip archive of logs instead."
     zipfile="$HOME/afc_debug_logs_$(date +%Y%m%d_%H%M%S).zip"
     zip -j "$zipfile" "$temp_log" "$temp_dir"/* > /dev/null
