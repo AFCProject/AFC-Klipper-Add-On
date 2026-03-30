@@ -186,12 +186,12 @@ install_afc() {
       find "$afc_config_dir" -type f -exec sed -i "s/Turtle_1/$boxturtle_name/g" {} +
     fi
     if [ "$buffer_type" == "TurtleNeck" ]; then
-      query_tn_pins "TN"
-      append_buffer_config "TurtleNeck" "$tn_advance_pin" "$tn_trailing_pin"
-      add_buffer_to_extruder "${afc_config_dir}/AFC_${boxturtle_name}.cfg" "${boxturtle_name}"
+      query_tn_pins "TN" "$boxturtle_name"
+      append_buffer_config "TurtleNeck" "$tn_advance_pin" "$tn_trailing_pin" "$boxturtle_name"
+      add_buffer_to_extruder "${afc_config_dir}/AFC_${boxturtle_name}.cfg" "${boxturtle_name}" "${boxturtle_name}"
     elif [ "$buffer_type" == "TurtleNeckV2" ]; then
-      append_buffer_config "TurtleNeckV2"
-      add_buffer_to_extruder "${afc_config_dir}/AFC_${boxturtle_name}.cfg" "${boxturtle_name}"
+      append_buffer_config "TurtleNeckV2" "" "" "$boxturtle_name"
+      add_buffer_to_extruder "${afc_config_dir}/AFC_${boxturtle_name}.cfg" "${boxturtle_name}" "${boxturtle_name}"
     fi
   fi
   check_and_append_prep "${afc_config_dir}/AFC.cfg"

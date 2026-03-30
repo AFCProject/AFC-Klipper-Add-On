@@ -11,22 +11,23 @@ append_buffer_config() {
   local buffer_name=""
   tn_advance_pin=$2
   tn_trailing_pin=$3
+  local unit_name="${4:-Turtle_1}"
 
   case "$buffer_type" in
     "TurtleNeck")
       buffer_config=$(cat <<EOF
-[AFC_buffer Turtle_1]
+[AFC_buffer ${unit_name}]
 advance_pin: ${tn_advance_pin}    # set advance pin
 trailing_pin: ${tn_trailing_pin}  # set trailing pin
 multiplier_high: 1.05   # default 1.05, factor to feed more filament
 multiplier_low:  0.95   # default 0.95, factor to feed less filament
 EOF
 )
-      buffer_name="Turtle_1"
+      buffer_name="${unit_name}"
       ;;
     "TurtleNeckV2")
-      buffer_config=$(cat <<'EOF'
-[AFC_buffer Turtle_1]
+      buffer_config=$(cat <<EOF
+[AFC_buffer ${unit_name}]
 advance_pin: !turtleneck:ADVANCE
 trailing_pin: !turtleneck:TRAILING
 multiplier_high: 1.05   # default 1.05, factor to feed more filament
@@ -43,7 +44,7 @@ initial_BLUE: 0.0
 initial_WHITE: 0.0
 EOF
 )
-      buffer_name="Turtle_1"
+      buffer_name="${unit_name}"
       ;;
     *)
       echo "Invalid BUFFER_SYSTEM: $buffer_type"
@@ -73,7 +74,8 @@ add_buffer_to_extruder() {
   #   $2: buffer_name - The name of the buffer to be added.
   local file_path="$1"
   local buffer_name="$2"
-  local section="[AFC_BoxTurtle Turtle_1]"
+  local unit_name="${3:-Turtle_1}"
+  local section="[AFC_BoxTurtle $unit_name]"
   local buffer_line="buffer: $buffer_name"
 
   awk -v section="$section" -v buffer="$buffer_line" '
@@ -101,15 +103,16 @@ query_tn_pins() {
   # Arguments:
   #   $1: buffer_name - The name of the buffer to be added.
   local buffer_name="$1"
+  local unit_name="${2:-Turtle_1}"
   local input
-  tn_advance_pin="^Turtle_1:TN_ADV"
-  tn_trailing_pin="^Turtle_1:TN_TRL"
+  tn_advance_pin="^${unit_name}:TN_ADV"
+  tn_trailing_pin="^${unit_name}:TN_TRL"
 
   print_msg INFO "\nPlease enter the pin numbers for the TurtleNeck buffer '$buffer_name':"
   print_msg INFO "(Leave blank to use the default values)"
   print_msg INFO "Ensure you use a pull-up '^' if you are using a AFC end stop pin."
-  print_msg INFO "(Default: ^Turtle_1:TN_ADV)"
-  print_msg INFO "(Default: ^Turtle_1:TN_TRL)"
+  print_msg INFO "(Default: ^${unit_name}:TN_ADV)"
+  print_msg INFO "(Default: ^${unit_name}:TN_TRL)"
 
   read -p "  Enter the advance pin (default: $tn_advance_pin): " -r input
   if [ -n "$input" ]; then
