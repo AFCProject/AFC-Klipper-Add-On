@@ -40,6 +40,10 @@ check_prereqs() {
         echo "column is required but not found. Please install it and rerun the script."
         exit 1
     fi
+    if ! command -v zip > /dev/null 2>&1; then
+        echo "zip is required but not found. Please install it and rerun the script."
+        exit 1
+    fi
 }
 
 log_can_interfaces() {
