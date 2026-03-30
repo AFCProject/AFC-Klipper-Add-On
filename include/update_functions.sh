@@ -15,9 +15,6 @@ update_afc() {
     read -p "Please confirm you want to update these macros: (y/n): " confirm_update_macros
     confirm_update_macros="${confirm_update_macros,,}"
     if [[ "$confirm_update_macros" == "y" ]]; then
-      for macro in "Brush" "Cut" "Kick" "Park" "Poop" "AFC_macros"; do
-        rm -rf "${afc_config_dir}/macros/${macro}.cfg"
-      done
       local _macro_copied=0
       local _macro_skipped=0
       local _cfg_files=("${afc_path}/config/macros/"*.cfg)
