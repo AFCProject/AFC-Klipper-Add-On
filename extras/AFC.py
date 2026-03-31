@@ -881,7 +881,7 @@ class afc:
             self.message_queue.append((warning_text, "warning"))
 
     cmd_LANE_MOVE_help = "Lane Manual Movements"
-    cmd_LANE_MOVE_options = {"LANE": {"type": "string", "default": "lane1"}, "DISTANCE": {"type": "int", "default": 20}}
+    cmd_LANE_MOVE_options = {"LANE": {"type": "string", "default": "lane1"}, "DISTANCE": {"type": "int", "default": 20}, "FORCE": {"type": "int", "default": 0}}
     def cmd_LANE_MOVE(self, gcmd):
         """
         This function handles the manual movement of a specified lane. It retrieves the lane
@@ -889,9 +889,12 @@ class afc:
 
         Distance's lower than 200 moves extruder at short_move_speed/accel, values above 200 move extruder at long_move_speed/accel
 
+        The 'FORCE' parameter overrides the is_printing() check, use with caution. Enable when not
+        paused (e.g. in a macro) to move a lane independent of the toolhead extruder.
+
         Usage
         -----
-        `LANE_MOVE LANE=<lane> DISTANCE=<distance>`
+        `LANE_MOVE LANE=<lane> DISTANCE=<distance> FORCE=<0/1>`
 
         Example
         -----
@@ -899,7 +902,8 @@ class afc:
         LANE_MOVE LANE=lane1 DISTANCE=100
         ```
         """
-        if self.function.is_printing():
+        force = gcmd.get_int('FORCE', 0) == 1
+        if self.function.is_printing() and not force:
             self.error.AFC_error("Cannot move lane while printer is printing", pause=False)
             return
         lane = gcmd.get('LANE', None)
