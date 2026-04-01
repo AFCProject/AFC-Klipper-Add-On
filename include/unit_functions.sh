@@ -32,6 +32,17 @@ name_additional_unit() {
         echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
       fi
     done
+  elif [ "$installation_type" == "HTLF_Claymore" ]; then
+    while true; do
+      read -p "Enter name for unit (Default: Claymore_1): " boxturtle_name
+      boxturtle_name=${boxturtle_name:-Claymore_1}
+
+      if [[ "$boxturtle_name" =~ ^[a-zA-Z0-9_-]+$ ]] && [[ ${#boxturtle_name} -le 24 ]]; then
+        break
+      else
+        echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
+      fi
+    done
   elif [ "$installation_type" == "BoxTurtle (4-Lane)" ]; then
     while true; do
       read -p "Enter name for unit (Default: Turtle_2): " boxturtle_name
@@ -169,7 +180,6 @@ install_additional_unit() {
     find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/Turtle_1/$boxturtle_name/g" {} +
     cp "${afc_path}"/config/mcu/AFC_Lite.cfg "${afc_config_dir}"/mcu/AFC_"${boxturtle_name}"_mcu.cfg
     sed -i "s/include mcu\/AFC_Lite.cfg/include mcu\/AFC_${boxturtle_name}_mcu.cfg/g" "${afc_config_dir}"/AFC_"${boxturtle_name}".cfg
-    # If we are installing a NightOwl, then copy these files over.
   elif [ "$installation_type" == "NightOwl" ]; then
     cp "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
     cp "${afc_path}/config/mcu/ERB_2.0.cfg" "${afc_config_dir}/mcu/"
@@ -189,6 +199,12 @@ install_additional_unit() {
     fi
     cp "${afc_path}/templates/AFC_HTLF_1-${board_type}.cfg" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
     sed -i "s/HTLF_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
+  elif [ "$installation_type" == "HTLF_Claymore" ]; then
+    local board_type="$htlf2_board_type"
+    mkdir -p "${afc_config_dir}/mcu"
+    cp "${afc_path}/config/mcu/AFC_Lite_HTLF_Claymore.cfg" "${afc_config_dir}/mcu/"
+    cp "${afc_path}/templates/AFC_HTLF_Claymore_1-${board_type}.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    sed -i "s/HTLF_Claymore_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
   elif [ "$installation_type" == "QuattroBox" ]; then
     mkdir -p "${afc_config_dir}/macros"
     mkdir -p "${afc_config_dir}/mcu"
