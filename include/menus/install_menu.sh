@@ -149,7 +149,7 @@ printf "
                           \e[49m                   \e[49;38;5;0m▀▀▀▀▀\e[49m             \e[m
 ";
 printf "                      HappyTurtleLettuceFeeder by ArmoredTurtle\n";
-    elif [ "$installation_type" == "HTLF_Claymore" ]; then
+    elif [ "$installation_type" == "Claymore" ]; then
 printf "\e[49m                                                                                  \e[m
 \e[49m                                                                                  \e[m
 \e[49m                                       \e[38;5;238;49m▄\e[38;5;64;49m▄\e[38;5;64;48;5;237m▄\e[38;5;64;48;5;238m▄\e[38;5;58;49m▄\e[38;5;70;48;5;237m▄\e[38;5;70;48;5;235m▄\e[38;5;64;49m▄\e[38;5;238;49m▄\e[49m                            \e[m
@@ -281,8 +281,8 @@ fi
           printf "E. QuattroBox Board Type : %s \n" "$qb_board_type"
           printf "F. QuattroBox Motor Type : %s \n" "$qb_motor_type"
           ;;
-        "HTLF_Claymore")
-          printf "G. HTLF_Claymore Board Type : %s \n" "$htlf2_board_type"
+        "Claymore")
+          printf "G. Claymore Board Type : %s \n" "$htlf2_board_type"
           ;;
       esac
       printf "\n${BOLD_GREEN}I. Install system with current selections${RESET}\n"
@@ -325,7 +325,7 @@ fi
       F)
         cycle_array qb_motor_types motor qb_motor_type "QuattroBox Motor Type" ;;
       G)
-        cycle_array htlf2_board_types board_counter htlf2_board_type "HTLF_Claymore Board Type" ;;
+        cycle_array htlf2_board_types board_counter htlf2_board_type "Claymore Board Type" ;;
       I) install_afc ;;
       M) main_menu ;;
       Q) exit_afc_install ;;

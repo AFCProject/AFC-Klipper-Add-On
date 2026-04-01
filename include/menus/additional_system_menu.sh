@@ -130,7 +130,7 @@ printf "
                           \e[49m                   \e[49;38;5;0m▀▀▀▀▀\e[49m             \e[m
 ";
 printf "                      HappyTurtleLettuceFeeder by ArmoredTurtle\n";
-    elif [ "$installation_type" == "HTLF_Claymore" ]; then
+    elif [ "$installation_type" == "Claymore" ]; then
 printf "\e[49m                                                                                  \e[m
 \e[49m                                                                                  \e[m
 \e[49m                                       \e[38;5;238;49m▄\e[38;5;64;49m▄\e[38;5;64;48;5;237m▄\e[38;5;64;48;5;238m▄\e[38;5;58;49m▄\e[38;5;70;48;5;237m▄\e[38;5;70;48;5;235m▄\e[38;5;64;49m▄\e[38;5;238;49m▄\e[49m                            \e[m
@@ -245,11 +245,11 @@ fi
           boxturtle_name="HTLF_1"
         fi
         printf "1. HTLF Name: %s \n" "$boxturtle_name"
-      elif [ "$installation_type" == "HTLF_Claymore" ]; then
+      elif [ "$installation_type" == "Claymore" ]; then
         if [ "$turtle_renamed" != "True" ]; then
           boxturtle_name="Claymore_1"
         fi
-        printf "1. HTLF_Claymore Name: %s \n" "$boxturtle_name"
+        printf "1. Claymore Name: %s \n" "$boxturtle_name"
       elif [ "$installation_type" == "QuattroBox" ]; then
         if [ "$turtle_renamed" != "True" ]; then
           boxturtle_name="QuattroBox_1"
@@ -275,8 +275,8 @@ fi
       if [ "$installation_type" == "QuattroBox" ]; then
         printf "F. QuattroBox Motor Type: %s \n" "$qb_motor_type"
       fi
-      if [ "$installation_type" == "HTLF_Claymore" ]; then
-        printf "G. HTLF_Claymore Board Type: %s \n" "$htlf2_board_type"
+      if [ "$installation_type" == "Claymore" ]; then
+        printf "G. Claymore Board Type: %s \n" "$htlf2_board_type"
       fi
     fi
     echo ""
@@ -339,7 +339,7 @@ fi
         htlf2_board_type="${htlf2_board_types[$board_counter]}"
 
         # Update the message
-        message="HTLF_Claymore Board Type: $htlf2_board_type"
+        message="Claymore Board Type: $htlf2_board_type"
         export message ;;
       1)
         name_additional_unit

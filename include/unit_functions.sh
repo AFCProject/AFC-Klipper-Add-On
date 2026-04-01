@@ -32,7 +32,7 @@ name_additional_unit() {
         echo "Invalid input. The unit name must consist of only a-z, A-Z, 0-9, -, and _ and be no more than 24 characters long."
       fi
     done
-  elif [ "$installation_type" == "HTLF_Claymore" ]; then
+  elif [ "$installation_type" == "Claymore" ]; then
     while true; do
       read -p "Enter name for unit (Default: Claymore_1): " boxturtle_name
       boxturtle_name=${boxturtle_name:-Claymore_1}
@@ -199,12 +199,12 @@ install_additional_unit() {
     fi
     cp "${afc_path}/templates/AFC_HTLF_1-${board_type}.cfg" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
     sed -i "s/HTLF_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
-  elif [ "$installation_type" == "HTLF_Claymore" ]; then
+  elif [ "$installation_type" == "Claymore" ]; then
     local board_type="$htlf2_board_type"
     mkdir -p "${afc_config_dir}/mcu"
-    cp "${afc_path}/config/mcu/AFC_Lite_HTLF_Claymore.cfg" "${afc_config_dir}/mcu/"
-    cp "${afc_path}/templates/AFC_HTLF_Claymore_1-${board_type}.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
-    sed -i "s/HTLF_Claymore_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    cp "${afc_path}/config/mcu/AFC_Lite_Claymore.cfg" "${afc_config_dir}/mcu/"
+    cp "${afc_path}/templates/AFC_Claymore_1-${board_type}.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    sed -i "s/Claymore_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
   elif [ "$installation_type" == "QuattroBox" ]; then
     mkdir -p "${afc_config_dir}/macros"
     mkdir -p "${afc_config_dir}/mcu"
