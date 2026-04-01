@@ -885,11 +885,16 @@ class AFCLane:
         """
         warn = AFCMoveWarning.NONE
         extruder_stepper = getattr(self, "extruder_stepper", None)
+        drive_stepper_assist = None
         if (self.drive_stepper
             or extruder_stepper):
             if use_homing:
                 if self.drive_stepper:
                     home_to = self.drive_stepper.home_to
+                    # Capturing driver stepper assist_move method and replacing with lanes
+                    # assist move so spooler motors are driven when using drive/stepper based units
+                    drive_stepper_assist= self.drive_stepper.assist_move
+                    self.drive_stepper.assist_move = self.assist_move
                 else:
                     home_to = self.home_to
                 # Add extra distance to homing move to guarantee that endstop is hit
@@ -898,9 +903,15 @@ class AFCLane:
                     new_distance = distance - self.homing_overshoot
                 self.unit_obj.select_lane(self)
                 speed, accel = self.get_speed_accel(speed_mode)
-                homed, mov_dis, error = home_to(endstop, new_distance, speed, accel,
-                        distance > 0, assist_active=self.get_active_assist(distance, assist_active)
-                )
+                try:
+                    homed, mov_dis, error = home_to(endstop, new_distance, speed, accel,
+                            distance > 0, assist_active=self.get_active_assist(distance,
+                                                                               assist_active)
+                    )
+                finally:
+                    # Restoring drive stepper assist move method
+                    if drive_stepper_assist:
+                        self.drive_stepper.assist_move = drive_stepper_assist
                 if error:
                     warn = AFCMoveWarning.ERROR
                 elif (abs(distance) - mov_dis) > self.homing_delta:
