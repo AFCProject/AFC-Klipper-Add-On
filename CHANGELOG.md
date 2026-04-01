@@ -43,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Toolchanger: Added `NEW_EXTRUDER_TEMP` parameter to Tn commands to set temperature before the tool change begins.
 - Toolchanger: Added `toolchange_temp_drop` config option to automatically lower the old extruder's temperature during toolchange.
 
+## [2026-03-11]
+### Update
+- Updated the Cut.cfg macro to support cut locations with axes configurations other than XY.  New configuration
+variables were added for individual axis.  The behavior of `pin_loc_xy` remains unchainged. New axis specific
+variables were added to avoid pin/toolhead collisions.  The behavior of `safe_margin_xy` did change slightly
+and the Y coordinate is now used when calculating the safe coordinate for the move.  An option has been added 
+to skip the post-cut safe move for configurations where the next move is known to be safe (such as a move
+to purge or wipe.)
+
 ## [2026-03-07]
 ### Fix
 - Added error checking when homing during a Tool Load or Unload, if a homing error (like communication timeout or something similar) happens during these calls that AFC displays error and returns early.
