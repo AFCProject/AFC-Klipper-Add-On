@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed issue where lane was trying to be looked up by keyname with `self.current` when the property returned `None`. Switched to using `self.lanes.get` since this is a safer operation.
 
+## [2026-04-01]
+### Added
+- Added support in the `install-afc.sh` script for the HTLF Claymore.
+
 ## [2026-03-30]
 ### Fixed
 - Updated the `install-afc.sh` script to implement a `safe_copy` feature to prevent accidental overwriting of existing configuration files in 

@@ -56,6 +56,7 @@ template_unit_files() {
 
   case "${installation_type}" in
     "HTLF") MCU="${htlf_board_type}" ;;
+    "Claymore") MCU="${htlf2_board_type}" ;;
     "BoxTurtle (4-Lane)") MCU="AFC" ;;
     "NightOwl") MCU="ERB" ;;
     *) MCU="UNKNOWN" ;;  # Optional: fallback
@@ -98,6 +99,13 @@ copy_unit_files() {
     [[ "$board_type" == "MMB_1.0" || "$board_type" == "MMB_1.1" ]] && board_type="MMB"
     safe_copy "${afc_path}/templates/AFC_HTLF_1-${board_type}.cfg" "${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
     safe_copy "${afc_path}/templates/AFC_Hardware-HTLF.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
+    ;;
+
+  "Claymore")
+    local board_type="$htlf2_board_type"
+    cp "${afc_path}/config/mcu/AFC_Lite_Claymore.cfg" "${afc_config_dir}/mcu/"
+    cp "${afc_path}/templates/AFC_Claymore_1-${board_type}.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    cp "${afc_path}/templates/AFC_Hardware-HTLF.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
     ;;
 
   "QuattroBox")
@@ -241,6 +249,12 @@ elif [ "$installation_type" == "HTLF" ]; then
 
 - Ensure you modify the ${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}_1.cfg file to select the proper rotation distance
   and gear ratio for your stepper motors.
+
+- Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_Hardware.cfg file
+  """
+elif [ "$installation_type" == "Claymore" ]; then
+  message+="""
+- Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_${boxturtle_name}.cfg file.
 
 - Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_Hardware.cfg file
   """

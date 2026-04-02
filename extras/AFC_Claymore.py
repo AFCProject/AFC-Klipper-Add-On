@@ -35,12 +35,12 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC_lane import AFCLane, AFCMoveWarning
 
-class AFC_HTLFclaymore(AFC_vivid):
+class AFC_Claymore(AFC_vivid):
     CALIBRATION_DISTANCE = 5000
     LANE_OVERSHOOT = 200
     def __init__(self, config: ConfigWrapper):
         super().__init__(config)
-        self.type: str = config.get('type', 'HTLFclaymore')
+        self.type: str = config.get('type', 'Claymore')
 
     def handle_connect(self):
         """
@@ -129,4 +129,4 @@ class AFC_HTLFclaymore(AFC_vivid):
         return afcBoxTurtle.calibration_lane_message(self)
 
 def load_config_prefix(config):
-    return AFC_HTLFclaymore(config)
+    return AFC_Claymore(config)
