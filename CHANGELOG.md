@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-04-04]
 ### Fixed
-- Fixed issue where lane was trying to be looked up by keyname with `self.current` when the property returned `None`. Switched to using `self.lane.get` since this is a safer operation.
+- Fixed issue where lane was trying to be looked up by keyname with `self.current` when the property returned `None`. Switched to using `self.lanes.get` since this is a safer operation.
 
 ## [2026-03-30]
 ### Fixed

@@ -2155,10 +2155,11 @@ class afc:
                         self.logger.raw("//      Change {} out of {}".format(self.current_toolchange, self.number_of_toolchanges))
 
                     # If a current lane is loaded, unload it first.
-                    if self.current is not None:
-                        unload_lane = self.lanes.get(self.current, None)
+                    current_lane_name = self.current
+                    if current_lane_name is not None:
+                        unload_lane = self.lanes.get(current_lane_name, None)
                         if unload_lane is None:
-                            self.error.AFC_error('{} Unknown'.format(self.current))
+                            self.error.AFC_error('{} Unknown'.format(current_lane_name))
                             return
                         if not self.TOOL_UNLOAD(unload_lane, set_start_time=False):
                             # Abort if the unloading process fails.
@@ -2197,9 +2198,12 @@ class afc:
         # Copilot yes this is a bare exception, ignore please since this is being done on purpose
         # to make sure all exceptions are catched
         except Exception:
-            err = "Following error happened during CHANGE_TOOL, please report error to developers\n"
-            err += f"{traceback.format_exc()}"
-            self.error.AFC_error(err, pause=self.function.in_print())
+            trace = traceback.format_exc()
+            self.logger.error("Unexpected error during CHANGE_TOOL:\n", traceback=trace)
+            self.error.AFC_error(
+                "An unexpected error occurred during CHANGE_TOOL. Please check the logs and report this issue to developers.",
+                pause=self.function.in_print()
+            )
         finally:
             self.next_lane_load = None
             self.function.log_toolhead_pos("Final Change Tool: Error State: {}, Is Paused {}, Position_saved {}, in toolchange: {}, POS: ".format(
