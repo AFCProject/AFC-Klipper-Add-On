@@ -349,6 +349,36 @@ class TestSetRunout:
         error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
         assert any("ghost" in m for m in error_msgs)
 
+    def test_set_runout_none_clears_runout_lane(self):
+        """RUNOUT='NONE' (uppercase) → runout_lane set to None."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.runout_lane = "lane2"
+        spool.afc.lanes = {"lane1": lane1}
+        gcmd = _make_gcmd(LANE="lane1", RUNOUT="NONE")
+        spool.cmd_SET_RUNOUT(gcmd)
+        assert lane1.runout_lane is None
+
+    def test_set_runout_lowercase_none_clears_runout_lane(self):
+        """RUNOUT='none' (lowercase) → runout_lane set to None."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.runout_lane = "lane2"
+        spool.afc.lanes = {"lane1": lane1}
+        gcmd = _make_gcmd(LANE="lane1", RUNOUT="none")
+        spool.cmd_SET_RUNOUT(gcmd)
+        assert lane1.runout_lane is None
+
+    def test_set_runout_mixedcase_none_clears_runout_lane(self):
+        """RUNOUT='None' (mixed case) → runout_lane set to None."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.runout_lane = "lane2"
+        spool.afc.lanes = {"lane1": lane1}
+        gcmd = _make_gcmd(LANE="lane1", RUNOUT="None")
+        spool.cmd_SET_RUNOUT(gcmd)
+        assert lane1.runout_lane is None
+
     def test_runout_not_in_lanes_logs_error(self):
         """Covers lines 387-389: runout != 'NONE' but not in lanes → log error + return."""
         spool = _make_spool()

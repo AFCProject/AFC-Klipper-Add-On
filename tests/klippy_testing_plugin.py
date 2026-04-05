@@ -1,5 +1,6 @@
 import ast
 import logging
+import re
 
 from extras import gcode_macro
 
@@ -34,19 +35,24 @@ class KlippyTestingPlugin:
             f"Unknown command during test execution: {cmd}"
         )
 
+    # Match a leading TEST= token (case-insensitive key), capturing a quoted
+    # or unquoted value while stopping before subsequent KEY= parameters.
+    _test_re = re.compile(
+        r'(?:^|\s)TEST='            # word boundary + key
+        r'(?:"((?:[^"\\]|\\.)*)"|'  # quoted value  -> group 1
+        r'(\S+))',                   # unquoted value -> group 2
+        re.IGNORECASE,
+    )
+
     def cmd_ASSERT(self, gcmd):
         "Evaluate an expression, raising an error if the return value is False"
         # Use raw command line to preserve case for Jinja expressions
         # (the normal params dict is uppercased by Klipper's gcode parser).
         raw = gcmd.get_raw_command_parameters()
-        # Extract value after TEST=
-        idx = raw.upper().find("TEST=")
-        if idx < 0:
+        m = self._test_re.search(raw)
+        if not m:
             raise gcmd.error("ASSERT: missing TEST parameter")
-        expression = raw[idx + 5:].strip()
-        # Strip surrounding quotes if present
-        if len(expression) >= 2 and expression[0] == '"' and expression[-1] == '"':
-            expression = expression[1:-1]
+        expression = (m.group(1) if m.group(1) is not None else m.group(2)).strip()
 
         try:
             template = _TemplateClass(

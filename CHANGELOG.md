@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-04-05]
 ### Fixed
-- Fixed bug where `SET_BUFFER_MULTIPLIER` would not properly parse lower case multiplier names. 
+- Fixed bug where `SET_BUFFER_MULTIPLIER` would not properly parse lowercase multiplier names.
 
 ## [2026-03-30]
 ### Fixed
