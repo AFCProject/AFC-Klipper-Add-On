@@ -3,6 +3,9 @@ import logging
 
 from extras import gcode_macro
 
+# Klipper uses TemplateWrapper, Kalico uses Template
+_TemplateClass = getattr(gcode_macro, 'TemplateWrapper', None) or gcode_macro.Template
+
 
 class KlippyTestingPlugin:
     def __init__(self, config):
@@ -33,10 +36,20 @@ class KlippyTestingPlugin:
 
     def cmd_ASSERT(self, gcmd):
         "Evaluate an expression, raising an error if the return value is False"
-        expression = gcmd.get("TEST")
+        # Use raw command line to preserve case for Jinja expressions
+        # (the normal params dict is uppercased by Klipper's gcode parser).
+        raw = gcmd.get_raw_command_parameters()
+        # Extract value after TEST=
+        idx = raw.upper().find("TEST=")
+        if idx < 0:
+            raise gcmd.error("ASSERT: missing TEST parameter")
+        expression = raw[idx + 5:].strip()
+        # Strip surrounding quotes if present
+        if len(expression) >= 2 and expression[0] == '"' and expression[-1] == '"':
+            expression = expression[1:-1]
 
         try:
-            template = gcode_macro.Template(
+            template = _TemplateClass(
                 self.printer,
                 self.gcode_macro.env,
                 "ASSERT:runtime_expression",

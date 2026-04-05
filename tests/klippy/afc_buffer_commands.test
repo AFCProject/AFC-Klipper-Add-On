@@ -17,8 +17,15 @@ CONFIG afc_with_buffer.cfg
 QUERY_BUFFER BUFFER=buf1
 
 # --- Enable / disable buffer ---
-# No active lane, so the internal set_multiplier call is a no-op.
 ENABLE_BUFFER BUFFER=buf1 LANE=lane1
+
+# --- Multiplier adjustment ---
+# Buffer is enabled with lane1 loaded, so multiplier comparisons are exercised.
+SET_BUFFER_MULTIPLIER BUFFER=buf1 MULTIPLIER=high FACTOR=1.15
+ASSERT TEST="{ printer['AFC_buffer buf1'].multiplier_high == 1.15 }"
+SET_BUFFER_MULTIPLIER BUFFER=buf1 MULTIPLIER=LOW FACTOR=0.85
+ASSERT TEST="{ printer['AFC_buffer buf1'].multiplier_low == 0.85 }"
+
 DISABLE_BUFFER BUFFER=buf1 LANE=lane1
 
 # --- Fault detection sensitivity transitions ---
@@ -28,8 +35,3 @@ AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=5.0
 AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=7.0
 # 7 → 0: stops the fault detection timer.
 AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=0
-
-# --- Multiplier adjustment ---
-# Buffer is disabled and no lane is loaded, so these are logged no-ops.
-SET_BUFFER_MULTIPLIER BUFFER=buf1 MULTIPLIER=HIGH FACTOR=1.15
-SET_BUFFER_MULTIPLIER BUFFER=buf1 MULTIPLIER=LOW FACTOR=0.85
