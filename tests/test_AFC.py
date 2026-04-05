@@ -11,11 +11,12 @@ Covers:
   - afc._heat_next_extruder: explicit next_temp path
   - afc.CHANGE_TOOL: adjusting_temperature with new_extruder_temp
   - afc.CHANGE_TOOL: early-exit paths (bypass active, _heat_next_extruder failure)
-  - afc.CHANGE_TOOL: same-lane branch (_handle_activate_extruder, current_toolchange logic)
+  - afc.CHANGE_TOOL: same-lane branch (_handle_activate_extruder, current_toolchange)
   - afc.CHANGE_TOOL: unload path (current=None, prep_done=False, unknown lane, TOOL_UNLOAD failure)
   - afc.CHANGE_TOOL: load path (restore_pos flag, in_toolchange, stats callbacks, error_state guard)
   - afc.CHANGE_TOOL: state management (next_lane_load lifecycle, in_toolchange flag, toolchange counter)
   - afc.CHANGE_TOOL: infinite runout (adjusting_temperature flag, status reset, heat with next_temp=None)
+  - afc.CHANGE_TOOL: exception handling (bare except, error.AFC_error, finally guarantees)
   - afc.TOOL_LOAD: unload when destination extruder already has a different lane loaded
   - afc.cmd_CHANGE_TOOL: NEW_EXTRUDER_TEMP parameter parsing
 """
@@ -703,7 +704,12 @@ class TestChangeTool_NewExtruderTemp:
 class TestChangeTool_EarlyExits:
     """
     CHANGE_TOOL returns before doing any real work in two situations:
-    the bypass sensor is active, or _heat_next_extruder returns falsy.
+      1. The bypass sensor is active (_check_bypass returns True).
+      2. _heat_next_extruder returns a falsy result.
+
+    NOTE: MockLogger (from conftest.py) is a real class whose methods append
+    (level, msg) tuples to self.messages.  Logger assertions throughout all
+    CHANGE_TOOL tests use obj.logger.messages, NOT MagicMock-style assertions.
     """
 
     def test_bypass_active_does_not_call_save_pos(self):
@@ -727,6 +733,13 @@ class TestChangeTool_EarlyExits:
         obj.CHANGE_TOOL(cur_lane)
         obj.TOOL_UNLOAD.assert_not_called()
 
+    def test_bypass_active_still_resets_next_lane_load(self):
+        """next_lane_load is reset to None in the finally block even after bypass return."""
+        obj, cur_lane, _ = _make_afc_for_change_tool()
+        obj._check_bypass.return_value = True
+        obj.CHANGE_TOOL(cur_lane)
+        assert obj.next_lane_load is None
+
     def test_heat_next_extruder_failure_calls_error_fix(self):
         """When _heat_next_extruder returns falsy, error.fix is called and execution stops."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
@@ -741,13 +754,19 @@ class TestChangeTool_EarlyExits:
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
         obj.TOOL_LOAD.assert_not_called()
 
-    def test_heat_next_extruder_failure_passes_next_lane_load_to_error(self):
-        """error.fix receives self.next_lane_load (the requested lane name) as its second arg."""
+    def test_heat_next_extruder_failure_passes_next_lane_name_to_error(self):
+        """error.fix second arg is the requested lane name (self.next_lane_load)."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._heat_next_extruder.return_value = None
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
-        fix_second_arg = obj.error.fix.call_args.args[1]
-        assert fix_second_arg == cur_lane.name
+        assert obj.error.fix.call_args.args[1] == cur_lane.name
+
+    def test_heat_next_extruder_failure_still_resets_next_lane_load(self):
+        """next_lane_load is reset to None in finally even after heat failure return."""
+        obj, cur_lane, _ = _make_afc_for_change_tool()
+        obj._heat_next_extruder.return_value = None
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        assert obj.next_lane_load is None
 
 
 # ── CHANGE_TOOL: same-lane-already-loaded branch ──────────────────────────────
@@ -760,7 +779,8 @@ class TestChangeTool_SameLane:
 
     def _make(self, error_state=False, current_toolchange=0):
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        # Make self.current (a property wrapping get_current_lane) match the requested lane.
+        # self.current is a property wrapping get_current_lane().
+        # Point it at the requested lane so the else-branch fires.
         obj.function.get_current_lane.return_value = cur_lane.name
         obj.error_state = error_state
         obj.current_toolchange = current_toolchange
@@ -791,22 +811,20 @@ class TestChangeTool_SameLane:
         obj.TOOL_LOAD.assert_not_called()
 
     def test_logs_already_loaded(self):
-        """logger.info is called with a message containing 'already loaded'."""
+        """An 'already loaded' message is appended to logger.messages at info level."""
         obj, cur_lane = self._make()
-        obj.logger = MagicMock()
         obj.CHANGE_TOOL(cur_lane)
-        obj.logger.info.assert_called_once()
-        log_msg = obj.logger.info.call_args.args[0]
-        assert "already loaded" in log_msg
+        msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any("already loaded" in m for m in msgs)
 
     def test_current_toolchange_incremented_from_minus_one(self):
-        """current_toolchange is incremented from -1 → 0 when not in error_state."""
+        """current_toolchange increments from -1 to 0 when not in error_state."""
         obj, cur_lane = self._make(error_state=False, current_toolchange=-1)
         obj.CHANGE_TOOL(cur_lane)
         assert obj.current_toolchange == 0
 
     def test_current_toolchange_not_incremented_when_not_minus_one(self):
-        """current_toolchange is left at 0 when it is not -1."""
+        """current_toolchange is left unchanged when it is already 0."""
         obj, cur_lane = self._make(error_state=False, current_toolchange=0)
         obj.CHANGE_TOOL(cur_lane)
         assert obj.current_toolchange == 0
@@ -818,7 +836,7 @@ class TestChangeTool_SameLane:
         assert obj.current_toolchange == -1
 
     def test_next_lane_load_reset_to_none(self):
-        """next_lane_load is reset to None at the end of the same-lane path."""
+        """next_lane_load is reset to None by the finally block on the same-lane path."""
         obj, cur_lane = self._make()
         obj.CHANGE_TOOL(cur_lane)
         assert obj.next_lane_load is None
@@ -844,7 +862,7 @@ class TestChangeTool_UnloadPath:
         obj.TOOL_LOAD.assert_called_once()
 
     def test_tool_unload_skipped_when_prep_not_done(self):
-        """When cur_lane._afc_prep_done is False the entire unload block is skipped."""
+        """When cur_lane._afc_prep_done is False the whole unload block is skipped."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         cur_lane._afc_prep_done = False
         obj.CHANGE_TOOL(cur_lane)
@@ -858,15 +876,14 @@ class TestChangeTool_UnloadPath:
         obj.TOOL_LOAD.assert_called_once()
 
     def test_afc_error_called_when_current_lane_not_in_lanes_dict(self):
-        """AFC_error is called when self.lanes.get(self.current) returns None."""
+        """AFC_error is called when lanes.get(self.current) returns None."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        # Remove lane1 so lanes.get("lane1") returns None.
         del obj.lanes["lane1"]
         obj.CHANGE_TOOL(cur_lane)
         obj.error.AFC_error.assert_called_once()
 
     def test_afc_error_message_contains_missing_lane_name(self):
-        """The AFC_error message contains the name of the unresolvable lane."""
+        """The AFC_error message contains the name of the unresolvable current lane."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         del obj.lanes["lane1"]
         obj.CHANGE_TOOL(cur_lane)
@@ -874,18 +891,19 @@ class TestChangeTool_UnloadPath:
         assert "lane1" in error_msg
 
     def test_tool_load_not_called_when_current_lane_unknown(self):
-        """TOOL_LOAD is never reached when the current lane is not in self.lanes."""
+        """TOOL_LOAD is never reached when the current lane cannot be resolved."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         del obj.lanes["lane1"]
         obj.CHANGE_TOOL(cur_lane)
         obj.TOOL_LOAD.assert_not_called()
 
     def test_tool_unload_called_with_correct_lane_object(self):
-        """TOOL_UNLOAD receives the lane object for self.current, not cur_lane."""
+        """TOOL_UNLOAD receives the lane object for the snapshot of self.current.
+        Because current_lane_name = self.current is captured before TOOL_UNLOAD
+        is invoked, the reference is stable even if get_current_lane() changes later."""
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane)
-        unload_arg = obj.TOOL_UNLOAD.call_args.args[0]
-        assert unload_arg is current_lane
+        assert obj.TOOL_UNLOAD.call_args.args[0] is current_lane
 
     def test_tool_unload_called_with_set_start_time_false(self):
         """TOOL_UNLOAD is always called with set_start_time=False during a toolchange."""
@@ -893,27 +911,33 @@ class TestChangeTool_UnloadPath:
         obj.CHANGE_TOOL(cur_lane)
         assert obj.TOOL_UNLOAD.call_args.kwargs["set_start_time"] is False
 
-    def test_error_fix_called_when_tool_unload_fails(self):
-        """When TOOL_UNLOAD returns False, error.fix is called."""
+    def test_error_fix_called_when_tool_unload_returns_false(self):
+        """When TOOL_UNLOAD returns False, error.fix is called to signal the failure."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
         obj.CHANGE_TOOL(cur_lane)
         obj.error.fix.assert_called_once()
 
     def test_error_fix_receives_unload_lane_object(self):
-        """error.fix is passed the unload_lane object, not None or the new lane."""
+        """error.fix second arg is the pre-resolved unload_lane, not None or cur_lane."""
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
         obj.CHANGE_TOOL(cur_lane)
-        fix_lane_arg = obj.error.fix.call_args.args[1]
-        assert fix_lane_arg is current_lane
+        assert obj.error.fix.call_args.args[1] is current_lane
 
     def test_tool_load_not_called_when_tool_unload_fails(self):
-        """Execution aborts after a failed TOOL_UNLOAD; TOOL_LOAD is never reached."""
+        """Execution aborts after failed TOOL_UNLOAD; TOOL_LOAD is never called."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
         obj.CHANGE_TOOL(cur_lane)
         obj.TOOL_LOAD.assert_not_called()
+
+    def test_next_lane_load_reset_after_unload_failure(self):
+        """The finally block resets next_lane_load to None even after TOOL_UNLOAD failure."""
+        obj, cur_lane, _ = _make_afc_for_change_tool()
+        obj.TOOL_UNLOAD.return_value = False
+        obj.CHANGE_TOOL(cur_lane)
+        assert obj.next_lane_load is None
 
 
 # ── CHANGE_TOOL: load path outcomes ───────────────────────────────────────────
@@ -922,37 +946,37 @@ class TestChangeTool_LoadPath:
     """Tests for the TOOL_LOAD call and its success/failure outcomes."""
 
     def test_tool_load_called_with_correct_lane(self):
-        """TOOL_LOAD receives cur_lane as its first argument."""
+        """TOOL_LOAD receives cur_lane as its first positional argument."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane)
         assert obj.TOOL_LOAD.call_args.args[0] is cur_lane
 
     def test_tool_load_called_with_purge_length(self):
-        """TOOL_LOAD receives the purge_length argument passed to CHANGE_TOOL."""
+        """TOOL_LOAD receives the purge_length value passed to CHANGE_TOOL."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane, purge_length=50.0)
         assert obj.TOOL_LOAD.call_args.args[1] == 50.0
 
     def test_tool_load_called_with_set_start_time_false(self):
-        """TOOL_LOAD is always called with set_start_time=False during a toolchange."""
+        """TOOL_LOAD is called with set_start_time=False during a toolchange."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane)
         assert obj.TOOL_LOAD.call_args.kwargs["set_start_time"] is False
 
-    def test_restore_pos_called_on_success_with_restore_pos_true(self):
+    def test_restore_pos_called_on_success_with_default_restore_pos(self):
         """restore_pos() is called when TOOL_LOAD succeeds and restore_pos=True (default)."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane)
         obj.restore_pos.assert_called_once()
 
-    def test_restore_pos_not_called_on_success_with_restore_pos_false(self):
-        """restore_pos() is NOT called when restore_pos=False, even on a successful load."""
+    def test_restore_pos_not_called_with_restore_pos_false(self):
+        """restore_pos() is NOT called when restore_pos=False even on a successful load."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane, restore_pos=False)
         obj.restore_pos.assert_not_called()
 
-    def test_restore_pos_not_called_when_error_state_set_during_load(self):
-        """If error_state is True after TOOL_LOAD returns, restore_pos is suppressed."""
+    def test_restore_pos_suppressed_when_error_state_set_during_load(self):
+        """If TOOL_LOAD sets error_state=True, restore_pos is not called."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         def _load_sets_error(*args, **kwargs):
             obj.error_state = True
@@ -968,7 +992,8 @@ class TestChangeTool_LoadPath:
         assert obj.in_toolchange is False
 
     def test_increase_toolcount_change_called_on_success(self):
-        """cur_lane.extruder_obj.estats.increase_toolcount_change() is called on success."""
+        """cur_lane.extruder_obj.estats.increase_toolcount_change() fires on success.
+        increase_toolcount_change lives on AFCExtruderStats (confirmed from AFC_extruder.py)."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane)
         cur_lane.extruder_obj.estats.increase_toolcount_change.assert_called_once()
@@ -980,7 +1005,7 @@ class TestChangeTool_LoadPath:
         obj.CHANGE_TOOL(cur_lane)
         obj.afc_stats.average_toolchange_time.average_time.assert_called_once_with(7.5)
 
-    def test_reset_toolchange_wo_error_called_on_load_failure_when_not_testing(self):
+    def test_reset_toolchange_wo_error_called_on_load_failure_not_testing(self):
         """When TOOL_LOAD fails and testing=False, reset_toolchange_wo_error() is called."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.testing = False
@@ -988,7 +1013,7 @@ class TestChangeTool_LoadPath:
         obj.CHANGE_TOOL(cur_lane)
         obj.afc_stats.reset_toolchange_wo_error.assert_called_once()
 
-    def test_reset_toolchange_wo_error_not_called_on_load_failure_when_testing(self):
+    def test_reset_toolchange_wo_error_skipped_on_load_failure_when_testing(self):
         """When TOOL_LOAD fails and testing=True, reset_toolchange_wo_error() is skipped."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.testing = True
@@ -996,26 +1021,25 @@ class TestChangeTool_LoadPath:
         obj.CHANGE_TOOL(cur_lane)
         obj.afc_stats.reset_toolchange_wo_error.assert_not_called()
 
-    def test_wait_for_temp_called_with_correct_heater_temp_and_deadband(self):
-        """_wait_for_temp_within_tolerance receives (heater, target_temp, deadband).
-        deadband on AFCExtruder defaults to 2.0 (confirmed from AFC_extruder.py)."""
+    def test_wait_for_temp_called_with_heater_target_and_deadband(self):
+        """_wait_for_temp_within_tolerance(heater, target_temp, deadband) is called.
+        deadband defaults to 2.0 on AFCExtruder (confirmed from AFC_extruder.py)."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        # _heat_next_extruder stub returns (next_extruder_obj, 200.0)
-        next_extruder_obj = obj._heat_next_extruder.return_value[0]
+        next_extruder_obj, target_temp = obj._heat_next_extruder.return_value
         next_extruder_obj.deadband = 2.0
         expected_heater = next_extruder_obj.get_heater()
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
         obj._wait_for_temp_within_tolerance.assert_called_once_with(
-            expected_heater, 200.0, 2.0
+            expected_heater, target_temp, 2.0
         )
 
 
 # ── CHANGE_TOOL: state management ────────────────────────────────────────────
 
 class TestChangeTool_StateManagement:
-    """Tests for the flags and counters managed across a full CHANGE_TOOL call."""
+    """Tests for flags and counters managed across a full CHANGE_TOOL call."""
 
-    def test_next_lane_load_set_before_toolchange_starts(self):
+    def test_next_lane_load_set_to_cur_lane_name_before_save_pos(self):
         """next_lane_load is set to cur_lane.name before save_pos is called."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         captured = {}
@@ -1028,20 +1052,20 @@ class TestChangeTool_StateManagement:
         assert captured["next_lane_load"] == cur_lane.name
 
     def test_next_lane_load_reset_to_none_after_successful_change(self):
-        """next_lane_load is None at the end of a successful toolchange."""
+        """next_lane_load is None at the end of a successful toolchange (finally block)."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane)
         assert obj.next_lane_load is None
 
     def test_next_lane_load_reset_to_none_after_unload_failure(self):
-        """next_lane_load is still None even when TOOL_UNLOAD fails mid-change."""
+        """next_lane_load is None in the finally block even when TOOL_UNLOAD fails."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
         obj.CHANGE_TOOL(cur_lane)
         assert obj.next_lane_load is None
 
-    def test_in_toolchange_true_by_time_tool_unload_is_called(self):
-        """in_toolchange is already True when TOOL_UNLOAD fires."""
+    def test_in_toolchange_true_when_tool_unload_is_called(self):
+        """in_toolchange is True by the time TOOL_UNLOAD fires (set before the prep block)."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         captured = {}
         original_unload = obj.TOOL_UNLOAD
@@ -1052,22 +1076,22 @@ class TestChangeTool_StateManagement:
         obj.CHANGE_TOOL(cur_lane)
         assert captured["in_toolchange"] is True
 
-    def test_save_pos_called_for_different_lane(self):
-        """save_pos() is called when switching to a lane different from self.current."""
+    def test_save_pos_called_when_switching_lanes(self):
+        """save_pos() is called when the requested lane differs from self.current."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.CHANGE_TOOL(cur_lane)
         obj.save_pos.assert_called_once()
 
     def test_save_pos_not_called_for_same_lane(self):
-        """save_pos() is NOT called when the requested lane is already loaded."""
+        """save_pos() is NOT called when the requested lane is already current."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.function.get_current_lane.return_value = cur_lane.name
         obj.CHANGE_TOOL(cur_lane)
         obj.save_pos.assert_not_called()
 
     def test_current_toolchange_incremented_when_within_total(self):
-        """current_toolchange increments when conditions are met:
-        error_state=False, number_of_toolchanges!=0, current_toolchange < total."""
+        """current_toolchange increments when error_state=False, number_of_toolchanges != 0,
+        and current_toolchange < number_of_toolchanges."""
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.error_state = False
         obj.number_of_toolchanges = 5
@@ -1109,15 +1133,15 @@ class TestChangeTool_InfiniteRunout:
     """
     Tests for the infinite_runout sub-path.
 
-    AFCLaneState.INFINITE_RUNOUT == "Infinite Runout" (a plain string constant,
-    confirmed from AFC_lane.py — AFCLaneState is not an Enum).
+    AFCLaneState is a plain class with string constants (NOT an Enum) —
+    confirmed from AFC_lane.py.  AFCLaneState.INFINITE_RUNOUT == "Infinite Runout".
     """
 
     def _make_infinite_runout(self, same_extruder=False):
         """
-        Return a fixture where cur_lane is in INFINITE_RUNOUT state.
-        same_extruder=True makes the next and current lanes share an extruder name
-        so that adjusting_temperature evaluates to False despite infinite_runout.
+        Fixture where cur_lane is in INFINITE_RUNOUT state.
+        same_extruder=True: next and current extruders share a name so that
+        adjusting_temperature evaluates to False even though infinite_runout is True.
         """
         next_ext = "extruder0" if same_extruder else "extruder1"
         obj, cur_lane, current_lane = _make_afc_for_change_tool(
@@ -1127,27 +1151,27 @@ class TestChangeTool_InfiniteRunout:
         cur_lane.status = AFCLaneState.INFINITE_RUNOUT
         return obj, cur_lane, current_lane
 
-    def test_adjusting_temperature_true_for_different_extruder(self):
-        """adjusting_temperature is True (heat path entered) when extruder changes."""
+    def test_adjusting_temperature_true_when_extruder_changes(self):
+        """adjusting_temperature is True (heat path entered) when the extruder differs."""
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=False)
         obj.CHANGE_TOOL(cur_lane)
         obj._heat_next_extruder.assert_called_once()
 
-    def test_adjusting_temperature_false_for_same_extruder(self):
+    def test_adjusting_temperature_false_when_same_extruder(self):
         """adjusting_temperature is False when infinite_runout but the extruder is unchanged."""
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=True)
         obj.CHANGE_TOOL(cur_lane)
         obj._heat_next_extruder.assert_not_called()
 
     def test_heat_next_extruder_called_with_next_temp_none(self):
-        """For infinite_runout, _heat_next_extruder is called with next_temp=None
-        (the caller lets it read the current target rather than forcing a value)."""
+        """_heat_next_extruder is called with next_temp=None for infinite_runout
+        so that it reads the current target temp rather than forcing a new value."""
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=False)
         obj.CHANGE_TOOL(cur_lane)
         obj._heat_next_extruder.assert_called_once_with(wait=False, next_temp=None)
 
     def test_cur_lane_status_set_to_loaded(self):
-        """cur_lane.status is forced to AFCLaneState.LOADED ('Loaded') during infinite_runout."""
+        """cur_lane.status is forced to AFCLaneState.LOADED during infinite_runout."""
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=False)
         assert cur_lane.status == AFCLaneState.INFINITE_RUNOUT
         obj.CHANGE_TOOL(cur_lane)
@@ -1159,6 +1183,64 @@ class TestChangeTool_InfiniteRunout:
         cur_lane.status = AFCLaneState.LOADED
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
         assert cur_lane.status == AFCLaneState.LOADED
+
+
+# ── CHANGE_TOOL: exception handling ──────────────────────────────────────────
+
+class TestChangeTool_ExceptionHandling:
+    """
+    Tests for the try/except/finally wrapper added around CHANGE_TOOL.
+
+    The bare 'except Exception' block:
+      - swallows the exception (does not re-raise)
+      - appends an ("error", ...) entry to logger.messages via MockLogger
+      - calls self.error.AFC_error(...)
+
+    The 'finally' block:
+      - always resets self.next_lane_load = None
+      - always calls self.function.log_toolhead_pos(...)
+    """
+
+    def _make_raising_fixture(self, exc=RuntimeError("simulated failure")):
+        """Return a fixture where TOOL_LOAD raises an unexpected exception."""
+        obj, cur_lane, _ = _make_afc_for_change_tool()
+        obj.TOOL_LOAD.side_effect = exc
+        return obj, cur_lane
+
+    def test_unexpected_exception_is_swallowed(self):
+        """An unexpected exception from TOOL_LOAD must not propagate to the caller."""
+        obj, cur_lane = self._make_raising_fixture()
+        try:
+            obj.CHANGE_TOOL(cur_lane)   # must not raise
+        except Exception as exc:
+            pytest.fail(f"CHANGE_TOOL propagated an unexpected exception: {exc}")
+
+    def test_unexpected_exception_calls_afc_error(self):
+        """error.AFC_error is called when an unexpected exception is caught."""
+        obj, cur_lane = self._make_raising_fixture()
+        obj.CHANGE_TOOL(cur_lane)
+        obj.error.AFC_error.assert_called_once()
+
+    def test_unexpected_exception_logs_error_message(self):
+        """An error-level entry is appended to logger.messages on unexpected exception."""
+        obj, cur_lane = self._make_raising_fixture()
+        obj.CHANGE_TOOL(cur_lane)
+        error_msgs = [m for lvl, m in obj.logger.messages if lvl == "error"]
+        assert any("CHANGE_TOOL" in m for m in error_msgs)
+
+    def test_next_lane_load_always_reset_on_exception(self):
+        """The finally block resets next_lane_load to None even when an exception fires."""
+        obj, cur_lane = self._make_raising_fixture()
+        obj.CHANGE_TOOL(cur_lane)
+        assert obj.next_lane_load is None
+
+    def test_afc_error_pause_arg_reflects_in_print(self):
+        """error.AFC_error is called with pause= matching function.in_print()."""
+        obj, cur_lane = self._make_raising_fixture()
+        obj.function.in_print.return_value = True
+        obj.CHANGE_TOOL(cur_lane)
+        call_kwargs = obj.error.AFC_error.call_args.kwargs
+        assert call_kwargs.get("pause") is True
 
 
 # ── cmd_CHANGE_TOOL: NEW_EXTRUDER_TEMP parameter parsing ─────────────────────
