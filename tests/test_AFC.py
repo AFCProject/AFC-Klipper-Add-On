@@ -2058,7 +2058,7 @@ class TestGetDefaultMaterialTemps:
     # ── extruder_temp set (non-None, non-zero) ───────────────────────────────
 
     def test_extruder_temp_overrides_default(self):
-        """A non-None extruder_temp is used directly and overrides everything else."""
+        """A valid extruder_temp above heater.min_extrude_temp is used directly and overrides everything else"""
         obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
         lane = _make_lane_for_material_temps(extruder_temp=220.0, material=None)
         temp, _ = obj._get_default_material_temps(lane)
@@ -2080,7 +2080,7 @@ class TestGetDefaultMaterialTemps:
 
     # ── extruder_temp set to zero (critical edge case) ───────────────────────
 
-    def test_extruder_temp_zero_is_used_return_default(self):
+    def test_extruder_temp_zero_returns_default(self):
         """Return default temp since extruder_temp=0 is not a valid temperature."""
         obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
         lane = _make_lane_for_material_temps(extruder_temp=0, material=None)

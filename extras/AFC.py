@@ -581,7 +581,9 @@ class afc:
         except:
             temp_value = self.heater.min_extrude_temp + 5
 
-        using_min_value = True  # Set it true if default temp/spoolman temps are not being used
+        # True when using a fallback/default/min-derived temp instead of an explicit lane or
+        # material-specific temp
+        using_min_value = True
         if (cur_lane.extruder_temp is not None
             and cur_lane.extruder_temp > self.heater.min_extrude_temp):
             temp_value = cur_lane.extruder_temp
