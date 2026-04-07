@@ -1935,3 +1935,228 @@ class TestRestoreToolheadTemp:
         temp_state = self._make_valid_temp_state()
         obj.restore_toolhead_temp(temp_state)   # must not raise
         obj.logger.debug.assert_called_once()
+
+
+# ── _get_default_material_temps ───────────────────────────────────────────────
+
+def _make_lane_for_material_temps(
+    extruder_temp=None,
+    material=None,
+):
+    """Build a minimal lane mock for _get_default_material_temps tests."""
+    lane = MagicMock()
+    lane.extruder_temp = extruder_temp
+    lane.material = material
+    return lane
+
+
+def _make_afc_for_material_temps(
+    default_material_temps=None,
+    min_extrude_temp=170.0,
+):
+    """Build an afc instance wired up for _get_default_material_temps tests."""
+    obj = _make_afc()
+
+    if default_material_temps is None:
+        default_material_temps = ["default: 235", "PLA:210", "PETG:235", "ABS:240", "ASA:245"]
+    obj.default_material_temps = default_material_temps
+
+    heater = MagicMock()
+    heater.min_extrude_temp = min_extrude_temp
+    obj.heater = heater
+
+    return obj
+
+
+class TestGetDefaultMaterialTemps:
+    """Tests for afc._get_default_material_temps."""
+
+    # ── return type ──────────────────────────────────────────────────────────
+
+    def test_returns_tuple(self):
+        """Return value is a 2-tuple."""
+        obj = _make_afc_for_material_temps()
+        lane = _make_lane_for_material_temps()
+        result = obj._get_default_material_temps(lane)
+        assert isinstance(result, tuple) and len(result) == 2
+
+    def test_first_element_is_float(self):
+        """First tuple element (temperature) is always a float."""
+        obj = _make_afc_for_material_temps()
+        lane = _make_lane_for_material_temps()
+        temp, _ = obj._get_default_material_temps(lane)
+        assert isinstance(temp, float)
+
+    def test_second_element_is_bool(self):
+        """Second tuple element (using_min_value flag) is always a bool."""
+        obj = _make_afc_for_material_temps()
+        lane = _make_lane_for_material_temps()
+        _, using_min = obj._get_default_material_temps(lane)
+        assert isinstance(using_min, bool)
+
+    # ── default entry in list ────────────────────────────────────────────────
+
+    def test_no_lane_data_returns_default_list_temp(self):
+        """With no extruder_temp and no material, falls back to the 'default:' entry."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material=None)
+        temp, using_min = obj._get_default_material_temps(lane)
+        assert temp == 235.0
+
+    def test_no_lane_data_sets_using_min_value_true(self):
+        """using_min_value is True when falling back to the 'default:' list entry."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material=None)
+        _, using_min = obj._get_default_material_temps(lane)
+        assert using_min is True
+
+    def test_default_entry_with_spaces_is_parsed_correctly(self):
+        """Spaces around the colon in 'default: 200' are handled correctly."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 200"])
+        lane = _make_lane_for_material_temps()
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 200.0
+
+    # ── fallback to min_extrude_temp + 5 ────────────────────────────────────
+
+    def test_missing_default_entry_falls_back_to_min_extrude_temp(self):
+        """When no 'default:' entry exists in the list, heater.min_extrude_temp + 5 is used."""
+        obj = _make_afc_for_material_temps(
+            default_material_temps=["PLA:210", "PETG:235"],
+            min_extrude_temp=170.0,
+        )
+        lane = _make_lane_for_material_temps(extruder_temp=None, material=None)
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 175.0  # 170 + 5
+
+    def test_missing_default_entry_using_min_value_true(self):
+        """using_min_value is True when the min_extrude_temp fallback is used."""
+        obj = _make_afc_for_material_temps(
+            default_material_temps=["PLA:210"],
+            min_extrude_temp=170.0,
+        )
+        lane = _make_lane_for_material_temps(extruder_temp=None, material=None)
+        _, using_min = obj._get_default_material_temps(lane)
+        assert using_min is True
+
+    def test_none_default_material_temps_falls_back_to_min_extrude_temp(self):
+        """When default_material_temps is None the heater fallback is used."""
+        obj = _make_afc_for_material_temps(min_extrude_temp=165.0)
+        obj.default_material_temps = None  # Force None so except branch fires
+        lane = _make_lane_for_material_temps(extruder_temp=None, material=None)
+        temp, using_min = obj._get_default_material_temps(lane)
+        assert temp == 170.0  # 165 + 5
+        assert using_min is True
+
+    def test_empty_default_material_temps_list_falls_back_to_min_extrude_temp(self):
+        """An empty list also triggers the min_extrude_temp + 5 fallback."""
+        obj = _make_afc_for_material_temps(default_material_temps=[], min_extrude_temp=180.0)
+        lane = _make_lane_for_material_temps(extruder_temp=None, material=None)
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 185.0  # 180 + 5
+
+    # ── extruder_temp set (non-None, non-zero) ───────────────────────────────
+
+    def test_extruder_temp_overrides_default(self):
+        """A non-None extruder_temp is used directly and overrides everything else."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=220.0, material=None)
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 220.0
+
+    def test_extruder_temp_sets_using_min_value_false(self):
+        """using_min_value is False when extruder_temp is provided."""
+        obj = _make_afc_for_material_temps()
+        lane = _make_lane_for_material_temps(extruder_temp=220.0, material=None)
+        _, using_min = obj._get_default_material_temps(lane)
+        assert using_min is False
+
+    def test_extruder_temp_overrides_material_match(self):
+        """extruder_temp takes priority over a matching material entry."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=250.0, material="PLA")
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 250.0
+
+    # ── extruder_temp set to zero (critical edge case) ───────────────────────
+
+    def test_extruder_temp_zero_is_used_return_default(self):
+        """Return default temp since extruder_temp=0 is not a valid temperature."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=0, material=None)
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 235.0
+
+    def test_extruder_temp_zero_sets_using_min_value_true(self):
+        """using_min_value is True when extruder_temp is exactly zero."""
+        obj = _make_afc_for_material_temps()
+        lane = _make_lane_for_material_temps(extruder_temp=0, material=None)
+        _, using_min = obj._get_default_material_temps(lane)
+        assert using_min is True
+
+    # ── material matching ────────────────────────────────────────────────────
+
+    def test_exact_material_match_returns_material_temp(self):
+        """Exact material name match returns the configured material temperature."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material="PLA")
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 210.0
+
+    def test_material_match_sets_using_min_value_false(self):
+        """using_min_value is False when a matching material entry is found."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material="PLA")
+        _, using_min = obj._get_default_material_temps(lane)
+        assert using_min is False
+
+    def test_material_match_is_case_insensitive(self):
+        """Material matching ignores case ('pla' matches 'PLA:210')."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material="pla")
+        temp, using_min = obj._get_default_material_temps(lane)
+        assert temp == 210.0
+        assert using_min is False
+
+    def test_material_substring_match(self):
+        """A material key is matched as a substring (e.g. 'PLA' key matches 'PLA+' material)."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:215"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material="PLA+")
+        temp, using_min = obj._get_default_material_temps(lane)
+        assert temp == 215.0
+        assert using_min is False
+
+    def test_unmatched_material_falls_back_to_default_entry(self):
+        """An unrecognised material name falls back to the 'default:' list entry."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material="TPU")
+        temp, using_min = obj._get_default_material_temps(lane)
+        assert temp == 235.0
+        assert using_min is True
+
+    def test_material_none_skips_material_lookup(self):
+        """When material is None the material-matching loop is skipped."""
+        obj = _make_afc_for_material_temps(default_material_temps=["default: 235", "PLA:210"])
+        lane = _make_lane_for_material_temps(extruder_temp=None, material=None)
+        temp, using_min = obj._get_default_material_temps(lane)
+        assert temp == 235.0
+        assert using_min is True
+
+    def test_first_matching_material_wins(self):
+        """When multiple entries could match the first one in the list wins."""
+        obj = _make_afc_for_material_temps(
+            default_material_temps=["default: 235", "PLA:210", "PLA:999"]
+        )
+        lane = _make_lane_for_material_temps(extruder_temp=None, material="PLA")
+        temp, _ = obj._get_default_material_temps(lane)
+        assert temp == 210.0
+
+    def test_multiple_materials_each_return_correct_temp(self):
+        """Each material in the list returns its own configured temperature."""
+        temps_cfg = ["default: 235", "PLA:210", "PETG:230", "ABS:240"]
+        obj = _make_afc_for_material_temps(default_material_temps=temps_cfg)
+        for material, expected in [("PLA", 210.0), ("PETG", 230.0), ("ABS", 240.0)]:
+            lane = _make_lane_for_material_temps(extruder_temp=None, material=material)
+            temp, using_min = obj._get_default_material_temps(lane)
+            assert temp == expected, f"Expected {expected} for {material}, got {temp}"
+            assert using_min is False
