@@ -1570,19 +1570,22 @@ class AFCLane:
             td        = self.td1_data['td']        if 'td'        in self.td1_data else ""
 
             lane_number = self.map.replace("T", "")
+            extruder_name = self.extruder_obj.name
+            extruder_index = 0 if extruder_name == "extruder" else int(extruder_name.replace("extruder", ""))
             lane_data = {
                 "namespace": "lane_data",
                 "key": self.name,
                 "value": {
-                    "color"         : self.color,
-                    "material"      : self.material,
-                    "bed_temp"      : self.bed_temp,
-                    "nozzle_temp"   : self.extruder_temp,
-                    "scan_time"     : scan_time,
-                    "td"            : td,
-                    "lane"          : lane_number,
-                    "spool_id"      : self.spool_id,
-                    "weight"        : self.weight
+                    "color"          : self.color,
+                    "material"       : self.material,
+                    "bed_temp"       : self.bed_temp,
+                    "nozzle_temp"    : self.extruder_temp,
+                    "scan_time"      : scan_time,
+                    "td"             : td,
+                    "lane"           : lane_number,
+                    "extruder_index" : extruder_index,
+                    "spool_id"       : self.spool_id,
+                    "weight"         : self.weight
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
@@ -1593,18 +1596,21 @@ class AFCLane:
         """
         if self.map is not None and "T" in self.map:
             lane_number = self.map.replace("T", "")
+            extruder_name = self.extruder_obj.name
+            extruder_index = 0 if extruder_name == "extruder" else int(extruder_name.replace("extruder", ""))
             lane_data = {
                 "namespace": "lane_data",
                 "key": self.name,
                 "value": {
-                    "color"         :  "",
-                    "material"      : "",
-                    "bed_temp"      : "",
-                    "nozzle_temp"   : "",
-                    "scan_time"     : "",
-                    "td"            : "",
-                    "lane"          : lane_number,
-                    "spool_id"      : None
+                    "color"          : "",
+                    "material"       : "",
+                    "bed_temp"       : "",
+                    "nozzle_temp"    : "",
+                    "scan_time"      : "",
+                    "td"             : "",
+                    "lane"           : lane_number,
+                    "extruder_index" : extruder_index,
+                    "spool_id"       : None
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
