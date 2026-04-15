@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-04-15]
+### Added
+- Added `extruder_index` field to the `lane_data` Moonraker database endpoint. This exposes the 0-based physical extruder index for each lane, enabling third-party tools such as OrcaSlicer's `physical_extruder_mapper` to correctly map filaments to physical extruders on multi-extruder machines.
+
 ## [2026-04-06]
 ### Fixed
 - Toolchanger: Issue where standalone toolheads would try to heat to 0.
