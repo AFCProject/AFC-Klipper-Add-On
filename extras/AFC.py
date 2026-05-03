@@ -1204,8 +1204,7 @@ class afc:
 
         # TODO: add a check for multi-tools to verify lane is not loaded to toolhead before trying to unload
         if (cur_lane.name != cur_lane.extruder_obj.lane_loaded
-		    and not cur_lane.extruder_obj.is_standalone()
-			and not cur_lane.is_direct_hub()):
+		    and not cur_lane.extruder_obj.is_standalone()):
             # Setting status as ejecting so if filament is removed and de-activates the prep sensor while
             # extruder motors are still running it does not trigger infinite spool or pause logic
             # once user removes filament lanes status will go to None
@@ -1232,9 +1231,6 @@ class afc:
 
         elif cur_lane.name == cur_lane.extruder_obj.lane_loaded:
             self.logger.info("LANE {} is loaded in toolhead, can't unload.".format(cur_lane.name))
-
-        elif cur_lane.is_direct_hub():
-            self.logger.info("LANE {} is a direct lane must be tool unloaded.".format(cur_lane.name))
 
         self.current_state = State.IDLE
 
@@ -2029,10 +2025,12 @@ class afc:
 
             if (cur_lane.is_direct_hub()
                 and not cur_lane.extruder_obj.is_standalone()):
-                while cur_lane.raw_load_state:
-                    cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
-                                           assist_active=AssistActive.YES)
-                cur_lane.move_advanced(cur_lane.short_move_dis * -5, SpeedMode.SHORT)
+                park_tries = 0
+                while not cur_lane.raw_load_state and cur_lane.prep_state:
+                    park_tries += 1
+                    cur_lane.move_advanced(cur_lane.short_move_dis, SpeedMode.SHORT)
+                    if park_tries >= 5:
+                        break
 
             if self.post_unload_macro is not None:
                 self.gcode.run_script_from_command(self.post_unload_macro)
