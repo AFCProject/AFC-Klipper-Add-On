@@ -2160,3 +2160,47 @@ class TestGetDefaultMaterialTemps:
             temp, using_min = obj._get_default_material_temps(lane)
             assert temp == expected, f"Expected {expected} for {material}, got {temp}"
             assert using_min is False
+
+
+# ── in_print_reactor_timer: moonraker None guard ─────────────────────────────
+
+class TestInPrintReactorTimer:
+    """
+    Tests for in_print_reactor_timer guarding against an uninitialized
+    moonraker object. If PREP has not been run, self.moonraker is None and
+    calling methods on it would raise AttributeError and crash klipper.
+    """
+
+    def _make(self):
+        obj = _make_afc()
+        obj.in_print_timer = MagicMock()
+        return obj
+
+    def test_skips_moonraker_call_when_moonraker_is_none(self):
+        """When in_print is True but moonraker is None, do not deref moonraker."""
+        obj = self._make()
+        obj.moonraker = None
+        obj.function.in_print.return_value = (True, "test.gcode")
+        # Must not raise AttributeError on NoneType.
+        result = obj.in_print_reactor_timer(0.0)
+        assert result == obj.reactor.NEVER
+
+    def test_calls_moonraker_when_in_print_and_moonraker_set(self):
+        """Happy path: moonraker is queried when both in_print and moonraker are set."""
+        obj = self._make()
+        obj.moonraker = MagicMock()
+        obj.moonraker.get_file_filament_change_count.return_value = 7
+        obj.function.in_print.return_value = (True, "test.gcode")
+        obj.function.get_current_lane_obj.return_value = None
+        obj.in_print_reactor_timer(0.0)
+        obj.moonraker.get_file_filament_change_count.assert_called_once_with("test.gcode")
+        assert obj.number_of_toolchanges == 7
+        assert obj.current_toolchange == -1
+
+    def test_does_not_call_moonraker_when_not_in_print(self):
+        """When not in a print, moonraker should not be queried."""
+        obj = self._make()
+        obj.moonraker = MagicMock()
+        obj.function.in_print.return_value = (False, None)
+        obj.in_print_reactor_timer(0.0)
+        obj.moonraker.get_file_filament_change_count.assert_not_called()
