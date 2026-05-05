@@ -884,9 +884,8 @@ class AFCExtruder:
         those leds will be turned on. If `nozzle_led_inx` is not provided then all leds not in defined in
         `status_led_idx` will be turned on.
 
-        `EXTRUDER` - AFC_extruder config name to print leds. If single toolhead, this will always be `extruder`
-
-        `TURN_ON` - set to 1 to turn on leds, set to 0 to turn off leds. If not supplied, defaults to 1
+        EXTRUDER - AFC_extruder config name to print leds. If single toolhead, this will always be `extruder`<br>
+        TURN_ON - set to 1 to turn on leds, set to 0 to turn off leds. If not supplied, defaults to 1
 
         Usage
         -----

@@ -1758,8 +1758,7 @@ class AFCLane:
         ```
         """
         if not self.load_state:
-            self.afc.error.AFC_error("Lane:{} is not loaded, ensure that the LOAD switch is properly configured and filament is detected. "
-                                     "Switch status can be checked with the AFC_STATUS command.".format(self.name), pause=False)
+            self.afc.error.AFC_error("Lane:{} is not loaded, ensure that the LOAD switch is properly configured and filament is detected.".format(self.name), pause=False)
             return
 
         # Do not set lane as loaded if virtual bypass or normal bypass is enabled/triggered

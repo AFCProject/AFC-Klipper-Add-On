@@ -422,16 +422,16 @@ class afc:
         self.gcode.register_command('SET_AFC_TOOLCHANGES',  self.cmd_SET_AFC_TOOLCHANGES,   desc=self.cmd_SET_AFC_TOOLCHANGES_help)
         self.gcode.register_command('AFC_CLEAR_MESSAGE',    self.cmd_AFC_CLEAR_MESSAGE,     desc=self.cmd_AFC_CLEAR_MESSAGE_help)
         self.gcode.register_command('_AFC_TEST_MESSAGES',   self.cmd__AFC_TEST_MESSAGES,    desc=self.cmd__AFC_TEST_MESSAGES_help)
-        self.gcode.register_command('AFC_M104',             self._cmd_AFC_M104,             desc=self._cmd_AFC_M104_help)
-        self.gcode.register_command('AFC_M109',             self._cmd_AFC_M109,             desc=self._cmd_AFC_M109_help)
+        self.gcode.register_command('AFC_M104',             self.cmd_AFC_M104,             desc=self.cmd_AFC_M104_help)
+        self.gcode.register_command('AFC_M109',             self.cmd_AFC_M109,             desc=self.cmd_AFC_M109_help)
 
         self._rename_macros()
 
         self.current_state = State.IDLE
 
     def _rename_macros(self):
-        self.function._rename(self.BASE_M104, self.RENAMED_M104, self._cmd_AFC_M104, self._cmd_AFC_M104_help)
-        self.function._rename(self.BASE_M109, self.RENAMED_M109, self._cmd_AFC_M109, self._cmd_AFC_M109_help)
+        self.function._rename(self.BASE_M104, self.RENAMED_M104, self.cmd_AFC_M104, self.cmd_AFC_M104_help)
+        self.function._rename(self.BASE_M109, self.RENAMED_M109, self.cmd_AFC_M109, self.cmd_AFC_M109_help)
 
     def print_version(self, console_only=False):
         """
@@ -2305,22 +2305,53 @@ class afc:
 
         web_request.send( {"status:" : {"AFC": str}})
 
-    _cmd_AFC_M104_help = "Set extruder temperature"
-    def _cmd_AFC_M104(self, gcmd):
+    cmd_AFC_M104_help = "Set extruder temperature"
+    def cmd_AFC_M104(self, gcmd):
         """
-        This function sets the temperature of the specified extruder.
+        Overrides Klipper's default M104 command to set extruder temperature
+        without waiting. Extends klippers default behavior by adding support for tool number (T) parameter.
+
+        T - Tool number to set temperature for. Defaults to current extruder if not specified.<br>
+        S - Temperature to set. Defaults to 0 if not specified.
 
         Usage
         -----
-        `AFC_M104 <extruder> <temperature>`
-        """
-        self._cmd_AFC_M109(gcmd, wait=False)
+        `AFC_M104 T<extruder> S<temperature>`
+        `M104 T<extruder> T<temperature>`
 
-    _cmd_AFC_M109_help = "Set extruder temperature and wait for it to reach the target"
-    def _cmd_AFC_M109(self, gcmd, wait=True):
+        Example
+        -----
+        `M104 T1 S250`
+
+        Example
+        -----
+        `M104 S250`
         """
-        This function sets the temperature of the specified extruder and waits for it to reach the target temperature.
-        Supports T (tool), S (temp), and D (deadband).
+        self.cmd_AFC_M109(gcmd, wait=False)
+
+    cmd_AFC_M109_help = "Set extruder temperature and wait for it to reach the target"
+    def cmd_AFC_M109(self, gcmd, wait=True):
+        """
+        Overrides Klipper's default M109 command to set extruder temperature and wait for it to be reached.
+        Extends klippers default behavior by adding support for tool number (T) and deadband (D) parameters.
+
+        T - Tool number to set temperature for. Defaults to current extruder if not specified.<br>
+        S - Temperature to set. Defaults to 0 if not specified.<br>
+        D - Deadband in degrees Celsius. When specified, AFC will wait until the extruder is within
+            +/- this value of the target temperature before continuing.
+
+        Usage
+        -----
+        `AFC_M109 T<extruder> S<temperature> D<deadband>`
+        `M109 T<extruder> T<temperature> D<deadband>`
+
+        Example
+        -----
+        `M109 T1 S250 D5`
+
+        Example
+        -----
+        `M109 S250`
         """
 
         # TODO: this currently does not work correctly when lanes are remapped and KTC calls M109
