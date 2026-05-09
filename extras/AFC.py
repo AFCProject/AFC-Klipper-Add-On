@@ -2316,16 +2316,21 @@ class afc:
 
         Usage
         -----
-        `AFC_M104 T<extruder> S<temperature>`
-        `M104 T<extruder> T<temperature>`
+        `AFC_M104 T<extruder> S<temperature>`<br>
+        or<br>
+        `M104 T<extruder> S<temperature>`
 
         Example
         -----
-        `M104 T1 S250`
+        ```
+        M104 T1 S250
+        ```
 
         Example
         -----
-        `M104 S250`
+        ```
+        M104 S250
+        ```
         """
         self.cmd_AFC_M109(gcmd, wait=False)
 
@@ -2342,16 +2347,21 @@ class afc:
 
         Usage
         -----
-        `AFC_M109 T<extruder> S<temperature> D<deadband>`
-        `M109 T<extruder> T<temperature> D<deadband>`
+        `AFC_M109 T<extruder> S<temperature> D<deadband>`<br>
+        or<br>
+        `M109 T<extruder> S<temperature> D<deadband>`
 
         Example
         -----
-        `M109 T1 S250 D5`
+        ```
+        M109 T1 S250 D5
+        ```
 
         Example
         -----
-        `M109 S250`
+        ```
+        M109 S250
+        ```
         """
 
         # TODO: this currently does not work correctly when lanes are remapped and KTC calls M109
