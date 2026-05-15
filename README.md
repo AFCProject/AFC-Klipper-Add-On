@@ -34,7 +34,7 @@ To install this plugin, you can use the following commands from the users home d
 
 ```bash
 cd ~
-git clone https://github.com/ArmoredTurtle/AFC-Klipper-Add-On.git
+git clone https://github.com/AFCProject/AFC-Klipper-Add-On.git
 cd AFC-Klipper-Add-On
 ./install-afc.sh
 ```

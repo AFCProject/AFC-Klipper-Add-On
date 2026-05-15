@@ -2,7 +2,7 @@ name: All others
 description: Anything else!
 title: "[Other]: "
 labels: ["Other", "triage"]
-projects: ["ArmoredTurtle/AFC-Klipper-Add-On"]
+projects: ["AFCProject/AFC-Klipper-Add-On"]
 body:
   - type: markdown
     attributes:

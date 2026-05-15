@@ -2,7 +2,7 @@ name: Bug Report
 description: File a bug report.
 title: "[Bug]: "
 labels: ["bug", "triage"]
-projects: ["ArmoredTurtle/AFC-Klipper-Add-On"]
+projects: ["AFCProject/AFC-Klipper-Add-On"]
 body:
   - type: markdown
     attributes:

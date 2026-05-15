@@ -2,7 +2,7 @@ name: Feature Request
 description: Request a new feature.
 title: "[Enhancement]: "
 labels: ["enhancement", "triage"]
-projects: ["ArmoredTurtle/AFC-Klipper-Add-On"]
+projects: ["AFCProject/AFC-Klipper-Add-On"]
 body:
   - type: markdown
     attributes:
