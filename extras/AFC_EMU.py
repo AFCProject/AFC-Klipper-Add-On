@@ -27,7 +27,6 @@ try: from extras.AFC_BoxTurtle import afcBoxTurtle
 except: raise error(ERROR_STR.format(import_lib="AFC_BoxTurtle", trace=traceback.format_exc()))
 
 class AFC_EMU(afcBoxTurtle):
-    MAX_NUM_MOVES = 40
     def __init__(self, config):
         super().__init__(config)
         self.type = config.get('type', 'EMU')

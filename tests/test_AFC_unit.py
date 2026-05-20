@@ -72,6 +72,7 @@ def _make_lane(name="lane1", hub="hub1", extruder="ext1", buffer_name="buf1"):
     lane._load_state = True
     lane.short_moves_speed = 50
     lane.short_moves_accel = 50
+    lane.led_spool_index = None
     return lane
 
 
