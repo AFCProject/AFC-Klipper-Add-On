@@ -77,7 +77,9 @@ class afc_hub:
 
     def is_virtual_pin(self):
         """
-        Helper method that returns true when switch_pin variable is set to "virtual"
+        Helper method that returns true when switch_pin variable is set to "virtual", meaning
+        that all load switches in a unit is the hub switch. So if one load switch it triggered
+        then the "hub switch" is triggered.
 
         :return boolean: Returns True when switch_pin variable equals virtual
         """

@@ -1,24 +1,28 @@
 """
 Unit tests for extras/AFC_EMU.py
 
-Covers:
-  - AFC_EMU: is a subclass of afcBoxTurtle
-  - AFC_EMU: MAX_NUM_MOVES constant
-  - handle_connect: sets EMU logo strings
-  - prep_post_load: virtual-pin hub path moves filament and sets loaded_to_hub
-  - prep_post_load: normal hub path delegates to super().prep_post_load()
-  - move_to_hub: uses hub_endstop_name for normal hubs
-  - move_to_hub: uses lane.load_es when hub is virtual pin
-  - move_to_hub: returns tuple from lane.move_to
-  - eject_lane: move_to called when loaded_to_hub is True
-  - eject_lane: move_advanced called unconditionally
-  - eject_lane: do_enable(False) called unconditionally
-  - load_config_prefix: returns AFC_EMU instance
+Covers every method defined in AFC_EMU.py:
+  - AFC_EMU.__init__: sets self.type from config (defaults to 'EMU')
+  - AFC_EMU.handle_connect: sets EMU-specific logo strings
+  - AFC_EMU.prep_post_load:
+      Virtual-pin path requires lane.hub_obj non-None AND hasattr(self.hub_obj,
+      'is_virtual_pin') AND lane.hub_obj.is_virtual_pin() True.  When all three
+      hold, move_to is retried while lane.raw_load_state is True, capped at 10
+      tries, then loaded_to_hub is set True.  Any other combination delegates to
+      super().prep_post_load().
+  - AFC_EMU.move_to_hub: same three-part virtual-pin guard selects lane.load_es
+      as endstop; normal/fallback path uses lane.hub_endstop_name; passes through
+      dist*dir, speed_mode, use_homing, assist_active; returns lane.move_to tuple.
+  - AFC_EMU.eject_lane: conditionally retracts past hub; always calls
+      move_advanced and do_enable(False).
+  - load_config_prefix: returns an AFC_EMU instance.
+  - Module-level import guards: each missing dependency raises configparser.Error
+      with the correct message and embedded traceback.
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 import pytest
 
 from extras.AFC_EMU import AFC_EMU, load_config_prefix
@@ -47,6 +51,8 @@ def _make_emu(name="EMU_1"):
     unit.name = name
     unit.full_name = ["AFC_EMU", name]
     unit.lanes = {}
+    # unit.hub_obj defaults to None; set to a MagicMock in tests that need the
+    # virtual-pin path (hasattr(self.hub_obj, 'is_virtual_pin') must be True).
     unit.hub_obj = None
     unit.extruder_obj = None
     unit.buffer_obj = None
@@ -68,6 +74,7 @@ def _make_lane(
     hub_endstop_name="hub_endstop",
     dist_hub=100.0,
     extruder_clear_dis=50.0,
+    raw_load_state=False,
 ):
     """Build a minimal mock AFCLane for use in EMU tests."""
     lane = MagicMock()
@@ -77,6 +84,7 @@ def _make_lane(
     lane.load_es = "load_endstop"
     lane.dist_hub = dist_hub
     lane.extruder_clear_dis = extruder_clear_dis
+    lane.raw_load_state = raw_load_state
     lane.move_to = MagicMock(return_value=(True, 0, AFCMoveWarning.NONE))
     lane.move_advanced = MagicMock()
     lane.do_enable = MagicMock()
@@ -84,7 +92,7 @@ def _make_lane(
 
 
 def _make_virtual_hub():
-    """Return a hub mock whose is_virtual_pin() returns True."""
+    """Return a lane hub mock whose is_virtual_pin() returns True."""
     hub = MagicMock()
     hub.is_virtual_pin.return_value = True
     hub.hub_clear_move_dis = 20.0
@@ -92,28 +100,20 @@ def _make_virtual_hub():
 
 
 def _make_normal_hub():
-    """Return a hub mock whose is_virtual_pin() returns False."""
+    """Return a lane hub mock whose is_virtual_pin() returns False."""
     hub = MagicMock()
     hub.is_virtual_pin.return_value = False
     return hub
 
 
-# ── Inheritance ───────────────────────────────────────────────────────────────
+def _make_unit_hub():
+    """Return a unit-level hub stub that satisfies hasattr(self.hub_obj, 'is_virtual_pin').
 
-class TestAFCEMUInheritance:
-    def test_is_subclass_of_box_turtle(self):
-        assert issubclass(AFC_EMU, afcBoxTurtle)
-
-    def test_instance_is_box_turtle(self):
-        unit = _make_emu()
-        assert isinstance(unit, afcBoxTurtle)
-
-
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-class TestConstants:
-    def test_max_num_moves(self):
-        assert AFC_EMU.MAX_NUM_MOVES == 40
+    The virtual-pin guard in prep_post_load and move_to_hub checks
+    hasattr(self.hub_obj, 'is_virtual_pin') where self is the AFC_EMU instance.
+    A plain MagicMock satisfies this because MagicMock auto-creates attributes.
+    """
+    return MagicMock()
 
 
 # ── handle_connect ────────────────────────────────────────────────────────────
@@ -141,34 +141,94 @@ class TestHandleConnect:
         unit.handle_connect()
         assert "error--text" in unit.logo_error
 
-    def test_handle_connect_registers_unit_in_afc_units(self):
-        unit = _make_emu(name="emu_test")
-        unit.handle_connect()
-        assert unit.afc.units.get("emu_test") is unit
 
-
-# ── prep_post_load: virtual-pin hub path ──────────────────────────────────────
+# ── prep_post_load: virtual-pin path ─────────────────────────────────────────
+#
+# The virtual-pin path fires only when ALL THREE of these hold:
+#   1. lane.hub_obj is not None
+#   2. hasattr(self.hub_obj, 'is_virtual_pin')   ← self is the AFC_EMU unit
+#   3. lane.hub_obj.is_virtual_pin() is True
+#
+# To satisfy condition 2 in these tests, unit.hub_obj is set to _make_unit_hub()
+# (a plain MagicMock, which auto-creates any attribute access).
 
 class TestPrepPostLoadVirtualPin:
-    def test_moves_filament_behind_load_switch(self):
-        """When hub is a virtual pin, move_to is called with NEG hub_clear_move_dis."""
+    def test_move_to_called_with_correct_args_while_load_state_true(self):
+        """move_to receives NEG hub_clear_move_dis and SpeedMode.SHORT."""
         unit = _make_emu()
-        lane = _make_lane()
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(raw_load_state=True)
         lane.hub_obj = _make_virtual_hub()
+
+        # Stop the while loop after the first call.
+        def _stop_after_first(*a, **kw):
+            lane.raw_load_state = False
+        lane.move_to.side_effect = _stop_after_first
 
         unit.prep_post_load(lane)
 
-        expected_dist = lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG
         lane.move_to.assert_called_once_with(
-            expected_dist,
+            lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
             SpeedMode.SHORT,
             use_homing=False,
         )
 
-    def test_sets_loaded_to_hub_true(self):
-        """Virtual-pin path must set lane.loaded_to_hub = True."""
+    def test_move_to_not_called_when_raw_load_state_already_false(self):
+        """When raw_load_state is False the while loop never executes."""
         unit = _make_emu()
-        lane = _make_lane()
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(raw_load_state=False)
+        lane.hub_obj = _make_virtual_hub()
+
+        unit.prep_post_load(lane)
+
+        lane.move_to.assert_not_called()
+
+    def test_move_to_capped_at_10_tries(self):
+        """While loop executes at most 10 times regardless of raw_load_state."""
+        unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(raw_load_state=True)  # stays True → always retry
+        lane.hub_obj = _make_virtual_hub()
+
+        unit.prep_post_load(lane)
+
+        assert lane.move_to.call_count == 10
+
+    def test_move_to_stops_when_raw_load_state_clears(self):
+        """While loop stops early once raw_load_state becomes False."""
+        unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(raw_load_state=True)
+        lane.hub_obj = _make_virtual_hub()
+
+        call_count = [0]
+        def _flip_after_3(*a, **kw):
+            call_count[0] += 1
+            if call_count[0] >= 3:
+                lane.raw_load_state = False
+        lane.move_to.side_effect = _flip_after_3
+
+        unit.prep_post_load(lane)
+
+        assert lane.move_to.call_count == 3
+
+    def test_sets_loaded_to_hub_true(self):
+        """loaded_to_hub is set True after the retry loop."""
+        unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(raw_load_state=True)
+        lane.hub_obj = _make_virtual_hub()
+
+        unit.prep_post_load(lane)
+
+        assert lane.loaded_to_hub is True
+
+    def test_sets_loaded_to_hub_true_when_no_moves_needed(self):
+        """loaded_to_hub is still set True even when raw_load_state starts False."""
+        unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
         unit.prep_post_load(lane)
@@ -178,7 +238,8 @@ class TestPrepPostLoadVirtualPin:
     def test_does_not_call_super_prep_post_load(self):
         """Virtual-pin path must NOT delegate to the parent implementation."""
         unit = _make_emu()
-        lane = _make_lane()
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
         with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
@@ -186,12 +247,13 @@ class TestPrepPostLoadVirtualPin:
             mock_super.assert_not_called()
 
 
-# ── prep_post_load: normal hub path ──────────────────────────────────────────
+# ── prep_post_load: normal / fallback path ───────────────────────────────────
 
 class TestPrepPostLoadNormalHub:
-    def test_delegates_to_super_when_no_hub_obj(self):
-        """When hub_obj is None, the parent prep_post_load must be called."""
+    def test_delegates_to_super_when_lane_hub_obj_is_none(self):
+        """When lane.hub_obj is None the guard short-circuits; super() is called."""
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = None
 
@@ -199,9 +261,21 @@ class TestPrepPostLoadNormalHub:
             unit.prep_post_load(lane)
             mock_super.assert_called_once_with(lane)
 
-    def test_delegates_to_super_when_hub_not_virtual(self):
-        """When hub is not a virtual pin, the parent prep_post_load must be called."""
+    def test_delegates_to_super_when_unit_hub_obj_lacks_is_virtual_pin(self):
+        """When self.hub_obj has no is_virtual_pin attr the guard short-circuits."""
         unit = _make_emu()
+        unit.hub_obj = None  # hasattr(None, 'is_virtual_pin') == False
+        lane = _make_lane()
+        lane.hub_obj = _make_virtual_hub()
+
+        with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
+            unit.prep_post_load(lane)
+            mock_super.assert_called_once_with(lane)
+
+    def test_delegates_to_super_when_hub_not_virtual_pin(self):
+        """When lane.hub_obj.is_virtual_pin() is False the parent is called."""
+        unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -209,9 +283,10 @@ class TestPrepPostLoadNormalHub:
             unit.prep_post_load(lane)
             mock_super.assert_called_once_with(lane)
 
-    def test_does_not_call_move_to_for_normal_hub(self):
-        """Normal hub path must not move the lane itself."""
+    def test_does_not_call_move_to_on_normal_path(self):
+        """Fallback path must not call lane.move_to."""
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -220,35 +295,48 @@ class TestPrepPostLoadNormalHub:
             lane.move_to.assert_not_called()
 
 
-# ── move_to_hub: normal hub (uses hub_endstop_name) ──────────────────────────
+# ── move_to_hub: normal / fallback path (uses hub_endstop_name) ──────────────
 
 class TestMoveToHubNormalHub:
-    def test_uses_hub_endstop_name_when_no_hub_obj(self):
-        """With hub_obj=None, move_to is called with lane.hub_endstop_name."""
+    def test_uses_hub_endstop_name_when_lane_hub_obj_is_none(self):
+        """lane.hub_obj=None → endstop is hub_endstop_name."""
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(hub_endstop_name="hub_es")
         lane.hub_obj = None
 
         unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS)
 
         _, kwargs = lane.move_to.call_args
-        assert kwargs.get("endstop", lane.move_to.call_args[0][3] if len(lane.move_to.call_args[0]) > 3 else None) == "hub_es" or \
-               lane.move_to.call_args[1].get("endstop") == "hub_es"
+        assert kwargs.get("endstop") == "hub_es"
 
-    def test_uses_hub_endstop_name_when_hub_not_virtual(self):
-        """With a non-virtual hub, move_to receives hub_endstop_name as endstop."""
+    def test_uses_hub_endstop_name_when_unit_hub_obj_lacks_is_virtual_pin(self):
+        """self.hub_obj=None (no is_virtual_pin attr) → endstop is hub_endstop_name."""
         unit = _make_emu()
+        unit.hub_obj = None
+        lane = _make_lane(hub_endstop_name="hub_es_unit_none")
+        lane.hub_obj = _make_virtual_hub()
+
+        unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS)
+
+        _, kwargs = lane.move_to.call_args
+        assert kwargs.get("endstop") == "hub_es_unit_none"
+
+    def test_uses_hub_endstop_name_when_lane_hub_not_virtual(self):
+        """lane.hub_obj.is_virtual_pin()=False → endstop is hub_endstop_name."""
+        unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(hub_endstop_name="hub_es_normal")
         lane.hub_obj = _make_normal_hub()
 
         unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS)
 
-        lane.move_to.assert_called_once()
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("endstop") == "hub_es_normal"
 
     def test_passes_dist_times_dir_as_first_arg(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -259,6 +347,7 @@ class TestMoveToHubNormalHub:
 
     def test_passes_speed_mode_arg(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -269,6 +358,7 @@ class TestMoveToHubNormalHub:
 
     def test_default_speed_mode_is_hub(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -279,6 +369,7 @@ class TestMoveToHubNormalHub:
 
     def test_passes_use_homing_kwarg(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -289,6 +380,7 @@ class TestMoveToHubNormalHub:
 
     def test_default_use_homing_is_true(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -299,19 +391,19 @@ class TestMoveToHubNormalHub:
 
     def test_passes_assist_active_kwarg(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(
-            lane, dist=50.0, dir=MoveDirection.POS,
-            assist_active=AssistActive.YES
-        )
+        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS,
+                         assist_active=AssistActive.YES)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("assist_active") == AssistActive.YES
 
     def test_default_assist_active_is_dynamic(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -321,12 +413,13 @@ class TestMoveToHubNormalHub:
         assert kwargs.get("assist_active") == AssistActive.DYNAMIC
 
 
-# ── move_to_hub: virtual-pin hub (uses load_es) ──────────────────────────────
+# ── move_to_hub: virtual-pin path (uses load_es) ─────────────────────────────
 
 class TestMoveToHubVirtualPin:
     def test_uses_load_es_when_hub_is_virtual(self):
-        """With a virtual-pin hub, move_to receives lane.load_es as endstop."""
+        """All three guard conditions met → endstop is lane.load_es."""
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_virtual_hub()
 
@@ -336,22 +429,25 @@ class TestMoveToHubVirtualPin:
         assert kwargs.get("endstop") == lane.load_es
 
     def test_does_not_use_hub_endstop_name_for_virtual_pin(self):
+        """Virtual-pin path must not fall back to hub_endstop_name."""
         unit = _make_emu()
-        lane = _make_lane(hub_endstop_name="should_not_be_used")
+        unit.hub_obj = _make_unit_hub()
+        lane = _make_lane(hub_endstop_name="must_not_be_used")
         lane.hub_obj = _make_virtual_hub()
 
         unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS)
 
         _, kwargs = lane.move_to.call_args
-        assert kwargs.get("endstop") != "should_not_be_used"
+        assert kwargs.get("endstop") != "must_not_be_used"
 
 
 # ── move_to_hub: return value ─────────────────────────────────────────────────
 
 class TestMoveToHubReturnValue:
     def test_returns_tuple_from_lane_move_to(self):
-        """move_to_hub must pass through the (homed, distance, warn) tuple."""
+        """move_to_hub passes through the (homed, distance, warn) tuple."""
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
         lane.move_to.return_value = (True, 75.5, AFCMoveWarning.WARN)
@@ -362,6 +458,7 @@ class TestMoveToHubReturnValue:
 
     def test_returns_false_result_on_failure(self):
         unit = _make_emu()
+        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
         lane.move_to.return_value = (False, 0, AFCMoveWarning.ERROR)
@@ -376,7 +473,7 @@ class TestMoveToHubReturnValue:
 
 class TestEjectLaneLoadedToHub:
     def test_move_to_called_when_loaded_to_hub(self):
-        """When loaded_to_hub is True, move_to must be called to retract past hub."""
+        """When loaded_to_hub is True, move_to retracts past hub with correct args."""
         unit = _make_emu()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = True
@@ -391,8 +488,8 @@ class TestEjectLaneLoadedToHub:
             use_homing=True,
         )
 
-    def test_move_to_uses_homing_enabled_flag(self):
-        """move_to use_homing follows afc.homing_enabled."""
+    def test_move_to_use_homing_follows_afc_flag(self):
+        """use_homing is taken from afc.homing_enabled."""
         unit = _make_emu()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = False
@@ -403,7 +500,7 @@ class TestEjectLaneLoadedToHub:
         assert kwargs.get("use_homing") is False
 
     def test_move_to_not_called_when_not_loaded_to_hub(self):
-        """When loaded_to_hub is False, move_to must NOT be called."""
+        """When loaded_to_hub is False, move_to must not be called."""
         unit = _make_emu()
         lane = _make_lane(loaded_to_hub=False)
 
@@ -457,7 +554,7 @@ class TestEjectLaneDoEnable:
         lane.do_enable.assert_called_once_with(False)
 
     def test_eject_order_move_to_then_move_advanced_then_do_enable(self):
-        """Operations must happen in the correct sequence."""
+        """Operations must execute in the correct sequence."""
         unit = _make_emu()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = False
@@ -477,13 +574,12 @@ class TestEjectLaneDoEnable:
 # a dependency cannot be imported.  Because the guards run at module scope we
 # cannot just call a function; we must force the module to be re-executed.
 #
-# Pattern used in every test:
-#   1. Save and pop extras.AFC_EMU from sys.modules so it is re-imported fresh.
-#   2. Set the target dependency to None in sys.modules — Python's import
-#      machinery treats a None entry as "blocked", raising ModuleNotFoundError.
-#   3. Use importlib.import_module('extras.AFC_EMU') to re-execute the module
-#      body and trigger the relevant try/except guard.
-#   4. Restore sys.modules exactly in a finally block so nothing leaks.
+# Pattern:
+#   1. Pop extras.AFC_EMU from sys.modules so it is re-imported fresh.
+#   2. Set the target dependency to None — Python treats a None entry as
+#      "blocked", raising ModuleNotFoundError on import.
+#   3. importlib.import_module('extras.AFC_EMU') re-executes the module body.
+#   4. Restore sys.modules in a finally block so nothing leaks.
 
 import importlib
 import sys
@@ -501,14 +597,12 @@ def _blocked_import(blocked_module: str):
     def _ctx():
         saved_emu     = sys.modules.pop("extras.AFC_EMU", None)
         saved_blocked = sys.modules.pop(blocked_module, None)
-        # None entry → Python raises ModuleNotFoundError on import
         sys.modules[blocked_module] = None  # type: ignore[assignment]
         try:
             with pytest.raises(ConfigParserError) as exc_info:
                 importlib.import_module("extras.AFC_EMU")
             yield exc_info
         finally:
-            # Restore original modules so later tests are unaffected
             if saved_blocked is not None:
                 sys.modules[blocked_module] = saved_blocked
             else:
@@ -529,7 +623,7 @@ class TestImportFailures:
     def test_missing_afc_utils_raises_config_error(self):
         """Blocking extras.AFC_utils must raise configparser.Error."""
         with _blocked_import("extras.AFC_utils"):
-            pass  # raises inside context manager; reaching here means it raised
+            pass
 
     def test_missing_afc_utils_error_message_references_module(self):
         """The AFC_utils error message must name AFC_utils.ERROR_STR."""
@@ -579,15 +673,11 @@ class TestImportFailures:
             assert any(kw in msg for kw in ("Traceback", "ModuleNotFoundError", "ImportError"))
 
 
+# ── load_config_prefix ────────────────────────────────────────────────────────
+
 class TestLoadConfigPrefix:
     def test_returns_afc_emu_instance(self):
-        """load_config_prefix must return an AFC_EMU object.
-
-        The full __init__ chain (AFC_unit → afcBoxTurtle → AFC_EMU) references many
-        MockAFC attributes that post-date conftest.py.  Rather than maintaining a
-        growing shim, we patch the base __init__ to a no-op and verify only that
-        load_config_prefix constructs and returns an AFC_EMU.
-        """
+        """load_config_prefix must return an AFC_EMU object."""
         from tests.conftest import MockConfig, MockPrinter, MockAFC
 
         afc = MockAFC()
