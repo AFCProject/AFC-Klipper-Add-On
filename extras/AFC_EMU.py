@@ -52,9 +52,13 @@ class AFC_EMU(afcBoxTurtle):
         :param lane: AFCLane object for which to perform prep_post_load action on
         """
         if (lane.hub_obj is not None
+            and hasattr(self.hub_obj, 'is_virtual_pin')
             and lane.hub_obj.is_virtual_pin()):
-            lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
-                        SpeedMode.SHORT, use_homing=False)
+            num_tries = 0
+            while( lane.raw_load_state and num_tries < 10 ):
+                lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
+                            SpeedMode.SHORT, use_homing=False)
+                num_tries += 1
             lane.loaded_to_hub = True
         else:
             super().prep_post_load(lane)
@@ -86,6 +90,7 @@ class AFC_EMU(afcBoxTurtle):
         """
         endstop = lane.hub_endstop_name
         if (lane.hub_obj is not None
+            and hasattr(self.hub_obj, 'is_virtual_pin')
             and lane.hub_obj.is_virtual_pin()):
             endstop = lane.load_es
         homed, distance, warn = lane.move_to(dist * dir, speed_mode, assist_active=assist_active,

@@ -634,7 +634,8 @@ class afcBoxTurtle(afcUnit):
         :param lane: AFCLane object for which to perform prep_post_load action on
         """
         # Checking if loaded to hub(it should not be since filament was just inserted), if false load to hub. Does a fast load if hub distance is over 200mm
-        if (lane.load_to_hub
+        if (not lane.is_direct_hub()
+            and lane.load_to_hub
             and not lane.loaded_to_hub
             and lane.load_state
             and lane.prep_state):

@@ -1109,7 +1109,7 @@ class AFCLane:
 
         if (self.printer.state_message == 'Printer is ready' and
             True == self._afc_prep_done and
-            self.is_direct_hub() and
+            "direct_load" in self.hub and
             not self.afc.auto_home and
             not self.afc.function.is_homed()):
             self.afc.error.AFC_error("Please home printer before directly loading to toolhead", False)
