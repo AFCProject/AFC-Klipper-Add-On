@@ -164,13 +164,11 @@ class afcBoxTurtle(afcUnit):
         else:
             self.logger.raw(f'Calibrating Bowden Length with {cur_lane.name}')
 
-        use_dist_hub = False
-        if (cur_lane.is_direct_hub()
-            or getattr(cur_hub, "use_dist_hub", False)):
-            use_dist_hub = True
+        # Store variable locally so check only happens once
+        is_direct_dist = cur_lane.is_direct_dist()
 
         checkpoint = "Moving to hub"
-        if not use_dist_hub:
+        if not is_direct_dist:
             # move to hub and retrieve that distance, the checkpoint returned and if successful
 
             if not self.afc.homing_enabled:
@@ -233,7 +231,7 @@ class afcBoxTurtle(afcUnit):
                     msg = 'while moving to toolhead. Failed after {}mm'.format(bow_pos)
                     msg += '\n if filament stopped short of the toolhead sensor/ramming during calibration'
                     msg += '\n use the following command to increase bowden length'
-                    if not use_dist_hub:
+                    if not is_direct_dist:
                         msg += '\n SET_BOWDEN_LENGTH HUB={} LENGTH=+(distance the filament was short from the toolhead)'.format(cur_hub.name)
                     else:
                         msg += '\n SET_HUB_DIST LANE={} LENGTH=+(distance the filament was short from the toolhead)'.format(cur_lane.name)
@@ -250,7 +248,7 @@ class afcBoxTurtle(afcUnit):
                 msg = 'Failed {} after {}mm'.format(checkpoint, bow_pos)
                 return False, msg, bow_pos
 
-            if not use_dist_hub:
+            if not is_direct_dist:
                 success, _, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos, MoveDirection.NEG,
                                                               self.afc.homing_enabled,
                                                               speed_mode=SpeedMode.LONG)
@@ -261,7 +259,7 @@ class afcBoxTurtle(afcUnit):
                 return False, "Failed to home filament back to hub", 0
 
             if (not self.afc.homing_enabled
-                and not use_dist_hub):
+                and not is_direct_dist):
                 success, message, hub_dis = self.calibrate_hub(cur_lane, tol)
 
                 if not success:
@@ -284,7 +282,7 @@ class afcBoxTurtle(afcUnit):
 
             unload_cal_msg = ''
             cal_msg = f'\n {variable_name}: New: {bowden_dist} Old: {bowden_length}'
-            if not use_dist_hub:
+            if not is_direct_dist:
                 unload_cal_msg = f'\n afc_unload_bowden_length: New: {bowden_dist} Old: {cur_lane.hub_obj.afc_unload_bowden_length}'
                 cur_lane.hub_obj.afc_unload_bowden_length = cur_lane.hub_obj.afc_bowden_length = bowden_dist
             else:
@@ -293,7 +291,7 @@ class afcBoxTurtle(afcUnit):
 
             unload_cal_msg = ''
             cal_msg = f'\n {variable_name}: New: {bowden_dist} Old: {bowden_length}'
-            if not use_dist_hub:
+            if not is_direct_dist:
                 unload_cal_msg = f'\n afc_unload_bowden_length: New: {bowden_dist} Old: {cur_lane.hub_obj.afc_unload_bowden_length}'
                 cur_lane.hub_obj.afc_unload_bowden_length = cur_lane.hub_obj.afc_bowden_length = bowden_dist
             else:
@@ -305,7 +303,7 @@ class afcBoxTurtle(afcUnit):
                     pause=False)
                 return False, "Invalid bowden length", bowden_dist
             self.afc.function.ConfigRewrite(fullname, variable_name, bowden_dist, cal_msg)
-            if not use_dist_hub:
+            if not is_direct_dist:
                 self.afc.function.ConfigRewrite(fullname, "afc_unload_bowden_length", cur_lane.hub_obj.afc_unload_bowden_length, unload_cal_msg)
                 cur_lane.loaded_to_hub  = True
 
@@ -336,10 +334,8 @@ class afcBoxTurtle(afcUnit):
             msg += "field in AFC_hub or per AFC_lane"
             return False, msg, 0
 
-        use_dist_hub = False
-        if (not cur_lane.is_direct_hub()
-            and not use_dist_hub):
-            use_dist_hub = True
+        # Store variable locally so check only happens once
+        is_direct_dist = cur_lane.is_direct_dist()
 
         # Verify TD-1 is still connected before trying to get data
         valid, msg = self.afc.function.check_for_td1_id(cur_lane.td1_device_id)
@@ -365,7 +361,7 @@ class afcBoxTurtle(afcUnit):
 
         compare_time = datetime.now()
         max_bowden_length = 0
-        if use_dist_hub:
+        if is_direct_dist:
             max_bowden_length = cur_lane.dist_hub
         else:
             max_bowden_length = cur_hub.afc_bowden_length
@@ -381,7 +377,7 @@ class afcBoxTurtle(afcUnit):
 
             cur_lane.move(dis, self.short_moves_speed, self.short_moves_accel)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
-        if not use_dist_hub:
+        if not is_direct_dist:
             success, _, _ = cur_lane.unit_obj.move_to_hub(cur_lane, bow_pos,
                                                           MoveDirection.NEG,
                                                           self.afc.homing_enabled,
@@ -392,11 +388,12 @@ class afcBoxTurtle(afcUnit):
                                                            self.afc.homing_enabled)
 
         if (not self.afc.homing_enabled
-            and not use_dist_hub):
+            and not is_direct_dist):
             # Reset to hub
             self.calc_position(cur_lane, lambda: cur_lane.hub_obj.state, 0,
                                  cur_lane.short_move_dis, tol, 200, checkpoint)
 
+        if not cur_lane.is_direct_hub():
             cur_lane.move(cur_hub.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
         else:
             # When direct lane move forwards so that load sensor is still triggered
@@ -405,7 +402,7 @@ class afcBoxTurtle(afcUnit):
 
         cal_msg = f"\n td1_bowden_length: New: {bow_pos} Old: {cur_lane.td1_bowden_length}"
 
-        if use_dist_hub:
+        if is_direct_dist:
             cur_lane.td1_bowden_length = bow_pos
             fullname = cur_lane.fullname
         else:

@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-05-16]
 ### Added
-- Support for EMU unit's types
-- Support's EMU without hub sensor(virtual) and with hub sensor
+- Support for EMU unit types
+- Supports EMU without hub sensor(virtual) and with hub sensor
 - Added new variable to use dist_hub instead of afc_bowden_length, currently only valid for EMU units.
 
 ## [2026-04-15]

@@ -732,8 +732,6 @@ class AFCLane:
                 selector_stepper._endstops[self.selector_endstop_name] = (selector_endstop["endstop"],
                                                                           selector_endstop["endstop_name"])
 
-
-
     def get_color(self):
         """
         Helper function for returning current color
@@ -830,6 +828,16 @@ class AFCLane:
         :return boolean: True if hub for lane is 'direct' or 'direct_load'
         """
         return self.hub in VALID_DIRECT_HUB
+
+    def is_direct_dist(self):
+        """
+        Helper method that returns True when dist_hub value should be used when loading to toolhead.
+
+        :return boolean: True when lane is setup as "direct hub" or lanes hub has "use_dist_hub"
+                         variable set to True
+        """
+        return (self.is_direct_hub()
+                or (self.hub_obj and getattr(self.hub_obj, "use_dist_hub", False) ))
 
     def select_lane(self):
         """

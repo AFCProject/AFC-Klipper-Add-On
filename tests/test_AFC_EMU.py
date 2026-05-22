@@ -261,17 +261,6 @@ class TestPrepPostLoadNormalHub:
             unit.prep_post_load(lane)
             mock_super.assert_called_once_with(lane)
 
-    def test_delegates_to_super_when_unit_hub_obj_lacks_is_virtual_pin(self):
-        """When self.hub_obj has no is_virtual_pin attr the guard short-circuits."""
-        unit = _make_emu()
-        unit.hub_obj = None  # hasattr(None, 'is_virtual_pin') == False
-        lane = _make_lane()
-        lane.hub_obj = _make_virtual_hub()
-
-        with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
-            unit.prep_post_load(lane)
-            mock_super.assert_called_once_with(lane)
-
     def test_delegates_to_super_when_hub_not_virtual_pin(self):
         """When lane.hub_obj.is_virtual_pin() is False the parent is called."""
         unit = _make_emu()

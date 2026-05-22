@@ -285,9 +285,9 @@ class afcUnit:
         # Selection buttons
         buttons.append(("Calibrate Lanes", "UNIT_LANE_CALIBRATION UNIT={}".format(self.name), "primary"))
 
-        direct_hubs = any( lane.is_direct_hub() or getattr(lane.hub_obj, "use_dist_hub", False) for lane in self.lanes.values())
+        direct_hubs = any( lane.is_direct_dist() for lane in self.lanes.values())
         lanes_loaded = any( (lane.load_state and not getattr(lane.hub_obj, "use_dist_hub", False)) and not lane.is_direct_hub() for lane in self.lanes.values())
-        any_lane_has_td1_ids = any( lane.td1_device_id for lane in self.lanes.values())
+        any_lane_has_td1_ids = any( lane.td1_device_id is not None for lane in self.lanes.values())
 
         if not direct_hubs or lanes_loaded:
             buttons.append(("Calibrate afc_bowden_length", "UNIT_BOW_CALIBRATION UNIT={}".format(self.name), "secondary"))
@@ -521,7 +521,7 @@ class afcUnit:
         """
         self.afc.function.afc_led(self._get_lane_color(lane, lane.led_ready), lane.led_index)
         # TODO: double check quattrobox led sets
-        if lane.led_spool_index:
+        if lane.led_spool_index is not None:
             self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
 
     def lane_unloading(self, lane):
@@ -539,7 +539,7 @@ class afcUnit:
         :param lane: Lane object to set led
         """
         self.lane_not_ready(lane)
-        if lane.led_spool_index:
+        if lane.led_spool_index is not None:
             self.afc.function.afc_led(self.afc.led_off, lane.led_spool_index)
 
     def lane_loading(self, lane: AFCLane):
@@ -591,7 +591,8 @@ class afcUnit:
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
+        if lane.led_spool_index is not None:
+            self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
 
     def lane_fault(self, lane):
         """
