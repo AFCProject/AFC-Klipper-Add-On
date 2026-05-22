@@ -106,16 +106,6 @@ def _make_normal_hub():
     return hub
 
 
-def _make_unit_hub():
-    """Return a unit-level hub stub that satisfies hasattr(self.hub_obj, 'is_virtual_pin').
-
-    The virtual-pin guard in prep_post_load and move_to_hub checks
-    hasattr(self.hub_obj, 'is_virtual_pin') where self is the AFC_EMU instance.
-    A plain MagicMock satisfies this because MagicMock auto-creates attributes.
-    """
-    return MagicMock()
-
-
 # ── handle_connect ────────────────────────────────────────────────────────────
 
 class TestHandleConnect:
@@ -146,17 +136,13 @@ class TestHandleConnect:
 #
 # The virtual-pin path fires only when ALL THREE of these hold:
 #   1. lane.hub_obj is not None
-#   2. hasattr(self.hub_obj, 'is_virtual_pin')   ← self is the AFC_EMU unit
+#   2. hasattr(lane.hub_obj, 'is_virtual_pin')
 #   3. lane.hub_obj.is_virtual_pin() is True
-#
-# To satisfy condition 2 in these tests, unit.hub_obj is set to _make_unit_hub()
-# (a plain MagicMock, which auto-creates any attribute access).
 
 class TestPrepPostLoadVirtualPin:
     def test_move_to_called_with_correct_args_while_load_state_true(self):
         """move_to receives NEG hub_clear_move_dis and SpeedMode.SHORT."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(raw_load_state=True)
         lane.hub_obj = _make_virtual_hub()
 
@@ -176,7 +162,6 @@ class TestPrepPostLoadVirtualPin:
     def test_move_to_not_called_when_raw_load_state_already_false(self):
         """When raw_load_state is False the while loop never executes."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
@@ -187,7 +172,6 @@ class TestPrepPostLoadVirtualPin:
     def test_move_to_capped_at_10_tries(self):
         """While loop executes at most 10 times regardless of raw_load_state."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(raw_load_state=True)  # stays True → always retry
         lane.hub_obj = _make_virtual_hub()
 
@@ -198,7 +182,6 @@ class TestPrepPostLoadVirtualPin:
     def test_move_to_stops_when_raw_load_state_clears(self):
         """While loop stops early once raw_load_state becomes False."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(raw_load_state=True)
         lane.hub_obj = _make_virtual_hub()
 
@@ -216,7 +199,6 @@ class TestPrepPostLoadVirtualPin:
     def test_sets_loaded_to_hub_true(self):
         """loaded_to_hub is set True after the retry loop."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(raw_load_state=True)
         lane.hub_obj = _make_virtual_hub()
 
@@ -227,7 +209,6 @@ class TestPrepPostLoadVirtualPin:
     def test_sets_loaded_to_hub_true_when_no_moves_needed(self):
         """loaded_to_hub is still set True even when raw_load_state starts False."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
@@ -238,7 +219,6 @@ class TestPrepPostLoadVirtualPin:
     def test_does_not_call_super_prep_post_load(self):
         """Virtual-pin path must NOT delegate to the parent implementation."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
@@ -253,7 +233,6 @@ class TestPrepPostLoadNormalHub:
     def test_delegates_to_super_when_lane_hub_obj_is_none(self):
         """When lane.hub_obj is None the guard short-circuits; super() is called."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = None
 
@@ -264,7 +243,6 @@ class TestPrepPostLoadNormalHub:
     def test_delegates_to_super_when_hub_not_virtual_pin(self):
         """When lane.hub_obj.is_virtual_pin() is False the parent is called."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -275,7 +253,6 @@ class TestPrepPostLoadNormalHub:
     def test_does_not_call_move_to_on_normal_path(self):
         """Fallback path must not call lane.move_to."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -290,7 +267,6 @@ class TestMoveToHubNormalHub:
     def test_uses_hub_endstop_name_when_lane_hub_obj_is_none(self):
         """lane.hub_obj=None → endstop is hub_endstop_name."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(hub_endstop_name="hub_es")
         lane.hub_obj = None
 
@@ -299,22 +275,10 @@ class TestMoveToHubNormalHub:
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("endstop") == "hub_es"
 
-    def test_uses_hub_endstop_name_when_unit_hub_obj_lacks_is_virtual_pin(self):
-        """self.hub_obj=None (no is_virtual_pin attr) → endstop is hub_endstop_name."""
-        unit = _make_emu()
-        unit.hub_obj = None
-        lane = _make_lane(hub_endstop_name="hub_es_unit_none")
-        lane.hub_obj = _make_virtual_hub()
-
-        unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS)
-
-        _, kwargs = lane.move_to.call_args
-        assert kwargs.get("endstop") == "hub_es_unit_none"
 
     def test_uses_hub_endstop_name_when_lane_hub_not_virtual(self):
         """lane.hub_obj.is_virtual_pin()=False → endstop is hub_endstop_name."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(hub_endstop_name="hub_es_normal")
         lane.hub_obj = _make_normal_hub()
 
@@ -325,7 +289,6 @@ class TestMoveToHubNormalHub:
 
     def test_passes_dist_times_dir_as_first_arg(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -336,7 +299,6 @@ class TestMoveToHubNormalHub:
 
     def test_passes_speed_mode_arg(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -347,7 +309,6 @@ class TestMoveToHubNormalHub:
 
     def test_default_speed_mode_is_hub(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -358,7 +319,6 @@ class TestMoveToHubNormalHub:
 
     def test_passes_use_homing_kwarg(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -369,7 +329,6 @@ class TestMoveToHubNormalHub:
 
     def test_default_use_homing_is_true(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -380,7 +339,6 @@ class TestMoveToHubNormalHub:
 
     def test_passes_assist_active_kwarg(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -392,7 +350,6 @@ class TestMoveToHubNormalHub:
 
     def test_default_assist_active_is_dynamic(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
@@ -408,7 +365,6 @@ class TestMoveToHubVirtualPin:
     def test_uses_load_es_when_hub_is_virtual(self):
         """All three guard conditions met → endstop is lane.load_es."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_virtual_hub()
 
@@ -420,7 +376,6 @@ class TestMoveToHubVirtualPin:
     def test_does_not_use_hub_endstop_name_for_virtual_pin(self):
         """Virtual-pin path must not fall back to hub_endstop_name."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane(hub_endstop_name="must_not_be_used")
         lane.hub_obj = _make_virtual_hub()
 
@@ -436,7 +391,6 @@ class TestMoveToHubReturnValue:
     def test_returns_tuple_from_lane_move_to(self):
         """move_to_hub passes through the (homed, distance, warn) tuple."""
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
         lane.move_to.return_value = (True, 75.5, AFCMoveWarning.WARN)
@@ -447,7 +401,6 @@ class TestMoveToHubReturnValue:
 
     def test_returns_false_result_on_failure(self):
         unit = _make_emu()
-        unit.hub_obj = _make_unit_hub()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
         lane.move_to.return_value = (False, 0, AFCMoveWarning.ERROR)
