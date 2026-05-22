@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-03-11]
 ### Update
 - Updated the Cut.cfg macro to support cut locations with axes configurations other than XY. New configuration variables were added for individual axis. The behavior of `pin_loc_xy` remains unchanged. New axis-specific variables were added to avoid pin/toolhead collisions. The behavior of `safe_margin_xy` did change slightly and the Y coordinate is now used when calculating the safe coordinate for the move. An option has been added to skip the post-cut safe move for configurations where the next move is known to be safe (such as a move to purge or wipe.)
+- Updated the Cut.cfg macro to support cut locations with broader axis configurations:
+  - Added per-axis configuration variables (`pin_loc_x`, `pin_loc_y`, `pin_loc_z`) to support axis combinations beyond XY (e.g., XZ, YZ, XYZ). The behavior of `pin_loc_xy` remains unchanged.
+  - **Breaking change**: `safe_margin_xy` now calculates the safe Y-coordinate using the Y-axis midpoint (`max_y/2`) instead of the X-axis midpoint, improving collision avoidance for diverse printer geometries.
+  - Added `safe_move_first` option to specify which axes to move in first when doing the safe move.
+  - Added `post_cut_safe_move` option to skip the post-cut safe move when the next move is already known to be safe (e.g., moves to purge or wipe locations).
 
 ## [2026-03-07]
 ### Fix
