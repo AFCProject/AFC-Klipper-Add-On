@@ -230,6 +230,17 @@ class TestPrepPostLoadVirtualPin:
 # ── prep_post_load: normal / fallback path ───────────────────────────────────
 
 class TestPrepPostLoadNormalHub:
+    def test_delegates_to_super_when_hub_lacks_is_virtual_pin(self):
+        """When hub object has no is_virtual_pin attr, fallback path calls parent."""
+        unit = _make_emu()
+        lane = _make_lane()
+        lane.hub_obj = object()  # no is_virtual_pin attribute
+
+        with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
+            unit.prep_post_load(lane)
+            mock_super.assert_called_once_with(lane)
+            lane.move_to.assert_not_called()
+
     def test_delegates_to_super_when_lane_hub_obj_is_none(self):
         """When lane.hub_obj is None the guard short-circuits; super() is called."""
         unit = _make_emu()

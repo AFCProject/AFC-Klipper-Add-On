@@ -286,15 +286,6 @@ class afcBoxTurtle(afcUnit):
                 unload_cal_msg = f'\n afc_unload_bowden_length: New: {bowden_dist} Old: {cur_lane.hub_obj.afc_unload_bowden_length}'
                 cur_lane.hub_obj.afc_unload_bowden_length = cur_lane.hub_obj.afc_bowden_length = bowden_dist
             else:
-                bowden_dist = bow_pos - cur_lane.short_move_dis
-
-
-            unload_cal_msg = ''
-            cal_msg = f'\n {variable_name}: New: {bowden_dist} Old: {bowden_length}'
-            if not is_direct_dist:
-                unload_cal_msg = f'\n afc_unload_bowden_length: New: {bowden_dist} Old: {cur_lane.hub_obj.afc_unload_bowden_length}'
-                cur_lane.hub_obj.afc_unload_bowden_length = cur_lane.hub_obj.afc_bowden_length = bowden_dist
-            else:
                 cur_lane.dist_hub = bowden_dist
 
             if bowden_dist < 0:
