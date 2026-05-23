@@ -714,7 +714,7 @@ class afc:
         else:
             return self.quiet_mode
 
-    def _get_bypass_state(self):
+    def get_bypass_state(self):
         """
         Helper function to return if filament is present in bypass sensor
 
@@ -755,7 +755,7 @@ class afc:
         :return        Returns true if filament is present in sensor
         """
         try:
-            if self._get_bypass_state():
+            if self.get_bypass_state():
                 if unload:
                     self.logger.info("Bypass detected, calling manual unload filament routine")
                     self.gcode.run_script_from_command(self.RENAMED_UNLOAD_FILAMENT)
@@ -1093,7 +1093,7 @@ class afc:
         str["system"]['num_lanes'] = len(self.lanes)
         str["system"]['num_extruders'] = len(self.tools)
         str["system"]["extruders"]={}
-        str["system"]["bypass"] = {"enabled": self._get_bypass_state() }
+        str["system"]["bypass"] = {"enabled": self.get_bypass_state() }
 
         for extrude in self.tools.keys():
             cur_extruder = self.tools[extrude]
@@ -2259,7 +2259,7 @@ class afc:
         str["td1_present"]              = self.td1_present
         str["lane_data_enabled"]        = self.lane_data_enabled
         str['error_state']              = self.error_state
-        str["bypass_state"]             = bool(self._get_bypass_state())
+        str["bypass_state"]             = bool(self.get_bypass_state())
         str["quiet_mode"]               = bool(self._get_quiet_mode())
         str["position_saved"]           = self.position_saved
 
