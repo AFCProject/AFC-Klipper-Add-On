@@ -223,14 +223,14 @@ class afcBoxTurtle(afcUnit):
                 # Check for error and return, if error state is set then AFC tried pausing
                 # during the homing
                 if warn == AFCMoveWarning.ERROR:
-                    return False, "Error occurred when trying to move lane", 0
+                    return False, "Error occurred when trying to move lane", fault_dis
                 bow_pos += distance
                 self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.1)
                 if bow_pos >= fault_dis:
                     # fault if move to bowden length does not reach toolhead sensor return to calibration macro
-                    msg = 'while moving to toolhead. Failed after {}mm'.format(bow_pos)
-                    msg += '\n if filament stopped short of the toolhead sensor/ramming during calibration'
-                    msg += '\n use the following command to increase bowden length'
+                    msg = 'while moving to toolhead. Failed after {}mm, '.format(bow_pos)
+                    msg += 'if filament stopped short of the toolhead sensor/ramming during calibration'
+                    msg += 'use the following command to increase bowden length'
                     if not is_direct_dist:
                         msg += '\n SET_BOWDEN_LENGTH HUB={} LENGTH=+(distance the filament was short from the toolhead)'.format(cur_hub.name)
                     else:
@@ -256,7 +256,7 @@ class afcBoxTurtle(afcUnit):
                 success, _, _ = cur_lane.unit_obj.move_to_load(cur_lane, bow_pos, MoveDirection.NEG,
                                                                self.afc.homing_enabled)
             if not success:
-                return False, "Failed to home filament back to hub", 0
+                return False, "Failed to home filament back to hub", fault_dis
 
             if (not self.afc.homing_enabled
                 and not is_direct_dist):
@@ -420,8 +420,8 @@ class afcBoxTurtle(afcUnit):
 
         if not success:
             # fault if check is not successful
-            msg = f'Failed to calibrate dist_hub for {cur_lane.name} after moving {hub_fault_dis}mm'
-            msg += 'If filament stopped short of the hub during calibration use the following command to increase dist_hub value'
+            msg = f'Failed to calibrate dist_hub for {cur_lane.name} after moving {hub_fault_dis}mm. '
+            msg += 'If filament stopped short of the hub during calibration use the following command to increase dist_hub value.'
             msg += f' SET_HUB_DIST LANE={cur_lane.name} LENGTH=+(distance the filament was short from the hub)'
             return False, msg, hub_pos
 
