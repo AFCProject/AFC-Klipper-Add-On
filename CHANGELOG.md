@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-04-06]
 ### Fixed
 - Toolchanger: Issue where standalone toolheads would try to heat to 0.
+### Added
+- Added `FORCE` parameter to `LANE_MOVE` to allow lane movement during a toolchange
+- Added support for negative `rip_length` in `AFC_CUT` for cutter-above-extruder printers
 
 ## [2026-04-05]
 ### Fixed
