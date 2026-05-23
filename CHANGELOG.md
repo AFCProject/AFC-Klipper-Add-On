@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-05-23]
+### Fixed
+- Fixed error where tool endstop was not being set correctly for homing when user had buffer set as pin_tool_start and an invalid buffer variable assigned in AFC_extruder config section. AFC now errors out if specified buffer config specified in AFC_extruder is not found.
+
 ## [2026-05-16]
 ### Added
 - Support for EMU unit types
