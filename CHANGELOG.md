@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-05-23]
 ### Fixed
 - Fixed error where tool endstop was not being set correctly for homing when user had buffer set as pin_tool_start and an invalid buffer variable assigned in AFC_extruder config section. AFC now errors out if specified buffer config specified in AFC_extruder is not found.
+- Fixed an issue where `SET_LANE_LOADED` could incorrectly report bypass-enabled errors on physical bypass switches when no filament was present. `SET_LANE_LOADED` now correctly detects filament in bypass and only errors when appropriate.
 
 ## [2026-05-16]
 ### Added
@@ -17,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-04-15]
 ### Added
-- Added `extruder_index` field to the `lane_data` Moonraker database endpoint. This exposes the 0-based physical extruder index for each lane, enabling third-party tools such as OrcaSlicer's `physical_extruder_mapper` to correctly map filaments to physical extruders on multi-extruder machines.
 
 ## [2026-04-06]
 ### Fixed
