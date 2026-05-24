@@ -475,7 +475,13 @@ class AFCExtruderStepper(AFCLane):
         if tool_start_pin != 'buffer':
             self._add_endstop('tool_start', tool_start_pin, 'tool_start')
         else:
-            self._add_endstop('tool_start', buffer_adv_pin, 'tool_start')
+            if buffer_adv_pin is not None:
+                self._add_endstop('tool_start', buffer_adv_pin, 'tool_start')
+            else:
+                error_string = f"Error: buffer set as pin_tool_start in [AFC_extruder {extruder_name}] config section,"
+                error_string += f" but [AFC_buffer {buffer_name}] is not found in config. Please make sure config "
+                error_string += f"section exists or remove `buffer: {buffer_name}` variable from your extruder config section."
+                raise error(error_string)
         self._add_endstop('tool_end', tool_end_pin, 'tool_end')
         self._add_endstop('buffer_advance', buffer_adv_pin, 'buffer_adv')
         self._add_endstop('buffer_trailing', buffer_trail_pin, 'buffer_trailing')
