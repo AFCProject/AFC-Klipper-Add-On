@@ -1814,7 +1814,7 @@ class AFCLane:
                 msg += "virtual "
                 detected_msg = " is enabled"
                 disable_msg = " and disable"
-            msg += f"bypass {detected_msg}.\nPlease unload{disable_msg} before trying to set lanes as loaded."
+            msg += f"bypass{detected_msg}.\nPlease unload{disable_msg} before trying to set lanes as loaded."
             self.logger.error(msg)
             return
 
