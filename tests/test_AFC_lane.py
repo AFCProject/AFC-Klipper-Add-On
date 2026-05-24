@@ -352,6 +352,47 @@ class TestAFCLaneLoadEs:
 
         assert lane_a.load_es != lane_b.load_es
 
+class TestAFCLaneIndexProperty:
+    def test_lane_index_property_map_none(self):
+        lane = _make_afc_lane()
+        lane.map = None
+        assert lane.lane_index == ""
+    
+    def test_lane_index_property_map_set(self):
+        lane = _make_afc_lane()
+        lane.map = "T5"
+        assert lane.lane_index == "5"
+    
+    def test_lane_index_property_is_str(self):
+        lane = _make_afc_lane()
+        lane.map = "T5"
+        assert isinstance(lane.lane_index, str)
+
+class TestAFCLaneExtruderIndexProperty:
+    def test_lane_extruder_index_property_is_int(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder1"
+        assert isinstance(lane.lane_extruder_index, int)
+
+    def test_lane_extruder_index_property_is_none(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj = None
+        assert isinstance(lane.lane_extruder_index, int)
+    
+    def test_lane_extruder_index_property_extruder(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder"
+        assert lane.lane_extruder_index == 0
+    
+    def test_lane_extruder_index_property_extruder1(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder1"
+        assert lane.lane_extruder_index == 1
+    
+    def test_lane_extruder_index_property_value_error(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruderT"
+        assert lane.lane_extruder_index == 0    
 
 # ── get_color ─────────────────────────────────────────────────────────────────
 

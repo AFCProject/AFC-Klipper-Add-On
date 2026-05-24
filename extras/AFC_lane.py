@@ -406,6 +406,39 @@ class AFCLane:
                 self.filament_density = float(v[1])
                 break
 
+    @property
+    def lane_index(self) -> str:
+        """
+        Strip's T from lane map and return integer as string.
+
+        :returns str: Returns lane mapping index as string
+        """
+        if self.map is None:
+            return ""
+
+        return self.map.replace("T", "")
+
+    @property
+    def lane_extruder_index(self) -> int:
+        """
+        Finds lanes extruder integer number and returns as integer.
+
+        :return int: Returns lanes extruder index as integer.
+        """
+        extruder_index = 0
+        if not hasattr(self, "extruder_obj") or self.extruder_obj is None:
+            return extruder_index
+
+        extruder_name = self.extruder_obj.name
+
+        if extruder_name == "extruder":
+            return extruder_index
+
+        try:
+            return int(extruder_name.replace("extruder", ""))
+        except ValueError:
+            return extruder_index
+
     def _handle_mcu_identify(self):
         """
         Handles klippy:mcu_identify callback to register endstops for steppers
@@ -1569,9 +1602,6 @@ class AFCLane:
             scan_time = self.td1_data['scan_time'] if 'scan_time' in self.td1_data else ""
             td        = self.td1_data['td']        if 'td'        in self.td1_data else ""
 
-            lane_number = self.map.replace("T", "")
-            extruder_name = self.extruder_obj.name
-            extruder_index = 0 if extruder_name == "extruder" else int(extruder_name.replace("extruder", ""))
             lane_data = {
                 "namespace": "lane_data",
                 "key": self.name,
@@ -1582,8 +1612,8 @@ class AFCLane:
                     "nozzle_temp"    : self.extruder_temp,
                     "scan_time"      : scan_time,
                     "td"             : td,
-                    "lane"           : lane_number,
-                    "extruder_index" : extruder_index,
+                    "lane"           : self.lane_index,
+                    "extruder_index" : self.lane_extruder_index,
                     "spool_id"       : self.spool_id,
                     "weight"         : self.weight
                 }
@@ -1595,9 +1625,6 @@ class AFCLane:
         Clears lane data that is currently stored at moonrakers `machine/set_lane_data` endpoint
         """
         if self.map is not None and "T" in self.map:
-            lane_number = self.map.replace("T", "")
-            extruder_name = self.extruder_obj.name
-            extruder_index = 0 if extruder_name == "extruder" else int(extruder_name.replace("extruder", ""))
             lane_data = {
                 "namespace": "lane_data",
                 "key": self.name,
@@ -1608,8 +1635,8 @@ class AFCLane:
                     "nozzle_temp"    : "",
                     "scan_time"      : "",
                     "td"             : "",
-                    "lane"           : lane_number,
-                    "extruder_index" : extruder_index,
+                    "lane"           : self.lane_index,
+                    "extruder_index" : self.lane_extruder_index,
                     "spool_id"       : None
                 }
             }
