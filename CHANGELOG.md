@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixed error where tool endstop was not being set correctly for homing when user had buffer set as pin_tool_start and an invalid buffer variable assigned in AFC_extruder config section. AFC now errors out if specified buffer config specified in AFC_extruder is not found.
 - Fixed an issue where `SET_LANE_LOADED` could incorrectly report bypass-enabled errors on physical bypass switches when no filament was present. `SET_LANE_LOADED` now correctly detects filament in bypass and only errors when appropriate.
+- Fixed calibration issue where 0 was being passed into `AFC_RESET` causing an error to display about invalid distance.
+### Added
+- Error message now pops up in calibration window when errors occur, no more searching console log to find applicable error.
+- Reset to hub button now only shows up when distance is not zero.
 
 ## [2026-05-16]
 ### Added
