@@ -8,7 +8,5 @@
 DICTIONARY stm32h723.dict
 CONFIG afc_extruder_buffer_not_found_AFC_stepper.cfg
 
-AFC_STEPPER_HOME STEPPER=lane1 DIST=100 SPEED=100 STOP_ON_ENDSTOP=1 ENDSTOP=buffer
-
 # Test should fail because klipper should raise an error
 SHOULD_FAIL
