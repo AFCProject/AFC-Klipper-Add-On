@@ -106,7 +106,7 @@ class AFCLane:
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.cb_update_weight   = self.reactor.register_timer( self.update_weight_callback )
 
-        self.unit_obj: afcUnit
+        self.unit_obj: afcUnit  = None
         self.hub_obj: Optional[afc_hub|None] = None
         self.buffer_obj: Optional[AFCTrigger|None] = None
         self.extruder_obj: AFCExtruder
@@ -732,8 +732,6 @@ class AFCLane:
                 selector_stepper._endstops[self.selector_endstop_name] = (selector_endstop["endstop"],
                                                                           selector_endstop["endstop_name"])
 
-
-
     def get_color(self):
         """
         Helper function for returning current color
@@ -830,6 +828,16 @@ class AFCLane:
         :return boolean: True if hub for lane is 'direct' or 'direct_load'
         """
         return self.hub in VALID_DIRECT_HUB
+
+    def is_direct_dist(self):
+        """
+        Helper method that returns True when dist_hub value should be used when loading to toolhead.
+
+        :return boolean: True when lane is setup as "direct hub" or lanes hub has "use_dist_hub"
+                         variable set to True
+        """
+        return (self.is_direct_hub()
+                or (self.hub_obj and getattr(self.hub_obj, "use_dist_hub", False) ))
 
     def select_lane(self):
         """
@@ -1027,7 +1035,9 @@ class AFCLane:
 
     @property
     def load_state(self) -> bool:
-        if self.unit_obj.type == "ViViD":
+        if (self.hub_obj is not None
+            and hasattr(self.hub_obj, 'is_virtual_pin')
+            and self.hub_obj.is_virtual_pin()):
             return self.loaded_to_hub
         else:
             return bool(self._load_state)
@@ -1107,7 +1117,7 @@ class AFCLane:
 
         if (self.printer.state_message == 'Printer is ready' and
             True == self._afc_prep_done and
-            self.is_direct_hub() and
+            "direct_load" in self.hub and
             not self.afc.auto_home and
             not self.afc.function.is_homed()):
             self.afc.error.AFC_error("Please home printer before directly loading to toolhead", False)
