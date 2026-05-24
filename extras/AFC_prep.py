@@ -223,7 +223,7 @@ class afcPrep:
                 self.logger.raw(cur_unit.logo_error)
             overrall_status = overrall_status and LaneCheck
         try:
-            if self.afc._get_bypass_state():
+            if self.afc.get_bypass_state():
                 self.logger.info("Filament loaded in bypass, toolchanges deactivated")
         except:
             pass

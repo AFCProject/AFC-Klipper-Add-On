@@ -1804,15 +1804,17 @@ class AFCLane:
             self.afc.error.AFC_error("Lane:{} is not loaded, ensure that the LOAD switch is properly configured and filament is detected.".format(self.name), pause=False)
             return
 
-        # Do not set lane as loaded if virtual bypass or normal bypass is enabled/triggered
-        if self.afc.bypass.sensor_enabled:
+        # Do not set lane as loaded if virtual bypass or normal bypass is triggered
+        if self.afc.get_bypass_state():
             disable_msg = ""
+            detected_msg = " detects filament"
             msg = f"Cannot set {self.name} as loaded, "
 
             if 'virtual' in self.afc.bypass.name:
                 msg += "virtual "
+                detected_msg = " is enabled"
                 disable_msg = " and disable"
-            msg += f"bypass is enabled.\nPlease unload{disable_msg} before trying to set lanes as loaded."
+            msg += f"bypass{detected_msg}.\nPlease unload{disable_msg} before trying to set lanes as loaded."
             self.logger.error(msg)
             return
 

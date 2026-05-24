@@ -120,7 +120,7 @@ def _make_afc():
     obj.number_of_toolchanges = 0
     obj.temp_wait_tolerance = 5
     obj.in_toolchange = False
-    obj._get_bypass_state = MagicMock(return_value=False)
+    obj.get_bypass_state = MagicMock(return_value=False)
     obj._get_quiet_mode = MagicMock(return_value=False)
     return obj
 
