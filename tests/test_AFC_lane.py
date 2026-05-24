@@ -352,6 +352,47 @@ class TestAFCLaneLoadEs:
 
         assert lane_a.load_es != lane_b.load_es
 
+class TestAFCLaneIndexProperty:
+    def test_lane_index_property_map_none(self):
+        lane = _make_afc_lane()
+        lane.map = None
+        assert lane.lane_index == ""
+    
+    def test_lane_index_property_map_set(self):
+        lane = _make_afc_lane()
+        lane.map = "T5"
+        assert lane.lane_index == "5"
+    
+    def test_lane_index_property_is_str(self):
+        lane = _make_afc_lane()
+        lane.map = "T5"
+        assert isinstance(lane.lane_index, str)
+
+class TestAFCLaneExtruderIndexProperty:
+    def test_lane_extruder_index_property_is_int(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder1"
+        assert isinstance(lane.lane_extruder_index, int)
+
+    def test_lane_extruder_index_property_is_none(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj = None
+        assert isinstance(lane.lane_extruder_index, int)
+    
+    def test_lane_extruder_index_property_extruder(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder"
+        assert lane.lane_extruder_index == 0
+    
+    def test_lane_extruder_index_property_extruder1(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder1"
+        assert lane.lane_extruder_index == 1
+    
+    def test_lane_extruder_index_property_value_error(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruderT"
+        assert lane.lane_extruder_index == 0    
 
 # ── get_color ─────────────────────────────────────────────────────────────────
 
@@ -593,6 +634,119 @@ class TestIsNormalPrintingState:
         from extras.AFC_lane import AFCLaneState
         lane = self._make_lane(AFCLaneState.NONE)
         assert lane._is_normal_printing_state() is False
+
+
+# ── send_lane_data / clear_lane_data ──────────────────────────────────────────
+
+def _make_lane_for_moonraker(extruder_name="extruder", map_value="T0"):
+    """Build a minimal AFCLane wired up for send/clear lane data tests."""
+    lane = _make_afc_lane("AFC_stepper lane1")
+    lane.map = map_value
+    lane.extruder_obj = MagicMock()
+    lane.extruder_obj.name = extruder_name
+    lane.color = "#FF0000"
+    lane._material = "PLA"
+    lane.bed_temp = 60
+    lane.extruder_temp = 210
+    lane.td1_data = {"scan_time": "1.23", "td": "0.95"}
+    lane.spool_id = "abc123"
+    lane.weight = 750.0
+    return lane
+
+
+def _get_sent_payload(lane):
+    """Call send_lane_data and return the payload passed to moonraker."""
+    lane.send_lane_data()
+    lane.afc.moonraker.send_lane_data.assert_called_once()
+    return lane.afc.moonraker.send_lane_data.call_args[0][0]
+
+
+def _get_cleared_payload(lane):
+    """Call clear_lane_data and return the payload passed to moonraker."""
+    lane.clear_lane_data()
+    lane.afc.moonraker.send_lane_data.assert_called_once()
+    return lane.afc.moonraker.send_lane_data.call_args[0][0]
+
+
+class TestSendLaneDataExtruderIndex:
+    @pytest.mark.parametrize("extruder_name,expected_index", [
+        ("extruder",  0),
+        ("extruder1", 1),
+        ("extruder2", 2),
+        ("extruder3", 3),
+    ])
+    def test_extruder_index_derivation(self, extruder_name, expected_index):
+        lane = _make_lane_for_moonraker(extruder_name=extruder_name, map_value=f"T{expected_index}")
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["extruder_index"] == expected_index
+
+    def test_extruder_index_is_int(self):
+        lane = _make_lane_for_moonraker(extruder_name="extruder1", map_value="T1")
+        payload = _get_sent_payload(lane)
+        assert isinstance(payload["value"]["extruder_index"], int)
+
+    def test_multiple_lanes_same_extruder_same_index(self):
+        lane_a = _make_lane_for_moonraker(extruder_name="extruder", map_value="T0")
+        lane_b = _make_lane_for_moonraker(extruder_name="extruder", map_value="T1")
+        payload_a = _get_sent_payload(lane_a)
+        payload_b = _get_sent_payload(lane_b)
+        assert payload_a["value"]["extruder_index"] == payload_b["value"]["extruder_index"]
+
+    def test_payload_namespace_is_lane_data(self):
+        lane = _make_lane_for_moonraker()
+        payload = _get_sent_payload(lane)
+        assert payload["namespace"] == "lane_data"
+
+    def test_no_send_when_map_is_none(self):
+        lane = _make_lane_for_moonraker()
+        lane.map = None
+        lane.send_lane_data()
+        lane.afc.moonraker.send_lane_data.assert_not_called()
+
+    def test_no_send_when_map_has_no_T(self):
+        lane = _make_lane_for_moonraker()
+        lane.map = "0"
+        lane.send_lane_data()
+        lane.afc.moonraker.send_lane_data.assert_not_called()
+
+
+class TestClearLaneDataExtruderIndex:
+    @pytest.mark.parametrize("extruder_name,expected_index", [
+        ("extruder",  0),
+        ("extruder1", 1),
+        ("extruder2", 2),
+        ("extruder3", 3),
+    ])
+    def test_extruder_index_derivation(self, extruder_name, expected_index):
+        lane = _make_lane_for_moonraker(extruder_name=extruder_name, map_value=f"T{expected_index}")
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["extruder_index"] == expected_index
+
+    def test_extruder_index_is_int(self):
+        lane = _make_lane_for_moonraker(extruder_name="extruder1", map_value="T1")
+        payload = _get_cleared_payload(lane)
+        assert isinstance(payload["value"]["extruder_index"], int)
+
+    def test_color_is_cleared(self):
+        lane = _make_lane_for_moonraker()
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["color"] == ""
+
+    def test_no_clear_when_map_is_none(self):
+        lane = _make_lane_for_moonraker()
+        lane.map = None
+        lane.clear_lane_data()
+        lane.afc.moonraker.send_lane_data.assert_not_called()
+
+
+# ── _is_normal_printing_state (continued) ─────────────────────────────────────
+
+class TestIsNormalPrintingStateContinued:
+    def _make_lane(self, status, in_toolchange=False):
+        lane = _make_lane_with_afc()
+        lane.status = status
+        lane.afc.in_toolchange = in_toolchange
+        return lane
 
     def test_in_toolchange_returns_false_even_if_tooled(self):
         from extras.AFC_lane import AFCLaneState
