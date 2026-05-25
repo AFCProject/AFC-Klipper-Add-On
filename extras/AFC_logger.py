@@ -10,6 +10,8 @@ import inspect
 import re
 import os
 import atexit
+import queuelogger
+
 from types import CodeType
 from queuelogger import QueueListener, QueueHandler
 from pathlib import Path
@@ -17,11 +19,18 @@ from webhooks import GCodeHelper
 
 class AFC_QueueListener(QueueListener):
     def __init__(self, filename):
-        try:
-            # Kalico needs an extra parameter passed in for log rollover
-            super().__init__(filename, False)
-        except:
+
+        # Checking to see if parent queuelogger has a FILE_SIZE define, this is mainly for
+        # logger working correctly for Snapmaker U1, if this check does not happen then False will
+        # be passed in and can cause the AFC log to grow without rolling.
+        if hasattr(queuelogger, "FILE_SIZE"):
             super().__init__(filename)
+        else:
+            try:
+                # Kalico needs an extra parameter passed in for log rollover
+                super().__init__(filename, False)
+            except:
+                super().__init__(filename)
 
         if issubclass(QueueListener, logging.handlers.TimedRotatingFileHandler):
             logging.handlers.TimedRotatingFileHandler.__init__(

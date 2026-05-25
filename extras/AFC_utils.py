@@ -56,7 +56,10 @@ def add_filament_switch(switch_name, switch_pin, printer, show_sensor=True,
     filament_switch_config.set( new_switch_name, 'switch_pin', switch_pin)
     filament_switch_config.set( new_switch_name, 'pause_on_runout', 'False')
     filament_switch_config.set( new_switch_name, 'debounce_delay', 0.0)
-    filament_switch_config.set( new_switch_name, "extruder") # TODO: put in a proper fix for this
+
+    # Following needs to be added for Snapmaker U1 klipper version, does not hurt to always
+    # have here for non U1 klipper versions.
+    filament_switch_config.set( new_switch_name, "extruder")
 
     cfg_wrap = configfile.ConfigWrapper( printer, filament_switch_config, {}, new_switch_name)
 

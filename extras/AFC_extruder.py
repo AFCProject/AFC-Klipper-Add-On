@@ -245,7 +245,6 @@ class AFCExtruder:
         self.filament_sensor_name: str  = config.get('u1_filament_sensor_name', None)
         self.park_detector: str         = config.get("u1_park_detector_name", None)
 
-
         if self.toolhead_status_index:
             self.toolhead_status_index  = self.afc.function._get_led_indexes(self.toolhead_status_index)
 
@@ -392,7 +391,7 @@ class AFCExtruder:
         """
         self.reactor = self.afc.reactor
         self.afc.tools[self.name] = self
-        
+
         self.toolhead_extruder = self.printer.lookup_object(self.name)
         if not self.toolhead_extruder:
             error_str = self.common_error.format(self.name, self.fullname)
@@ -479,6 +478,15 @@ class AFCExtruder:
         self.fila_tool_start.runout_helper.min_event_systime = self.reactor.monotonic() + self.fila_tool_start.runout_helper.event_delay
 
     def note_tool_start_callback(self, state, force=False):
+        """
+        Method for overriding runout_helper.note_filament_present for passed in filament_motion_sensor
+        object. Currently this is only needed for to allow AFC to work with Snapmakers U1 toolhead
+        sensors.
+
+        :param state: Boolean indicating sensor state (True = filament present, False = runout)
+        :param force: Set to True to force the filament sensor state, currently not used and pass
+                      through to original note_filament_present method.
+        """
         self.orig_note_filament_present(state, force)
         self.tool_start_callback(0, state)
 
@@ -609,8 +617,16 @@ class AFCExtruder:
 
         axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, self.tool_load_speed, 5)
         print_time = toolhead.get_last_move_time()
-        self.trapq_append(self.trapq, print_time, accel_t, cruise_t, accel_t,
-                            0., 0., 0., axis_r, 0., 0., 0., cruise_v, 5, 0) # TODO: add a check for the zero
+
+        trapq_append_args = (self.trapq, print_time, accel_t, cruise_t, accel_t,
+                             0., 0., 0., axis_r, 0., 0., 0., cruise_v, 5,)
+
+        # Checking to see if zero needs to be appended, this is mainly for Snapmaker U1 klipper version
+        if self.afc.trapq_append_line:
+            trapq_append_args = trapq_append_args + (0,)
+
+        self.trapq_append(*trapq_append_args)
+
         print_time = print_time + accel_t + cruise_t + accel_t
 
         if self.motion_queuing is None:
