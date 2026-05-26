@@ -140,12 +140,16 @@ esac
 
 install_afc() {
   # Link the python extensions
-  link_extensions
-  if [ "$installation_type" != "OpenAMS" ]; then
+  if [ "$is_snapmaker" == "True" ]; then
+    check_and_move_lite_files
+    copy_snapmaker_config
+    comment_gcode_in_fluidd "comment"
+  elif [ "$installation_type" != "OpenAMS" ]; then
     copy_config
   else
     copy_openams_config
   fi
+  link_extensions
   copy_unit_files
   # Add our extensions to the klipper gitignore
   if [ "$git_install" == "True" ]; then
@@ -196,8 +200,13 @@ install_afc() {
   fi
   check_and_append_prep "${afc_config_dir}/AFC.cfg"
   replace_varfile_path "${afc_config_dir}/AFC.cfg"
-  if [ "$git_install" == "True" ]; then
+  if [ "$git_install" == "True" ] && [ "$is_snapmaker" == "False" ]; then
     update_moonraker_config
+  fi
+
+  if [ "$is_snapmaker" == "True" ]; then
+    # Passing in True since su is needed to write to debug file
+    u1_write_debug_file
   fi
 
   export message

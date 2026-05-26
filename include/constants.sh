@@ -9,6 +9,7 @@
 # Path related constants
 printer_config_dir="$HOME/printer_data/config"
 klipper_dir="$HOME/klipper"
+klipper_extra_path="$klipper_dir/klippy/extras"
 afc_path="$HOME/AFC-Klipper-Add-On"
 afc_config_dir="${printer_config_dir}/AFC"
 afc_file="$afc_config_dir/AFC.cfg"
@@ -39,6 +40,7 @@ invalid_name="False"
 minimum_python_major="3"
 minimum_python_minor="8"
 is_k1_os="False"
+is_snapmaker="False"
 
 # AFC default configs
 park_macro="True"

@@ -26,7 +26,7 @@ check_root() {
 
   check_for_k1
   # On K1 OS, allow running as root but warn the user instead of exiting.
-  if [ "$is_k1_os" == "True" ] && [ "$EUID" -eq 0 ]; then
+  if [[ "$is_k1_os" == "True" && "$is_snapmaker" == "False" ]] && [ "$EUID" -eq 0 ]; then
     print_msg WARNING "K1 OS detected, skipping root user check."
     return
   fi
@@ -135,7 +135,15 @@ query_printer_status() {
   local state
 
   response=$(curl -s "$moonraker"/printer/objects/query?idle_timeout)
-  state=$(echo "$response" | jq -r '.result.status.idle_timeout.state' 2>/dev/null)
+  
+  # Needed for Snapmaker U1 since jq is not installed on this machine
+  if ! command -v jq &> /dev/null; then
+    tmp="${response#*\"idle_timeout\":}"
+    tmp="${tmp#*\"state\": \"}"
+    state="${tmp%%\"*}"
+  else
+    state=$(echo "$response" | jq -r '.result.status.idle_timeout.state' 2>/dev/null)
+  fi
 
   if [ -z "$state" ] || [ "$state" = "null" ]; then
     return 1
