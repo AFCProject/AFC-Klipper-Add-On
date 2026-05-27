@@ -1759,6 +1759,8 @@ class afc:
 
             unload_time = self.afcDeltaTime.log_major_delta("Lane {} unload done".format(cur_lane.name if cur_lane is not None else "None"))
             self.afc_stats.average_tool_unload_time.average_time(unload_time)
+            if cur_lane is not None and cur_lane.hub == 'direct_load':
+                self.LANE_UNLOAD(cur_lane)
         self.current_state = State.IDLE
         return True
 

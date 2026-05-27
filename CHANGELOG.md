@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-05-24]
 ### Fixed
 - Toolchanger: unload support for hub:direct lanes
+- Toolchanger: tool unload with eject for hub:direct_load lanes
 
 ## [2026-05-23]
 ### Fixed
