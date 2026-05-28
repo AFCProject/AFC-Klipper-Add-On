@@ -29,6 +29,7 @@ def _make_extruder_obj(name="extruder"):
     obj.name = name
     obj.afc = afc
     obj.logger = MockLogger()
+    obj.park_detector_obj = None
     return obj
 
 
@@ -243,6 +244,8 @@ def _make_afc_extruder(name="extruder"):
     ext.common_save_msg = f"\nRun SAVE_EXTRUDER_VALUES EXTRUDER={name} once done."
     ext.estats = MagicMock()
     ext.function = afc.function
+    ext.park_detector = None
+    ext.park_detector_obj = None
 
     # Toolchanger stuff
     ext.tool_obj = None
