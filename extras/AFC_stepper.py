@@ -117,10 +117,10 @@ class AFCExtruderStepper(AFCLane):
         """
         self.extruder_stepper.stepper.set_position((0., 0., 0.))
         axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, speed, accel)
-        
+
         trapq_append_args = (self.trapq, movetime, accel_t, cruise_t, accel_t,
                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel)
-        
+
         # Checking to see if zero needs to be appended, this is mainly for Snapmaker U1 klipper version
         if self.afc.trapq_append_line:
             trapq_append_args = trapq_append_args + (0,)

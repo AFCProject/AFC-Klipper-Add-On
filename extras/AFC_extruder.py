@@ -8,7 +8,6 @@ from __future__ import annotations
 import traceback
 import chelper
 from extras.force_move import calc_move_time
-import configfile
 
 try:
     from printer import message_ready as READY # type: ignore
@@ -820,7 +819,7 @@ class AFCExtruder:
         """
         # Return true if both are not set as this would be for single toolhead
         # setups
-        if ( (self.tool_obj is None 
+        if ( (self.tool_obj is None
               and self.park_detector_obj is None)
               and self.tc_unit_name is None):
             return True
