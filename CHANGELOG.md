@@ -5,9 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-05-24]
+### Fixed
+- Toolchanger: unload support for hub:direct lanes
+- Toolchanger: tool unload with eject for hub:direct_load lanes
+
+## [2026-05-23]
+### Fixed
+- Fixed error where tool endstop was not being set correctly for homing when user had buffer set as pin_tool_start and an invalid buffer variable assigned in AFC_extruder config section. AFC now errors out if specified buffer config specified in AFC_extruder is not found.
+- Fixed an issue where `SET_LANE_LOADED` could incorrectly report bypass-enabled errors on physical bypass switches when no filament was present. `SET_LANE_LOADED` now correctly detects filament in bypass and only errors when appropriate.
+- Fixed calibration issue where 0 was being passed into `AFC_RESET` causing an error to display about invalid distance.
+### Added
+- Error message now pops up in calibration window when errors occur, no more searching console log to find applicable error.
+- Reset to hub button now only shows up when distance is not zero.
+
+## [2026-05-16]
+### Added
+- Support for EMU unit types
+- Supports EMU without hub sensor(virtual) and with hub sensor
+- Added new variable to use dist_hub instead of afc_bowden_length, currently only valid for EMU units.
+
+## [2026-04-15]
+### Added
+
 ## [2026-04-06]
 ### Fixed
 - Toolchanger: Issue where standalone toolheads would try to heat to 0.
+### Added
+- Added `FORCE` parameter to `LANE_MOVE` to allow lane movement during a toolchange
+- Added support for negative `rip_length` in `AFC_CUT` for cutter-above-extruder printers
 
 ## [2026-04-05]
 ### Fixed
@@ -60,6 +86,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Toolchanger: Added `NEW_EXTRUDER_TEMP` parameter to Tn commands to set temperature before the tool change begins.
 - Toolchanger: Added `toolchange_temp_drop` config option to automatically lower the old extruder's temperature during toolchange.
+
+## [2026-03-11]
+### Update
+- Updated the Cut.cfg macro to support cut locations with axes configurations other than XY. New configuration variables were added for individual axis. The behavior of `pin_loc_xy` remains unchanged. New axis-specific variables were added to avoid pin/toolhead collisions. The behavior of `safe_margin_xy` did change slightly and the Y coordinate is now used when calculating the safe coordinate for the move. An option has been added to skip the post-cut safe move for configurations where the next move is known to be safe (such as a move to purge or wipe.)
+- Updated the Cut.cfg macro to support cut locations with broader axis configurations:
+  - Added per-axis configuration variables (`pin_loc_x`, `pin_loc_y`, `pin_loc_z`) to support axis combinations beyond XY (e.g., XZ, YZ, XYZ). The behavior of `pin_loc_xy` remains unchanged.
+  - **Breaking change**: `safe_margin_xy` now calculates the safe Y-coordinate using the Y-axis midpoint (`max_y/2`) instead of the X-axis midpoint, improving collision avoidance for diverse printer geometries.
+  - Added `safe_move_first` option to specify which axes to move in first when doing the safe move.
+  - Added `post_cut_safe_move` option to skip the post-cut safe move when the next move is already known to be safe (e.g., moves to purge or wipe locations).
 
 ## [2026-03-07]
 ### Fix

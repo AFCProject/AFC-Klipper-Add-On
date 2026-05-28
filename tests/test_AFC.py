@@ -120,7 +120,7 @@ def _make_afc():
     obj.number_of_toolchanges = 0
     obj.temp_wait_tolerance = 5
     obj.in_toolchange = False
-    obj._get_bypass_state = MagicMock(return_value=False)
+    obj.get_bypass_state = MagicMock(return_value=False)
     obj._get_quiet_mode = MagicMock(return_value=False)
     return obj
 
@@ -2162,7 +2162,7 @@ class TestGetDefaultMaterialTemps:
             assert using_min is False
 
 
-# ── in_print_reactor_timer: moonraker None guard ─────────────────────────────
+# in_print_reactor_timer: moonraker None guard
 
 class TestInPrintReactorTimer:
     """
@@ -2204,3 +2204,119 @@ class TestInPrintReactorTimer:
         obj.function.in_print.return_value = (False, None)
         obj.in_print_reactor_timer(0.0)
         obj.moonraker.get_file_filament_change_count.assert_not_called()
+
+
+# cmd_LANE_MOVE
+
+def _make_afc_for_lane_move(is_printing=False):
+    """Build an afc instance wired up for cmd_LANE_MOVE tests."""
+
+    obj = _make_afc()
+    obj.function.is_printing.return_value = is_printing
+    obj.error = MagicMock()
+
+    lane = MagicMock()
+    lane.unit_obj = MagicMock()
+    obj.lanes["lane1"] = lane
+
+    return obj, lane
+
+
+def _make_gcmd(lane="lane1", distance=10.0, force=0):
+    gcmd = MagicMock()
+    gcmd.get.side_effect = lambda key, default=None: {"LANE": lane}.get(key, default)
+    gcmd.get_float.side_effect = lambda key, default=0: {"DISTANCE": distance}.get(key, default)
+    gcmd.get_int.side_effect = lambda key, default=0: {"FORCE": force}.get(key, default)
+    return gcmd
+
+
+class TestCmdLaneMove:
+    # ── printing guard ────────────────────────────────────────────────────────
+
+    def test_blocks_when_printing_and_no_force(self):
+        """Move is rejected while printing when FORCE is not 1."""
+        obj, lane = _make_afc_for_lane_move(is_printing=True)
+        gcmd = _make_gcmd(force=0)
+        obj.cmd_LANE_MOVE(gcmd)
+        obj.error.AFC_error.assert_called_once()
+        lane.move_advanced.assert_not_called()
+
+    def test_allows_when_printing_and_force_is_1(self):
+        """FORCE=1 bypasses the is_printing guard."""
+        obj, lane = _make_afc_for_lane_move(is_printing=True)
+        gcmd = _make_gcmd(force=1)
+        obj.cmd_LANE_MOVE(gcmd)
+        obj.error.AFC_error.assert_not_called()
+        lane.move_advanced.assert_called_once()
+
+    def test_force_2_does_not_bypass_guard(self):
+        """FORCE=2 is not equal to 1, so the guard still fires."""
+        obj, lane = _make_afc_for_lane_move(is_printing=True)
+        gcmd = _make_gcmd(force=2)
+        obj.cmd_LANE_MOVE(gcmd)
+        obj.error.AFC_error.assert_called_once()
+        lane.move_advanced.assert_not_called()
+
+    def test_force_0_does_not_bypass_guard(self):
+        """FORCE=0 (default) does not bypass the guard."""
+        obj, lane = _make_afc_for_lane_move(is_printing=True)
+        gcmd = _make_gcmd(force=0)
+        obj.cmd_LANE_MOVE(gcmd)
+        obj.error.AFC_error.assert_called_once()
+        lane.move_advanced.assert_not_called()
+
+    def test_no_guard_when_not_printing(self):
+        """Guard is not triggered when the printer is idle, regardless of FORCE."""
+        obj, lane = _make_afc_for_lane_move(is_printing=False)
+        gcmd = _make_gcmd(force=0)
+        obj.cmd_LANE_MOVE(gcmd)
+        obj.error.AFC_error.assert_not_called()
+        lane.move_advanced.assert_called_once()
+
+    # ── zero distance guard ───────────────────────────────────────────────────
+
+    def test_blocks_zero_distance(self):
+        """A distance of zero is always rejected."""
+        obj, lane = _make_afc_for_lane_move(is_printing=False)
+        gcmd = _make_gcmd(distance=0.0)
+        obj.cmd_LANE_MOVE(gcmd)
+        obj.error.AFC_error.assert_called_once()
+        lane.move_advanced.assert_not_called()
+
+    # ── unknown lane guard ────────────────────────────────────────────────────
+
+    def test_blocks_unknown_lane(self):
+        """An unknown lane name is logged and the move is skipped."""
+        obj, lane = _make_afc_for_lane_move(is_printing=False)
+        gcmd = _make_gcmd(lane="unknown_lane")
+        obj.cmd_LANE_MOVE(gcmd)
+        lane.move_advanced.assert_not_called()
+
+    # ── normal move ───────────────────────────────────────────────────────────
+
+    def test_move_advanced_called_with_distance(self):
+        """move_advanced is called with the requested distance."""
+        from extras.AFC_lane import SpeedMode, AssistActive
+        obj, lane = _make_afc_for_lane_move(is_printing=False)
+        gcmd = _make_gcmd(distance=50.0)
+        obj.cmd_LANE_MOVE(gcmd)
+        args = lane.move_advanced.call_args.args
+        assert args[0] == 50.0
+
+    def test_short_speed_mode_for_small_distance(self):
+        """Distances under 200 use SHORT speed mode."""
+        from extras.AFC_lane import SpeedMode, AssistActive
+        obj, lane = _make_afc_for_lane_move(is_printing=False)
+        gcmd = _make_gcmd(distance=100.0)
+        obj.cmd_LANE_MOVE(gcmd)
+        args = lane.move_advanced.call_args.args
+        assert args[1] == SpeedMode.SHORT
+
+    def test_long_speed_mode_for_large_distance(self):
+        """Distances of 200 or more use LONG speed mode."""
+        from extras.AFC_lane import SpeedMode, AssistActive
+        obj, lane = _make_afc_for_lane_move(is_printing=False)
+        gcmd = _make_gcmd(distance=200.0)
+        obj.cmd_LANE_MOVE(gcmd)
+        args = lane.move_advanced.call_args.args
+        assert args[1] == SpeedMode.LONG

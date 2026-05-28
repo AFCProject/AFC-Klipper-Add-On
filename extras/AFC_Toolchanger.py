@@ -142,8 +142,6 @@ class AfcToolchanger(afcUnit):
         """
         Unselects current tool loaded in shuttle by calling klipper-toolchanger UNSELECT_TOOL
 
-        TODO: Update text once moved away from KTC
-
         Usage
         -----
         `AFC_UNSELECT_TOOL`
@@ -154,6 +152,7 @@ class AfcToolchanger(afcUnit):
         AFC_UNSELECT_TOOL
         ```
         """
+        #TODO: Update description text once moved away from KTC
         self._increase_unselect()
         current_extruder = self.afc.function.get_current_extruder_obj()
         if (current_extruder
@@ -237,10 +236,10 @@ class AfcToolchanger(afcUnit):
     }
     def cmd_AFC_SET_TOOLHEAD_LED(self, gcmd: GCodeCommand):
         """
-        Macro call to set nozzle led in toolhead based on lane/tool mapping. Led config name needs to be
+        Macro to set nozzle led in toolhead based on lane/tool mapping. Led config name needs to be
         set to AFC_extruder `led_name` variable. Status led in toolhead will not be affected if `status_led_idx`
         is set in AFC_extruder config. If `nozzle_led_idx` is set in AFC_extruder configuration then just
-        those leds will be turned on. If `nozzle_led_inx` is not provided then all leds not in defined in
+        those leds will be turned on. If `nozzle_led_idx` is not provided then all LEDs not in defined in
         `status_led_idx` will be turned on.
 
         `MAP` - is the mapped toolhead to set. ex(T0,T1,etc)

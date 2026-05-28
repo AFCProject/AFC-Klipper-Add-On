@@ -42,7 +42,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_stats import AFCStats
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-AFC_VERSION="1.1.10"
+AFC_VERSION="1.1.16"
 
 # Class for holding different states so its clear what all valid states are
 class State:
@@ -422,16 +422,16 @@ class afc:
         self.gcode.register_command('SET_AFC_TOOLCHANGES',  self.cmd_SET_AFC_TOOLCHANGES,   desc=self.cmd_SET_AFC_TOOLCHANGES_help)
         self.gcode.register_command('AFC_CLEAR_MESSAGE',    self.cmd_AFC_CLEAR_MESSAGE,     desc=self.cmd_AFC_CLEAR_MESSAGE_help)
         self.gcode.register_command('_AFC_TEST_MESSAGES',   self.cmd__AFC_TEST_MESSAGES,    desc=self.cmd__AFC_TEST_MESSAGES_help)
-        self.gcode.register_command('AFC_M104',             self._cmd_AFC_M104,             desc=self._cmd_AFC_M104_help)
-        self.gcode.register_command('AFC_M109',             self._cmd_AFC_M109,             desc=self._cmd_AFC_M109_help)
+        self.gcode.register_command('AFC_M104',             self.cmd_AFC_M104,             desc=self.cmd_AFC_M104_help)
+        self.gcode.register_command('AFC_M109',             self.cmd_AFC_M109,             desc=self.cmd_AFC_M109_help)
 
         self._rename_macros()
 
         self.current_state = State.IDLE
 
     def _rename_macros(self):
-        self.function._rename(self.BASE_M104, self.RENAMED_M104, self._cmd_AFC_M104, self._cmd_AFC_M104_help)
-        self.function._rename(self.BASE_M109, self.RENAMED_M109, self._cmd_AFC_M109, self._cmd_AFC_M109_help)
+        self.function._rename(self.BASE_M104, self.RENAMED_M104, self.cmd_AFC_M104, self.cmd_AFC_M104_help)
+        self.function._rename(self.BASE_M109, self.RENAMED_M109, self.cmd_AFC_M109, self.cmd_AFC_M109_help)
 
     def print_version(self, console_only=False):
         """
@@ -714,7 +714,7 @@ class afc:
         else:
             return self.quiet_mode
 
-    def _get_bypass_state(self):
+    def get_bypass_state(self):
         """
         Helper function to return if filament is present in bypass sensor
 
@@ -755,7 +755,7 @@ class afc:
         :return        Returns true if filament is present in sensor
         """
         try:
-            if self._get_bypass_state():
+            if self.get_bypass_state():
                 if unload:
                     self.logger.info("Bypass detected, calling manual unload filament routine")
                     self.gcode.run_script_from_command(self.RENAMED_UNLOAD_FILAMENT)
@@ -881,7 +881,7 @@ class afc:
             self.message_queue.append((warning_text, "warning"))
 
     cmd_LANE_MOVE_help = "Lane Manual Movements"
-    cmd_LANE_MOVE_options = {"LANE": {"type": "string", "default": "lane1"}, "DISTANCE": {"type": "int", "default": 20}}
+    cmd_LANE_MOVE_options = {"LANE": {"type": "string", "default": "lane1"}, "DISTANCE": {"type": "int", "default": 20}, "FORCE": {"type": "int", "default": 0}}
     def cmd_LANE_MOVE(self, gcmd):
         """
         This function handles the manual movement of a specified lane. It retrieves the lane
@@ -889,9 +889,12 @@ class afc:
 
         Distance's lower than 200 moves extruder at short_move_speed/accel, values above 200 move extruder at long_move_speed/accel
 
+        The 'FORCE' parameter overrides the is_printing() check, use with caution. Enable when not
+        paused (e.g. in a macro) to move a lane independent of the toolhead extruder.
+
         Usage
         -----
-        `LANE_MOVE LANE=<lane> DISTANCE=<distance>`
+        `LANE_MOVE LANE=<lane> DISTANCE=<distance> FORCE=<0/1>`
 
         Example
         -----
@@ -899,7 +902,8 @@ class afc:
         LANE_MOVE LANE=lane1 DISTANCE=100
         ```
         """
-        if self.function.is_printing():
+        force = gcmd.get_int('FORCE', 0) == 1
+        if self.function.is_printing() and not force:
             self.error.AFC_error("Cannot move lane while printer is printing", pause=False)
             return
         lane = gcmd.get('LANE', None)
@@ -1089,7 +1093,7 @@ class afc:
         str["system"]['num_lanes'] = len(self.lanes)
         str["system"]['num_extruders'] = len(self.tools)
         str["system"]["extruders"]={}
-        str["system"]["bypass"] = {"enabled": self._get_bypass_state() }
+        str["system"]["bypass"] = {"enabled": self.get_bypass_state() }
 
         for extrude in self.tools.keys():
             cur_extruder = self.tools[extrude]
@@ -1200,8 +1204,7 @@ class afc:
 
         # TODO: add a check for multi-tools to verify lane is not loaded to toolhead before trying to unload
         if (cur_lane.name != cur_lane.extruder_obj.lane_loaded
-		    and not cur_lane.extruder_obj.is_standalone()
-			and not cur_lane.is_direct_hub()):
+		    and not cur_lane.extruder_obj.is_standalone()):
             # Setting status as ejecting so if filament is removed and de-activates the prep sensor while
             # extruder motors are still running it does not trigger infinite spool or pause logic
             # once user removes filament lanes status will go to None
@@ -1228,9 +1231,6 @@ class afc:
 
         elif cur_lane.name == cur_lane.extruder_obj.lane_loaded:
             self.logger.info("LANE {} is loaded in toolhead, can't unload.".format(cur_lane.name))
-
-        elif cur_lane.is_direct_hub():
-            self.logger.info("LANE {} is a direct lane must be tool unloaded.".format(cur_lane.name))
 
         self.current_state = State.IDLE
 
@@ -1444,6 +1444,11 @@ class afc:
                 self.error.handle_lane_failure(cur_lane, message)
                 return False
         else:
+            use_direct_dist = False
+            if (cur_lane.hub_obj
+                and getattr(cur_lane.hub_obj, "use_dist_hub", False)):
+                use_direct_dist = True
+
             if self._check_extruder_temp(cur_lane):
                 self.afcDeltaTime.log_with_time("Done heating toolhead")
 
@@ -1502,8 +1507,9 @@ class afc:
 
             # Move filament towards the toolhead.
             if not cur_lane.is_direct_hub():
+                distance = cur_lane.dist_hub if use_direct_dist else cur_hub.afc_bowden_length
                 _, _, warn = cur_lane.unit_obj.load_then_home(cur_lane,
-                                                              cur_hub.afc_bowden_length,
+                                                              distance,
                                                               AssistActive.DYNAMIC,
                                                               cur_lane.get_toolhead_endstop())
                 # Check for error and return, if error state is set then AFC tried pausing
@@ -1522,7 +1528,7 @@ class afc:
                     max_attempts = int(self.tool_homing_distance/cur_lane.short_move_dis)
                     if (self.homing_enabled
                         and self.home_to_tool):
-                        move_distance = cur_hub.afc_bowden_length if not cur_lane.is_direct_hub() else cur_lane.dist_hub
+                        move_distance = cur_hub.afc_bowden_length if not cur_lane.is_direct_hub() and not use_direct_dist else cur_lane.dist_hub
                         max_attempts = 2
                         self.logger.info("Distance stopped short of commanded distance to toolhead, "\
                                         "backing up and retrying load.")
@@ -1753,6 +1759,8 @@ class afc:
 
             unload_time = self.afcDeltaTime.log_major_delta("Lane {} unload done".format(cur_lane.name if cur_lane is not None else "None"))
             self.afc_stats.average_tool_unload_time.average_time(unload_time)
+            if cur_lane is not None and cur_lane.hub == 'direct_load':
+                self.LANE_UNLOAD(cur_lane)
         self.current_state = State.IDLE
         return True
 
@@ -1773,6 +1781,11 @@ class afc:
             cur_lane.status = AFCLaneState.NONE
             self.save_vars()
         else:
+            use_direct_dist = False
+            if (cur_lane.hub_obj
+                and getattr(cur_lane.hub_obj, "use_dist_hub", False)):
+                use_direct_dist = True
+
             # Prepare the extruder and heater for unloading.
             if self._check_extruder_temp(cur_lane):
                 self.afcDeltaTime.log_with_time("Done heating toolhead")
@@ -1920,7 +1933,8 @@ class afc:
             # Synchronize and move filament out of the hub.
             cur_lane.unsync_to_extruder()
             if not cur_lane.is_direct_hub():
-                _, _, warn = cur_lane.unit_obj.move_to_hub(cur_lane, cur_hub.afc_unload_bowden_length,
+                distance = cur_lane.dist_hub if use_direct_dist else cur_hub.afc_unload_bowden_length
+                _, _, warn = cur_lane.unit_obj.move_to_hub(cur_lane, distance,
                                                            MoveDirection.NEG, self.homing_enabled,
                                                            speed_mode=SpeedMode.LONG)
                 # Check for error and return, if error state is set then AFC tried pausing
@@ -2013,10 +2027,12 @@ class afc:
 
             if (cur_lane.is_direct_hub()
                 and not cur_lane.extruder_obj.is_standalone()):
-                while cur_lane.raw_load_state:
-                    cur_lane.move_advanced(cur_lane.short_move_dis * -1, SpeedMode.SHORT,
-                                           assist_active=AssistActive.YES)
-                cur_lane.move_advanced(cur_lane.short_move_dis * -5, SpeedMode.SHORT)
+                park_tries = 0
+                while not cur_lane.raw_load_state and cur_lane.prep_state:
+                    park_tries += 1
+                    cur_lane.move_advanced(cur_lane.short_move_dis, SpeedMode.SHORT)
+                    if park_tries >= 5:
+                        break
 
             if self.post_unload_macro is not None:
                 self.gcode.run_script_from_command(self.post_unload_macro)
@@ -2243,7 +2259,7 @@ class afc:
         str["td1_present"]              = self.td1_present
         str["lane_data_enabled"]        = self.lane_data_enabled
         str['error_state']              = self.error_state
-        str["bypass_state"]             = bool(self._get_bypass_state())
+        str["bypass_state"]             = bool(self.get_bypass_state())
         str["quiet_mode"]               = bool(self._get_quiet_mode())
         str["position_saved"]           = self.position_saved
 
@@ -2305,22 +2321,63 @@ class afc:
 
         web_request.send( {"status:" : {"AFC": str}})
 
-    _cmd_AFC_M104_help = "Set extruder temperature"
-    def _cmd_AFC_M104(self, gcmd):
+    cmd_AFC_M104_help = "Set extruder temperature"
+    def cmd_AFC_M104(self, gcmd):
         """
-        This function sets the temperature of the specified extruder.
+        Overrides Klipper's default M104 command to set extruder temperature
+        without waiting. Extends klippers default behavior by adding support for tool number (T) parameter.
+
+        T - Tool number to set temperature for. Defaults to current extruder if not specified.<br>
+        S - Temperature to set. Defaults to 0 if not specified.
 
         Usage
         -----
-        `AFC_M104 <extruder> <temperature>`
-        """
-        self._cmd_AFC_M109(gcmd, wait=False)
+        `AFC_M104 T<extruder> S<temperature>`<br>
+        or<br>
+        `M104 T<extruder> S<temperature>`
 
-    _cmd_AFC_M109_help = "Set extruder temperature and wait for it to reach the target"
-    def _cmd_AFC_M109(self, gcmd, wait=True):
+        Example
+        -----
+        ```
+        M104 T1 S250
+        ```
+
+        Example
+        -----
+        ```
+        M104 S250
+        ```
         """
-        This function sets the temperature of the specified extruder and waits for it to reach the target temperature.
-        Supports T (tool), S (temp), and D (deadband).
+        self.cmd_AFC_M109(gcmd, wait=False)
+
+    cmd_AFC_M109_help = "Set extruder temperature and wait for it to reach the target"
+    def cmd_AFC_M109(self, gcmd, wait=True):
+        """
+        Overrides Klipper's default M109 command to set extruder temperature and wait for it to be reached.
+        Extends klippers default behavior by adding support for tool number (T) and deadband (D) parameters.
+
+        T - Tool number to set temperature for. Defaults to current extruder if not specified.<br>
+        S - Temperature to set. Defaults to 0 if not specified.<br>
+        D - Deadband in degrees Celsius. When specified, AFC will wait until the extruder is within
+            +/- this value of the target temperature before continuing.
+
+        Usage
+        -----
+        `AFC_M109 T<extruder> S<temperature> D<deadband>`<br>
+        or<br>
+        `M109 T<extruder> S<temperature> D<deadband>`
+
+        Example
+        -----
+        ```
+        M109 T1 S250 D5
+        ```
+
+        Example
+        -----
+        ```
+        M109 S250
+        ```
         """
 
         # TODO: this currently does not work correctly when lanes are remapped and KTC calls M109

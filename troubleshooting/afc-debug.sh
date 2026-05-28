@@ -265,7 +265,19 @@ echo "Gathering system information..."
 DISTRO=$(cat /etc/*-release 2>/dev/null || echo "Unknown")
 KERNEL=$(uname -a)
 UPTIME=$(uptime)
-LSUSB=$(lsusb | tr -d '\0')
+LSUSB=$(lsusb -tv; echo "==="; for dev in /sys/bus/usb/devices/*/; do
+  [ "$(cat "$dev/bDeviceClass" 2>/dev/null)" = "09" ] || continue
+  bus=$(cat "$dev/busnum")
+  devnum=$(cat "$dev/devnum")
+  active=$(cat "$dev"*/bAlternateSetting 2>/dev/null | head -1 | tr -d ' ')
+  lsusb -v -s "$bus:$devnum" 2>/dev/null | awk -v active="$active" -v path="$dev" '
+    /iProduct/{ product=$0 }
+    /bDeviceProtocol/{ proto=$0 }
+    /bAlternateSetting/{ alt=$NF }
+    /bInterfaceProtocol/{ iproto = iproto ? iproto "\n" $0 (alt==active ? " (active)" : "") : $0 (alt==active ? " (active)" : "") }
+    END{ print "Path:              " path; print product; print proto; print iproto; print "---" }
+  '
+done | tr -d '\0')
 SERIAL_IDS=$(ls -l /dev/serial/by-id/ || echo "No serial devices found.")
 
 get_afc_version
@@ -282,7 +294,7 @@ log_can_interfaces
 	printf "AFC Version: %s\n" "$afc_version"
 	printf "Klipper Version: %s\n" "$klipper_version"
 
-	prepout "lsusb output"
+	prepout "USB Topology"
 	echo "$LSUSB"
 
 	prepout "Serial IDs"

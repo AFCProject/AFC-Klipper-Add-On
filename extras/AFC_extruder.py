@@ -881,12 +881,11 @@ class AFCExtruder:
         Macro call to set print led in toolhead based on extruder name. Led config name needs to be
         set to AFC_extruder `led_name` variable. Status led in toolhead will not be affected if `status_led_idx`
         is set in AFC_extruder config. If `nozzle_led_idx` is set in AFC_extruder configuration then just
-        those leds will be turned on. If `nozzle_led_inx` is not provided then all leds not in defined in
+        those leds will be turned on. If `nozzle_led_idx` is not provided then all leds not in defined in
         `status_led_idx` will be turned on.
 
-        `EXTRUDER` - AFC_extruder config name to print leds. If single toolhead, this will always be `extruder`
-
-        `TURN_ON` - set to 1 to turn on leds, set to 0 to turn off leds. If not supplied, defaults to 1
+        EXTRUDER - AFC_extruder config name to print leds. If single toolhead, this will always be `extruder`<br>
+        TURN_ON - set to 1 to turn on leds, set to 0 to turn off leds. If not supplied, defaults to 1
 
         Usage
         -----

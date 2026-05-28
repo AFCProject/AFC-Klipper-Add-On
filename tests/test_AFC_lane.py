@@ -352,6 +352,47 @@ class TestAFCLaneLoadEs:
 
         assert lane_a.load_es != lane_b.load_es
 
+class TestAFCLaneIndexProperty:
+    def test_lane_index_property_map_none(self):
+        lane = _make_afc_lane()
+        lane.map = None
+        assert lane.lane_index == ""
+    
+    def test_lane_index_property_map_set(self):
+        lane = _make_afc_lane()
+        lane.map = "T5"
+        assert lane.lane_index == "5"
+    
+    def test_lane_index_property_is_str(self):
+        lane = _make_afc_lane()
+        lane.map = "T5"
+        assert isinstance(lane.lane_index, str)
+
+class TestAFCLaneExtruderIndexProperty:
+    def test_lane_extruder_index_property_is_int(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder1"
+        assert isinstance(lane.lane_extruder_index, int)
+
+    def test_lane_extruder_index_property_is_none(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj = None
+        assert isinstance(lane.lane_extruder_index, int)
+    
+    def test_lane_extruder_index_property_extruder(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder"
+        assert lane.lane_extruder_index == 0
+    
+    def test_lane_extruder_index_property_extruder1(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruder1"
+        assert lane.lane_extruder_index == 1
+    
+    def test_lane_extruder_index_property_value_error(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "extruderT"
+        assert lane.lane_extruder_index == 0    
 
 # ── get_color ─────────────────────────────────────────────────────────────────
 
@@ -593,6 +634,119 @@ class TestIsNormalPrintingState:
         from extras.AFC_lane import AFCLaneState
         lane = self._make_lane(AFCLaneState.NONE)
         assert lane._is_normal_printing_state() is False
+
+
+# ── send_lane_data / clear_lane_data ──────────────────────────────────────────
+
+def _make_lane_for_moonraker(extruder_name="extruder", map_value="T0"):
+    """Build a minimal AFCLane wired up for send/clear lane data tests."""
+    lane = _make_afc_lane("AFC_stepper lane1")
+    lane.map = map_value
+    lane.extruder_obj = MagicMock()
+    lane.extruder_obj.name = extruder_name
+    lane.color = "#FF0000"
+    lane._material = "PLA"
+    lane.bed_temp = 60
+    lane.extruder_temp = 210
+    lane.td1_data = {"scan_time": "1.23", "td": "0.95"}
+    lane.spool_id = "abc123"
+    lane.weight = 750.0
+    return lane
+
+
+def _get_sent_payload(lane):
+    """Call send_lane_data and return the payload passed to moonraker."""
+    lane.send_lane_data()
+    lane.afc.moonraker.send_lane_data.assert_called_once()
+    return lane.afc.moonraker.send_lane_data.call_args[0][0]
+
+
+def _get_cleared_payload(lane):
+    """Call clear_lane_data and return the payload passed to moonraker."""
+    lane.clear_lane_data()
+    lane.afc.moonraker.send_lane_data.assert_called_once()
+    return lane.afc.moonraker.send_lane_data.call_args[0][0]
+
+
+class TestSendLaneDataExtruderIndex:
+    @pytest.mark.parametrize("extruder_name,expected_index", [
+        ("extruder",  0),
+        ("extruder1", 1),
+        ("extruder2", 2),
+        ("extruder3", 3),
+    ])
+    def test_extruder_index_derivation(self, extruder_name, expected_index):
+        lane = _make_lane_for_moonraker(extruder_name=extruder_name, map_value=f"T{expected_index}")
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["extruder_index"] == expected_index
+
+    def test_extruder_index_is_int(self):
+        lane = _make_lane_for_moonraker(extruder_name="extruder1", map_value="T1")
+        payload = _get_sent_payload(lane)
+        assert isinstance(payload["value"]["extruder_index"], int)
+
+    def test_multiple_lanes_same_extruder_same_index(self):
+        lane_a = _make_lane_for_moonraker(extruder_name="extruder", map_value="T0")
+        lane_b = _make_lane_for_moonraker(extruder_name="extruder", map_value="T1")
+        payload_a = _get_sent_payload(lane_a)
+        payload_b = _get_sent_payload(lane_b)
+        assert payload_a["value"]["extruder_index"] == payload_b["value"]["extruder_index"]
+
+    def test_payload_namespace_is_lane_data(self):
+        lane = _make_lane_for_moonraker()
+        payload = _get_sent_payload(lane)
+        assert payload["namespace"] == "lane_data"
+
+    def test_no_send_when_map_is_none(self):
+        lane = _make_lane_for_moonraker()
+        lane.map = None
+        lane.send_lane_data()
+        lane.afc.moonraker.send_lane_data.assert_not_called()
+
+    def test_no_send_when_map_has_no_T(self):
+        lane = _make_lane_for_moonraker()
+        lane.map = "0"
+        lane.send_lane_data()
+        lane.afc.moonraker.send_lane_data.assert_not_called()
+
+
+class TestClearLaneDataExtruderIndex:
+    @pytest.mark.parametrize("extruder_name,expected_index", [
+        ("extruder",  0),
+        ("extruder1", 1),
+        ("extruder2", 2),
+        ("extruder3", 3),
+    ])
+    def test_extruder_index_derivation(self, extruder_name, expected_index):
+        lane = _make_lane_for_moonraker(extruder_name=extruder_name, map_value=f"T{expected_index}")
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["extruder_index"] == expected_index
+
+    def test_extruder_index_is_int(self):
+        lane = _make_lane_for_moonraker(extruder_name="extruder1", map_value="T1")
+        payload = _get_cleared_payload(lane)
+        assert isinstance(payload["value"]["extruder_index"], int)
+
+    def test_color_is_cleared(self):
+        lane = _make_lane_for_moonraker()
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["color"] == ""
+
+    def test_no_clear_when_map_is_none(self):
+        lane = _make_lane_for_moonraker()
+        lane.map = None
+        lane.clear_lane_data()
+        lane.afc.moonraker.send_lane_data.assert_not_called()
+
+
+# ── _is_normal_printing_state (continued) ─────────────────────────────────────
+
+class TestIsNormalPrintingStateContinued:
+    def _make_lane(self, status, in_toolchange=False):
+        lane = _make_lane_with_afc()
+        lane.status = status
+        lane.afc.in_toolchange = in_toolchange
+        return lane
 
     def test_in_toolchange_returns_false_even_if_tooled(self):
         from extras.AFC_lane import AFCLaneState
@@ -986,3 +1140,262 @@ class TestPerformPauseRunout:
         assert "Runout" in msg
         assert "Minimum weight" not in msg
         assert lane.name in msg
+
+# ── cmd_SET_LANE_LOADED ───────────────────────────────────────────────────────
+#
+# Tests added with help from claude
+#
+# Method logic summary:
+#   1. If lane.load_state is False → call AFC_error with message + pause=False, return early.
+#   2. If afc.get_bypass_state() returns True:
+#        - Build error message referencing lane name and bypass state.
+#        - If 'virtual' in afc.bypass.name → include "virtual" and "disable" in message.
+#        - Call logger.error(msg), return early.
+#   3. Happy path (load_state True, get_bypass_state() False):
+#        unset_lane_loaded() → handle_activate_extruder() → set_tool_loaded()
+#        → sync_to_extruder() → save_vars() → unit_obj.select_lane(self)
+#        → logger.info(message mentioning lane name)
+#
+# get_bypass_state() delegates to afc, so tests mock it directly on afc rather
+# than wiring the full bypass object internals. This also makes the tests
+# independent of the virtual/normal distinction inside get_bypass_state itself.
+#
+# load_state is a read-only property backed by _load_state; tests set _load_state
+# directly to control the guard without going through the real sensor machinery. 
+ 
+def _make_lane_for_set_loaded(
+    load_state=True,
+    bypass_active=False,
+    bypass_name="bypass",
+):
+    """Build a minimal AFCLane wired for cmd_SET_LANE_LOADED tests.
+ 
+    Args:
+        load_state: Value for lane._load_state (read-only property).
+        bypass_active: Return value of afc.get_bypass_state(). Mocked directly
+            on afc so tests are decoupled from get_bypass_state internals.
+        bypass_name: afc.bypass.name — controls virtual vs normal message path.
+    """
+    from tests.conftest import MockAFC, MockLogger
+ 
+    lane = _make_afc_lane("AFC_stepper lane1")
+    lane.afc = MockAFC()
+    lane.logger = MockLogger()
+ 
+    # load_state is a read-only property; drive it via its backing attribute.
+    lane._load_state = load_state
+ 
+    # Mock get_bypass_state directly — the method under test only calls this;
+    # it doesn't inspect the bypass object internals directly.
+    lane.afc.get_bypass_state = MagicMock(return_value=bypass_active)
+    lane.afc.bypass.name = bypass_name
+ 
+    # Methods called on the happy path
+    lane.set_tool_loaded    = MagicMock()
+    lane.sync_to_extruder   = MagicMock()
+    lane.unit_obj.select_lane = MagicMock()
+ 
+    return lane
+ 
+ 
+class TestCmdSetLaneLoaded:
+    """Tests for AFCLane.cmd_SET_LANE_LOADED."""
+ 
+    # ── early-exit: load_state is False ──────────────────────────────────────
+ 
+    def test_afc_error_called_when_not_loaded(self):
+        """AFC_error must be called when load_state is False."""
+        lane = _make_lane_for_set_loaded(load_state=False)
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.error.AFC_error.assert_called_once()
+ 
+    def test_afc_error_message_mentions_lane_name(self):
+        """The error message must include the lane name."""
+        lane = _make_lane_for_set_loaded(load_state=False)
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = lane.afc.error.AFC_error.call_args[0][0]
+        assert lane.name in msg
+ 
+    def test_afc_error_called_with_pause_false(self):
+        """AFC_error must be called with pause=False so the print is not paused."""
+        lane = _make_lane_for_set_loaded(load_state=False)
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        _, kwargs = lane.afc.error.AFC_error.call_args
+        assert kwargs.get("pause") is False
+ 
+    def test_no_happy_path_calls_when_not_loaded(self):
+        """When load_state is False none of the success-path methods must be called."""
+        lane = _make_lane_for_set_loaded(load_state=False)
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.function.unset_lane_loaded.assert_not_called()
+        lane.afc.function.handle_activate_extruder.assert_not_called()
+        lane.set_tool_loaded.assert_not_called()
+        lane.sync_to_extruder.assert_not_called()
+        lane.afc.save_vars.assert_not_called()
+        lane.unit_obj.select_lane.assert_not_called()
+ 
+    # ── early-exit: bypass active (normal, non-virtual) ───────────────────────
+ 
+    def test_logger_error_called_when_bypass_active(self):
+        """When get_bypass_state() is True, logger.error must be called."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="bypass_sensor")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        error_msgs = [msg for level, msg in lane.logger.messages if level == "error"]
+        assert len(error_msgs) == 1
+ 
+    def test_bypass_error_message_mentions_lane_name(self):
+        """The bypass error message must include the lane name."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="bypass_sensor")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert lane.name in msg
+ 
+    def test_bypass_error_message_mentions_bypass(self):
+        """The bypass error message must tell the user bypass is active."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="bypass_sensor")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert "bypass" in msg.lower()
+    
+    def test_bypass_error_message_mentions_detects_filament(self):
+        """The bypass error message must tell the user bypass is active."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="bypass_sensor")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert "detects filament" in msg.lower()
+ 
+    def test_normal_bypass_error_does_not_mention_disable(self):
+        """A non-virtual bypass message must NOT include 'disable'."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="bypass_sensor")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert "disable" not in msg.lower()
+ 
+    def test_no_happy_path_calls_when_bypass_active(self):
+        """When bypass is active none of the success-path methods must be called."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="bypass_sensor")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.function.unset_lane_loaded.assert_not_called()
+        lane.afc.function.handle_activate_extruder.assert_not_called()
+        lane.set_tool_loaded.assert_not_called()
+        lane.sync_to_extruder.assert_not_called()
+        lane.afc.save_vars.assert_not_called()
+        lane.unit_obj.select_lane.assert_not_called()
+ 
+    def test_get_bypass_state_is_called(self):
+        """The guard must delegate to afc.get_bypass_state()."""
+        lane = _make_lane_for_set_loaded(bypass_active=False)
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.get_bypass_state.assert_called_once()
+ 
+    # ── early-exit: bypass active (virtual) ──────────────────────────────────
+ 
+    def test_virtual_bypass_error_message_includes_virtual(self):
+        """When bypass name contains 'virtual' the message must say 'virtual'."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="virtual_bypass")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert "virtual" in msg.lower()
+ 
+    def test_virtual_bypass_error_message_includes_disable(self):
+        """When bypass name contains 'virtual' the message must include 'disable'."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="virtual_bypass")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert "disable" in msg.lower()
+    
+    def test_virtual_bypass_error_message_includes_is_enabled(self):
+        """When bypass name contains 'virtual' the message must include 'disable'."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="virtual_bypass")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert "is enabled" in msg.lower()
+
+    def test_virtual_bypass_error_message_does_not_include_detects_filament(self):
+        """When bypass name contains 'virtual' the message must include 'disable'."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="virtual_bypass")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        msg = next(msg for level, msg in lane.logger.messages if level == "error")
+        assert "detects filament" not in msg.lower()
+ 
+    def test_virtual_bypass_no_happy_path_calls(self):
+        """Virtual bypass path must also return early with no success-path calls."""
+        lane = _make_lane_for_set_loaded(bypass_active=True, bypass_name="virtual_bypass")
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.function.unset_lane_loaded.assert_not_called()
+        lane.set_tool_loaded.assert_not_called()
+ 
+    # ── happy path ────────────────────────────────────────────────────────────
+ 
+    def test_unset_lane_loaded_called(self):
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.function.unset_lane_loaded.assert_called_once()
+ 
+    def test_handle_activate_extruder_called(self):
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.function.handle_activate_extruder.assert_called_once()
+ 
+    def test_set_tool_loaded_called(self):
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.set_tool_loaded.assert_called_once()
+ 
+    def test_sync_to_extruder_called(self):
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.sync_to_extruder.assert_called_once()
+ 
+    def test_save_vars_called(self):
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.save_vars.assert_called_once()
+ 
+    def test_select_lane_called_with_self(self):
+        """unit_obj.select_lane must be called with the lane itself."""
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.unit_obj.select_lane.assert_called_once_with(lane)
+ 
+    def test_logger_info_called_with_lane_name(self):
+        """A success info message must be logged that mentions the lane name."""
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        info_msgs = [msg for level, msg in lane.logger.messages if level == "info"]
+        assert any(lane.name in msg for msg in info_msgs)
+ 
+    def test_happy_path_call_order(self):
+        """Success-path calls must execute in the correct sequence."""
+        lane = _make_lane_for_set_loaded()
+        order = []
+        lane.afc.function.unset_lane_loaded.side_effect        = lambda *a, **kw: order.append("unset_lane_loaded")
+        lane.afc.function.handle_activate_extruder.side_effect = lambda *a, **kw: order.append("handle_activate_extruder")
+        lane.set_tool_loaded.side_effect                        = lambda *a, **kw: order.append("set_tool_loaded")
+        lane.sync_to_extruder.side_effect                       = lambda *a, **kw: order.append("sync_to_extruder")
+        lane.afc.save_vars.side_effect                          = lambda *a, **kw: order.append("save_vars")
+        lane.unit_obj.select_lane.side_effect                   = lambda *a, **kw: order.append("select_lane")
+ 
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+ 
+        assert order == [
+            "unset_lane_loaded",
+            "handle_activate_extruder",
+            "set_tool_loaded",
+            "sync_to_extruder",
+            "save_vars",
+            "select_lane",
+        ]
+ 
+    def test_afc_error_not_called_on_happy_path(self):
+        """AFC_error must not be called when all preconditions are satisfied."""
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.afc.error.AFC_error.assert_not_called()
+ 
+    def test_no_logger_error_on_happy_path(self):
+        """No error must be logged when all preconditions are satisfied."""
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        error_msgs = [msg for level, msg in lane.logger.messages if level == "error"]
+        assert error_msgs == []
