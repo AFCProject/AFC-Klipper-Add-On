@@ -181,7 +181,7 @@ class AFCLane:
         self.load_then_home_var: bool  = config.getboolean("load_then_home", None)
         self.load_undershoot: float    = config.getfloat("load_undershoot", None)
         self.extruder_clear_dis: float = config.getfloat("extruder_clear_dis", None)
-        self.tool_max_unload_attempts  = config.getint('tool_max_unload_attempts', None) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
+        self.tool_max_unload_attempts  = config.getint('tool_max_unload_attempts', None, minval=0) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
 
         # Custom Load/unload Commands
         self.custom_load_cmd = config.get('custom_load_cmd', None)  # Custom command to run when loading lane, this will bypass the typical load sequence and run the command instead.

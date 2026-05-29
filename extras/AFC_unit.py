@@ -105,7 +105,7 @@ class afcUnit:
         self.rev_long_moves_speed_factor = config.getfloat("rev_long_moves_speed_factor", self.afc.rev_long_moves_speed_factor)
         self.extruder_clear_dis          = config.getfloat("extruder_clear_dis", 50)                        # Amount to move to clear extruder gears when ejecting filament
         self.enable_buffer_tool_check    = config.getboolean("enable_buffer_tool_check", False)
-        self.tool_max_unload_attempts    = config.getint('tool_max_unload_attempts', self.afc.tool_max_unload_attempts) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
+        self.tool_max_unload_attempts    = config.getint('tool_max_unload_attempts', self.afc.tool_max_unload_attempts, minval=0) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
 
         # Espooler defines
         # Time in seconds to wait between breaking n20 motors(nSleep/FWD/RWD all 1) and then releasing the break to allow coasting. Setting value here overrides values set in AFC.cfg file

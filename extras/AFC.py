@@ -222,7 +222,7 @@ class afc:
         self.load_then_home_var     = config.getboolean("load_then_home", True)
         self.load_undershoot        = config.getfloat("load_undershoot", 20)
 
-        self.tool_max_unload_attempts= config.getint('tool_max_unload_attempts', 4) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
+        self.tool_max_unload_attempts= config.getint('tool_max_unload_attempts', 4, minval=0) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
         self.tool_max_load_checks   = config.getint('tool_max_load_checks', 4)      # Max number of attempts to check to make sure filament is loaded into toolhead extruder when using buffer as ramming sensor
         self.max_move_tries         = config.getint("max_move_tries", 20)
 
@@ -1450,7 +1450,8 @@ class afc:
         :param cur_hub: The hub object associated with the lane.
         :param cur_extruder: The extruder object associated with the lane.
         """
-        if self.park_pre_load:
+        if (self.park_pre_load
+            and self.park_pre_load_cmd):
             self.gcode.run_script_from_command(self.park_pre_load_cmd)
 
         # Placeholder for custom load sequence

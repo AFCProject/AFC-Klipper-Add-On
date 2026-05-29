@@ -333,14 +333,11 @@ class TestHandleToolheadSensorRunout:
     
     def test_runout_no_handle_toolhead_runout_attr(self):
         ext = _make_afc_extruder()
-        lane = _make_afc_lane()
-        # Delete class handle_toolhead_runout so hasattr will return false
-        delattr(AFCLane, "handle_toolhead_runout")
-        spy = MagicMock(wraps=lane)
+        lane = MagicMock(spec=[])
         ext.lanes = {"lane1": lane}
         ext.lane_loaded = "lane1"
         ext._handle_toolhead_sensor_runout(False, "tool_end")
-        assert not spy.mock_calls
+        assert not hasattr(lane, "handle_toolhead_runout")
 
 
 # ── tool_start_callback ────────────────────────────────────────────────────────
@@ -1028,7 +1025,7 @@ class TestNoteToolStartCallback:
         ext.orig_note_filament_present = MagicMock()
         ext.note_tool_start_callback(True)
         args = ext.orig_note_filament_present.call_args.args
-        assert args[0] == True
+        assert args[0]
     
     def test_orig_note_filament_present_check_state_false(self):
         ext = _make_ext_for_tool_start()
@@ -1038,7 +1035,7 @@ class TestNoteToolStartCallback:
         ext.orig_note_filament_present = MagicMock()
         ext.note_tool_start_callback(False)
         args = ext.orig_note_filament_present.call_args.args
-        assert args[0] == False
+        assert not args[0]
     
     def test_orig_note_filament_present_check_default_force(self):
         ext = _make_ext_for_tool_start()
@@ -1048,7 +1045,7 @@ class TestNoteToolStartCallback:
         ext.orig_note_filament_present = MagicMock()
         ext.note_tool_start_callback(True)
         args = ext.orig_note_filament_present.call_args.args
-        assert args[1] == False
+        assert not args[1]
     
     def test_orig_note_filament_present_check_force_true(self):
         ext = _make_ext_for_tool_start()
@@ -1058,7 +1055,7 @@ class TestNoteToolStartCallback:
         ext.orig_note_filament_present = MagicMock()
         ext.note_tool_start_callback(True, True)
         args = ext.orig_note_filament_present.call_args.args
-        assert args[1] == True
+        assert args[1]
 
     def test_tool_start_callback_called(self):
         ext = _make_ext_for_tool_start()
@@ -1091,4 +1088,4 @@ class TestNoteToolStartCallback:
         ext.tool_start_callback = MagicMock()
         ext.note_tool_start_callback(True)
         args = ext.tool_start_callback.call_args.args
-        assert args[1] == True
+        assert args[1]
