@@ -67,10 +67,10 @@ Once the plugin is updated, please uncomment the lines in your `printer.cfg` fil
 
 ## Documentation
 
-Further documentation on the plugin, it's various commands and configuration references can be found [here](https://armoredturtle.xyz/docs/).
+Further documentation on the plugin, it's various commands and configuration references can be found [here](https://www.afcproject.dev/).
 
 ## Support
 
-[![Join me on Discord](https://discord.com/api/guilds/1229586267671629945/widget.png?style=banner2)](https://discord.gg/eT8zc3bvPR)
+[![Join me on Discord](https://discord.com/api/guilds/1495561254293471282/widget.png?style=banner2)](https://discord.gg/z2tgWEnfDT)
 
 Armored Turtle Configuration / Build Manuals [here](https://armoredturtle.xyz/)
