@@ -75,14 +75,14 @@ move_lite_files_back() {
 check_and_move_afc_files() {
     if [ ! -d "${printer_config_dir}/AFC" ]; then
         echo "Making AFC directories in printer_data/config directory"
-        mkdir -p ${printer_config_dir}/AFC
-        mkdir -p ${printer_config_dir}/AFC/macros
+        mkdir -p "${printer_config_dir}/AFC"
+        mkdir -p "${printer_config_dir}/AFC/macros"
 
         echo "Copying AFC config files to printer_data/config/AFC directory"
-        cp ${afc_dir}/templates/u1_macros/AFC.cfg ${printer_config_dir}/AFC/
-        cp ${afc_dir}/config/AFC_Macro_Vars.cfg ${printer_config_dir}/AFC/
-        cp ${afc_dir}/templates/u1_macros/Snapmaker_macros.cfg ${printer_config_dir}/AFC/macros/Snapmaker_macros.cfg
-        cp ${afc_dir}/templates/AFC_Hardware_U1.cfg ${printer_config_dir}/AFC/AFC_Hardware.cfg
+        cp "${afc_dir}/templates/u1_macros/AFC.cfg" "${printer_config_dir}/AFC/"
+        cp "${afc_dir}/config/AFC_Macro_Vars.cfg" "${printer_config_dir}/AFC/"
+        cp "${afc_dir}/templates/u1_macros/Snapmaker_macros.cfg" "${printer_config_dir}/AFC/macros/Snapmaker_macros.cfg"
+        cp "${afc_dir}/templates/AFC_Hardware_U1.cfg" "${printer_config_dir}/AFC/AFC_Hardware.cfg"
     fi
 }
 
