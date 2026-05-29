@@ -548,8 +548,10 @@ class afc:
         in_print, print_filename = self.function.in_print(return_file=True)
         self.logger.debug("In print: {}, Filename: {}".format(in_print, print_filename))
         if in_print:
-            # Gather file filament change count from moonraker
-            self.number_of_toolchanges  = self.moonraker.get_file_filament_change_count(print_filename)
+            self.number_of_toolchanges = 0
+            if self.moonraker is not None:
+                # Gather file filament change count from moonraker
+                self.number_of_toolchanges  = self.moonraker.get_file_filament_change_count(print_filename)
             self.current_toolchange     = -1 # Reset
             self.logger.info("Total number of toolchanges set to {}".format(self.number_of_toolchanges))
 
