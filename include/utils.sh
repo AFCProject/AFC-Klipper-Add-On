@@ -131,6 +131,7 @@ function copy_snapmaker_config() {
     mkdir -p "${afc_config_dir}/mcu"
     mkdir -p "${afc_config_dir}/macros"
     safe_copy "${afc_path}/templates/u1_macros/Snapmaker_macros.cfg" "${afc_config_dir}/macros/"
+    safe_copy "${afc_path}/config/macros/AFC_macros.cfg" "${afc_config_dir}/AFC/macros"
     safe_copy "${afc_path}/templates/AFC_Hardware_U1.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
 }
 
