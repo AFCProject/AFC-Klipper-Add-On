@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-05-28]
+### Added
+- Added support for AFC working on Snapmaker U1
+    - Added a signature check for trapq_append_sig c function since Snapmaker klipper add another parameter to this function call. When detected a zero is appended to a tuple before calling and unpacking args for trapq_append function.
+    - Updated AFC_logger to detect if FILE_SIZE can be passed into super init method, this is needed to be compatible with Snapmaker U1 as passing in False for file size will cause the log to grow without any rollover.
+    - Added `extruder` to filament switch config as its needed for Snapmaker U1, and also works on non Snapmaker klipper versions.
+    - Updated install scripts to work correctly on U1 machine
+    - Created new U1 install script to aid in installing AFC with `./install-afc.sh` and to have the ability to call this script from paxx12-Extended Firmware
+    - Adding U1 specific config files for AFC.cfg, AFC_hardware.cfg and Snapmaker_Macros.cfg
+- Added ability to call a park macro pre loading filament
+- Added ability to always force override T(n) mappings with force_assign_map variable.
+- Moved `tool_max_lane_unload_attempts` variable to reside at lane/unit configs, lane/unit will still inherit from AFC config if this variable is not set.
+### Fixed
+- Minor tweaks in AFC_vivid and AFC_stats files
+
 ## [2026-05-24]
 ### Fixed
 - Toolchanger: unload support for hub:direct lanes

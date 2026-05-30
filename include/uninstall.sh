@@ -8,6 +8,10 @@
 uninstall_afc() {
   unlink_extensions
   manage_include "${printer_config_dir}/printer.cfg" "remove"
+  if [ "$is_snapmaker" == "True" ]; then
+    move_lite_files_back
+    comment_gcode_in_fluidd
+  fi
   backup_afc_config
   restart_klipper
   message="""

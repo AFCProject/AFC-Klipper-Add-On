@@ -181,7 +181,7 @@ class AFC_vivid(afcBoxTurtle):
                     and selector_state):
                     self.unselect_lane()
 
-                self.logger.info(f"ViViD: Selecting {lane.name}")
+                self.logger.debug(f"{self.type}: Selecting {lane.name}")
                 homed, distance = self.selector_stepper_obj.do_homing_move(
                     movepos=self.max_selector_movement * sel_dir,
                     speed=self.selector_homing_speed,
@@ -195,7 +195,7 @@ class AFC_vivid(afcBoxTurtle):
                     self.selector_stepper_obj.move(lane.selector_cal_dis, lane.short_moves_speed,
                                                    lane.short_moves_accel, False)
 
-                self.logger.debug(f"ViViD: Homing done, success:{homed}, distance:{distance}")
+                self.logger.debug(f"{self.type}: Homing done, success:{homed}, distance:{distance}")
                 return homed, round(distance, 2)
 
     def prep_load(self, lane: AFCLane):
@@ -266,7 +266,8 @@ class AFC_vivid(afcBoxTurtle):
 
         :param move_distance: Distance in millimeters to move the selector. Defaults to 50 mm.
         """
-        self.selector_stepper_obj.move(move_distance, 100, 100, False)
+        self.selector_stepper_obj.move(move_distance, self.selector_homing_speed,
+                                       self.selector_homing_accel, False)
 
     def eject_lane(self, lane: AFCLane):
         """

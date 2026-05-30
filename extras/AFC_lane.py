@@ -181,6 +181,7 @@ class AFCLane:
         self.load_then_home_var: bool  = config.getboolean("load_then_home", None)
         self.load_undershoot: float    = config.getfloat("load_undershoot", None)
         self.extruder_clear_dis: float = config.getfloat("extruder_clear_dis", None)
+        self.tool_max_unload_attempts  = config.getint('tool_max_unload_attempts', None, minval=0) # Max number of attempts to unload filament from toolhead when using buffer as ramming sensor
 
         # Custom Load/unload Commands
         self.custom_load_cmd = config.get('custom_load_cmd', None)  # Custom command to run when loading lane, this will bypass the typical load sequence and run the command instead.
@@ -295,7 +296,7 @@ class AFCLane:
             and "extruder" not in self.name): # Protects against standalone lanes
             self._get_extruder_object()
             pin = self.extruder_obj.tool_start
-            if "buffer" not in pin:
+            if pin and "buffer" not in pin:
                 self._set_homing_endstop(query_endstops, ppins,
                                          pin, AFCHomingPoints.TOOL)
 
@@ -619,7 +620,7 @@ class AFCLane:
         # Checking if buffer was defined in extruder if not defined in unit/stepper
         elif (self.buffer_obj is None
               and self.extruder_obj.tool_start == "buffer"
-              and len(self.extruder_obj.lanes) > 1):
+              and self.name != self.extruder_obj.name):
             if self.extruder_obj.buffer_name is not None:
                 self.buffer_obj = self.printer.lookup_object("AFC_buffer {}".format(self.extruder_obj.buffer_name))
             else:
@@ -660,6 +661,7 @@ class AFCLane:
         if self.td1_device_id               is None: self.td1_device_id     = self.unit_obj.td1_device_id
         if self.extruder_clear_dis          is None: self.extruder_clear_dis= self.unit_obj.extruder_clear_dis
         if self.post_prep_macro             is None: self.post_prep_macro   = self.unit_obj.post_prep_macro
+        if self.tool_max_unload_attempts    is None: self.tool_max_unload_attempts = self.unit_obj.tool_max_unload_attempts
 
         if self.td1_bowden_length           is None:
             if not self.is_direct_hub():

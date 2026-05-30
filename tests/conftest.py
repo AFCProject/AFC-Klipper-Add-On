@@ -431,6 +431,8 @@ class MockPrinter:
             return MagicMock()
         if name == "buttons":
             return MagicMock()
+        if name == "extruder":
+            return MagicMock()
         return default
 
     def load_object(self, config, name):

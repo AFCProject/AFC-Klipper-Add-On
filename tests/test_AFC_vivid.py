@@ -320,7 +320,7 @@ class TestUnselectLane:
     def test_calls_selector_stepper_move(self):
         unit = _make_vivid()
         unit.unselect_lane()
-        unit.selector_stepper_obj.move.assert_called_once_with(50, 100, 100, False)
+        unit.selector_stepper_obj.move.assert_called_once_with(50, 150, 150, False)
 
 
 # ── move_to_hub ───────────────────────────────────────────────────────────────

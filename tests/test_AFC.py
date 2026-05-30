@@ -2320,3 +2320,175 @@ class TestCmdLaneMove:
         obj.cmd_LANE_MOVE(gcmd)
         args = lane.move_advanced.call_args.args
         assert args[1] == SpeedMode.LONG
+
+# ── _check_trapq_append_sig ───────────────────────────────────────────────────
+#
+# Method logic summary:
+#   1. Import chelper and call chelper.get_ffi() → (ffi_main, ffi_lib)
+#   2. Set self.trapq_append_line = False (default).
+#   3. Read the type signature of ffi_lib.trapq_append via ffi_main.typeof().
+#   4. If len(sig.args) == SNAPMAKER_TRAPQ_APPEND_LEN (15):
+#        - Log an info message mentioning "Snapmaker".
+#        - Set self.trapq_append_line = True.
+#      Otherwise: trapq_append_line stays False, nothing is logged.
+#
+# chelper is a C-extension that only exists inside a live Klipper environment,
+# so it is mocked via sys.modules for every test.  The mock exposes:
+#   - chelper.get_ffi()  → (ffi_main, ffi_lib)
+#   - ffi_main.typeof()  → a type object whose .args has a controllable length
+#   - ffi_lib.trapq_append  → any sentinel (only its type is read, not called)
+ 
+import sys
+from types import ModuleType
+from unittest.mock import MagicMock, patch
+ 
+ 
+def _make_chelper_mock(num_args: int):
+    """Return a (chelper_mod, ffi_main, ffi_lib) triple.
+ 
+    ffi_main.typeof(ffi_lib.trapq_append).args will have *num_args* elements.
+    """
+    sig_mock = MagicMock()
+    sig_mock.args = [MagicMock()] * num_args
+ 
+    ffi_main = MagicMock()
+    ffi_main.typeof.return_value = sig_mock
+ 
+    ffi_lib = MagicMock()
+ 
+    chelper_mod = ModuleType("chelper")
+    chelper_mod.get_ffi = MagicMock(return_value=(ffi_main, ffi_lib))
+ 
+    return chelper_mod, ffi_main, ffi_lib
+ 
+ 
+def _make_afc_for_trapq():
+    """Build a minimal AFC instance for _check_trapq_append_sig tests."""
+    obj = _make_afc()
+    obj.SNAPMAKER_TRAPQ_APPEND_LEN = 15
+    obj.trapq_append_line = None        # sentinel — must be overwritten by the method
+    return obj
+ 
+ 
+class TestCheckTrapqAppendSig:
+    """Tests for AFC._check_trapq_append_sig."""
+ 
+    # ── chelper interaction ───────────────────────────────────────────────────
+ 
+    def test_get_ffi_is_called(self):
+        """The method must call chelper.get_ffi() to obtain the FFI handles."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, ffi_main, _ = _make_chelper_mock(num_args=10)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        chelper_mod.get_ffi.assert_called_once()
+ 
+    def test_typeof_called_with_trapq_append(self):
+        """ffi_main.typeof() must be called with ffi_lib.trapq_append."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, ffi_main, ffi_lib = _make_chelper_mock(num_args=10)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        ffi_main.typeof.assert_called_once_with(ffi_lib.trapq_append)
+ 
+    # ── trapq_append_line initialised to False ────────────────────────────────
+ 
+    def test_trapq_append_line_always_reset_to_false_first(self):
+        """trapq_append_line must be set to False before the signature check runs."""
+        obj = _make_afc_for_trapq()
+        obj.trapq_append_line = True    # pre-set to True to prove it is reset
+        chelper_mod, ffi_main, _ = _make_chelper_mock(num_args=10)
+ 
+        call_log = []
+        original_typeof = ffi_main.typeof
+ 
+        def _record_state(*a, **kw):
+            call_log.append(obj.trapq_append_line)  # capture state at typeof() time
+            return original_typeof(*a, **kw)
+ 
+        ffi_main.typeof = _record_state
+ 
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+ 
+        assert call_log[0] is False, "trapq_append_line was not reset to False before the sig check"
+ 
+    # ── non-Snapmaker signature (len != 15) ───────────────────────────────────
+ 
+    def test_trapq_append_line_false_when_args_less_than_snapmaker(self):
+        """With fewer than 15 args, trapq_append_line must remain False."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=14)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        assert obj.trapq_append_line is False
+ 
+    def test_trapq_append_line_false_when_args_greater_than_snapmaker(self):
+        """With more than 15 args, trapq_append_line must remain False."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=16)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        assert obj.trapq_append_line is False
+ 
+    def test_trapq_append_line_false_when_args_is_zero(self):
+        """Edge case: zero args must leave trapq_append_line False."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=0)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        assert obj.trapq_append_line is False
+ 
+    def test_no_snapmaker_log_when_args_not_snapmaker_length(self):
+        """No Snapmaker info message must be logged when the signature does not match."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=14)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        info_msgs = [msg for level, msg in obj.logger.messages if level == "info"]
+        assert not any("Snapmaker" in msg for msg in info_msgs)
+ 
+    # ── Snapmaker signature (len == 15) ──────────────────────────────────────
+ 
+    def test_trapq_append_line_true_when_args_equal_snapmaker_len(self):
+        """With exactly 15 args, trapq_append_line must be set to True."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=15)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        assert obj.trapq_append_line is True
+ 
+    def test_snapmaker_info_logged_when_sig_matches(self):
+        """An info message mentioning 'Snapmaker' must be logged on match."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=15)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        info_msgs = [msg for level, msg in obj.logger.messages if level == "info"]
+        assert any("Found Snapmaker trapq_append signature" in msg for msg in info_msgs)
+ 
+    # ── SNAPMAKER_TRAPQ_APPEND_LEN constant boundary ──────────────────────────
+ 
+    def test_boundary_one_below_snapmaker_len_is_false(self):
+        """SNAPMAKER_TRAPQ_APPEND_LEN - 1 must not trigger the Snapmaker path."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=obj.SNAPMAKER_TRAPQ_APPEND_LEN - 1)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        assert obj.trapq_append_line is False
+ 
+    def test_boundary_one_above_snapmaker_len_is_false(self):
+        """SNAPMAKER_TRAPQ_APPEND_LEN + 1 must not trigger the Snapmaker path."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=obj.SNAPMAKER_TRAPQ_APPEND_LEN + 1)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        assert obj.trapq_append_line is False
+ 
+    def test_exact_snapmaker_len_is_true(self):
+        """Exactly SNAPMAKER_TRAPQ_APPEND_LEN args must trigger the Snapmaker path."""
+        obj = _make_afc_for_trapq()
+        chelper_mod, _, _ = _make_chelper_mock(num_args=obj.SNAPMAKER_TRAPQ_APPEND_LEN)
+        with patch.dict(sys.modules, {"chelper": chelper_mod}):
+            obj._check_trapq_append_sig()
+        assert obj.trapq_append_line is True

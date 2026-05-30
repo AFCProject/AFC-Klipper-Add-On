@@ -16,6 +16,7 @@ import sys
 import types
 
 from extras.AFC_extruder import AFCExtruderStats, AFCExtruder
+from tests.test_AFC_lane import _make_afc_lane, AFCLane
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ def _make_extruder_obj(name="extruder"):
     obj.name = name
     obj.afc = afc
     obj.logger = MockLogger()
+    obj.park_detector_obj = None
     return obj
 
 
@@ -243,6 +245,8 @@ def _make_afc_extruder(name="extruder"):
     ext.common_save_msg = f"\nRun SAVE_EXTRUDER_VALUES EXTRUDER={name} once done."
     ext.estats = MagicMock()
     ext.function = afc.function
+    ext.park_detector = None
+    ext.park_detector_obj = None
 
     # Toolchanger stuff
     ext.tool_obj = None
@@ -326,6 +330,14 @@ class TestHandleToolheadSensorRunout:
         ext.lane_loaded = "lane1"
         ext._handle_toolhead_sensor_runout(False, "tool_end")
         lane.handle_toolhead_runout.assert_called_once_with(sensor="tool_end")
+    
+    def test_runout_no_handle_toolhead_runout_attr(self):
+        ext = _make_afc_extruder()
+        lane = MagicMock(spec=[])
+        ext.lanes = {"lane1": lane}
+        ext.lane_loaded = "lane1"
+        ext._handle_toolhead_sensor_runout(False, "tool_end")
+        assert not hasattr(lane, "handle_toolhead_runout")
 
 
 # ── tool_start_callback ────────────────────────────────────────────────────────
@@ -794,6 +806,23 @@ class TestOnShuttle_WithoutDetectState:
         ext.tool_obj = _tool_without_detect_state()
         assert ext.on_shuttle() is False
 
+class TestOnShuttle_WithParkDetector:
+    def test_returns_true_active_state(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = None
+        ext.park_detector_obj = MagicMock()
+        ext.park_detector_obj.get_park_detector_status.return_value = {"state":"ACTIVATE"}
+
+        assert ext.on_shuttle() is True
+    
+    def test_returns_false_active_state(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = None
+        ext.park_detector_obj = MagicMock()
+        ext.park_detector_obj.get_park_detector_status.return_value = {"state":"NOT_ACTIVATE"}
+
+        assert ext.on_shuttle() is False
+
 # ── tool_start_callback helpers ───────────────────────────────────────────────
 
 def _make_ext_for_tool_start(name="extruder"):
@@ -977,3 +1006,86 @@ class TestToolStartCallback_StateChanged_WithToolchanger:
         ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
         ext.tool_start_callback(100.0, False)
         ext.load_unload_sequence.assert_not_called()
+
+class TestNoteToolStartCallback:
+    def test_orig_note_filament_present_called(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.note_tool_start_callback(True)
+        ext.orig_note_filament_present.assert_called_once()
+    
+    def test_orig_note_filament_present_check_state_true(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.note_tool_start_callback(True)
+        args = ext.orig_note_filament_present.call_args.args
+        assert args[0]
+    
+    def test_orig_note_filament_present_check_state_false(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.note_tool_start_callback(False)
+        args = ext.orig_note_filament_present.call_args.args
+        assert not args[0]
+    
+    def test_orig_note_filament_present_check_default_force(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.note_tool_start_callback(True)
+        args = ext.orig_note_filament_present.call_args.args
+        assert not args[1]
+    
+    def test_orig_note_filament_present_check_force_true(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.note_tool_start_callback(True, True)
+        args = ext.orig_note_filament_present.call_args.args
+        assert args[1]
+
+    def test_tool_start_callback_called(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.tool_start_callback = MagicMock()
+        ext.note_tool_start_callback(True)
+        ext.tool_start_callback.assert_called_once()
+
+    def test_tool_start_callback_check_arg0(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.tool_start_callback = MagicMock()
+        ext.note_tool_start_callback(True)
+        args = ext.tool_start_callback.call_args.args
+        assert args[0] == 0
+        assert isinstance(args[0], int)
+    
+    def test_tool_start_callback_check_state(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_unit_name     = "unit_0"
+        ext.no_lanes         = False
+        ext.tool_start_state = False
+        ext.orig_note_filament_present = MagicMock()
+        ext.tool_start_callback = MagicMock()
+        ext.note_tool_start_callback(True)
+        args = ext.tool_start_callback.call_args.args
+        assert args[1]
