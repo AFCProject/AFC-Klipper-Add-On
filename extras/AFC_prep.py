@@ -96,7 +96,6 @@ class afcPrep:
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 1)
 
         self._rename_macros()
-        self.afc.print_version(console_only=True)
 
         # Try and connect to moonraker
         self.afc.handle_moonraker_connect()
@@ -137,6 +136,9 @@ class afcPrep:
                   units["system"]["extruders"][extruder_obj.name]['lane_loaded']:
                     extruder_obj.lane_loaded = units["system"]["extruders"][extruder_obj.name]['lane_loaded']
 
+        self.afc.print_version(console_only=True)
+        if self.afc.snapmaker_printer:
+            self.logger.info("Snapmaker Printer Detected")
 
         for lane in self.afc.lanes.keys():
             cur_lane = self.afc.lanes[lane]

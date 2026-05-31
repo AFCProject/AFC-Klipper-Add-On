@@ -120,6 +120,7 @@ def _make_afc():
     obj.number_of_toolchanges = 0
     obj.temp_wait_tolerance = 5
     obj.in_toolchange = False
+    obj.snapmaker_printer = False
     obj.get_bypass_state = MagicMock(return_value=False)
     obj._get_quiet_mode = MagicMock(return_value=False)
     return obj
@@ -1327,6 +1328,71 @@ class TestCmdChangeTool_NewExtruderTempParsing:
         assert "PURGE_LENGTH" in error_msg
         obj.CHANGE_TOOL.assert_not_called()
 
+class TestCmdChange_ToolCheckBypass_CheckHomed():
+    def _make_gcmd(self):
+        gcmd = MagicMock()
+        # Use a T0 command line so cmd_CHANGE_TOOL takes the simple else-branch
+        # (no "CHANGE" in command) and Tcmd = "T0" directly.
+        gcmd.get_commandline.return_value = "T0"
+        return gcmd
+
+    def test_check_bypass_True(self):
+        obj, _, _ = _make_afc_for_change_tool()
+        gcmd = self._make_gcmd()
+        obj._check_bypass.return_value = True
+
+        ret = obj.cmd_CHANGE_TOOL(gcmd)
+        assert not ret
+
+    def test_check_homed_False(self):
+        obj, _, _ = _make_afc_for_change_tool()
+        gcmd = self._make_gcmd()
+        obj.function.check_homed.return_value = False
+
+        ret = obj.cmd_CHANGE_TOOL(gcmd)
+        assert not ret
+
+class TestCmdChangeTool_SnapmakerPath:
+    def _make_gcmd(self, tcmd="T0"):
+        gcmd = MagicMock()
+        # Use a T0 command line so cmd_CHANGE_TOOL takes the simple else-branch
+        # (no "CHANGE" in command) and Tcmd = "T0" directly.
+        gcmd.get_commandline.return_value = f"{tcmd} A0"
+        gcmd.get.side_effect = lambda key, default=None: {
+            "A": "0"
+        }.get(key, default)
+        return gcmd
+
+    def test_setting_A_param(self):
+        obj, _, _ = _make_afc_for_change_tool()
+        obj.snapmaker_printer = True
+        gcmd = self._make_gcmd()
+        obj.gcode = MagicMock()
+        obj.gcode.ready_gcode_handlers = {"_T0": MagicMock()}
+        ret = obj.cmd_CHANGE_TOOL(gcmd)
+        obj.gcode.run_script_from_command.assert_called_once()
+    
+    def test_setting_A_param_snapmaker_false(self):
+        obj, _, _ = _make_afc_for_change_tool()
+        obj.snapmaker_printer = False
+        obj.function.check_homed.return_value = False
+        gcmd = self._make_gcmd()
+        obj.gcode = MagicMock()
+        obj.gcode.ready_gcode_handlers = {"_T0": MagicMock()}
+        ret = obj.cmd_CHANGE_TOOL(gcmd)
+        obj.gcode.run_script_from_command.assert_not_called()
+        assert not ret
+
+    def test_setting_A_param_not_in_ready_gcode_handlers(self):
+        obj, _, _ = _make_afc_for_change_tool()
+        obj.snapmaker_printer = True
+        obj.function.check_homed.return_value = False
+        gcmd = self._make_gcmd("T5")
+        obj.gcode = MagicMock()
+        obj.gcode.ready_gcode_handlers = {"_T0": MagicMock()}
+        ret = obj.cmd_CHANGE_TOOL(gcmd)
+        obj.gcode.run_script_from_command.assert_not_called()
+        assert not ret
 
 # ── TOOL_LOAD: destination extruder already has a different lane loaded ───────
 
@@ -2320,3 +2386,19 @@ class TestCmdLaneMove:
         obj.cmd_LANE_MOVE(gcmd)
         args = lane.move_advanced.call_args.args
         assert args[1] == SpeedMode.LONG
+
+class TestCheckForSnapmakerSignature:
+    def test_check_for_snapmaker_signature_false(self):
+        from klippy import Printer
+        obj = _make_afc()
+        if hasattr(Printer, "get_snapmaker_config_dir"):
+            delattr(Printer, "get_snapmaker_config_dir")
+        obj._check_for_snapmaker_signature()
+        assert not obj.snapmaker_printer
+    
+    def test_check_for_snapmaker_signature_false(self):
+        from klippy import Printer
+        obj = _make_afc()
+        Printer.get_snapmaker_config_dir = MagicMock()
+        obj._check_for_snapmaker_signature()
+        assert obj.snapmaker_printer
