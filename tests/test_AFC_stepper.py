@@ -403,33 +403,19 @@ class TestTrapqAppend:
         """Standard signature: args tuple must be passed through unchanged."""
         obj, *_ = _make_wrapper(num_args=14)
         fn = MagicMock()
-        obj.trapq_append(fn, (1, 2, 3))
-        fn.assert_called_once_with(1, 2, 3)
+        obj.trapq_append(fn, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+        fn.assert_called_once_with(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
 
     def test_padding_added_on_snapmaker_signature(self):
         """Snapmaker signature: a trailing 0 must be appended to args."""
         obj, *_ = _make_wrapper(num_args=15)
         fn = MagicMock()
-        obj.trapq_append(fn, (1, 2, 3))
-        fn.assert_called_once_with(1, 2, 3, 0)
+        obj.trapq_append(fn, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+        fn.assert_called_once_with(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 0)
 
     def test_fn_called_exactly_once(self):
         """trapq_append_fn must be called exactly once per invocation."""
         obj, *_ = _make_wrapper(num_args=14)
         fn = MagicMock()
-        obj.trapq_append(fn, (1, 2, 3))
+        obj.trapq_append(fn, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
         assert fn.call_count == 1
-
-    def test_empty_args_no_padding_standard(self):
-        """Empty args on standard signature must call fn with no arguments."""
-        obj, *_ = _make_wrapper(num_args=14)
-        fn = MagicMock()
-        obj.trapq_append(fn, ())
-        fn.assert_called_once_with()
-
-    def test_empty_args_padding_snapmaker(self):
-        """Empty args on Snapmaker signature must call fn with just (0,)."""
-        obj, *_ = _make_wrapper(num_args=15)
-        fn = MagicMock()
-        obj.trapq_append(fn, ())
-        fn.assert_called_once_with(0)

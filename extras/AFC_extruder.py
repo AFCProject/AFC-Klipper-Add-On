@@ -333,14 +333,16 @@ class AFCExtruder:
             self.stepper_kinematics = ffi_main.gc(
                 ffi_lib.cartesian_stepper_alloc(b'x'), ffi_lib.free)
 
-            self.trapq_append_wrapper = TrapqAppendWrapper()
+            trapq_append_wrapper = TrapqAppendWrapper()
             if self.motion_queuing is not None:
                 self.trapq          = self.motion_queuing.allocate_trapq()
-                self.trapq_append   = self.motion_queuing.lookup_trapq_append()
+                _trapq_append       = self.motion_queuing.lookup_trapq_append()
             else:
                 self.trapq                  = ffi_main.gc(ffi_lib.trapq_alloc(), ffi_lib.trapq_free)
-                self.trapq_append           = ffi_lib.trapq_append
+                _trapq_append               = ffi_lib.trapq_append
                 self.trapq_finalize_moves   = ffi_lib.trapq_finalize_moves
+
+            self.trapq_append = lambda *args: trapq_append_wrapper.trapq_append(_trapq_append, *args)
 
         self.show_macros = self.afc.show_macros
         self.function: afcFunction = self.printer.load_object(config, 'AFC_functions')
@@ -620,12 +622,8 @@ class AFCExtruder:
 
         axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, self.tool_load_speed, 5)
         print_time = toolhead.get_last_move_time()
-
-        trapq_append_args = (self.trapq, print_time, accel_t, cruise_t, accel_t,
-                             0., 0., 0., axis_r, 0., 0., 0., cruise_v, 5,)
-
-        self.trapq_append_wrapper.trapq_append(self.trapq_append, trapq_append_args)
-
+        self.trapq_append(self.trapq, print_time, accel_t, cruise_t, accel_t,
+                          0., 0., 0., axis_r, 0., 0., 0., cruise_v, 5)
         print_time = print_time + accel_t + cruise_t + accel_t
 
         if self.motion_queuing is None:
