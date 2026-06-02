@@ -313,8 +313,6 @@ class afc:
         self.function.register_commands(self.show_macros, 'AFC_RESET_STATS', self.cmd_AFC_RESET_STATS,
                                         self.cmd_AFC_RESET_STATS_help, self.cmd_AFC_RESET_STATS_options)
 
-        self._check_trapq_append_sig()
-
     @property
     def current(self):
         return self.function.get_current_lane()
@@ -344,19 +342,6 @@ class afc:
                 else : self.logger.info("TRSYNC_SINGLE_MCU_TIMEOUT does not exist in mcu file, not updating")
             except Exception as e:
                 self.logger.info("Unable to update TRSYNC_TIMEOUT: {}".format(e))
-
-    def _check_trapq_append_sig(self):
-        """
-        Method for checking trapq_append signature since Snapmaker U1 firmware has an additional
-        parameter that needs to be passed in when calling this trapq_append c function.
-        """
-        import chelper
-        ffi_main, ffi_lib = chelper.get_ffi()
-        self.trapq_append_line = False
-        trapq_append_sig = ffi_main.typeof(ffi_lib.trapq_append)
-        if len(trapq_append_sig.args) == self.SNAPMAKER_TRAPQ_APPEND_LEN:
-            self.logger.info("Found Snapmaker trapq_append signature")
-            self.trapq_append_line = True
 
     def register_config_callback(self, option):
         # Function needed for virtual pins, does nothing
@@ -1365,7 +1350,6 @@ class afc:
 
                 temp_state = self.capture_toolhead_temp()
                 try:
-
                     # Run the load sequence, which may include custom gcode commands.
                     success = self.load_sequence(cur_lane, cur_hub, cur_extruder)
                     if not success:

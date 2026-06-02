@@ -16,7 +16,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 import pytest
 
-from extras.AFC_stepper import AFCExtruderStepper
+from extras.AFC_stepper import AFCExtruderStepper, TrapqAppendWrapper
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -329,3 +329,107 @@ class TestSyncUnsync:
         s.set_load_current = MagicMock()
         s.unsync_to_extruder(update_current=False)
         s.set_load_current.assert_not_called()
+
+# ── TrapqAppendWrapper  ───────────────────────────────────────────────────
+ 
+import sys
+from types import ModuleType
+from unittest.mock import MagicMock, patch
+
+# chelper is imported at the top level of AFC_stepper.py, so it must exist
+# in sys.modules before we import the module, otherwise the import fails.
+_chelper_stub = ModuleType("chelper")
+_chelper_stub.get_ffi = MagicMock()
+sys.modules.setdefault("chelper", _chelper_stub)
+
+def _make_chelper_mock(num_args: int):
+    sig_mock = MagicMock()
+    sig_mock.args = [MagicMock()] * num_args
+
+    ffi_main = MagicMock()
+    ffi_main.typeof.return_value = sig_mock
+
+    ffi_lib = MagicMock()
+
+    chelper_mod = ModuleType("chelper")
+    chelper_mod.get_ffi = MagicMock(return_value=(ffi_main, ffi_lib))
+
+    return chelper_mod, ffi_main, ffi_lib
+
+
+def _make_wrapper(num_args: int):
+    chelper_mock, ffi_main, ffi_lib = _make_chelper_mock(num_args)
+    with patch("extras.AFC_stepper.chelper", chelper_mock):
+        obj = TrapqAppendWrapper()
+    return obj, chelper_mock, ffi_main, ffi_lib
+
+
+class TestSnapmakerTrapqAppendSig:
+
+    def test_get_ffi_is_called(self):
+        """chelper.get_ffi() must be called exactly once during construction."""
+        _, chelper_mod, _, _ = _make_wrapper(num_args=10)
+        chelper_mod.get_ffi.assert_called_once()
+
+    def test_typeof_called_with_trapq_append(self):
+        """ffi_main.typeof() must receive ffi_lib.trapq_append as its argument."""
+        _, _, ffi_main, ffi_lib = _make_wrapper(num_args=10)
+        ffi_main.typeof.assert_called_once_with(ffi_lib.trapq_append)
+
+    def test_false_when_args_less_than_snapmaker(self):
+        """14 args (one fewer than Snapmaker) must yield False."""
+        obj, *_ = _make_wrapper(num_args=14)
+        assert obj.snapmaker_trapq_append_sig is False
+
+    def test_false_when_args_greater_than_snapmaker(self):
+        """16 args (one more than Snapmaker) must yield False."""
+        obj, *_ = _make_wrapper(num_args=16)
+        assert obj.snapmaker_trapq_append_sig is False
+
+    def test_false_when_zero_args(self):
+        """Edge case: zero args must yield False."""
+        obj, *_ = _make_wrapper(num_args=0)
+        assert obj.snapmaker_trapq_append_sig is False
+
+    def test_true_when_exactly_snapmaker_len(self):
+        """Exactly 15 args must yield True."""
+        obj, *_ = _make_wrapper(num_args=15)
+        assert obj.snapmaker_trapq_append_sig is True
+
+
+class TestTrapqAppend:
+
+    def test_no_padding_on_standard_signature(self):
+        """Standard signature: args tuple must be passed through unchanged."""
+        obj, *_ = _make_wrapper(num_args=14)
+        fn = MagicMock()
+        obj.trapq_append(fn, (1, 2, 3))
+        fn.assert_called_once_with(1, 2, 3)
+
+    def test_padding_added_on_snapmaker_signature(self):
+        """Snapmaker signature: a trailing 0 must be appended to args."""
+        obj, *_ = _make_wrapper(num_args=15)
+        fn = MagicMock()
+        obj.trapq_append(fn, (1, 2, 3))
+        fn.assert_called_once_with(1, 2, 3, 0)
+
+    def test_fn_called_exactly_once(self):
+        """trapq_append_fn must be called exactly once per invocation."""
+        obj, *_ = _make_wrapper(num_args=14)
+        fn = MagicMock()
+        obj.trapq_append(fn, (1, 2, 3))
+        assert fn.call_count == 1
+
+    def test_empty_args_no_padding_standard(self):
+        """Empty args on standard signature must call fn with no arguments."""
+        obj, *_ = _make_wrapper(num_args=14)
+        fn = MagicMock()
+        obj.trapq_append(fn, ())
+        fn.assert_called_once_with()
+
+    def test_empty_args_padding_snapmaker(self):
+        """Empty args on Snapmaker signature must call fn with just (0,)."""
+        obj, *_ = _make_wrapper(num_args=15)
+        fn = MagicMock()
+        obj.trapq_append(fn, ())
+        fn.assert_called_once_with(0)

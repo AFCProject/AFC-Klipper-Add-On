@@ -46,6 +46,9 @@ except: raise error(ERROR_STR.format(import_lib="AFC", trace=traceback.format_ex
 try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
+try: from extras.AFC_stepper import TrapqAppendWrapper
+except: raise error(ERROR_STR.format(import_lib="AFC_stepper", trace=traceback.format_exc()))
+
 LARGE_TIME_OFFSET = 99999.9
 
 class AFCExtruderStats:
@@ -330,6 +333,7 @@ class AFCExtruder:
             self.stepper_kinematics = ffi_main.gc(
                 ffi_lib.cartesian_stepper_alloc(b'x'), ffi_lib.free)
 
+            self.trapq_append_wrapper = TrapqAppendWrapper()
             if self.motion_queuing is not None:
                 self.trapq          = self.motion_queuing.allocate_trapq()
                 self.trapq_append   = self.motion_queuing.lookup_trapq_append()
@@ -391,7 +395,7 @@ class AFCExtruder:
         self.reactor = self.afc.reactor
         self.afc.tools[self.name] = self
 
-        self.toolhead_extruder = self.printer.lookup_object(self.name)
+        self.toolhead_extruder = self.printer.lookup_object(self.name, None)
         if not self.toolhead_extruder:
             error_str = self.common_error.format(self.name, self.fullname)
             raise error(error_str)
@@ -620,11 +624,7 @@ class AFCExtruder:
         trapq_append_args = (self.trapq, print_time, accel_t, cruise_t, accel_t,
                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, 5,)
 
-        # Checking to see if zero needs to be appended, this is mainly for Snapmaker U1 klipper version
-        if self.afc.trapq_append_line:
-            trapq_append_args = trapq_append_args + (0,)
-
-        self.trapq_append(*trapq_append_args)
+        self.trapq_append_wrapper.trapq_append(self.trapq_append, trapq_append_args)
 
         print_time = print_time + accel_t + cruise_t + accel_t
 
