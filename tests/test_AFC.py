@@ -1366,9 +1366,9 @@ class TestCmdChangeTool_SnapmakerPath:
     def get_snapmaker_config_dir():
             pass
 
-    def test_setting_A_param(self):
+    def test_setting_A_param(self, monkeypatch):
         obj, _, _ = _make_afc_for_change_tool()
-        setattr(Printer, "get_snapmaker_config_dir", self.get_snapmaker_config_dir)
+        monkeypatch.setattr(Printer, "get_snapmaker_config_dir", True, raising=False)
         gcmd = self._make_gcmd()
         obj.gcode = MagicMock()
         obj.gcode.ready_gcode_handlers = {"_T0": MagicMock()}
@@ -1378,8 +1378,6 @@ class TestCmdChangeTool_SnapmakerPath:
     def test_setting_A_param_snapmaker_false(self):
         obj, _, _ = _make_afc_for_change_tool()
         obj.function.check_homed.return_value = False
-        if hasattr(Printer, "get_snapmaker_config_dir"):
-            delattr(Printer, "get_snapmaker_config_dir")
         gcmd = self._make_gcmd()
         obj.gcode = MagicMock()
         obj.gcode.ready_gcode_handlers = {"_T0": MagicMock()}
@@ -1387,10 +1385,10 @@ class TestCmdChangeTool_SnapmakerPath:
         obj.gcode.run_script_from_command.assert_not_called()
         assert not ret
 
-    def test_setting_A_param_not_in_ready_gcode_handlers(self):
+    def test_setting_A_param_not_in_ready_gcode_handlers(self, monkeypatch):
         obj, _, _ = _make_afc_for_change_tool()
         obj.function.check_homed.return_value = False
-        setattr(Printer, "get_snapmaker_config_dir", self.get_snapmaker_config_dir)
+        monkeypatch.setattr(Printer, "get_snapmaker_config_dir", True, raising=False)
         obj.function.check_homed.return_value = False
         gcmd = self._make_gcmd("T5")
         obj.gcode = MagicMock()
@@ -2396,12 +2394,10 @@ class TestCheckForSnapmakerSignature:
     def test_check_snapmaker_printer_property_false(self):
         obj = _make_afc()
         obj.printer = Printer
-        if hasattr(Printer, "get_snapmaker_config_dir"):
-            delattr(Printer, "get_snapmaker_config_dir")
         assert not obj.snapmaker_printer
     
-    def test_check_snapmaker_printer_property_true(self):
+    def test_check_snapmaker_printer_property_true(self, monkeypatch):
         obj = _make_afc()
         obj.printer = Printer
-        setattr(Printer, "get_snapmaker_config_dir", True)
+        monkeypatch.setattr(Printer, "get_snapmaker_config_dir", True, raising=False)
         assert obj.snapmaker_printer
