@@ -719,8 +719,9 @@ class AFCExtruderStepper(AFCLane):
                 steps_moved = abs(trig_mcu_pos - start_mcu_pos)
                 dist_mm = steps_moved * step_dist
             except Exception as e:
+                steps_moved = 0
+                dist_mm = 0.0
                 self.logger.debug(f"Exception {e}")
-                pass
             self.logger.debug(f"Homed lane {self.name} to ENDSTOP={endstop_spec} trigger after "\
                               f"{dist_mm:.3f}mm (steps={steps_moved} dt={(end_ts-start_ts):.3f}s)")
 

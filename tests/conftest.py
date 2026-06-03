@@ -192,7 +192,10 @@ def _make_force_move_mock():
 def _make_klippy_ready_mock():
     mod = types.ModuleType("klippy")
     mod.message_ready = "Printer is ready"
-    mod.Printer = MagicMock()
+    
+    class Printer:
+        pass
+    mod.Printer = Printer
     return mod
 
 

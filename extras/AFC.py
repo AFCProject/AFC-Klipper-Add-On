@@ -8,7 +8,9 @@ import json
 import re
 import traceback
 import inspect
+from functools import cached_property
 from configfile import error
+from klippy import Printer
 
 from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple
 
@@ -312,10 +314,6 @@ class afc:
         self.function.register_commands(self.show_macros, 'AFC_RESET_STATS', self.cmd_AFC_RESET_STATS,
                                         self.cmd_AFC_RESET_STATS_help, self.cmd_AFC_RESET_STATS_options)
 
-        # Snapmaker Related Checks
-        self.snapmaker_printer = False
-        self._check_for_snapmaker_signature()
-
     @property
     def current(self):
         return self.function.get_current_lane()
@@ -346,14 +344,14 @@ class afc:
             except Exception as e:
                 self.logger.info("Unable to update TRSYNC_TIMEOUT: {}".format(e))
 
-    def _check_for_snapmaker_signature(self):
+    @cached_property
+    def snapmaker_printer(self):
         """
-        Method to check for Snapmaker U1 signature. If get_snapmaker_config_dir method exists in
-        klippy Printer Class, then print is running u1-klipper version. Sets `snapmaker_printer` to
-        True when this method exists.
+        Property to check get_snapmaker_config_dir method exists in klippy Printer Class.
+
+        :return bool: Returns True of get_snapmaker_config_dir method is found in Printer class
         """
-        from klippy import Printer
-        self.snapmaker_printer = hasattr(Printer, "get_snapmaker_config_dir")
+        return hasattr(Printer, "get_snapmaker_config_dir")
 
     def register_config_callback(self, option):
         # Function needed for virtual pins, does nothing

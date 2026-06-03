@@ -28,6 +28,7 @@ import pytest
 
 from extras.AFC import afc, State, AFC_VERSION
 from extras.AFC_lane import AFCLaneState
+from klippy import Printer
 
 
 # ── State constants ───────────────────────────────────────────────────────────
@@ -120,7 +121,6 @@ def _make_afc():
     obj.number_of_toolchanges = 0
     obj.temp_wait_tolerance = 5
     obj.in_toolchange = False
-    obj.snapmaker_printer = False
     obj.get_bypass_state = MagicMock(return_value=False)
     obj._get_quiet_mode = MagicMock(return_value=False)
     return obj
@@ -589,6 +589,7 @@ def _make_afc_for_change_tool(lane_name="lane2", next_extruder_name="extruder1",
     obj._cooldown_last_extruder = MagicMock()
     obj._wait_for_temp_within_tolerance = MagicMock()
     obj.error = MagicMock()
+    obj.printer = Printer
 
     # Current (old) lane/extruder
     current_extruder = MagicMock()
@@ -1362,10 +1363,12 @@ class TestCmdChangeTool_SnapmakerPath:
             "A": "0"
         }.get(key, default)
         return gcmd
+    def get_snapmaker_config_dir():
+            pass
 
     def test_setting_A_param(self):
         obj, _, _ = _make_afc_for_change_tool()
-        obj.snapmaker_printer = True
+        setattr(Printer, "get_snapmaker_config_dir", self.get_snapmaker_config_dir)
         gcmd = self._make_gcmd()
         obj.gcode = MagicMock()
         obj.gcode.ready_gcode_handlers = {"_T0": MagicMock()}
@@ -1374,8 +1377,9 @@ class TestCmdChangeTool_SnapmakerPath:
     
     def test_setting_A_param_snapmaker_false(self):
         obj, _, _ = _make_afc_for_change_tool()
-        obj.snapmaker_printer = False
         obj.function.check_homed.return_value = False
+        if hasattr(Printer, "get_snapmaker_config_dir"):
+            delattr(Printer, "get_snapmaker_config_dir")
         gcmd = self._make_gcmd()
         obj.gcode = MagicMock()
         obj.gcode.ready_gcode_handlers = {"_T0": MagicMock()}
@@ -1385,7 +1389,8 @@ class TestCmdChangeTool_SnapmakerPath:
 
     def test_setting_A_param_not_in_ready_gcode_handlers(self):
         obj, _, _ = _make_afc_for_change_tool()
-        obj.snapmaker_printer = True
+        obj.function.check_homed.return_value = False
+        setattr(Printer, "get_snapmaker_config_dir", self.get_snapmaker_config_dir)
         obj.function.check_homed.return_value = False
         gcmd = self._make_gcmd("T5")
         obj.gcode = MagicMock()
@@ -2388,17 +2393,15 @@ class TestCmdLaneMove:
         assert args[1] == SpeedMode.LONG
 
 class TestCheckForSnapmakerSignature:
-    def test_check_for_snapmaker_signature_false(self):
-        from klippy import Printer
+    def test_check_snapmaker_printer_property_false(self):
         obj = _make_afc()
+        obj.printer = Printer
         if hasattr(Printer, "get_snapmaker_config_dir"):
             delattr(Printer, "get_snapmaker_config_dir")
-        obj._check_for_snapmaker_signature()
         assert not obj.snapmaker_printer
     
-    def test_check_for_snapmaker_signature_false(self):
-        from klippy import Printer
+    def test_check_snapmaker_printer_property_true(self):
         obj = _make_afc()
-        Printer.get_snapmaker_config_dir = MagicMock()
-        obj._check_for_snapmaker_signature()
+        obj.printer = Printer
+        setattr(Printer, "get_snapmaker_config_dir", True)
         assert obj.snapmaker_printer
