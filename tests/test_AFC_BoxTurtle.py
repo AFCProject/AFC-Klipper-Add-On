@@ -8,10 +8,11 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 
 from extras.AFC_BoxTurtle import afcBoxTurtle
+from tests.test_AFC_lane import _make_afc_lane
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -155,29 +156,32 @@ class Test_MoveLane:
     def test_returns_not_enable_movement_loaded(self):
         from unittest.mock import PropertyMock
         unit = _make_box_turtle()
-        lane = _make_lane()
-        type(lane).load_state = PropertyMock(side_effect=[True])
+        lane = _make_afc_lane()
+        with patch.object(type(lane), "load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[True]
 
-        result = unit._move_lane(lane, delay=1, enable_movement=False)
+            result = unit._move_lane(lane, delay=1, enable_movement=False)
         assert result is True
     
     def test_returns_not_enable_movement_not_loaded(self):
         from unittest.mock import PropertyMock
         unit = _make_box_turtle()
-        lane = _make_lane()
-        type(lane).load_state = PropertyMock(side_effect=[False])
+        lane = _make_afc_lane()
+        with patch.object(type(lane), "load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[False]
 
-        result = unit._move_lane(lane, delay=1, enable_movement=False)
+            result = unit._move_lane(lane, delay=1, enable_movement=False)
         assert result is False
     
     def test_returns_enable_movement_not_loaded(self):
         from unittest.mock import PropertyMock
         unit = _make_box_turtle()
-        lane = _make_lane()
+        lane = _make_afc_lane()
         pause_mock = MagicMock()
         unit.afc.reactor.pause = pause_mock
-        type(lane).load_state = PropertyMock(side_effect=[False])
+        with patch.object(type(lane), "load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[False]
 
-        result = unit._move_lane(lane, delay=1, enable_movement=True)
+            result = unit._move_lane(lane, delay=1, enable_movement=True)
         assert result is False
         pause_mock.assert_called()

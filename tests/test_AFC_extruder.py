@@ -247,7 +247,9 @@ def _make_afc_extruder(name="extruder"):
     ext.function = afc.function
     ext.park_detector = None
     ext.park_detector_obj = None
-
+    ext.tc_name = None
+    ext.no_lanes = False
+    
     # Toolchanger stuff
     ext.tool_obj = None
     ext.tc_unit_name = None
@@ -264,6 +266,62 @@ class TestAFCExtruderStr:
         ext = _make_afc_extruder("my_extruder")
         assert str(ext) == "my_extruder"
 
+class TestAFCExtruderHandleReady:
+    def _make_extruder_with_lane(self, name):
+        ext = _make_afc_extruder(name)
+        ext.tc_lane = _make_afc_lane()
+        ext.tc_lane.set_tool_loaded = MagicMock()
+        ext.tc_lane.set_loaded = MagicMock()
+        return ext
+
+    def test_handle_ready_lanes(self):
+        extruder_name = "extruder"
+        ext = self._make_extruder_with_lane(extruder_name)
+
+        ext.handle_ready()
+
+        assert ext.no_lanes is False
+        warn_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert not any(f"{extruder_name} no lanes" in m for m in warn_msgs)
+
+    def test_handle_ready_no_lanes(self):
+        extruder_name = "extruder"
+        ext = self._make_extruder_with_lane(extruder_name)
+        ext.lanes.update({extruder_name: ext})
+
+        ext.handle_ready()
+        warn_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+
+        assert ext.no_lanes is True
+        assert any(f"{extruder_name} no lanes" in m for m in warn_msgs)
+        assert ext.tc_lane._load_state == ext.tool_start_state
+        assert ext.tc_lane.prep_state  == ext.tool_start_state
+
+    def test_handle_ready_no_lanes_tool_start_True(self):
+        extruder_name = "extruder"
+        ext = self._make_extruder_with_lane(extruder_name)
+        ext.tool_start_state = True
+        ext.lanes.update({extruder_name: ext})
+
+        ext.handle_ready()
+
+        assert ext.no_lanes is True
+        assert ext.tc_lane._load_state == ext.tool_start_state
+        assert ext.tc_lane.prep_state  == ext.tool_start_state
+        ext.tc_lane.set_tool_loaded.assert_called_once()
+        ext.tc_lane.set_loaded.assert_called_once()
+    
+    def test_handle_ready_no_lanes_tool_start_buffer(self):
+        from configparser import Error as error
+        extruder_name = "extruder"
+        ext = self._make_extruder_with_lane(extruder_name)
+        ext.tool_start = "buffer"
+        ext.lanes.update({extruder_name: ext})
+
+        with pytest.raises(error) as exc:
+            ext.handle_ready()
+
+        assert f"buffer is not valid config for pin_tool_start when using {extruder_name} as a standalone extruder" in str(exc.value)
 
 # ── handle_connect ─────────────────────────────────────────────────────────────
 
@@ -846,12 +904,21 @@ def _make_ext_for_tool_start(name="extruder"):
 class TestToolStartCallback_StateUnchanged:
     """state == tool_start_state: logs, still updates tool_start_state."""
 
-    def test_logs_info_when_state_unchanged(self):
+    def test_logs_info_when_state_unchanged_standalone_toolhead(self):
+        ext = _make_ext_for_tool_start()
+        ext.tool_start_state = False
+        ext.tc_unit_name = "extruder"
+        ext.no_lanes = True
+        ext.tool_start_callback(100.0, False)
+        info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert any("Not loading" in m for m in info_msgs)
+    
+    def test_logs_info_when_state_unchanged_not_standalone_toolhead(self):
         ext = _make_ext_for_tool_start()
         ext.tool_start_state = False
         ext.tool_start_callback(100.0, False)
         info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
-        assert any("Not loading" in m for m in info_msgs)
+        assert not any("Not loading" in m for m in info_msgs)
 
     def test_state_still_set_when_unchanged(self):
         ext = _make_ext_for_tool_start()
@@ -915,7 +982,8 @@ class TestToolStartCallback_StateChanged_WithToolchanger:
     """tc_unit_name set + no_lanes=True: tc_lane state is always updated."""
 
     def _make_tc_ext(self, printer_ready=False, prep_done=False,
-                     state=True, load_active=False):
+                     state=True, load_active=False, on_shuttle=False,
+                     printing=False):
         from klippy import message_ready as READY
         ext                  = _make_ext_for_tool_start()
         ext.tc_unit_name     = "unit_0"
@@ -924,6 +992,8 @@ class TestToolStartCallback_StateChanged_WithToolchanger:
         ext.load_active      = load_active
         ext.printer.state_message = READY if printer_ready else "startup"
         ext.tc_lane._afc_prep_done = prep_done
+        ext.on_shuttle = MagicMock(return_value=on_shuttle)
+        ext.afc.function.is_printing.return_value = printing
         return ext
 
     def test_tc_lane_load_state_updated(self):
@@ -991,21 +1061,58 @@ class TestToolStartCallback_StateChanged_WithToolchanger:
         ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
         ext.tool_start_callback(100.0, False)
         ext.tc_lane.set_tool_unloaded.assert_called_once()
+    
+    def test_set_tool_unloaded_not_called_on_runout(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False,
+                                on_shuttle=True, printing=True)
+        ext.tool_start_callback(100.0, False)
+        ext.tc_lane.set_tool_unloaded.assert_not_called()
 
     def test_set_unloaded_called_on_runout(self):
         ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
         ext.tool_start_callback(100.0, False)
         ext.tc_lane.set_unloaded.assert_called_once()
+    
+    def test_set_unloaded_not_called_on_runout(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False,
+                                on_shuttle=True, printing=True)
+        ext.tool_start_callback(100.0, False)
+        ext.tc_lane.set_unloaded.assert_not_called()
 
     def test_save_vars_called_after_runout(self):
-        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False,
+                                on_shuttle=False, printing=False)
         ext.tool_start_callback(100.0, False)
-        ext.afc.save_vars.assert_called_once()
+        ext.afc.save_vars.assert_called()
 
     def test_load_sequence_not_called_on_runout(self):
         ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
         ext.tool_start_callback(100.0, False)
         ext.load_unload_sequence.assert_not_called()
+    
+    def test_load_sequence_info_called(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False,
+                                on_shuttle=True, printing=True)
+        ext.tool_start_callback(100.0, False)
+        ext.load_unload_sequence.assert_not_called()
+        info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert any("Cannot trigger auto load/unload" in m for m in info_msgs)
+    
+    def test_load_sequence_info_not_called_not_printing(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False,
+                                on_shuttle=True, printing=False)
+        ext.tool_start_callback(100.0, False)
+        ext.load_unload_sequence.assert_not_called()
+        info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert not any("Cannot trigger auto load/unload" in m for m in info_msgs)
+    
+    def test_load_sequence_info_not_called_not_on_shuttle(self):
+        ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False,
+                                on_shuttle=False, printing=True)
+        ext.tool_start_callback(100.0, False)
+        ext.load_unload_sequence.assert_not_called()
+        info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert not any("Cannot trigger auto load/unload" in m for m in info_msgs)
 
 class TestNoteToolStartCallback:
     def test_orig_note_filament_present_called(self):

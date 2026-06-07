@@ -12,7 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, PropertyMock
 import pytest
 
 from extras.AFC_error import afcError
@@ -471,8 +471,9 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
         # Sequence: if check(True→enter), while check(True→loop), while check(False→exit),
         #           while-not check(False→enter), while-not check(True→exit)
-        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False, False, True])
-        result = err.ToolHeadFix(lane)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [True, True, False, False, True]
+            result = err.ToolHeadFix(lane)
         assert result is True
         assert err.pause is False
         afc.save_vars.assert_called_once()
@@ -485,8 +486,9 @@ class TestToolHeadFix:
         afc.homing_enabled = False
         lane = _make_afc_lane()
         lane.get_toolhead_pre_sensor_state.return_value = False
-        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False, False, True])
-        err.ToolHeadFix(lane)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[True, True, False, False, True]
+            err.ToolHeadFix(lane)
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
         assert lane.extruder_obj.lane_loaded == None
@@ -504,8 +506,9 @@ class TestToolHeadFix:
         lane.hub_obj.afc_bowden_length = 1300
         # Sequence: if check(True→enter), while check(True→loop), while check(False→exit),
         #           while-not check(False→enter), while-not check(True→exit)
-        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False])
-        result = err.ToolHeadFix(lane)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[True, True, False]
+            result = err.ToolHeadFix(lane)
         assert result is True
         assert err.pause is False
         afc.save_vars.assert_called_once()
@@ -520,8 +523,9 @@ class TestToolHeadFix:
         lane.hub_obj = MagicMock()
         lane.hub_obj.afc_bowden_length = 1300
         lane.get_toolhead_pre_sensor_state.return_value = False
-        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, False])
-        err.ToolHeadFix(lane)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[True, True, False]
+            err.ToolHeadFix(lane)
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
         assert lane.extruder_obj.lane_loaded == None
@@ -539,8 +543,9 @@ class TestToolHeadFix:
         lane.hub_obj.afc_bowden_length = 1300
         # Sequence: if check(True→enter), while check(True→loop), while check(False→exit),
         #           while-not check(False→enter), while-not check(True→exit)
-        type(lane).raw_load_state = PropertyMock(side_effect=[True, True, True, True, True, True])
-        result = err.ToolHeadFix(lane)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[True, True, True, True, True, True]
+            result = err.ToolHeadFix(lane)
         assert result is False
         assert err.pause is False
         err.PauseUserIntervention.assert_called_with("Failed to retract lane1 to load sensor")

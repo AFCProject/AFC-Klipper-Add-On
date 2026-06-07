@@ -26,6 +26,7 @@ from extras.AFC_lane import (
     AFCMoveWarning
 )
 from extras.AFC_stepper import AFCExtruderStepper
+from tests.conftest import MockAFC, MockLogger
 
 
 # ── SpeedMode ─────────────────────────────────────────────────────────────────
@@ -187,6 +188,7 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     """Build an AFCLane bypassing the complex __init__."""
     lane = AFCLane.__new__(AFCLane)
     parts = fullname.split()
+    lane.logger = MockLogger()
     lane.fullname = fullname
     lane.name = parts[-1]
     lane.afc = MagicMock()
@@ -214,6 +216,10 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane.remember_spool = False
     lane.short_moves_speed = 50
     lane.short_moves_accel = 100
+    lane._load_state = False
+    lane.runout_lane = None
+    lane.map = "T0"
+    lane.gcode = MagicMock()
     return lane
 
 
@@ -1399,3 +1405,316 @@ class TestCmdSetLaneLoaded:
         lane.cmd_SET_LANE_LOADED(MagicMock())
         error_msgs = [msg for level, msg in lane.logger.messages if level == "error"]
         assert error_msgs == []
+
+class TestHandleToolheadRunout:
+    def _make_lane_for_toolhead_runout(self, normal_printing_state=True, printing=True,
+                                       on_shuttle=True, prep=True, load=True, hub=True,
+                                       runout=None, standalone=False):
+        from tests.conftest import MockLogger
+
+        lane = _make_afc_lane("AFC_stepper lane1")
+        lane.prep_state = prep
+        lane._load_state = load
+        if hub is not None:
+            lane.hub_obj = MagicMock()
+            lane.hub_obj.state = hub
+        else:
+            lane.hub_obj = None
+        lane.logger = MockLogger()
+        lane.afc.save_pos = MagicMock()
+        lane.afc.save_vars = MagicMock()
+        lane.runout_lane = runout
+        lane._perform_pause_runout = MagicMock()
+        lane._perform_infinite_runout = MagicMock()
+
+        lane._is_normal_printing_state = MagicMock(return_value=normal_printing_state)
+        lane.afc.function.is_printing = MagicMock(return_value=printing)
+        lane.extruder_obj.on_shuttle = MagicMock(return_value=on_shuttle)
+        lane.extruder_obj.is_standalone = MagicMock(return_value=standalone)
+        lane.set_tool_unloaded = MagicMock()
+        lane.set_unloaded = MagicMock()
+        return lane
+
+    def test_not_normal_printing_state(self):
+        lane = self._make_lane_for_toolhead_runout(normal_printing_state=False)
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.save_pos.assert_not_called()
+        lane.afc.save_vars.assert_not_called()
+
+    def test_not_printing(self):
+        lane = self._make_lane_for_toolhead_runout(printing=False)
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.save_pos.assert_not_called()
+        lane.afc.save_vars.assert_not_called()
+    
+    def test_not_on_shuttle(self):
+        lane = self._make_lane_for_toolhead_runout(on_shuttle=False)
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.save_pos.assert_not_called()
+        lane.afc.save_vars.assert_not_called()
+    
+    def test_all_sensors_true(self):
+        lane = self._make_lane_for_toolhead_runout()
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.save_pos.assert_called_once()
+        lane.afc.error.pause_resume.send_pause_command.assert_called_once()
+        lane.afc.error.AFC_error.assert_called_once()
+
+    def test_all_sensors_true_check_error_msg(self):
+        sensor_name = "tool_start"
+        lane = self._make_lane_for_toolhead_runout()
+        lane.handle_toolhead_runout(sensor=sensor_name)
+        assert f"Toolhead runout detected by {sensor_name} sensor" in \
+                lane.afc.error.AFC_error.call_args.args[0]
+    
+    def test_prep_false(self):
+        lane = self._make_lane_for_toolhead_runout(prep=False)
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.error.pause_resume.send_pause_command.assert_not_called()
+        lane._perform_pause_runout.assert_called_once()
+    
+    def test_load_false(self):
+        lane = self._make_lane_for_toolhead_runout(load=False)
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.error.pause_resume.send_pause_command.assert_not_called()
+        lane._perform_pause_runout.assert_called_once()
+    
+    def test_hub_false(self):
+        lane = self._make_lane_for_toolhead_runout(hub=False)
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.error.pause_resume.send_pause_command.assert_not_called()
+        lane._perform_pause_runout.assert_called_once()
+
+    def test_no_hub_obj(self):
+        lane = self._make_lane_for_toolhead_runout(hub=False)
+        lane.hub_obj = None
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.save_pos.assert_called_once()
+        lane.afc.error.pause_resume.send_pause_command.assert_called_once()
+        lane.afc.error.AFC_error.assert_called_once()
+    
+    def test_standalone_runout_no_runout_lane(self):
+        lane = self._make_lane_for_toolhead_runout(standalone=True)
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.error.pause_resume.send_pause_command.assert_not_called()
+        lane._perform_pause_runout.assert_called_once()
+        lane._perform_infinite_runout.assert_not_called()
+
+        lane.set_tool_unloaded.assert_called_once()
+        lane.set_unloaded.assert_called_once()
+        lane.afc.save_vars.assert_called_once()
+
+    def test_standalone_runout_disabled_tool_start(self):
+        sensor = "tool_start"
+        lane = self._make_lane_for_toolhead_runout(standalone=True)
+        lane.extruder_obj.fila_tool_start.runout_helper.sensor_enabled = False
+        lane.handle_toolhead_runout(sensor=sensor)
+
+        warn_msgs = [m for lvl, m in lane.logger.messages if lvl == "warning"]
+        assert any(f"{sensor} runout has been detected," in m for m in warn_msgs)
+        lane._perform_pause_runout.assert_not_called()
+        lane._perform_infinite_runout.assert_not_called()
+        lane.afc.error.pause_resume.send_pause_command.assert_not_called()
+        lane.afc.save_vars.assert_called_once()
+
+    def test_standalone_runout_disabled_tool_end(self):
+        sensor = "tool_end"
+        lane = self._make_lane_for_toolhead_runout(standalone=True)
+        lane.extruder_obj.fila_tool_end.runout_helper.sensor_enabled = False
+        lane.handle_toolhead_runout(sensor=sensor)
+
+        warn_msgs = [m for lvl, m in lane.logger.messages if lvl == "warning"]
+        assert any(f"{sensor} runout has been detected," in m for m in warn_msgs)
+    
+    def test_standalone_runout_disabled_None(self):
+        sensor = "None"
+        lane = self._make_lane_for_toolhead_runout(standalone=True)
+        lane.extruder_obj.fila_tool_end.runout_helper.sensor_enabled = False
+        lane.handle_toolhead_runout()
+
+        warn_msgs = [m for lvl, m in lane.logger.messages if lvl == "warning"]
+        assert any(f"{sensor} runout has been detected," in m for m in warn_msgs)
+    
+    def test_standalone_runout_has_runout_lane(self):
+        lane = self._make_lane_for_toolhead_runout(standalone=True, runout="lane1")
+        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.afc.error.pause_resume.send_pause_command.assert_not_called()
+        lane._perform_pause_runout.assert_not_called()
+        lane._perform_infinite_runout.assert_called_once()
+
+        lane.set_tool_unloaded.assert_called_once()
+        lane.set_unloaded.assert_called_once()
+        lane.afc.save_vars.assert_called_once()
+
+class TestSetToolLoaded:
+    def test_not_on_shuttle(self):
+        obj = _make_afc_lane()
+        obj.extruder_obj.on_shuttle.return_value = False
+
+        obj.set_tool_loaded()
+
+        assert obj.tool_loaded is True
+        assert obj.extruder_obj.lane_loaded is obj.name
+        assert obj.afc.current_loading is None
+        assert obj.status is AFCLaneState.TOOLED
+    
+    def test_not_on_shuttle_lane_tool_loaded_called(self):
+        obj = _make_afc_lane()
+        obj.extruder_obj.on_shuttle.return_value = False
+
+        obj.set_tool_loaded()
+        obj.unit_obj.lane_tool_loaded.assert_called_once()
+        obj.unit_obj.lane_tool_loaded.assert_called_with(obj)
+    
+    def test_on_shuttle_set_active_spool_called(self):
+        spool_id = 100
+        obj = _make_afc_lane()
+        obj.spool_id = spool_id
+        obj.extruder_obj.on_shuttle.return_value = True
+
+        obj.set_tool_loaded()
+        obj.afc.spool.set_active_spool.assert_called_once()
+        obj.afc.spool.set_active_spool.assert_called_with(spool_id)
+
+class TestPerformInfiniteRunout:
+    def test_no_current_lane_found(self):
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        afc.lanes.get.return_value = None
+        lane = _make_afc_lane()
+        lane.afc = afc
+
+
+        lane._perform_infinite_runout()
+        info_msgs = [m for lvl, m in lane.logger.messages if lvl == "info"]
+
+        assert lane.status is AFCLaneState.NONE
+        lane.unit_obj.lane_not_ready.assert_called_with(lane)
+        assert any(f"Infinite Spool triggered for {lane.name}" in m for m in info_msgs), info_msgs
+        afc.lanes.get.assert_called_with(afc.current)
+        assert afc.lanes.get.call_count == 1
+        afc.error.AFC_error.assert_called_with(f"Error when looking up current lane:{lane.afc.current}")
+
+    def test_current_lane_found_runout_none(self):
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        lane = _make_afc_lane()
+        lane.afc = afc
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, None]
+
+        lane._perform_infinite_runout()
+
+        afc.lanes.get.assert_any_call(afc.current)
+        afc.lanes.get.assert_any_call(None)
+        assert afc.lanes.get.call_count == 2
+        afc.error.AFC_error.assert_called_with(f"Error when looking up runout lane:{lane.runout_lane} for lane:{lane.name}")
+
+    def test_current_lane_found_runout_lane2_not_found(self):
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, None]
+
+        lane._perform_infinite_runout()
+
+        afc.lanes.get.assert_any_call(afc.current)
+        afc.lanes.get.assert_any_call(lane2.name)
+        assert afc.lanes.get.call_count == 2
+        afc.error.AFC_error.assert_called_with(f"Error when looking up runout lane:{lane.runout_lane} for lane:{lane.name}")
+    
+    def test_current_lane_found_runout_lane2(self):
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, lane2]
+
+        lane._perform_infinite_runout()
+
+        afc.lanes.get.assert_any_call(afc.current)
+        afc.lanes.get.assert_any_call(lane2.name)
+        assert afc.lanes.get.call_count == 2
+        assert lane2.status is AFCLaneState.INFINITE_RUNOUT
+    
+    def test_current_lane_found_runout_lane2_check_calls(self):
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, lane2]
+
+        lane._perform_infinite_runout()
+
+        afc.error.pause_resume.send_pause_command.assert_called_once()
+        afc.save_pos.assert_called_once()
+        afc.CHANGE_TOOL.assert_called_with(lane2, restore_pos=False)
+        lane.gcode.run_script_from_command.assert_called_with(f"SET_MAP LANE={lane2.name} MAP={lane.map}")
+        afc.restore_pos.assert_called_once()
+        afc.error.pause_resume.send_resume_command.assert_called_once()
+        lane.unit_obj.lane_not_ready.assert_called_with(lane)
+
+    def test_current_lane_found_runout_lane2_check_extruder_calls(self):
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, lane2]
+
+        lane._perform_infinite_runout()
+
+        lane.extruder_obj.set_print_leds.assert_called_with(0, quiet=True)
+        lane2.extruder_obj.set_print_leds.assert_called_with(1, quiet=True)
+        lane2.unit_obj.lane_tool_loaded.assert_called_with(lane2)
+    
+    def test_current_lane_found_runout_lane2_same_extruder(self):
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        lane2.extruder_obj = lane.extruder_obj
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, lane2]
+
+        lane._perform_infinite_runout()
+
+        lane.extruder_obj.set_print_leds.assert_not_called()
+    
+    def test_current_lane_found_runout_lane2_error_state(self):
+        def change_tool_side_effect(afc):
+            afc.error_state = True
+            return True
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, lane2]
+        afc.CHANGE_TOOL.side_effect = lambda *a, **kw: (
+            change_tool_side_effect(afc)
+        )
+
+        lane._perform_infinite_runout()
+
+        afc.lanes.get.assert_any_call(afc.current)
+        afc.lanes.get.assert_any_call(lane2.name)
+        assert afc.lanes.get.call_count == 2
+        assert lane2.status is AFCLaneState.INFINITE_RUNOUT
+        lane.gcode.run_script_from_command.assert_not_called()

@@ -11,11 +11,13 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 
 from extras.AFC_vivid import AFC_vivid
 from extras.AFC_BoxTurtle import afcBoxTurtle
+from extras.AFC_lane import AFCLane
+from tests.test_AFC_lane import _make_afc_lane
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -442,20 +444,23 @@ class TestGetSelectorEnabledExceptBranch:
 
 # ── prep_load ─────────────────────────────────────────────────────────────────
 
+from unittest.mock import PropertyMock
 class TestPrepLoad:
     def test_calibrated_lane_sets_loaded_to_hub(self):
-        from unittest.mock import PropertyMock
         unit = _make_vivid()
-        lane = MagicMock()
+        lane = _make_afc_lane()
         lane.calibrated_lane = True
         lane.dist_hub = 200.0
-        lane.move_to.return_value = (True, 200.0, False)
+        lane.move_to = MagicMock(return_value = (True, 200.0, False))
+        lane.prep_state = True
+        lane.loaded_to_hub = False
+        lane.hub_obj = MagicMock()
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
-        type(lane).raw_load_state = PropertyMock(side_effect=[False, True])
-
-        unit.prep_load(lane)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [False, True]
+            unit.prep_load(lane)
 
         assert lane.loaded_to_hub is True
         unit.lane_loading.assert_called_once_with(lane)
@@ -481,16 +486,18 @@ class TestPrepLoad:
     def test_uncalibrated_lane_updates_dist_hub_and_config(self):
         from unittest.mock import PropertyMock
         unit = _make_vivid()
-        lane = MagicMock()
+        lane = _make_afc_lane()
         lane.calibrated_lane = False
         lane.prep_state = True
-        lane.move_to.return_value = (True, 300.0, False)
+        lane.hub_obj = MagicMock()
+        lane.move_to = MagicMock(return_value = (True, 300.0, False))
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
-        type(lane).raw_load_state = PropertyMock(side_effect=[False, True])
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [False, True]
 
-        unit.prep_load(lane)
+            unit.prep_load(lane)
 
         assert lane.calibrated_lane is True
         assert lane.dist_hub == round(300.0, 2) + AFC_vivid.LANE_OVERSHOOT
@@ -499,16 +506,18 @@ class TestPrepLoad:
     def test_uncalibrated_lane_updates_dist_hub_and_config_two_tries(self):
         from unittest.mock import PropertyMock
         unit = _make_vivid()
-        lane = MagicMock()
+        lane = _make_afc_lane()
         lane.calibrated_lane = False
         lane.prep_state = True
-        lane.move_to.return_value = (True, 300.0, False)
+        lane.hub_obj = MagicMock()
+        lane.move_to = MagicMock(return_value = (True, 300.0, False))
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
-        type(lane).raw_load_state = PropertyMock(side_effect=[False, False, True])
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [False, False, True]
 
-        unit.prep_load(lane)
+            unit.prep_load(lane)
 
         assert lane.calibrated_lane is True
         assert lane.dist_hub == round(300.0, 2) + AFC_vivid.LANE_OVERSHOOT
@@ -525,7 +534,7 @@ class TestPrepLoad:
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
-        type(lane).raw_load_state = PropertyMock(side_effect=[False, False, False])
+        lane.raw_load_state = PropertyMock(side_effect=[False, False, False])
 
         unit.prep_load(lane)
 
@@ -546,7 +555,7 @@ class TestPrepLoad:
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
-        type(lane).raw_load_state = PropertyMock(side_effect=[False])
+        lane.raw_load_state = PropertyMock(side_effect=[False])
 
         unit.prep_load(lane)
 

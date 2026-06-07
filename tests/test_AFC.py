@@ -99,6 +99,7 @@ def _make_afc():
     obj.reactor = inner.reactor
     obj.moonraker = None
     obj.function = MagicMock()
+    obj.gcode = MagicMock()
     obj.message_queue = []
     # obj.current = MagicMock()
     obj.current_loading = None
@@ -123,6 +124,10 @@ def _make_afc():
     obj.in_toolchange = False
     obj.get_bypass_state = MagicMock(return_value=False)
     obj._get_quiet_mode = MagicMock(return_value=False)
+    obj.park = False
+    obj.park_cmd = None
+    obj.wipe = False
+    obj.wipe_cmd = None
     return obj
 
 
@@ -584,6 +589,7 @@ def _make_afc_for_change_tool(lane_name="lane2", next_extruder_name="extruder1",
     obj.restore_pos = MagicMock()
     obj.TOOL_LOAD = MagicMock(return_value=True)
     obj.TOOL_UNLOAD = MagicMock(return_value=True)
+    obj.LANE_UNLOAD = MagicMock(return_value=True)
     obj._check_bypass = MagicMock(return_value=False)
     obj._heat_next_extruder = MagicMock()
     obj._cooldown_last_extruder = MagicMock()
@@ -666,9 +672,13 @@ class TestChangeTool_NewExtruderTemp:
             call_order.append("heat"),
             obj._heat_next_extruder.return_value
         )[1]
+        obj.TOOL_UNLOAD.side_effect = lambda *a, **kw: (
+            call_order.append("unload"),
+            obj.TOOL_UNLOAD.return_value
+        )[1]
         obj._cooldown_last_extruder.side_effect = lambda *a, **kw: call_order.append("cool")
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
-        assert call_order == ["heat", "cool"], f"Wrong call order: {call_order}"
+        assert call_order == ["heat", "unload", "cool"], f"Wrong call order: {call_order}"
 
     def test_wait_for_temp_called_after_unload(self):
         """_wait_for_temp_within_tolerance is called (after unload) when adjusting temps."""
@@ -699,6 +709,73 @@ class TestChangeTool_NewExtruderTemp:
         )
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
         obj._cooldown_last_extruder.assert_not_called()
+
+class TestChangeTool_NewExtruderTemp_Park_Wipe: 
+    def test_no_park_called(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert not any("Parking while waiting for extruder to heat." in m for m in info_msgs)
+    
+    def test_park_called(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.park = True
+        obj.park_cmd = "AFC_PARK"
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_called_once()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any("Parking while waiting for extruder to heat." in m for m in info_msgs)
+        assert obj.gcode.run_script_from_command.call_args.args[0] == obj.park_cmd
+    
+    def test_park_bool_set_cmd_not_set(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.park = True
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert not any("Parking while waiting for extruder to heat." in m for m in info_msgs)
+    
+    def test_park_bool_not_set_cmd_set(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.park_cmd = "AFC_PARK"
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert not any("Parking while waiting for extruder to heat." in m for m in info_msgs)
+
+    def test_no_wipe_called(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert not any("Wiping ooze..." in m for m in info_msgs)
+    
+    def test_wipe_called(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.wipe = True
+        obj.wipe_cmd = "AFC_WIPE"
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_called_once()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any("Wiping ooze..." in m for m in info_msgs)
+        assert obj.gcode.run_script_from_command.call_args.args[0] == obj.wipe_cmd
+    
+    def test_wipe_bool_set_cmd_not_set(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.wipe = True
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert not any("Wiping ooze..." in m for m in info_msgs)
+    
+    def test_wipe_bool_not_set_cmd_set(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.wipe_cmd = "AFC_WIPE"
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
+        info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert not any("Wiping ooze..." in m for m in info_msgs)
 
 
 # ── CHANGE_TOOL: early-exit paths ─────────────────────────────────────────────
@@ -1185,6 +1262,18 @@ class TestChangeTool_InfiniteRunout:
         cur_lane.status = AFCLaneState.LOADED
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
         assert cur_lane.status == AFCLaneState.LOADED
+    
+    def test_force_unload_not_standalone_lane(self):
+        obj, cur_lane, current_lane = self._make_infinite_runout(same_extruder=False)
+        current_lane.extruder_obj.is_standalone.return_value = False
+        obj.CHANGE_TOOL(cur_lane)
+        obj.LANE_UNLOAD.assert_called_once()
+    
+    def test_force_unload_standalone_lane(self):
+        obj, cur_lane, current_lane = self._make_infinite_runout(same_extruder=False)
+        current_lane.extruder_obj.is_standalone.return_value = True
+        obj.CHANGE_TOOL(cur_lane)
+        obj.LANE_UNLOAD.assert_not_called()
 
 
 # ── CHANGE_TOOL: exception handling ──────────────────────────────────────────
