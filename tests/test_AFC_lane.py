@@ -1533,7 +1533,7 @@ class TestHandleToolheadRunout:
         lane.handle_toolhead_runout()
 
         warn_msgs = [m for lvl, m in lane.logger.messages if lvl == "warning"]
-        assert any(f"{sensor} runout has been detected," in m for m in warn_msgs)
+        assert any("toolhead runout has been detected," in m for m in warn_msgs)
     
     def test_standalone_runout_has_runout_lane(self):
         lane = self._make_lane_for_toolhead_runout(standalone=True, runout="lane1")

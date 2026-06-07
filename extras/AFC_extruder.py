@@ -530,9 +530,9 @@ class AFCExtruder:
                             self.tc_lane.set_tool_unloaded()
                             self.tc_lane.set_unloaded()
 
-                    else:
+                    elif actively_printing:
                         self.logger.info(("Cannot trigger auto load/unload when toolhead is "
-                                      "actively printing"))
+                                          "actively printing"))
                     if self.tc_lane._afc_prep_done:
                         self.afc.save_vars()
             else:

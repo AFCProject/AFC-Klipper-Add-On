@@ -726,7 +726,8 @@ class TestChangeTool_NewExtruderTemp_Park_Wipe:
         obj.gcode.run_script_from_command.assert_called_once()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("Parking while waiting for extruder to heat." in m for m in info_msgs)
-        assert obj.gcode.run_script_from_command.call_args.args[0] == obj.park_cmd
+        assert obj.gcode.run_script_from_command.call_args.args[0] == \
+            f"{obj.park_cmd} EXTRUDER={current_lane.extruder_obj.name}"
     
     def test_park_bool_set_cmd_not_set(self):
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
@@ -759,7 +760,8 @@ class TestChangeTool_NewExtruderTemp_Park_Wipe:
         obj.gcode.run_script_from_command.assert_called_once()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("Wiping ooze..." in m for m in info_msgs)
-        assert obj.gcode.run_script_from_command.call_args.args[0] == obj.wipe_cmd
+        assert obj.gcode.run_script_from_command.call_args.args[0] == \
+            f"{obj.wipe_cmd} EXTRUDER={current_lane.extruder_obj.name}"
     
     def test_wipe_bool_set_cmd_not_set(self):
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
@@ -1272,6 +1274,12 @@ class TestChangeTool_InfiniteRunout:
     def test_force_unload_standalone_lane(self):
         obj, cur_lane, current_lane = self._make_infinite_runout(same_extruder=False)
         current_lane.extruder_obj.is_standalone.return_value = True
+        obj.CHANGE_TOOL(cur_lane)
+        obj.LANE_UNLOAD.assert_not_called()
+    
+    def test_force_unload_direct_lane(self):
+        obj, cur_lane, current_lane = self._make_infinite_runout(same_extruder=False)
+        current_lane.is_direct_hub = MagicMock(return_value = True)
         obj.CHANGE_TOOL(cur_lane)
         obj.LANE_UNLOAD.assert_not_called()
 

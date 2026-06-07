@@ -2233,7 +2233,8 @@ class afc:
                             self.error.fix(msg, unload_lane)  #send to error handling
                             return
 
-                        if force_unload:
+                        if (force_unload
+                            and not unload_lane.is_direct_hub()):
                             # Eject spool before loading next lane for infinite rollover
                             self.LANE_UNLOAD(unload_lane)
 
@@ -2247,7 +2248,9 @@ class afc:
                     if (self.park
                         and self.park_cmd is not None):
                         self.logger.info("Parking while waiting for extruder to heat.")
-                        self.gcode.run_script_from_command(self.park_cmd)
+                        self.gcode.run_script_from_command(
+                            f"{self.park_cmd} EXTRUDER={unload_lane.extruder_obj.name}"
+                        )
 
                     next_heater = next_extruder_obj.get_heater()
                     self._wait_for_temp_within_tolerance(next_heater, target_temp, next_extruder_obj.deadband)
@@ -2256,7 +2259,9 @@ class afc:
                     if (self.wipe
                         and self.wipe_cmd is not None):
                         self.logger.info("Wiping ooze...")
-                        self.gcode.run_script_from_command(self.wipe_cmd)
+                        self.gcode.run_script_from_command(
+                            f"{self.wipe_cmd} EXTRUDER={unload_lane.extruder_obj.name}"
+                        )
 
                 # Load the new lane and restore the toolhead position if successful.
                 if self.TOOL_LOAD(cur_lane, purge_length, set_start_time=False) and not self.error_state:

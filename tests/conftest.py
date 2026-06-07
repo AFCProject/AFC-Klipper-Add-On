@@ -394,7 +394,6 @@ class MockAFC:
 
         self.save_pos = MagicMock()
         self.CHANGE_TOOL = MagicMock()
-        self.gcode = MagicMock()
         self.restore_pos = MagicMock()
 
 

@@ -1584,8 +1584,9 @@ class AFCLane:
         else:
             # Don't run if user disabled sensor in gui
             sensor_obj = self.extruder_obj.fila_tool_start if sensor == "tool_start" else self.extruder_obj.fila_tool_end
+            sensor_name = sensor if sensor else "toolhead"
             if not sensor_obj.runout_helper.sensor_enabled:
-                self.logger.warning(f"{sensor} runout has been detected, but pause and runout detection has been disabled")
+                self.logger.warning(f"{sensor_name} runout has been detected, but pause and runout detection has been disabled")
             elif (self.runout_lane is not None
                   and self.extruder_obj.is_standalone()):
                 # TODO: For now this only works for standalone toolheads, more reboust toolhead
@@ -1600,9 +1601,6 @@ class AFCLane:
                 self.set_tool_unloaded()
                 self.set_unloaded()
                 self.afc.save_vars()
-
-
-        # No else: do not trigger infinite runout or pause runout here
 
     def handle_hub_runout(self, sensor=None):
         """
