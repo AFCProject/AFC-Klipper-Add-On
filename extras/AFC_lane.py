@@ -1430,29 +1430,40 @@ class AFCLane:
             self.afc.spool.clear_values(self)
         self.unit_obj.lane_unloaded(self)
 
-    def set_tool_loaded(self):
+    def set_tool_loaded(self, normal_toolchange: bool=False):
         """
         Helper function for setting multiple variables when lane is loaded into toolhead
+
+        :param normal_toolchange: Set to True when calling this function within the normal toolchange
+          flow. When this is set to true AFC current_loading variable is updated and active spool id
+          is set.
         """
         self.tool_loaded = True
         self.extruder_obj.lane_loaded = self.name
-        self.afc.current_loading = None
         self.status = AFCLaneState.TOOLED
 
-        if self.extruder_obj.on_shuttle():
+        if normal_toolchange:
+            self.afc.current_loading = None
             self.afc.spool.set_active_spool(self.spool_id)
 
         self.unit_obj.lane_tool_loaded(self)
 
-    def set_tool_unloaded(self):
+    def set_tool_unloaded(self, normal_toolchange: bool=False):
         """
         Helper function for setting multiple variables when lane is unloaded from toolhead
+
+        :param normal_toolchange: Set to True when calling this function within the normal toolchange
+          flow. When this is set to true AFC current_loading variable is updated and active spool id
+          is unset.
         """
         self.tool_loaded = False
         self.extruder_obj.lane_loaded = None
         self.status = AFCLaneState.NONE
-        self.afc.current_loading = None
-        self.afc.spool.set_active_spool(None)
+
+        if normal_toolchange:
+            self.afc.current_loading = None
+            self.afc.spool.set_active_spool(None)
+
         self.unit_obj.lane_tool_unloaded(self)
 
     def enable_buffer(self, disable_fault: bool=False):
@@ -1597,10 +1608,10 @@ class AFCLane:
             else:
                 self._perform_pause_runout()
 
-            if self.extruder_obj.is_standalone():
-                self.set_tool_unloaded()
-                self.set_unloaded()
-                self.afc.save_vars()
+                if self.extruder_obj.is_standalone():
+                    self.set_tool_unloaded()
+                    self.set_unloaded()
+                    self.afc.save_vars()
 
     def handle_hub_runout(self, sensor=None):
         """
@@ -1855,7 +1866,7 @@ class AFCLane:
         self.afc.function.unset_lane_loaded()
 
         self.afc.function.handle_activate_extruder()
-        self.set_tool_loaded()
+        self.set_tool_loaded(normal_toolchange=True)
         self.sync_to_extruder()
         self.afc.save_vars()
         self.unit_obj.select_lane(self)

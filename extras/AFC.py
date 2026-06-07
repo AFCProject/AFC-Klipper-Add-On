@@ -1635,7 +1635,7 @@ class afc:
                 cur_lane.sync_to_extruder()
 
         # Update tool and lane status.
-        cur_lane.set_tool_loaded()
+        cur_lane.set_tool_loaded(normal_toolchange=True)
         # Setting disable_fault so that fault detection is turned off for users
         # that utilize poop
         cur_lane.enable_buffer(disable_fault=True)
@@ -1807,7 +1807,7 @@ class afc:
             self.logger.info("Running custom unload command for lane {}".format(cur_lane.name))
             cur_lane.status = AFCLaneState.TOOL_UNLOADING
             self.gcode.run_script_from_command(cur_lane.custom_unload_cmd)
-            cur_lane.set_tool_unloaded()
+            cur_lane.set_tool_unloaded(normal_toolchange=True)
             cur_lane.status = AFCLaneState.NONE
             self.save_vars()
         else:
@@ -1988,7 +1988,7 @@ class afc:
             self.afcDeltaTime.log_with_time("Long retract done")
 
             # Clear toolhead's loaded state for easier error handling later.
-            cur_lane.set_tool_unloaded()
+            cur_lane.set_tool_unloaded(normal_toolchange=True)
             self.save_vars()
 
             # Ensure filament is fully cleared from the hub.
@@ -2245,7 +2245,8 @@ class afc:
 
                     self.logger.info("Heating and waiting for {} for {}".format(next_extruder_obj.name,
                         "infinite runout" if infinite_runout else "tool change."))
-                    if (self.park
+                    if (current_lane_name is not None
+                        and self.park
                         and self.park_cmd is not None):
                         self.logger.info("Parking while waiting for extruder to heat.")
                         self.gcode.run_script_from_command(
@@ -2256,7 +2257,8 @@ class afc:
                     self._wait_for_temp_within_tolerance(next_heater, target_temp, next_extruder_obj.deadband)
                     self.logger.info("{} heated and ready to print".format(next_extruder_obj.name))
 
-                    if (self.wipe
+                    if (current_lane_name is not None
+                        and self.wipe
                         and self.wipe_cmd is not None):
                         self.logger.info("Wiping ooze...")
                         self.gcode.run_script_from_command(

@@ -1515,7 +1515,6 @@ class TestHandleToolheadRunout:
         lane._perform_pause_runout.assert_not_called()
         lane._perform_infinite_runout.assert_not_called()
         lane.afc.error.pause_resume.send_pause_command.assert_not_called()
-        lane.afc.save_vars.assert_called_once()
 
     def test_standalone_runout_disabled_tool_end(self):
         sensor = "tool_end"
@@ -1527,7 +1526,6 @@ class TestHandleToolheadRunout:
         assert any(f"{sensor} runout has been detected," in m for m in warn_msgs)
     
     def test_standalone_runout_disabled_None(self):
-        sensor = "None"
         lane = self._make_lane_for_toolhead_runout(standalone=True)
         lane.extruder_obj.fila_tool_end.runout_helper.sensor_enabled = False
         lane.handle_toolhead_runout()
@@ -1542,39 +1540,39 @@ class TestHandleToolheadRunout:
         lane._perform_pause_runout.assert_not_called()
         lane._perform_infinite_runout.assert_called_once()
 
-        lane.set_tool_unloaded.assert_called_once()
-        lane.set_unloaded.assert_called_once()
-        lane.afc.save_vars.assert_called_once()
-
 class TestSetToolLoaded:
-    def test_not_on_shuttle(self):
+    def test_not_normal_toolchange(self):
         obj = _make_afc_lane()
         obj.extruder_obj.on_shuttle.return_value = False
+        obj.afc.current_loading = True
 
         obj.set_tool_loaded()
 
         assert obj.tool_loaded is True
         assert obj.extruder_obj.lane_loaded is obj.name
-        assert obj.afc.current_loading is None
         assert obj.status is AFCLaneState.TOOLED
+        assert obj.afc.current_loading is True
+        obj.afc.spool.set_active_spool.assert_not_called()
     
-    def test_not_on_shuttle_lane_tool_loaded_called(self):
+    def test_not_normal_toolchange_lane_tool_loaded_called(self):
         obj = _make_afc_lane()
         obj.extruder_obj.on_shuttle.return_value = False
 
         obj.set_tool_loaded()
         obj.unit_obj.lane_tool_loaded.assert_called_once()
         obj.unit_obj.lane_tool_loaded.assert_called_with(obj)
+        obj.afc.spool.set_active_spool.assert_not_called()
     
-    def test_on_shuttle_set_active_spool_called(self):
+    def test_normal_toolchange(self):
         spool_id = 100
         obj = _make_afc_lane()
         obj.spool_id = spool_id
         obj.extruder_obj.on_shuttle.return_value = True
 
-        obj.set_tool_loaded()
+        obj.set_tool_loaded(normal_toolchange=True)
         obj.afc.spool.set_active_spool.assert_called_once()
         obj.afc.spool.set_active_spool.assert_called_with(spool_id)
+        assert obj.afc.current_loading is None
 
 class TestPerformInfiniteRunout:
     def test_no_current_lane_found(self):

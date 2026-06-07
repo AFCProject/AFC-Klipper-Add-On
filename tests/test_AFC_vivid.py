@@ -11,7 +11,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 import pytest
 
 from extras.AFC_vivid import AFC_vivid
@@ -444,7 +444,6 @@ class TestGetSelectorEnabledExceptBranch:
 
 # ── prep_load ─────────────────────────────────────────────────────────────────
 
-from unittest.mock import PropertyMock
 class TestPrepLoad:
     def test_calibrated_lane_sets_loaded_to_hub(self):
         unit = _make_vivid()
@@ -484,7 +483,6 @@ class TestPrepLoad:
         unit.afc.function.select_loaded_lane.assert_called_once()
 
     def test_uncalibrated_lane_updates_dist_hub_and_config(self):
-        from unittest.mock import PropertyMock
         unit = _make_vivid()
         lane = _make_afc_lane()
         lane.calibrated_lane = False
@@ -504,7 +502,6 @@ class TestPrepLoad:
         unit.afc.function.ConfigRewrite.assert_called()
     
     def test_uncalibrated_lane_updates_dist_hub_and_config_two_tries(self):
-        from unittest.mock import PropertyMock
         unit = _make_vivid()
         lane = _make_afc_lane()
         lane.calibrated_lane = False
@@ -524,19 +521,19 @@ class TestPrepLoad:
         unit.afc.function.ConfigRewrite.assert_called()
     
     def test_uncalibrated_lane_updates_dist_hub_and_config_failed(self):
-        from unittest.mock import PropertyMock
         unit = _make_vivid()
-        lane = MagicMock()
+        lane = _make_afc_lane()
         lane.calibrated_lane = False
         lane.prep_state = True
-        lane.move_to.return_value = (False, 300.0, False)
+        lane.move_to = MagicMock(return_value = (False, 300.0, False))
         lane.dist_hub = 0.0
         unit.lane_loading = MagicMock()
         unit.select_lane = MagicMock()
         unit.lane_loaded = MagicMock()
-        lane.raw_load_state = PropertyMock(side_effect=[False, False, False])
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [False, False, False]
 
-        unit.prep_load(lane)
+            unit.prep_load(lane)
 
         assert lane.calibrated_lane is False
         assert lane.dist_hub == 0.0
@@ -546,7 +543,6 @@ class TestPrepLoad:
         assert error_msgs
     
     def test_uncalibrated_lane_updates_dist_hub_no_prep(self):
-        from unittest.mock import PropertyMock
         unit = _make_vivid()
         lane = MagicMock()
         lane.calibrated_lane = False

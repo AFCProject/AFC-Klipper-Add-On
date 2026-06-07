@@ -1083,7 +1083,7 @@ class TestToolStartCallback_StateChanged_WithToolchanger:
         ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False,
                                 on_shuttle=False, printing=False)
         ext.tool_start_callback(100.0, False)
-        ext.afc.save_vars.assert_called()
+        ext.afc.save_vars.assert_called_once()
 
     def test_load_sequence_not_called_on_runout(self):
         ext = self._make_tc_ext(printer_ready=True, prep_done=True, state=False)
