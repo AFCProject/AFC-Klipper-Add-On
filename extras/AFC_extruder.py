@@ -279,7 +279,6 @@ class AFCExtruder:
 
         # U1 only related variables
         self.park_detector_obj   = None
-        self.filament_sensor_obj = None
 
         self.tool_start_state = False
         if self.tool_start is not None:
@@ -296,12 +295,15 @@ class AFCExtruder:
         elif self.filament_sensor_name is not None:
             filament_motion_name = f"filament_motion_sensor {self.filament_sensor_name}"
             try:
-                self.filament_sensor_obj = self.printer.load_object(config, filament_motion_name)
+                self.fila_tool_start = self.printer.load_object(config, filament_motion_name)
             except error:
                 error_str = self.common_error.format(filament_motion_name, self.fullname)
                 raise error(error_str)
-            self.orig_note_filament_present = self.filament_sensor_obj.runout_helper.note_filament_present
-            self.filament_sensor_obj.runout_helper.note_filament_present = self.note_tool_start_callback
+            self.orig_note_filament_present = self.fila_tool_start.runout_helper.note_filament_present
+            self.fila_tool_start.runout_helper.note_filament_present = self.note_tool_start_callback
+            self.fila_tool_start.runout_helper.runout_pause = False
+            self.fila_tool_start.runout_helper.runout_gcode = 1
+            self.fila_tool_start.runout_helper._runout_event_handler = self.handle_start_runout
 
         self.tool_end_state = False
         if self.tool_end is not None:
@@ -382,6 +384,10 @@ class AFCExtruder:
             # Due to race conditions at startup, these variables might not be set correctly,
             #  set to current tool start state
             self.tc_lane._load_state = self.tc_lane.prep_state = self.tool_start_state
+
+            if self.tool_start_state:
+                self.tc_lane.set_tool_loaded()
+                self.tc_lane.set_loaded()
 
             if self.tool_start == "buffer":
                 raise error(
@@ -506,23 +512,31 @@ class AFCExtruder:
         :param eventtime: Event time from the button press
         :param state: Boolean indicating sensor state (True = filament present, False = runout)
         """
-        if state != self.tool_start_state:
-            if self.tc_unit_name and self.is_standalone():
+        if self.tc_unit_name and self.is_standalone():
+            if state != self.tool_start_state:
                 self.tc_lane._load_state = state
                 self.tc_lane.prep_state = state
 
-                if (self.printer.state_message == READY and
-                    self.tc_lane._afc_prep_done):
-                    if state:
-                        if not self.load_active:
-                            self.load_unload_sequence(self.tool_stn)
-                    else:
-                        self.tc_lane.set_tool_unloaded()
-                        self.tc_lane.set_unloaded()
+                # Check to verify that toolhead is not actively printing to trigger the auto
+                # load/unload logic.
+                actively_printing = self.afc.function.is_printing() and self.on_shuttle()
+                if self.printer.state_message == READY:
+                    if (self.tc_lane._afc_prep_done
+                        and not actively_printing):
+                        if state:
+                            if not self.load_active:
+                                self.load_unload_sequence(self.tool_stn)
+                        else:
+                            self.tc_lane.set_tool_unloaded()
+                            self.tc_lane.set_unloaded()
 
-                    self.afc.save_vars()
-        else:
-            self.logger.info("Not loading State matches tool_start_state")
+                    else:
+                        self.logger.info(("Cannot trigger auto load/unload when toolhead is "
+                                      "actively printing"))
+                    if self.tc_lane._afc_prep_done:
+                        self.afc.save_vars()
+            else:
+                self.logger.info("Not loading State matches tool_start_state")
 
         self.tool_start_state = state
 
@@ -663,9 +677,15 @@ class AFCExtruder:
         self.afc.restore_toolhead_temp(temp_state=self._captured_toolhead_temp, async_restore=True)
         self._captured_toolhead_temp = None
 
-        info_str = "loading" if self.current_move_distance > 0 else "unloading"
+        if self.current_move_distance > 0:
+            info_str = "loading"
+            self.tc_lane.status = AFCLaneState.TOOLED
+        else:
+            info_str = "unloading"
+            self.tc_lane.status = AFCLaneState.NONE
+
         self.logger.info(f"{self.name} {info_str} done")
-        self.tc_lane.status = AFCLaneState.NONE
+
         self.current_move_distance = 0
         self.afc.save_vars()
         return self.reactor.NEVER
@@ -771,17 +791,22 @@ class AFCExtruder:
 
         self.check_transmit_status_fn(None)
 
-    def set_print_leds(self, state: int=1):
+    def set_print_leds(self, state: int=1, quiet: bool=False):
         """
         Function to set toolhead part led's, currently will set leds in `led_name` objects chain count
         to white. Does not set led's that defined in `status_led_idx`. If `nozzle_led_idx` is defined
         then only sets leds that are defined in that index.
 
         :param state: Set to 1 to turn on the leds, set to 0 to turn off leds
+        :param quiet: Set to True to not print out if toolhead led object is not set, defaults to
+                      always print
+        :return tuple: Returns a tuple(bool, str) if setting the led was successful, if error
+                      occurred message gets passed back with boolean.
         """
         if self.toolhead_led_obj is None:
             error_string = f"led_name variable not set in [{self.fullname}] config section"
-            self.logger.error(error_string)
+            if not quiet:
+                self.logger.error(error_string)
             return False, error_string
 
         if (self.set_status_color_fn is None

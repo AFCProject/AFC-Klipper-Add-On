@@ -951,35 +951,40 @@ class AFCLane:
         self.unit_obj.lane_not_ready(self)
         self.logger.info("Infinite Spool triggered for {}".format(self.name))
         empty_lane = self.afc.lanes.get(self.afc.current)
+
+        if not empty_lane:
+            self.afc.error.AFC_error(f"Error when looking up current lane:{self.afc.current}")
+            return
+
         change_lane = self.afc.lanes.get(self.runout_lane)
+        # Verifying lanes are valid before continuing
+        if not change_lane:
+            self.afc.error.AFC_error(f"Error when looking up runout lane:{self.runout_lane} for lane:{self.name}")
+            return
+
         change_lane.status = AFCLaneState.INFINITE_RUNOUT
         # Pause printer with manual command
         self.afc.error.pause_resume.send_pause_command()
         # Saving position after printer is paused
         self.afc.save_pos()
 
-        # Verifying lanes are valid before continuing
-        if not change_lane:
-            self.afc.error.AFC_error(f"Error when looking up runout lane:{self.runout_lane} for lane:{self.name}")
-            return
-        if not empty_lane:
-            self.afc.error.AFC_error(f"Error when looking up current lane:{self.afc.current}")
-            return
 
-        # Position will be restored after lane is unloaded so that nozzle does not sit
+        # Position will be restored after new lane loaded so that nozzle does not sit
         # on print while lane is unloading
-        if not self.afc.TOOL_UNLOAD(empty_lane):
-            return
-
-        # Eject spool before loading next lane
-        self.gcode.run_script_from_command('LANE_UNLOAD LANE={}'.format(empty_lane.name))
-
-        self.afc.TOOL_LOAD(change_lane)
-        # Change Mapping
-        self.gcode.run_script_from_command('SET_MAP LANE={} MAP={}'.format(change_lane.name, empty_lane.map))
+        self.afc.CHANGE_TOOL(change_lane, restore_pos=False)
 
         # Only continue if a error did not happen
         if not self.afc.error_state:
+            # Change Mapping
+            self.gcode.run_script_from_command('SET_MAP LANE={} MAP={}'.format(change_lane.name, empty_lane.map))
+
+            # Turn off runout extruder LEDs and turn on other extruder LEDs if extruders are
+            # different
+            if empty_lane.extruder_obj != change_lane.extruder_obj:
+                empty_lane.extruder_obj.set_print_leds(0, quiet=True)
+                change_lane.extruder_obj.set_print_leds(1, quiet=True)
+                change_lane.unit_obj.lane_tool_loaded(change_lane)
+
             # Resume pos
             self.afc.restore_pos()
             # Resume with manual issued command
@@ -1433,7 +1438,9 @@ class AFCLane:
         self.extruder_obj.lane_loaded = self.name
         self.afc.current_loading = None
         self.status = AFCLaneState.TOOLED
-        self.afc.spool.set_active_spool(self.spool_id)
+
+        if self.extruder_obj.on_shuttle():
+            self.afc.spool.set_active_spool(self.spool_id)
 
         self.unit_obj.lane_tool_loaded(self)
 
@@ -1550,17 +1557,23 @@ class AFCLane:
         Otherwise, triggers normal runout handling logic. Only triggers during normal printing states and when printing.
         :param sensor: Optional name of the triggering sensor for user notification.
         """
-        # Only trigger runout logic if in a normal printing state AND printer is actively printing
-        if not (self._is_normal_printing_state() and self.afc.function.is_printing()):
+        # Only trigger runout logic if in a normal printing state, printer is actively printing
+        # and toolhead is on shuttle for toolchangers
+        if (not (self._is_normal_printing_state()
+                and self.afc.function.is_printing()
+                and self.extruder_obj.on_shuttle())):
             return
 
         # Check upstream sensors: prep, load, hub
         prep_ok = self.prep_state
         load_ok = self.raw_load_state
-        hub_ok = self.hub_obj.state if self.hub_obj is not None else True
+        hub_ok = True
+        if self.hub_obj is not None:
+            hub_ok = self.hub_obj.state
 
         # If all upstream sensors are still True, this is a break/jam at the toolhead
-        if prep_ok and load_ok and hub_ok:
+        if (prep_ok and load_ok and hub_ok
+            and not self.extruder_obj.is_standalone()):
             msg = (
                 f"Toolhead runout detected by {sensor} sensor, but upstream sensors still detect filament.\n"
                 "Possible filament break or jam at the toolhead. Please clear the jam and reload filament manually, then resume the print."
@@ -1568,6 +1581,27 @@ class AFCLane:
             self.afc.error.pause_resume.send_pause_command()
             self.afc.save_pos()
             self.afc.error.AFC_error(msg)
+        else:
+            # Don't run if user disabled sensor in gui
+            sensor_obj = self.extruder_obj.fila_tool_start if sensor == "tool_start" else self.extruder_obj.fila_tool_end
+            if not sensor_obj.runout_helper.sensor_enabled:
+                self.logger.warning(f"{sensor} runout has been detected, but pause and runout detection has been disabled")
+            elif (self.runout_lane is not None
+                  and self.extruder_obj.is_standalone()):
+                # TODO: For now this only works for standalone toolheads, more reboust toolhead
+                # infinite runout can be added when resolving Issue #729. So for now if a toolhead
+                # runsout and its not a standalone lane AFC will pause.
+                self._perform_infinite_runout()
+                # TODO: set tool unloaded here
+            else:
+                self._perform_pause_runout()
+
+            if self.extruder_obj.is_standalone():
+                self.set_tool_unloaded()
+                self.set_unloaded()
+                self.afc.save_vars()
+
+
         # No else: do not trigger infinite runout or pause runout here
 
     def handle_hub_runout(self, sensor=None):
