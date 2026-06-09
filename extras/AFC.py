@@ -2202,6 +2202,11 @@ class afc:
                 # so capture the reference here after heating is already queued).
                 if self.current is not None:
                     _last_lane = self.lanes.get(self.current)
+                    # Now cool down the old extruder when not doing infinite runout
+                    if (_last_lane is not None
+                        and not infinite_runout
+                        and _last_lane.extruder_obj.name != next_extruder):
+                        self._cooldown_last_extruder(_last_lane.extruder_obj, infinite_runout)
 
             # If the requested lane is not the current lane, proceed with the tool change.
             if cur_lane.name != self.current:
@@ -2239,13 +2244,17 @@ class afc:
                             self.LANE_UNLOAD(unload_lane)
 
                 if adjusting_temperature:
-                    # Now cool down last lanes extruder since TOOL_UNLOAD should now be done
-                    if _last_lane is not None and _last_lane.extruder_obj.name != next_extruder:
+                    # Now cool down last lanes extruder only when doing infinite runout since
+                    # TOOL_UNLOAD should now be done
+                    if (_last_lane is not None
+                        and infinite_runout
+                        and _last_lane.extruder_obj.name != next_extruder):
                         self._cooldown_last_extruder(_last_lane.extruder_obj, infinite_runout)
 
                     self.logger.info("Heating and waiting for {} for {}".format(next_extruder_obj.name,
                         "infinite runout" if infinite_runout else "tool change."))
                     if (current_lane_name is not None
+                        and infinite_runout
                         and self.park
                         and self.park_cmd is not None):
                         self.logger.info("Parking while waiting for extruder to heat.")
@@ -2258,6 +2267,7 @@ class afc:
                     self.logger.info("{} heated and ready to print".format(next_extruder_obj.name))
 
                     if (current_lane_name is not None
+                        and infinite_runout
                         and self.wipe
                         and self.wipe_cmd is not None):
                         self.logger.info("Wiping ooze...")

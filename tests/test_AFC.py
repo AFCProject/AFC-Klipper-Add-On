@@ -678,7 +678,7 @@ class TestChangeTool_NewExtruderTemp:
         )[1]
         obj._cooldown_last_extruder.side_effect = lambda *a, **kw: call_order.append("cool")
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
-        assert call_order == ["heat", "unload", "cool"], f"Wrong call order: {call_order}"
+        assert call_order == ["heat", "cool", "unload"], f"Wrong call order: {call_order}"
 
     def test_wait_for_temp_called_after_unload(self):
         """_wait_for_temp_within_tolerance is called (after unload) when adjusting temps."""
@@ -718,16 +718,24 @@ class TestChangeTool_NewExtruderTemp_Park_Wipe:
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Parking while waiting for extruder to heat." in m for m in info_msgs)
     
-    def test_park_called(self):
+    def test_park_called_infinite_runout(self):
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.park = True
         obj.park_cmd = "AFC_PARK"
+        cur_lane.status = AFCLaneState.INFINITE_RUNOUT
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
         obj.gcode.run_script_from_command.assert_called_once()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("Parking while waiting for extruder to heat." in m for m in info_msgs)
         assert obj.gcode.run_script_from_command.call_args.args[0] == \
             f"{obj.park_cmd} EXTRUDER={current_lane.extruder_obj.name}"
+    
+    def test_park_set_not_infinite_runout(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.park = True
+        obj.park_cmd = "AFC_PARK"
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
     
     def test_park_bool_set_cmd_not_set(self):
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
@@ -752,16 +760,24 @@ class TestChangeTool_NewExtruderTemp_Park_Wipe:
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Wiping ooze..." in m for m in info_msgs)
     
-    def test_wipe_called(self):
+    def test_wipe_called_infinite_runout(self):
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.wipe = True
         obj.wipe_cmd = "AFC_WIPE"
+        cur_lane.status = AFCLaneState.INFINITE_RUNOUT
         obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
         obj.gcode.run_script_from_command.assert_called_once()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("Wiping ooze..." in m for m in info_msgs)
         assert obj.gcode.run_script_from_command.call_args.args[0] == \
             f"{obj.wipe_cmd} EXTRUDER={current_lane.extruder_obj.name}"
+    
+    def test_wipe_set_not_infinite_runout(self):
+        obj, cur_lane, current_lane = _make_afc_for_change_tool()
+        obj.wipe = True
+        obj.wipe_cmd = "AFC_WIPE"
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.gcode.run_script_from_command.assert_not_called()
     
     def test_wipe_bool_set_cmd_not_set(self):
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
@@ -1234,9 +1250,20 @@ class TestChangeTool_InfiniteRunout:
 
     def test_adjusting_temperature_true_when_extruder_changes(self):
         """adjusting_temperature is True (heat path entered) when the extruder differs."""
+        call_order = []
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=False)
+        obj._heat_next_extruder.side_effect = lambda **kw: (
+            call_order.append("heat"),
+            obj._heat_next_extruder.return_value
+        )[1]
+        obj.TOOL_UNLOAD.side_effect = lambda *a, **kw: (
+            call_order.append("unload"),
+            obj.TOOL_UNLOAD.return_value
+        )[1]
+        obj._cooldown_last_extruder.side_effect = lambda *a, **kw: call_order.append("cool")
         obj.CHANGE_TOOL(cur_lane)
         obj._heat_next_extruder.assert_called_once()
+        assert call_order == ["heat", "unload", "cool"], f"Wrong call order: {call_order}"
 
     def test_adjusting_temperature_false_when_same_extruder(self):
         """adjusting_temperature is False when infinite_runout but the extruder is unchanged."""
