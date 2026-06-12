@@ -3,9 +3,16 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from extras.AFC import afc
+    from extras.AFC_lane import AFCLane
 
 class AFCSpool:
+    SNAPMAKER_SET_PRINT_FILAMENT_CONFIG = "SET_PRINT_FILAMENT_CONFIG"
     def __init__(self, config):
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
@@ -20,11 +27,12 @@ class AFCSpool:
         This function is called when the printer connects. It looks up the AFC object
         and assigns it to the instance variable `self.AFC`.
         """
-        self.afc        = self.printer.lookup_object('AFC')
+        self.afc: afc   = self.printer.lookup_object('AFC')
         self.error      = self.afc.error
         self.reactor    = self.afc.reactor
         self.gcode      = self.afc.gcode
         self.logger     = self.afc.logger
+        self.print_task_config_obj = self.printer.lookup_object('print_task_config', None)
 
         self.disable_weight_check = self.afc.disable_weight_check
 
@@ -34,7 +42,7 @@ class AFCSpool:
         self.gcode.register_command("RESET_AFC_MAPPING", self.cmd_RESET_AFC_MAPPING, desc=self.cmd_RESET_AFC_MAPPING_help)
         self.gcode.register_command("SET_NEXT_SPOOL_ID", self.cmd_SET_NEXT_SPOOL_ID, desc=self.cmd_SET_NEXT_SPOOL_ID_help)
 
-    def register_lane_macros(self, lane_obj):
+    def register_lane_macros(self, lane_obj: AFCLane):
         """
         Callback function to register macros with proper lane names so that klipper errors out correctly when users supply lanes that
         are not valid
@@ -48,6 +56,22 @@ class AFCSpool:
         self.gcode.register_mux_command('SET_RUNOUT',           "LANE", lane_obj.name, self.cmd_SET_RUNOUT,             desc=self.cmd_SET_RUNOUT_help)
         self.gcode.register_mux_command('SET_MAP',              "LANE", lane_obj.name, self.cmd_SET_MAP,                desc=self.cmd_SET_MAP_help)
         self.gcode.register_mux_command('AFC_SET_SPOOL_TEMP',   "LANE", lane_obj.name, self.cmd_AFC_SET_SPOOL_TEMP,     desc=self.cmd_AFC_SET_SPOOL_TEMP_help)
+
+    def set_snapmaker_filament_params(self, lane: AFCLane):
+        if (self.afc.snapmaker_printer
+            and lane.tool_loaded
+            and lane.name == lane.extruder_obj.lane_loaded):
+            extruder_num = 0 if lane.extruder_obj.name == "extruder" else lane.extruder_obj.name[-1]
+            self.print_task_config_obj.print_task_config['filament_vendor'][extruder_num] = "Generic"
+            self.print_task_config_obj.print_task_config['filament_type'][extruder_num] = lane.material
+            self.print_task_config_obj.print_task_config['filament_color'][extruder_num] = lane.color.replace('#', '')
+            # msg = f"{self.SNAPMAKER_SET_PRINT_FILAMENT_CONFIG} CONFIG_EXTRUDER={extruder_num} VENDOR='Generic' "
+            # msg += f"FILAMENT_COLOR_RGBA={lane.color.replace('#', '')} FILAMENT_TYPE='{lane.material}' FILAMENT_SUBTYPE=''"
+            # self.logger.debug(msg)
+            # try:
+            #     self.gcode.run_script_from_command(msg)
+            # except:
+            #     pass
 
     cmd_AFC_SET_SPOOL_TEMP_help = "Set spool temperatures for a lane"
     def cmd_AFC_SET_SPOOL_TEMP(self, gcmd):
@@ -159,6 +183,7 @@ class AFCSpool:
             unit = cur_lane.unit_obj
             self.afc.function.afc_led(unit._get_lane_color(cur_lane, cur_lane.led_ready), cur_lane.led_index)
         self.afc.save_vars()
+        self.set_snapmaker_filament_params(cur_lane)
 
     cmd_SET_WEIGHT_help = "Sets filaments weight for a lane"
     def cmd_SET_WEIGHT(self, gcmd):
@@ -236,6 +261,7 @@ class AFCSpool:
 
         cur_lane.send_lane_data()
         self.afc.save_vars()
+        self.set_snapmaker_filament_params(cur_lane)
 
     def set_active_spool(self, ID):
         webhooks = self.printer.lookup_object('webhooks')
@@ -396,6 +422,9 @@ class AFCSpool:
             # Clears out values if users are not using spoolman and lane isn't set to remember spool, this is to cover this function being called from LANE UNLOAD and clearing out
             # Manually entered information
             self.clear_values(cur_lane)
+
+        self.set_snapmaker_filament_params(cur_lane)
+
         if save_vars: self.afc.save_vars()
 
     cmd_SET_RUNOUT_help = "Set runout lane"

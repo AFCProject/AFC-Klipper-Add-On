@@ -224,6 +224,8 @@ class afcFunction:
 
         :param cur_lane: Lane to assign auto generated T(n) macro
         """
+        
+        print_task_config_obj = self.printer.lookup_object('print_task_config', None)
         if cur_lane.map is None:
             for x in range(99):
                 cmd = 'T{}'.format(x)
@@ -239,6 +241,16 @@ class afcFunction:
                         cur_lane._map = cur_lane.map = cmd
                         break
         self.afc.tool_cmds[cur_lane.map]=cur_lane.name
+        # if print_task_config_obj is not None:
+        #     parsed_map = int(cur_lane.map.replace('T', ''))
+        #     self.logger.info(f"Extruder name {cur_lane.extruder_obj.name}")
+        #     if cur_lane.extruder_obj.name == "extruder":
+        #         extruder_num = 0
+        #     else:
+        #         extruder_num =int(cur_lane.extruder_obj.name.replace("extruder", ""))
+
+        #     print_task_config_obj.print_task_config['extruder_map_table'][parsed_map] = extruder_num
+        #     print_task_config_obj.print_task_config['reprint_info']['extruder_map_table'][parsed_map] = extruder_num
         try:
             if (cur_lane._map
                 or self.afc.force_assign_map):

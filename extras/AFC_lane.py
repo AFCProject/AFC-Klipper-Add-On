@@ -1459,6 +1459,7 @@ class AFCLane:
         if normal_toolchange:
             self.afc.current_loading = None
             self.afc.spool.set_active_spool(self.spool_id)
+        self.afc.spool.set_snapmaker_filament_params(self)
 
         self.unit_obj.lane_tool_loaded(self)
 
