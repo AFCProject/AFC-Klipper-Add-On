@@ -123,10 +123,11 @@ class AFCLane:
         self.tool_loaded        = False
         self.loaded_to_hub      = False
         self.spool_id           = None
-        self.color              = None
-        self.weight             = 0
+        self.color: str         = ""
+        self.multi_color: list  = []
+        self.weight: float      = 0.
         self.auto_switch_triggered = False
-        self._material          = None
+        self._material: str     = None
         self.extruder_temp      = None
         self.bed_temp           = None
         self.td1_data           = {}
