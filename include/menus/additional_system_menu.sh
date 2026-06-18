@@ -277,7 +277,7 @@ fi
           boxturtle_name="Claymore_1"
         fi
         printf "1. Claymore Name: %s \n" "$boxturtle_name"
-	printf "H. Claymore Board Type: %s \n" "$htlf2_board_type"
+	    printf "H. Claymore Board Type: %s \n" "$htlf2_board_type"
       elif [ "$installation_type" == "QuattroBox" ]; then
         if [ "$turtle_renamed" != "True" ]; then
           boxturtle_name="QuattroBox_1"
