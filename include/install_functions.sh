@@ -103,6 +103,7 @@ copy_unit_files() {
 
   "Claymore")
     local board_type="$htlf2_board_type"
+    local boxturtle_name="Claymore_1"
     cp "${afc_path}/config/mcu/AFC_Lite_Claymore.cfg" "${afc_config_dir}/mcu/"
     cp "${afc_path}/templates/AFC_Claymore_1-${board_type}.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
     cp "${afc_path}/templates/AFC_Hardware-HTLF.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
