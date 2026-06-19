@@ -213,8 +213,8 @@ install_additional_unit() {
   elif [ "$installation_type" == "Claymore" ]; then
     local board_type="$htlf2_board_type"
     mkdir -p "${afc_config_dir}/mcu"
-    cp "${afc_path}/config/mcu/AFC_Lite_Claymore.cfg" "${afc_config_dir}/mcu/"
-    cp "${afc_path}/templates/AFC_Claymore_1-${board_type}.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    safe_copy "${afc_path}/config/mcu/AFC_Lite_Claymore.cfg" "${afc_config_dir}/mcu/"
+    safe_copy "${afc_path}/templates/AFC_Claymore_1-${board_type}.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
     sed -i "s/Claymore_1/$boxturtle_name/g" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
   elif [ "$installation_type" == "QuattroBox" ]; then
     mkdir -p "${afc_config_dir}/macros"

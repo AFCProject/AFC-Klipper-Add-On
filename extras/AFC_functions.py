@@ -134,7 +134,7 @@ class afcFunction:
             pdesc = "Renamed builtin of '%s'" % (base_name,)
             self.afc.gcode.register_command(rename_name, prev_cmd, desc=pdesc)
         else:
-            self.logger.debug("{}Existing command {} found in gcode_macros{}".format("<span class=warning--text>", base_name, "</span>",))
+            self.logger.debug("{}Existing command {} not found in gcode_macros{}".format("<span class=warning--text>", base_name, "</span>",))
         self.logger.debug("PREP-renaming macro {}".format(base_name))
         self.afc.gcode.register_command(base_name, rename_macro, desc=rename_help)
 

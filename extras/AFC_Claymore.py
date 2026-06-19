@@ -17,7 +17,7 @@ except:
     err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{trace}"
     raise config_error(err_str)
 
-try: from extras.AFC_lane import AFCLaneState, MoveDirection, AFCLane, SpeedMode, AssistActive
+try: from extras.AFC_lane import MoveDirection, AFCLane, SpeedMode, AssistActive
 except: raise config_error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 try: from extras.AFC_vivid import AFC_vivid
@@ -27,9 +27,6 @@ try: from extras.AFC_BoxTurtle import afcBoxTurtle
 except:
     err_str = ERROR_STR.format(import_lib="AFC_BoxTurtle", trace=traceback.format_exc())
     raise config_error(err_str)
-
-try: from extras.AFC_utils import add_filament_switch
-except: raise config_error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -67,10 +64,10 @@ class AFC_Claymore(AFC_vivid):
         Move the selector by a configurable distance to free filament in a lane, e.g. when
         ejecting filament.
 
-        :param move_distance: Distance in millimeters to move the selector. Defaults to 50 mm.
+        :param move_distance: Distance in millimeters to move the selector. Defaults to 5 mm.
         """
         super().unselect_lane(move_distance=move_distance)
-    
+
     def eject_lane(self, lane: AFCLane):
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
@@ -115,9 +112,7 @@ class AFC_Claymore(AFC_vivid):
             self, cur_lane: AFCLane, tol: Union[float|int]
         ) -> tuple[bool, str, Union[float|int]]:
         """
-        Method to calibrate lane for ViViD units. Since ViViD units are unique, this method ejects
-        filament and sets calibration flag to False. Once user reinserts filament lane will be
-        automatically calibrated.
+        Method to calibrate lane for Claymore units. Delegates to afcBoxTurtle calibration logic.
 
         :param cur_lane: Lane object to eject
         :param tol: Unused for this method
