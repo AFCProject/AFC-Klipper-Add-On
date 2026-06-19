@@ -116,7 +116,9 @@ class AFC_Claymore(AFC_vivid):
 
         :param cur_lane: Lane object to eject
         :param tol: Unused for this method
-        :return tuple: Always returns True, lane name, 0
+        :return tuple: bool: Returns True/False if calibration succeed or failed,
+                       str: Calibration message for when calibration failed,
+                       float: Calibration distance for when calibration failed
         """
         return afcBoxTurtle.calibrate_lane(self, cur_lane, tol)
 
