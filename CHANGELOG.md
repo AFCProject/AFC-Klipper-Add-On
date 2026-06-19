@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-06-19]
 ### Added
 - Added support for HTLF2-Claymore Unit type.
+### Fixed
+- Fixed lane and unit ordering so that units and lanes show correctly in Fluidd/Mainsail panels
 
 ## [2026-06-07]
 ### Added

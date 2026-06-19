@@ -246,7 +246,7 @@ class afcUnit:
         """
         sorted_lanes = dict(sorted(
             self.lanes.items(),
-            key=lambda x: int(re.search(r"\d+", x[0]).group())
+            key=lambda x: int(m.group()) if (m := re.search(r"\d+", x[0])) else 9999
         ))
         self.lanes = sorted_lanes
 

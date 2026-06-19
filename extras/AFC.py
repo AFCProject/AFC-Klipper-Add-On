@@ -44,7 +44,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_stats import AFCStats
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-AFC_VERSION="1.1.19"
+AFC_VERSION="1.1.20"
 
 # Class for holding different states so its clear what all valid states are
 class State:
@@ -451,7 +451,7 @@ class afc:
         Sorts units base on lane numbering so that units/lanes show up in fluidd/mainsail panels
         in the correct order.
         """
-        def natural_lane_num(key, lane: AFCLane):
+        def natural_lane_num(key: int, lane: AFCLane):
             """
             Helper function for returning lane number, if lane name matches extruder name then this
             is a standalone toolhead and returns 9999 to force Tools to the bottom of this list
@@ -461,15 +461,12 @@ class afc:
             :return int: Lane integer if not standalone lane, 9999 if standalone lane
             """
             if lane.extruder_obj.name == lane.name:
-                self.logger.info("standalone")
                 return 9999
-            else:
-                self.logger.info("Not standalone")
 
             m = re.search(r'\d+', key)
             return int(m.group()) if m else 9999
 
-        def unit_min_lane(unit_dict):
+        def unit_min_lane(unit_dict: dict):
             """
             Helper function for getting minimum lane version found in unit
 
