@@ -68,6 +68,7 @@ class afc:
         self.reactor = self.printer.get_reactor()
         self.webhooks = self.printer.load_object(config, 'webhooks')
         self.printer.register_event_handler("klippy:connect",self.handle_connect)
+        self.printer.register_event_handler("klippy:ready", self.handle_ready)
         self.logger  = AFC_logger(self.printer, self)
 
         self.spool: AFCSpool = self.printer.load_object(config, 'AFC_spool')
@@ -442,6 +443,56 @@ class afc:
         self._rename_macros()
 
         self.current_state = State.IDLE
+
+    def handle_ready(self):
+        """
+        Handle the ready event.
+
+        Sorts units base on lane numbering so that units/lanes show up in fluidd/mainsail panels
+        in the correct order.
+        """
+        def natural_lane_num(key, lane: AFCLane):
+            """
+            Helper function for returning lane number, if lane name matches extruder name then this
+            is a standalone toolhead and returns 9999 to force Tools to the bottom of this list
+
+            :param key: Key name to extract number from
+            :param lane: AFCLane to check if its extruder name matches its name
+            :return int: Lane integer if not standalone lane, 9999 if standalone lane
+            """
+            if lane.extruder_obj.name == lane.name:
+                self.logger.info("standalone")
+                return 9999
+            else:
+                self.logger.info("Not standalone")
+
+            m = re.search(r'\d+', key)
+            return int(m.group()) if m else 9999
+
+        def unit_min_lane(unit_dict):
+            """
+            Helper function for getting minimum lane version found in unit
+
+            :param unit_dict: Units lane dictionary to extract lane numbers from
+            :return int: Minimum integer found in units lanes, if no list returns float("inf")
+            """
+            nums = [
+                natural_lane_num(k, lanes) for k, lanes in unit_dict.lanes.items()
+            ]
+
+            minimum = float("inf")
+            if nums:
+                minimum = min(nums)
+            return minimum
+
+        sorted_units = dict(
+            sorted(
+                self.units.items(),
+                key=lambda x: unit_min_lane(x[1])
+            )
+        )
+
+        self.units = sorted_units
 
     def _rename_macros(self):
         self.function._rename(self.BASE_M104, self.RENAMED_M104, self.cmd_AFC_M104, self.cmd_AFC_M104_help)

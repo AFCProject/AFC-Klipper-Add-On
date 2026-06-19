@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import traceback
+import re
 
 from configfile import error as config_error
 from datetime import datetime, timedelta
@@ -47,6 +48,7 @@ class afcUnit:
         self.printer        = config.get_printer()
         self.gcode          = self.printer.load_object(config, 'gcode')
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
+        self.printer.register_event_handler("klippy:ready", self.handle_ready)
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.afc: afc       = self.printer.load_object(config, 'AFC')
         self.reactor        = self.printer.get_reactor()
@@ -236,6 +238,17 @@ class afcUnit:
         self.gcode.register_mux_command('UNIT_CALIBRATION', "UNIT", self.name, self.cmd_UNIT_CALIBRATION, desc=self.cmd_UNIT_CALIBRATION_help)
         self.gcode.register_mux_command('UNIT_LANE_CALIBRATION', "UNIT", self.name, self.cmd_UNIT_LANE_CALIBRATION, desc=self.cmd_UNIT_LANE_CALIBRATION_help)
         self.gcode.register_mux_command('UNIT_BOW_CALIBRATION', "UNIT", self.name, self.cmd_UNIT_BOW_CALIBRATION, desc=self.cmd_UNIT_BOW_CALIBRATION_help)
+
+    def handle_ready(self):
+        """
+        Handles klippy:ready event, sorts lanes so they they will show up in the correct
+        natural order.
+        """
+        sorted_lanes = dict(sorted(
+            self.lanes.items(),
+            key=lambda x: int(re.search(r"\d+", x[0]).group())
+        ))
+        self.lanes = sorted_lanes
 
     def handle_moonraker_connect(self):
         """

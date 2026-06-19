@@ -2525,3 +2525,87 @@ class TestCheckForSnapmakerSignature:
         obj.printer = Printer
         monkeypatch.setattr(Printer, "get_snapmaker_config_dir", True, raising=False)
         assert obj.snapmaker_printer
+
+class TestUnitOrdering:
+    def _make_unit(self, name, afc):
+        unit = MagicMock()
+        unit.name = name
+        unit.lanes = {}
+
+
+        afc.units.update({name: unit})
+        return unit
+        
+    def add_lane_to_unit(self, unit, lane_name, extruder_name="extruder"):
+        lane = MagicMock()
+        lane.name = lane_name
+        lane.extruder_obj.name = extruder_name
+        unit.lanes.update({lane_name: lane})
+        
+    def test_unit_lane_ordering(self):
+        obj = _make_afc()
+        claymore_unit = self._make_unit("HTLF_Claymore_1", obj)
+        self.add_lane_to_unit(claymore_unit, "lane11", "extruder")
+        self.add_lane_to_unit(claymore_unit, "lane12", "extruder")
+        self.add_lane_to_unit(claymore_unit, "lane13", "extruder")
+        self.add_lane_to_unit(claymore_unit, "lane14", "extruder")
+
+        emu_unit = self._make_unit("EMU_1", obj)
+        self.add_lane_to_unit(emu_unit, "lane9", "extruder3")
+        self.add_lane_to_unit(emu_unit, "lane10", "extruder3")
+        
+        tools_unit = self._make_unit("Tools", obj)
+        self.add_lane_to_unit(tools_unit, "extruder1", "extruder1")
+        self.add_lane_to_unit(tools_unit, "extruder2", "extruder2")
+
+        bt_unit = self._make_unit("Turtle_1", obj)
+        self.add_lane_to_unit(bt_unit, "lane4", "extruder")
+        self.add_lane_to_unit(bt_unit, "lane2", "extruder")
+        self.add_lane_to_unit(bt_unit, "lane1", "extruder")
+        self.add_lane_to_unit(bt_unit, "lane3", "extruder")
+
+        vivid_unit = self._make_unit("Vivid_1", obj)
+        self.add_lane_to_unit(vivid_unit, "lane8", "extruder3")
+        self.add_lane_to_unit(vivid_unit, "lane5", "extruder3")
+        self.add_lane_to_unit(vivid_unit, "lane7", "extruder3")
+        self.add_lane_to_unit(vivid_unit, "lane6", "extruder3")
+
+
+        obj.handle_ready()
+
+        key_order = list(obj.units.keys())
+
+        assert key_order == ["Turtle_1", "Vivid_1", "EMU_1", "HTLF_Claymore_1", "Tools"], key_order
+
+    def test_inf_unit_lane_ordering(self):
+        obj = _make_afc()
+        claymore_unit = self._make_unit("HTLF_Claymore_1", obj)
+        self.add_lane_to_unit(claymore_unit, "lane11", "extruder")
+        self.add_lane_to_unit(claymore_unit, "lane12", "extruder")
+        self.add_lane_to_unit(claymore_unit, "lane13", "extruder")
+        self.add_lane_to_unit(claymore_unit, "lane14", "extruder")
+
+        emu_unit = self._make_unit("EMU_1", obj)
+        
+        tools_unit = self._make_unit("Tools", obj)
+        self.add_lane_to_unit(tools_unit, "extruder1", "extruder1")
+        self.add_lane_to_unit(tools_unit, "extruder2", "extruder2")
+
+        bt_unit = self._make_unit("Turtle_1", obj)
+        self.add_lane_to_unit(bt_unit, "lane4", "extruder")
+        self.add_lane_to_unit(bt_unit, "lane2", "extruder")
+        self.add_lane_to_unit(bt_unit, "lane1", "extruder")
+        self.add_lane_to_unit(bt_unit, "lane3", "extruder")
+
+        vivid_unit = self._make_unit("Vivid_1", obj)
+        self.add_lane_to_unit(vivid_unit, "lane8", "extruder3")
+        self.add_lane_to_unit(vivid_unit, "lane5", "extruder3")
+        self.add_lane_to_unit(vivid_unit, "lane7", "extruder3")
+        self.add_lane_to_unit(vivid_unit, "lane6", "extruder3")
+
+        obj.handle_ready()
+
+        key_order = list(obj.units.keys())
+
+        assert key_order == ["Turtle_1", "Vivid_1", "HTLF_Claymore_1", "Tools", "EMU_1"], key_order
+        

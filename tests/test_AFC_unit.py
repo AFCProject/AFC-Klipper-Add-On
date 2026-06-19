@@ -388,3 +388,15 @@ class TestBufferToolheadLoadCheck:
         call_args = lane.move.call_args[0]
         assert result is True
         assert call_args[0] == (SIDE_EFFECT_DIST * MoveDirection.NEG)
+
+
+class TestLaneOrdering:
+    def test_lane_in_correct_order(self):
+        # Tests to verify that lanes are in correct natural number order
+        unit = _make_unit()
+        lane = _make_lane()
+
+        unit.lanes = {"lane2": lane, "lane1": lane, "custom_name4":lane, "lane3": lane, "lane10": lane}
+        unit.handle_ready()
+
+        assert list(unit.lanes.keys()) == ["lane1", "lane2", "lane3", "custom_name4", "lane10"]
