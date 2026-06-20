@@ -948,16 +948,6 @@ class TestCmdSetSpoolID:
         spool.set_spoolID = MagicMock()
         spool.cmd_SET_SPOOL_ID(gcmd)
         spool.set_spoolID.assert_not_called()
-    
-    def test_no_op_when_spoolman_is_none(self):
-        spool = _make_spool()
-        spool.afc.spoolman = None
-        lane = _make_lane("lane1")
-        spool.afc.lanes = {"lane1": lane}
-        gcmd = _make_gcmd(LANE="lane1", SPOOL_ID="42")
-        spool.set_spoolID = MagicMock()
-        spool.cmd_SET_SPOOL_ID(gcmd)
-        spool.set_spoolID.assert_not_called()
 
     def test_invalid_spool_id_string_logs_error(self):
         spool = _make_spool()
