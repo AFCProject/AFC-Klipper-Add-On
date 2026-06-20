@@ -220,6 +220,7 @@ class AFCSpool:
             return
         cur_lane = self.afc.lanes[lane]
         cur_lane.color = '#{}'.format(color.replace('#',''))
+        cur_lane.multi_color = []
         cur_lane.send_lane_data()
         # Refresh LED only if filament is loaded — empty lanes keep their state color
         if cur_lane.load_state and cur_lane.unit in self.afc.units:

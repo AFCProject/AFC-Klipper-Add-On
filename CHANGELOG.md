@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-06-20]
 ### Fixed
 - Setting toolhead leds correctly during PREP for toolchangers
+### Added
+- Support for updating Snapmaker U1 print_task_config object with proper filament color, material, name, etc.
 
 ## [2026-06-19]
 ### Added
