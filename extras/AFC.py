@@ -468,7 +468,7 @@ class afc:
 
         def unit_min_lane(unit_dict: dict):
             """
-            Helper function for getting minimum lane version found in unit
+            Helper function for getting minimum lane number found in unit
 
             :param unit_dict: Units lane dictionary to extract lane numbers from
             :return int: Minimum integer found in units lanes, if no list returns float("inf")
