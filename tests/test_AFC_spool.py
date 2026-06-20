@@ -58,6 +58,7 @@ def _make_lane(name="lane1", extruder_name="extruder", extruder_index=0):
     lane.weight = 0
     lane.spool_id = None
     lane.runout_lane = None
+    lane.spool_vendor = ""
     lane.unit_obj = MagicMock()
     lane.hub_obj = MagicMock()
     lane.extruder_obj = MagicMock()
@@ -798,6 +799,25 @@ class TestSetSpoolID:
         assert lane.spool_id == 42
         assert lane.material == "PLA"
         assert lane.color == "#FF0000"
+        assert lane.spool_vendor == ""
+        spool.set_snapmaker_filament_params.assert_called_once()
+        spool.afc.function.afc_led.assert_not_called()
+
+    def test_valid_spool_id_sets_vendor(self):
+        spool = self._make_spool_with_spoolman()
+        spool.set_snapmaker_filament_params = MagicMock()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result()
+        result["filament"]["vendor"] = {}
+        result["filament"]["vendor"]["name"] = "Polymaker"
+        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        spool.set_spoolID(lane, 42)
+        assert lane.spool_id == 42
+        assert lane.material == "PLA"
+        assert lane.color == "#FF0000"
+        assert lane.spool_vendor == "Polymaker"
         spool.set_snapmaker_filament_params.assert_called_once()
         spool.afc.function.afc_led.assert_not_called()
     
@@ -1099,7 +1119,7 @@ class TestSetSnapmakerFilamentParams:
     def test_snapmaker_printer_tool_not_loaded(self):
         from tests.conftest import _make_print_task_config
         import sys
-        sys.modules.setdefault("print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
         spool.print_task_config_obj = MagicMock()
@@ -1113,7 +1133,7 @@ class TestSetSnapmakerFilamentParams:
     def test_snapmaker_printer_lane_name_not_match(self):
         from tests.conftest import _make_print_task_config
         import sys
-        sys.modules.setdefault("print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
         spool.print_task_config_obj = MagicMock()
@@ -1127,16 +1147,20 @@ class TestSetSnapmakerFilamentParams:
     def test_snapmaker_printer_exception(self):
         from tests.conftest import _make_print_task_config
         import sys
-        sys.modules.setdefault("print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG, config_path
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
         spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        spool.print_task_config_obj.config_path = config_path
         lane = _make_lane("lane1")
         lane.color = "#123456"
         lane.material = "PLA"
         lane.tool_loaded = True
         lane.extruder_obj.lane_loaded = lane.name
         spool.printer = MagicMock()
+        spool.printer.update_snapmaker_config_file.side_effect = RuntimeError("Creating error")
         spool.set_snapmaker_filament_params(lane)
         error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
         assert any("Error when trying to update colors for snapmaker print_task_config" in m for m in error_msgs)
@@ -1186,7 +1210,83 @@ class TestSetSnapmakerFilamentParams:
 
         assert print_task_config["filament_vendor"][0] == "Generic"
         assert print_task_config["filament_type"][0] == lane.material
-        assert print_task_config["filament_sub_type"][0] == None
+        assert print_task_config["filament_sub_type"][0] == "NONE"
+    
+    def test_snapmaker_printer_extruder_check_vendor(self):
+        from tests.conftest import _make_print_task_config
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "PLA"
+        lane.tool_loaded = True
+        lane.spool_vendor = "Polymaker"
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_vendor"][0] == lane.spool_vendor
+        assert print_task_config["filament_type"][0] == lane.material
+        assert print_task_config["filament_sub_type"][0] == "NONE"
+
+    def test_snapmaker_printer_extruder_check_material_NONE(self):
+        from tests.conftest import _make_print_task_config
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.afc.default_material_type = None
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = ""
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_vendor"][0] == "Generic"
+        assert print_task_config["filament_type"][0] == "NONE"
+        assert print_task_config["filament_sub_type"][0] == "NONE"
+
+    def test_snapmaker_printer_extruder_check_material_default(self):
+        from tests.conftest import _make_print_task_config
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.afc.default_material_type = "ABS"
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = ""
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_vendor"][0] == "Generic"
+        assert print_task_config["filament_type"][0] == "ABS"
+        assert print_task_config["filament_sub_type"][0] == "NONE"
 
     def test_snapmaker_printer_extruder_check_single_color(self):
         from tests.conftest import _make_print_task_config

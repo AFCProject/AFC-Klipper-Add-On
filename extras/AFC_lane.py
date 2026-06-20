@@ -125,6 +125,7 @@ class AFCLane:
         self.spool_id           = None
         self.color: str         = ""
         self.multi_color: list  = []
+        self.spool_vendor       = ""
         self.weight: float      = 0.
         self.auto_switch_triggered = False
         self._material: str     = None

@@ -84,9 +84,13 @@ class AFCSpool:
 
                 tmp_config = copy.deepcopy(self.print_task_config_obj.print_task_config)
 
-                tmp_config['filament_vendor'][extruder_num] = "Generic"
-                tmp_config['filament_type'][extruder_num] = lane.material
-                tmp_config['filament_sub_type'][extruder_num] = None
+                tmp_config['filament_vendor'][extruder_num] = (lane.spool_vendor or "Generic")
+                tmp_config['filament_type'][extruder_num] = (
+                    lane.material
+                    or getattr(self.afc, "default_material_type", None)
+                    or "NONE"
+                )
+                tmp_config['filament_sub_type'][extruder_num] = "NONE"
 
                 tmp_config['filament_color'][extruder_num] = int("FFFFFFFF", 16)
                 tmp_config['filament_color_rgba'][extruder_num] = "FFFFFFFF"
@@ -396,7 +400,7 @@ class AFCSpool:
             self.next_spool_id = None
             self.set_spoolID(cur_lane, spool_id)
 
-    def clear_values(self, cur_lane):
+    def clear_values(self, cur_lane: AFCLane):
         """
         Helper function for clearing out lane spool values
         """
@@ -409,8 +413,9 @@ class AFCSpool:
         cur_lane.extruder_temp = None
         cur_lane.bed_temp = None
         cur_lane.clear_lane_data()
+        cur_lane.spool_vendor = ""
 
-    def set_spoolID(self, cur_lane, SpoolID, save_vars=True):
+    def set_spoolID(self, cur_lane: AFCLane, SpoolID: str, save_vars=True):
         if self.afc.spoolman is not None:
             if SpoolID not in ('', None):
                 try:
@@ -427,6 +432,11 @@ class AFCSpool:
                     cur_lane.empty_spool_weight = self._get_filament_values(result, 'spool_weight', default=190)
                     cur_lane.weight             = self._get_filament_values(result, 'remaining_weight')
                     cur_lane.espooler.espooler_values.full_weight = self._get_filament_values(result, 'initial_weight', default=1000)
+
+                    vendor_result  = result["filament"].get("vendor", None)
+                    cur_lane.spool_vendor       = ""
+                    if vendor_result:
+                        cur_lane.spool_vendor   = self._get_filament_values(vendor_result, "name", None)
 
                     weight_check = self.disable_weight_check
 
