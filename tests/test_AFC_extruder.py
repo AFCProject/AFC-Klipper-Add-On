@@ -1196,3 +1196,61 @@ class TestNoteToolStartCallback:
         ext.note_tool_start_callback(True)
         args = ext.tool_start_callback.call_args.args
         assert args[1]
+
+class TestPrepOnShuttleCheck:
+
+    @pytest.fixture(autouse=True)
+    def patch_toolchanger_module(self):
+        """Inject a fake extras.toolchanger so the in-method import resolves."""
+        fake_mod = _make_toolchanger_module()
+        with patch.dict(sys.modules, {"extras.toolchanger": fake_mod}):
+            yield
+
+    def test_in_toolhead(self):
+        ext = _make_afc_extruder()
+        lane = MagicMock()
+        msg = ext.prep_on_shuttle_check(lane)
+
+        assert "<span class=primary--text> in ToolHead</span>" in msg
+        lane.unit_obj.lane_tool_loaded.assert_not_called()
+        lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
+    
+    def test_in_toolhead_tool_obj(self):
+        ext = _make_afc_extruder()
+        ext.tool_obj = MagicMock()
+        lane = MagicMock()
+        msg = ext.prep_on_shuttle_check(lane)
+
+        lane.unit_obj.lane_tool_loaded.assert_not_called()
+        lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
+
+    def test_in_toolhead_tc_unit_name(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = MagicMock()
+        lane = MagicMock()
+        msg = ext.prep_on_shuttle_check(lane)
+
+        lane.unit_obj.lane_tool_loaded.assert_not_called()
+        lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
+    
+    def test_in_toolhead_tc_unit_name_tool_obj_not_on_shuttle(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = MagicMock()
+        ext.tool_obj = MagicMock()
+        lane = MagicMock()
+        msg = ext.prep_on_shuttle_check(lane)
+
+        lane.unit_obj.lane_tool_loaded.assert_not_called()
+        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
+    
+    def test_in_toolhead_tc_unit_name_tool_obj_on_shuttle(self):
+        ext = _make_afc_extruder()
+        ext.tc_unit_name = MagicMock()
+        ext.tool_obj = MagicMock()
+        ext.tool_obj.detect_state = "mounted"
+        lane = MagicMock()
+        msg = ext.prep_on_shuttle_check(lane)
+
+        lane.unit_obj.lane_tool_loaded.assert_called_once_with(lane)
+        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
+        assert "<span class=primary--text> in ToolHead and toolhead on shuttle</span>" in msg

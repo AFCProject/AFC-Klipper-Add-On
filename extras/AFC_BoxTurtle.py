@@ -117,11 +117,8 @@ class afcBoxTurtle(afcUnit):
                         or cur_lane.extruder_obj.tool_end_state):
                         if cur_lane.extruder_obj.lane_loaded == cur_lane.name:
                             cur_lane.sync_to_extruder()
-                            on_shuttle = ""
-                            if (cur_lane.extruder_obj.tool_obj
-                                and cur_lane.extruder_obj.tc_unit_name):
-                                on_shuttle = " and toolhead on shuttle" if cur_lane.extruder_obj.on_shuttle() else ""
-                            msg += f"<span class=primary--text> in ToolHead{on_shuttle}</span>"
+
+                            msg += cur_lane.extruder_obj.prep_on_shuttle_check(cur_lane)
 
                             if (cur_lane.extruder_obj.tool_start == "buffer"
                                 and (not self.afc.homing_enabled

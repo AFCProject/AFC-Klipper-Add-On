@@ -61,8 +61,12 @@ class AfcToolchanger(afcUnit):
         # Now that a T command is assigned, send lane data to moonraker
         cur_lane.send_lane_data()
         msg = ""
-        if( cur_lane.prep_state and cur_lane.load_state ):
-            msg = "<span class=success--text>LOADED</span> <span class=primary--text>in ToolHead</span>"
+        if( cur_lane.prep_state
+            and cur_lane.load_state
+            and cur_lane.extruder_obj.lane_loaded == cur_lane.name):
+            msg = "<span class=success--text>LOADED</span>"
+            msg += cur_lane.extruder_obj.prep_on_shuttle_check(cur_lane)
+
         self.logger.raw( '{lane_name} tool cmd: {tcmd:3} {msg}'.format(lane_name=cur_lane.name, tcmd=cur_lane.map, msg=msg))
         cur_lane.set_afc_prep_done()
         return True

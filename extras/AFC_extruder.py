@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from extras.AFC_Toolchanger import AfcToolchanger
     from extras.AFC_functions import afcFunction
     from extras.AFC_utils import AFC_moonraker
+    from extras.AFC_lane import AFCLane
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -868,6 +869,28 @@ class AFCExtruder:
             return status.get('state') == 'ACTIVATE'
         else:
             return False
+
+    def prep_on_shuttle_check(self, lane: AFCLane) -> str:
+        """
+        This helper method should only be called during PREP as it's a helper to check
+        if toolhead is on the shuttle or not and will set toolhead leds correctly.
+
+        This method also already assumes that current extruder lane_loaded matches
+        current lane name.
+
+        :param lane: AFCLane for current extruder to easily set leds though its unit object
+        :return str: Message string if lane is loaded to toolhead or in toolhead and on shuttle
+        """
+        msg = ""
+        on_shuttle = ""
+        if (self.tool_obj
+            and self.tc_unit_name):
+            lane.unit_obj.lane_tool_loaded_idle(lane)
+            if self.on_shuttle():
+                on_shuttle = " and toolhead on shuttle"
+                lane.unit_obj.lane_tool_loaded(lane)
+        msg += f"<span class=primary--text> in ToolHead{on_shuttle}</span>"
+        return msg
 
     def is_standalone(self):
         """
