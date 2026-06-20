@@ -2128,6 +2128,9 @@ class AFCLane:
         response["remember_spool"]= bool(self.remember_spool)
         response["spool_id"]= int(self.spool_id) if self.spool_id else None
         response["color"]=self.color
+        if not save_to_file:
+            response["multi_color_hexes"] = self.multi_color
+
         response["weight"]=self.weight
         response["extruder_temp"] = self.extruder_temp
         response["bed_temp"] = self.bed_temp

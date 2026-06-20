@@ -198,6 +198,25 @@ def _make_klippy_ready_mock():
     mod.Printer = Printer
     return mod
 
+def _make_print_task_config():
+    config = {
+        "filament_vendor": ["NONE"] * 4,
+        "filament_type": ["NONE"] * 4,
+        "filament_sub_type": ["NONE"] * 4,
+        "filament_color": [0xFFFFFFFF] * 4,
+        "filament_color_rgba": ['FFFFFFFF'] * 4,
+        "filament_color_multi": [
+            {"nums": 1, "alpha": 0xFF, "mode": 0, "colors": ["FFFFFF"]}
+            for _ in range(4)
+        ],
+    }
+    mod = types.ModuleType("print_task_config")
+    mod.DEFAULT_PRINT_TASK_CONFIG = config
+    mod.print_task_config = config
+    mod.config_path = MagicMock()
+
+    return mod
+
 
 # Install mocks before any extras imports happen
 sys.modules.setdefault("configfile", _make_configfile_mock())
@@ -395,6 +414,8 @@ class MockAFC:
         self.save_pos = MagicMock()
         self.CHANGE_TOOL = MagicMock()
         self.restore_pos = MagicMock()
+
+        self.snapmaker_printer = False
 
 
 class MockPrinter:
