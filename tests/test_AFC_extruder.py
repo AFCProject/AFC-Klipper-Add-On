@@ -11,15 +11,14 @@ Covers:
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from configparser import Error as KlipperError
 import pytest
 import sys
 import types
 
 from extras.AFC_extruder import AFCExtruderStats, AFCExtruder
 from tests.test_AFC_lane import _make_afc_lane, AFCLane
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────
 
 def _make_extruder_obj(name="extruder"):
     """Minimal AFCExtruder-like mock."""
@@ -1196,6 +1195,29 @@ class TestNoteToolStartCallback:
         ext.note_tool_start_callback(True)
         args = ext.tool_start_callback.call_args.args
         assert args[1]
+
+class TestCheckExtruderName:
+    def test_no_extruder_in_config_name(self):
+        ext = _make_afc_extruder(name="e0")
+        with pytest.raises(KlipperError) as exc:
+            ext._check_extruder_name()
+        assert "Missing extruder reference" in str(exc.value)
+
+    def test_no_extruder_in_extruder_name_variable(self):
+        ext = _make_afc_extruder(name="extruder")
+        ext.th_extruder_name = "e0"
+        with pytest.raises(KlipperError) as exc:
+            ext._check_extruder_name()
+        assert "Missing extruder reference" in str(exc.value)
+    
+    def test_extruder_in_config_name(self):
+        ext = _make_afc_extruder(name="extruder")
+        ext._check_extruder_name()
+
+    def test_extruder_in_extruder_name_variable(self):
+        ext = _make_afc_extruder(name="e0")
+        ext.th_extruder_name = "extruder1"
+        ext._check_extruder_name()
 
 class TestPrepOnShuttleCheck:
 

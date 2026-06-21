@@ -221,6 +221,8 @@ class AFCExtruder:
 
         self.name: str                  = self.fullname.split(' ')[-1]
         self.th_extruder_name: str      = config.get("extruder_name", self.name)
+        self._check_extruder_name()
+
         self.tool_start                 = config.get('pin_tool_start', None)                                            # Pin for sensor before(pre) extruder gears
         self.tool_end                   = config.get('pin_tool_end', None)                                              # Pin for sensor after(post) extruder gears (optional)
         self.tool_stn                   = config.getfloat("tool_stn", 72)                                               # Distance in mm from the toolhead sensor to the tip of the nozzle in mm, if `tool_end` is defined then distance is from this sensor
@@ -364,6 +366,19 @@ class AFCExtruder:
 
     def __str__(self):
         return self.name
+
+    def _check_extruder_name(self):
+        """
+        Helper method the verify that "extruder" exists in either the config name or in
+        extruder_name variable. If "extruder" is not found, raises a ConfigParser.Error with
+        a message to display to the user.
+        """
+        if "extruder" not in self.th_extruder_name:
+            error_str = (f"Missing extruder reference in [{self.fullname}] section. The word " \
+                         "extruder must appear either in the section name " \
+                         "([AFC_extruder extruder(n)]) or in the extruder_name variable " \
+                         "(extruder_name: extruder(n)).")
+            raise error(error_str)
 
     def check_lanes(self):
         # Checks to see if there are multiple lanes per toolhead, remove self created lane if
