@@ -335,6 +335,15 @@ class TestAFCExtruderHandleConnect:
         ext.reactor = None
         ext.handle_connect()
         assert ext.reactor is ext.afc.reactor
+    
+    def test_handel_connect_duplicate_entry(self):
+        ext1 = _make_afc_extruder("extruder")
+        ext2 = _make_afc_extruder("extruder")
+        ext2.afc = ext1.afc
+        ext1.afc.tools[ext1.th_extruder_name] = ext1
+        with pytest.raises(KlipperError) as exc:
+            ext2.handle_connect()
+        assert "Duplicate toolhead extruder mapping" in str(exc.value)
 
 
 # ── handle_moonraker_connect ───────────────────────────────────────────────────

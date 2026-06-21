@@ -418,6 +418,13 @@ class AFCExtruder:
         and assigns it to the instance variable `self.AFC`.
         """
         self.reactor = self.afc.reactor
+        existing = self.afc.tools.get(self.th_extruder_name)
+        if (existing is not None
+            and existing is not self):
+            error_str = (f"Duplicate toolhead extruder mapping '{self.th_extruder_name}' "
+                         f"between [{existing.fullname}] and [{self.fullname}]. "
+                         "Each AFC_extruder section must map to a unique toolhead extruder.")
+            raise error(error_str)
         self.afc.tools[self.th_extruder_name] = self
 
         self.toolhead_extruder = self.printer.lookup_object(self.th_extruder_name, None)
