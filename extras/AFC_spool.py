@@ -454,8 +454,9 @@ class AFCSpool:
 
                     # Check to see if filament is defined as multi-color and take the first color for now
                     # Once support for multicolor is added this needs to be updated
-                    if "multi_color_hexes" in result['filament']:
-                        cur_lane.multi_color = self._get_filament_values(result['filament'], 'multi_color_hexes').split(",")
+                    multi_color_hex = self._get_filament_values(result['filament'], 'multi_color_hexes')
+                    if multi_color_hex:
+                        cur_lane.multi_color = multi_color_hex.split(",")
                         cur_lane.color = f"#{cur_lane.multi_color[0]}"
                     else:
                         cur_lane.color = '#{}'.format(self._get_filament_values(result['filament'], 'color_hex'))

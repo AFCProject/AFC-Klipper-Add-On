@@ -895,6 +895,18 @@ class TestSetSpoolID:
         assert lane.color == "#AABBCC"
         assert lane.multi_color == result["filament"]["multi_color_hexes"].split(",")
 
+    def test_multi_color_is_none(self):
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result(color_hex="AABBCC")
+        result["filament"]["multi_color_hexes"] = None
+        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        spool.set_spoolID(lane, 42)
+        assert lane.color == "#AABBCC"
+        assert lane.multi_color == []
+
     def test_ignore_spoolman_material_temps_skips_extruder_temp(self):
         spool = self._make_spool_with_spoolman()
         spool.afc.ignore_spoolman_material_temps = True
