@@ -21,7 +21,7 @@ from extras.AFC_stepper import AFCExtruderStepper, TrapqAppendWrapper
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_stepper(name="lane1"):
+def _make_stepper(name="lane1", extruder_name="extruder"):
     """Build an AFCExtruderStepper bypassing the complex __init__."""
     stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
 
@@ -38,6 +38,9 @@ def _make_stepper(name="lane1"):
     stepper.fullname = name
     stepper.next_cmd_time = 0.0
     stepper._manual_axis_pos = 0.0
+    stepper.extruder_obj = MagicMock()
+    stepper.extruder_obj.th_extruder_name = stepper.extruder_obj.name = extruder_name
+    stepper.afc_extruder_name = extruder_name
 
     # Extruder stepper mock
     stepper.extruder_stepper = MagicMock()
@@ -284,32 +287,28 @@ class TestGetLastMoveTime:
 
 class TestSyncUnsync:
     def test_sync_calls_extruder_stepper_sync(self):
-        s = _make_stepper()
-        s.extruder_name = "extruder"
+        s = _make_stepper(extruder_name="extruder")
         s._set_current = MagicMock()
         s.set_print_current = MagicMock()
         s.sync_to_extruder(update_current=False)
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder")
 
     def test_sync_calls_set_print_current_when_update_current(self):
-        s = _make_stepper()
-        s.extruder_name = "extruder"
+        s = _make_stepper(extruder_name="extruder")
         s.set_print_current = MagicMock()
         s.sync_to_extruder(update_current=True)
         s.set_print_current.assert_called_once()
 
     def test_sync_skips_set_print_current_when_update_current_false(self):
-        s = _make_stepper()
-        s.extruder_name = "extruder"
+        s = _make_stepper(extruder_name="extruder")
         s.set_print_current = MagicMock()
         s.sync_to_extruder(update_current=False)
         s.set_print_current.assert_not_called()
 
     def test_sync_uses_override_extruder_name(self):
-        s = _make_stepper()
-        s.extruder_name = "extruder"
+        s = _make_stepper(extruder_name="extruder")
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=False, extruder_name="extruder2")
+        s.sync_to_extruder(update_current=False, th_extruder_name="extruder2")
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder2")
 
     def test_unsync_calls_sync_with_none(self):

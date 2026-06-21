@@ -220,7 +220,7 @@ class AFCExtruder:
         self.fullname                   = config.get_name()
 
         self.name: str                  = self.fullname.split(' ')[-1]
-        # self.extruder_name: str         = config.get("extruder_name", self.name)    # Add support for this, not sure where all this will have to be updated
+        self.th_extruder_name: str      = config.get("extruder_name", self.name)
         self.tool_start                 = config.get('pin_tool_start', None)                                            # Pin for sensor before(pre) extruder gears
         self.tool_end                   = config.get('pin_tool_end', None)                                              # Pin for sensor after(post) extruder gears (optional)
         self.tool_stn                   = config.getfloat("tool_stn", 72)                                               # Distance in mm from the toolhead sensor to the tip of the nozzle in mm, if `tool_end` is defined then distance is from this sensor
@@ -276,7 +276,7 @@ class AFCExtruder:
         self.lanes: Dict                = {}
         self.load_active                = False
         self.current_move_distance: float = 0
-        self.estats = AFCExtruderStats(self.name, self, self.afc.tool_cut_threshold)
+        self.estats = AFCExtruderStats(self.th_extruder_name, self, self.afc.tool_cut_threshold)
 
         # U1 only related variables
         self.park_detector_obj   = None
@@ -322,6 +322,7 @@ class AFCExtruder:
             config.fileconfig.set(config.section, "unit", self.tc_unit_name.split()[-1])
             config.fileconfig.set(config.section, "extruder", self.name)
             config.fileconfig.set(config.section, "hub", "direct")
+            config.fileconfig.set(config.section, "standalone", "True")
             self.tc_lane = AFCLane(config)
             self.printer.objects[f"AFC_lane {self.name}"] = self.tc_lane
             # TODO: Once homing is in create common function for this and AFC_stepper
@@ -402,11 +403,11 @@ class AFCExtruder:
         and assigns it to the instance variable `self.AFC`.
         """
         self.reactor = self.afc.reactor
-        self.afc.tools[self.name] = self
+        self.afc.tools[self.th_extruder_name] = self
 
-        self.toolhead_extruder = self.printer.lookup_object(self.name, None)
+        self.toolhead_extruder = self.printer.lookup_object(self.th_extruder_name, None)
         if not self.toolhead_extruder:
-            error_str = self.common_error.format(self.name, self.fullname)
+            error_str = self.common_error.format(self.th_extruder_name, self.fullname)
             raise error(error_str)
 
         if self.tool:
@@ -673,7 +674,7 @@ class AFCExtruder:
         if self.motion_queuing is not None:
             self.motion_queuing.wipe_trapq(self.trapq)
 
-        self.function.do_enable(False, self.name)
+        self.function.do_enable(False, self.th_extruder_name)
         self.load_active = False
 
         self.afc.restore_toolhead_temp(temp_state=self._captured_toolhead_temp, async_restore=True)
@@ -708,7 +709,7 @@ class AFCExtruder:
             and current_temp <= target_temp + self.afc.temp_wait_tolerance):
             if self.tool_start_state:
                 info_str = "loading to" if self.current_move_distance > 0 else "unloading from"
-                self.logger.info(f"{self.name} temp within range, {info_str} nozzle")
+                self.logger.info(f"{self.th_extruder_name} temp within range, {info_str} nozzle")
                 self.move_extruder(self.current_move_distance)
                 if self.current_move_distance > 0:
                     self.tc_lane.set_loaded()
@@ -725,7 +726,7 @@ class AFCExtruder:
                 )
             return self.reactor.NEVER
         else:
-            self.logger.debug(f"{self.name}: waiting for temp: {current_temp}")
+            self.logger.debug(f"{self.th_extruder_name}: waiting for temp: {current_temp}")
 
         return self.reactor.monotonic() + 1
 

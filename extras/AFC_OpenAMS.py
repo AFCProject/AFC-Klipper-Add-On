@@ -469,7 +469,7 @@ class afcAMS(afcUnit):
         if not extruder_name:
             return False
 
-        lane_extruder = getattr(lane, "extruder_name", None)
+        lane_extruder = getattr(lane, "afc_extruder_name", None)
         if lane_extruder is None:
             lane_extruder_obj = getattr(lane, "extruder_obj", None)
             lane_extruder = getattr(lane_extruder_obj, "name", None)

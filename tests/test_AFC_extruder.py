@@ -27,7 +27,7 @@ def _make_extruder_obj(name="extruder"):
     afc = MockAFC()
     afc.afc_stats = MagicMock()
     obj = MagicMock()
-    obj.name = name
+    obj.th_extruder_name = obj.name = name
     obj.afc = afc
     obj.logger = MockLogger()
     obj.park_detector_obj = None
@@ -224,7 +224,7 @@ def _make_afc_extruder(name="extruder"):
     ext.logger = MockLogger()
     ext.reactor = reactor
     ext.fullname = f"AFC_extruder {name}"
-    ext.name = name
+    ext.th_extruder_name = ext.name = name
     # Toolchanger fields – default mirrors single-toolhead state
     ext.tool_obj     = None
     ext.tc_unit_name = None

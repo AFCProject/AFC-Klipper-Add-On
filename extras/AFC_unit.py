@@ -267,7 +267,7 @@ class afcUnit:
 
         for lane in self.lanes.values():
             if lane.hub is not None and not lane.is_direct_hub() and lane.hub not in response["hubs"]: response["hubs"].append(lane.hub)
-            if lane.extruder_name is not None and lane.extruder_name not in response["extruders"]: response["extruders"].append(lane.extruder_name)
+            if lane.afc_extruder_name is not None and lane.afc_extruder_name not in response["extruders"]: response["extruders"].append(lane.afc_extruder_name)
             if lane.buffer_name is not None and lane.buffer_name not in response["buffers"]: response["buffers"].append(lane.buffer_name)
 
         return response

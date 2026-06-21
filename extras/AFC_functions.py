@@ -408,9 +408,9 @@ class afcFunction:
 
         :return Object: Object of current extruder/tool, None if no extruder/tool
         """
-        extruder_name = self.get_current_extruder()
-        if extruder_name:
-            return self.afc.tools.get(extruder_name, None)
+        th_extruder_name = self.get_current_extruder()
+        if th_extruder_name:
+            return self.afc.tools.get(th_extruder_name, None)
         return None
 
     def get_current_extruder(self) -> Optional[str]:

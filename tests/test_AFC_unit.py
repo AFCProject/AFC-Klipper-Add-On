@@ -59,7 +59,7 @@ def _make_lane(name="lane1", hub="hub1", extruder="ext1", buffer_name="buf1"):
     lane.unit_obj = MagicMock()
     lane.name = name
     lane.hub = hub
-    lane.extruder_name = extruder
+    lane.afc_extruder_name = extruder
     lane.buffer_name = buffer_name
     lane.led_ready = "0,1,0,0"
     lane.led_not_ready = "0,0,0,0.25"

@@ -273,16 +273,16 @@ class AFCExtruderStepper(AFCLane):
         else:
             self.next_cmd_time = print_time
 
-    def sync_to_extruder(self, update_current=True, extruder_name=None):
+    def sync_to_extruder(self, update_current=True, th_extruder_name=None):
         """
         Helper function to sync lane to extruder and set print current if specified.
 
         :param update_current: Sets current to specified print current when True
         """
-        if extruder_name is None:
-            extruder_name = self.extruder_name
+        if th_extruder_name is None:
+            th_extruder_name = self.extruder_obj.th_extruder_name
 
-        self.extruder_stepper.sync_to_extruder(extruder_name)
+        self.extruder_stepper.sync_to_extruder(th_extruder_name)
         if update_current: self.set_print_current()
 
     def unsync_to_extruder(self, update_current=True):
@@ -518,14 +518,14 @@ class AFCExtruderStepper(AFCLane):
             hub_pin = self._get_section_value('AFC_hub', hub_name, 'switch_pin')
 
         # Toolhead endstops from AFC_extruder (tool_start/tool_end)
-        extruder_name = getattr(self, 'extruder_name', None) or self._inherit_from_unit('extruder')
-        tool_start_pin = self._get_section_value('AFC_extruder', extruder_name, 'pin_tool_start')
-        tool_end_pin   = self._get_section_value('AFC_extruder', extruder_name, 'pin_tool_end')
+        afc_extruder_name = getattr(self, 'afc_extruder_name', None) or self._inherit_from_unit('extruder')
+        tool_start_pin = self._get_section_value('AFC_extruder', afc_extruder_name, 'pin_tool_start')
+        tool_end_pin   = self._get_section_value('AFC_extruder', afc_extruder_name, 'pin_tool_end')
 
         # Buffer endstops from AFC_buffer (advance/trailing), inherit from extruder or unit if needed
         buffer_name = getattr(self, 'buffer_name', None)
         if not buffer_name:
-            buffer_name = self._get_section_value('AFC_extruder', extruder_name, 'buffer') or self._inherit_from_unit('buffer')
+            buffer_name = self._get_section_value('AFC_extruder', afc_extruder_name, 'buffer') or self._inherit_from_unit('buffer')
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
 
@@ -539,7 +539,7 @@ class AFCExtruderStepper(AFCLane):
             if buffer_adv_pin is not None:
                 self._add_endstop('tool_start', buffer_adv_pin, 'tool_start')
             else:
-                error_string = f"Error: buffer set as pin_tool_start in [AFC_extruder {extruder_name}] config section,"
+                error_string = f"Error: buffer set as pin_tool_start in [AFC_extruder {afc_extruder_name}] config section,"
                 error_string += f" but [AFC_buffer {buffer_name}] is not found in config. Please make sure config "
                 error_string += f"section exists or remove `buffer: {buffer_name}` variable from your extruder config section."
                 raise error(error_string)

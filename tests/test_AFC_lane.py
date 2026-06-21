@@ -377,7 +377,7 @@ class TestAFCLaneIndexProperty:
 class TestAFCLaneExtruderIndexProperty:
     def test_lane_extruder_index_property_is_int(self):
         lane = _make_afc_lane()
-        lane.extruder_obj.name = "extruder1"
+        lane.extruder_obj.th_extruder_name = lane.extruder_obj.name = "extruder1"
         assert isinstance(lane.lane_extruder_index, int)
 
     def test_lane_extruder_index_property_is_none(self):
@@ -387,17 +387,17 @@ class TestAFCLaneExtruderIndexProperty:
     
     def test_lane_extruder_index_property_extruder(self):
         lane = _make_afc_lane()
-        lane.extruder_obj.name = "extruder"
+        lane.extruder_obj.th_extruder_name = lane.extruder_obj.name = "extruder"
         assert lane.lane_extruder_index == 0
     
     def test_lane_extruder_index_property_extruder1(self):
         lane = _make_afc_lane()
-        lane.extruder_obj.name = "extruder1"
+        lane.extruder_obj.th_extruder_name = lane.extruder_obj.name = "extruder1"
         assert lane.lane_extruder_index == 1
     
     def test_lane_extruder_index_property_value_error(self):
         lane = _make_afc_lane()
-        lane.extruder_obj.name = "extruderT"
+        lane.extruder_obj.th_extruder_name = lane.extruder_obj.name = "extruderT"
         assert lane.lane_extruder_index == 0    
 
 # ── get_color ─────────────────────────────────────────────────────────────────
@@ -649,7 +649,7 @@ def _make_lane_for_moonraker(extruder_name="extruder", map_value="T0"):
     lane = _make_afc_lane("AFC_stepper lane1")
     lane.map = map_value
     lane.extruder_obj = MagicMock()
-    lane.extruder_obj.name = extruder_name
+    lane.extruder_obj.th_extruder_name = lane.extruder_obj.name = extruder_name
     lane.color = "#FF0000"
     lane._material = "PLA"
     lane.bed_temp = 60

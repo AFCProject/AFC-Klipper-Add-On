@@ -150,7 +150,8 @@ class AFCLane:
             self.index              = 0
             pass
 
-        self.extruder_name      = config.get('extruder', None)                          # Extruder name(AFC_extruder) that belongs to this stepper, overrides extruder that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
+        self.afc_extruder_name    = config.get('extruder', None)                          # Extruder name(AFC_extruder) that belongs to this stepper, overrides extruder that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
+        self.standalone_lane      = config.getboolean("standalone", False)
         self.remember_spool :bool = config.getboolean('remember_spool', None)             # remember_spool that is set in AFC_Stepper section, overrides remember_spool that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
         self.map                = config.get('cmd', None)                               # Keeping this in so it does not break others config that may have used this, use map instead
         # Saving to self._map so that if a user has it defined it will be reset back to this when
@@ -296,8 +297,8 @@ class AFCLane:
             self._set_homing_endstop(query_endstops, ppins,
                                      self.buffer_obj.advance_pin, AFCHomingPoints.BUFFER)
 
-        if (self.extruder_name
-            and "extruder" not in self.name): # Protects against standalone lanes
+        if (self.afc_extruder_name
+            and not self.standalone_lane): # Protects against standalone lanes
             self._get_extruder_object()
             pin = self.extruder_obj.tool_start
             if pin and "buffer" not in pin:
@@ -434,13 +435,13 @@ class AFCLane:
         if not hasattr(self, "extruder_obj") or self.extruder_obj is None:
             return extruder_index
 
-        extruder_name = self.extruder_obj.name
+        th_extruder_name = self.extruder_obj.th_extruder_name
 
-        if extruder_name == "extruder":
+        if th_extruder_name == "extruder":
             return extruder_index
 
         try:
-            return int(extruder_name.replace("extruder", ""))
+            return int(th_extruder_name.replace("extruder", ""))
         except ValueError:
             return extruder_index
 
@@ -504,10 +505,10 @@ class AFCLane:
         raises error if extruder is not found
         """
         try:
-            self.extruder_obj = self.printer.load_object(self._config, 'AFC_extruder {}'.format(self.extruder_name))
-        except:
-            error_string = 'Error: No config found for extruder: {extruder} in [{stepper}]. Please make sure [AFC_extruder {extruder}] section exists in your config'.format(
-                extruder=self.extruder_name, stepper=self.fullname )
+            self.extruder_obj = self.printer.load_object(self._config, 'AFC_extruder {}'.format(self.afc_extruder_name))
+        except Exception as e:
+            error_string = 'Error: No config found for extruder: {extruder} in [{stepper}]. Please make sure [AFC_extruder {extruder}] section exists in your config\nKlippy error: {e}'.format(
+                extruder=self.afc_extruder_name, stepper=self.fullname, e=e )
             raise error(error_string)
 
     def _set_homing_endstop(self, query_endstops: QueryEndstops, ppins: PrinterPins,
@@ -603,7 +604,7 @@ class AFCLane:
             self.hub_obj.hub_clear_move_dis = 65
 
         self.extruder_obj = self.unit_obj.extruder_obj
-        if self.extruder_name is not None:
+        if self.afc_extruder_name is not None:
             self._get_extruder_object()
         elif self.extruder_obj is None:
             error_string = "Error: Extruder has not been configured for stepper {name}, please add extruder variable to either [AFC_stepper {name}] or [AFC_{unit_type} {unit_name}] in your config file".format(
@@ -611,7 +612,7 @@ class AFCLane:
             raise error(error_string)
 
         # Assigning extruder name just in case stepper is using extruder defined in units config
-        self.extruder_name = self.extruder_obj.name
+        self.afc_extruder_name = self.extruder_obj.name
         if add_to_other_obj:
             self.extruder_obj.lanes[self.name] = self
             self.extruder_obj.check_lanes()
@@ -1270,7 +1271,8 @@ class AFCLane:
         :param update_current: Sets current to specified print current when True
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.sync_to_extruder(update_current, extruder_name=self.extruder_name)
+            self.drive_stepper.sync_to_extruder(update_current,
+                                                th_extruder_name=self.extruder_obj.th_extruder_name)
 
     def unsync_to_extruder(self, update_current=True):
         """
@@ -2109,7 +2111,7 @@ class AFCLane:
         response['name'] = self.name
         response['unit'] = self.unit
         response['hub'] = self.hub
-        response['extruder'] = self.extruder_name
+        response['extruder'] = self.afc_extruder_name
         response['buffer'] = self.buffer_name
         response['buffer_status'] = self.buffer_status()
         response['lane'] = self.index

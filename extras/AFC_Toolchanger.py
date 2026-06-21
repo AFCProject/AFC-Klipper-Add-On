@@ -203,7 +203,7 @@ class AfcToolchanger(afcUnit):
             self.afc.last_gcode_position[i] -= self.afc.gcode_move.base_position[i]
         # Perform a tool swap by selecting the appropriate extruder based on the lane's extruder object.
         self.afc.afcDeltaTime.log_with_time("Performing tool swap")
-        name = lane.extruder_obj.name
+        name = lane.extruder_obj.th_extruder_name
         tool_index = 0 if name == "extruder" else int(name.replace("extruder", ""))
 
         if lane.extruder_obj.custom_tool_swap:

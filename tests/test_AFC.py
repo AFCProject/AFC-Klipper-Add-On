@@ -599,7 +599,7 @@ def _make_afc_for_change_tool(lane_name="lane2", next_extruder_name="extruder1",
 
     # Current (old) lane/extruder
     current_extruder = MagicMock()
-    current_extruder.name = current_extruder_name
+    current_extruder.th_extruder_name = current_extruder.name = current_extruder_name
     current_extruder.get_heater = MagicMock(return_value=MagicMock())
     current_extruder.deadband = 2.0
     current_extruder.estats = MagicMock()
@@ -611,7 +611,7 @@ def _make_afc_for_change_tool(lane_name="lane2", next_extruder_name="extruder1",
 
     # Next (new) lane/extruder
     next_extruder = MagicMock()
-    next_extruder.name = next_extruder_name
+    next_extruder.th_extruder_name = next_extruder.name = next_extruder_name
     next_extruder.get_heater = MagicMock(return_value=MagicMock())
     next_extruder.deadband = 2.0
     next_extruder.estats = MagicMock()
@@ -2539,7 +2539,7 @@ class TestUnitOrdering:
     def add_lane_to_unit(self, unit, lane_name, extruder_name="extruder"):
         lane = MagicMock()
         lane.name = lane_name
-        lane.extruder_obj.name = extruder_name
+        lane.extruder_obj.th_extruder_name = lane.extruder_obj.name = extruder_name
         unit.lanes.update({lane_name: lane})
         
     def test_unit_lane_ordering(self):
