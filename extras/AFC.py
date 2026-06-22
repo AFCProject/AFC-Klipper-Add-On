@@ -424,8 +424,8 @@ class afc:
 
         # Check if hardware bypass is configured, if not create a virtual bypass sensor
         try:
-            self.bypass = self.printer.lookup_object('filament_switch_sensor bypass')[0].runout_helper
-        except:
+            self.bypass = self.printer.lookup_object('filament_switch_sensor bypass').runout_helper
+        except Exception:
             self.bypass = add_filament_switch("virtual_bypass",
                                               "afc_virtual_bypass:virtual_bypass",
                                               self.printer )[0].runout_helper
