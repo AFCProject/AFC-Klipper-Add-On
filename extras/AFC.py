@@ -424,12 +424,16 @@ class afc:
 
         # Check if hardware bypass is configured, if not create a virtual bypass sensor
         try:
-            self.bypass = self.printer.lookup_object('filament_switch_sensor bypass').runout_helper
+            self.bypass = self.printer.lookup_object('filament_switch_sensor bypass')[0].runout_helper
         except:
-            self.bypass = add_filament_switch("virtual_bypass", "afc_virtual_bypass:virtual_bypass", self.printer ).runout_helper
+            self.bypass = add_filament_switch("virtual_bypass",
+                                              "afc_virtual_bypass:virtual_bypass",
+                                              self.printer )[0].runout_helper
 
         if self.show_quiet_mode:
-            self.quiet_switch = add_filament_switch("quiet_mode", "afc_quiet_mode:afc_quiet_mode", self.printer ).runout_helper
+            self.quiet_switch = add_filament_switch("quiet_mode",
+                                                    "afc_quiet_mode:afc_quiet_mode",
+                                                    self.printer )[0].runout_helper
 
         # Register G-Code commands for macros we don't want to show up in mainsail/fluidd
         self.gcode.register_command('TOOL_UNLOAD',          self.cmd_TOOL_UNLOAD,           desc=self.cmd_TOOL_UNLOAD_help)

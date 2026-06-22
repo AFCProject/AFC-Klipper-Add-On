@@ -76,10 +76,12 @@ class AFCTrigger:
         self.multiplier_low     = config.getfloat("multiplier_low", default=0.9, minval=0.0, maxval=1.0)
 
         self.adv_filament_switch_name = "{}_{}".format(self.name, "expanded")
-        self.fila_avd = add_filament_switch(self.adv_filament_switch_name, self.advance_pin, self.printer, show_sensor=self.enable_sensors_in_gui )
+        self.fila_avd, _ = add_filament_switch(self.adv_filament_switch_name, self.advance_pin,
+                                               self.printer, show_sensor=self.enable_sensors_in_gui )
 
         self.trail_filament_switch_name = "{}_{}".format(self.name, "compressed")
-        self.fila_trail = add_filament_switch(self.trail_filament_switch_name, self.trailing_pin, self.printer, show_sensor=self.enable_sensors_in_gui )
+        self.fila_trail, _ = add_filament_switch(self.trail_filament_switch_name, self.trailing_pin,
+                                                 self.printer, show_sensor=self.enable_sensors_in_gui )
 
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
 

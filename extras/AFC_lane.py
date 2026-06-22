@@ -281,8 +281,8 @@ class AFCLane:
             show_sensor = True
             if not self.enable_sensors_in_gui or (self.sensor_to_show is not None and 'selector' not in self.sensor_to_show):
                 show_sensor = False
-            self.fila_selector = add_filament_switch(f"{self.name}_selector", self.selector,
-                                                     self.printer, show_sensor)
+            self.fila_selector, _ = add_filament_switch(f"{self.name}_selector", self.selector,
+                                                        self.printer, show_sensor)
             self._set_homing_endstop(query_endstops, ppins,
                                      self.selector, AFCHomingPoints.SELECTOR)
             buttons.register_buttons([self.selector], self.selector_callback)

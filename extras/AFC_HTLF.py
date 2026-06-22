@@ -63,7 +63,8 @@ class AFC_HTLF(afcBoxTurtle):
         self.home_endstop           = None
         self.home_endstop_name      = None
         if self.home_pin is not None:
-            self.home_sensor = add_filament_switch(f"{self.name}_home_pin", self.home_pin, self.printer, self.enable_sensors_in_gui )
+            self.home_sensor, _ = add_filament_switch(f"{self.name}_home_pin", self.home_pin,
+                                                      self.printer, self.enable_sensors_in_gui )
 
             ppins.allow_multi_use_pin(self.home_pin.strip("!^"))
             ppins.parse_pin(self.home_pin, True, True)

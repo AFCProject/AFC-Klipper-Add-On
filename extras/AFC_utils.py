@@ -26,25 +26,36 @@ from urllib.error import (
     HTTPError
 )
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Callable
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
     from configfile import ConfigWrapper
+    from extras.filament_switch_sensor import SwitchSensor
+    from klippy import Printer
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
-def add_filament_switch(switch_name, switch_pin, printer, show_sensor=True,
-                        runout_callback = None, enable_runout=False,
-                        debounce_delay=0., extruder="extruder" ):
+def add_filament_switch(switch_name: str, switch_pin: str, printer: Printer,
+                        show_sensor: bool=True, runout_callback: Callable = None,
+                        enable_runout: bool=False, debounce_delay: float=0.
+                        ) -> tuple[SwitchSensor, DebounceButton]:
     """
     Helper function to register pins as filament switch sensor so it will show up in web guis
 
     :param switch_name: Name of switch to register, should be in the following format: `filament_switch_sensor <name>`
     :param switch_pin: Pin to add to config for switch
     :param printer: printer object
+    :param show_sensor: Controls weather or not this sensor will show up in Fluidd/Mainsail UI,
+                        True to show sensor, False to hide sensor from showing up.
+    :param runout_callback: Pass in method to replace existing _runout_event_handler in klippers
+                            runout_helper class.
+    :param enable_runout: If True automatically turns off runout, user can always reenable from UI
+                          if sensor is showing or from klipper macro.
+    :param debounce_delay: A period of time in seconds to debounce switches prior to detecting
+                           runouts
 
-    :return returns filament_switch_sensor object
+    :return tuple: filament_switch_sensor object and DebounceButton object
     """
     import configparser
     import configfile
@@ -85,10 +96,7 @@ def add_filament_switch(switch_name, switch_pin, printer, show_sensor=True,
         fila.runout_helper.runout_gcode = 1
         fila.runout_helper._runout_event_handler = runout_callback # Overriding filament event handler with AFC handler
 
-    if enable_runout:
-        return fila, debounce_button
-
-    return fila
+    return fila, debounce_button
 
 
 def check_and_return( value_str:str, data_values:dict ) -> str:

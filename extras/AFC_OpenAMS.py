@@ -370,7 +370,7 @@ class afcAMS(afcUnit):
             debounce = getattr(extruder, "debounce_delay", 0.0)
 
             try:
-                created = add_filament_switch(
+                created, _ = add_filament_switch(
                     normalized,
                     f"afc_virtual_ams:{normalized}",
                     self.printer,
@@ -381,7 +381,7 @@ class afcAMS(afcUnit):
                 )
             except TypeError:
                 try:
-                    created = add_filament_switch(
+                    created, _ = add_filament_switch(
                         normalized,
                         f"afc_virtual_ams:{normalized}",
                         self.printer,
