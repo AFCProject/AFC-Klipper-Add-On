@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-06-21]
 ### Added
 - Ability to have AFC_extruder config section a custom name thats not `extruder(x)`, if `extruder(x)` is not being used then `extruder_name` variable needs to have the correct toolhead extruder name.
+### Fixed
+- Issue where adding `enable_tool_runout: False` would cause klipper to crash with message `Internal error during connect: cannot unpack non-iterable SwitchSensor object`
 
 ## [2026-06-20]
 ### Fixed
