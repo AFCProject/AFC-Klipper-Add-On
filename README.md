@@ -73,4 +73,4 @@ Further documentation on the plugin, it's various commands and configuration ref
 
 [![Join me on Discord](https://discord.com/api/guilds/1495561254293471282/widget.png?style=banner2)](https://discord.gg/z2tgWEnfDT)
 
-Armored Turtle Configuration / Build Manuals [here](https://armoredturtle.xyz/)
+Armored Turtle Configuration / Build Manuals [here](https://www.afcproject.dev/)
