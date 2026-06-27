@@ -267,7 +267,7 @@ class afcFunction:
         except Exception:
             return False
 
-    def check_homed(self):
+    def check_homed(self, error_msg=None):
         """
         Helper function to determine if printer is currently homed, if not, then apply G28
 
@@ -287,7 +287,9 @@ class afcFunction:
                         return False
                 return True
             else:
-                self.afc.error.AFC_error("Please home printer before doing a tool load",
+                if error_msg is None:
+                    error_msg = "Please home printer before doing a tool load"
+                self.afc.error.AFC_error(error_msg,
                                          False, stack_name=inspect.currentframe().f_back.f_code.co_name)
                 return False
         else:
@@ -1355,11 +1357,19 @@ class afcFunction:
             try:
                 if (self.afc.snapmaker_printer
                     and self.afc.park_pre_load):
-                    if not self.is_homed():
-                        self.afc.error.AFC_error("Printer needs to be homed before calibrating PTFE length "
-                                                "to toolhead", pause=False)
+                    error_msg = ("Printer needs to be homed before calibrating PTFE length "
+                                "to toolhead")
+                    if not self.check_homed(error_msg):
                         return
                     self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
+                    selected_tool = self.get_current_extruder_obj()
+                    if (selected_tool is None
+                        or selected_tool.name != cur_lane.extruder_obj.name):
+                        self.afc.error.AFC_error(
+                            f"Failed to select tool '{cur_lane.extruder_obj.name}' before Bowden calibration",
+                            pause=False,
+                        )
+                        return
                     snapmaker_tool_selected = True
                     self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
 
