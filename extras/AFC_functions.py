@@ -1360,8 +1360,8 @@ class afcFunction:
                                                 "to toolhead", pause=False)
                         return
                     self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
-                    self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
                     snapmaker_tool_selected = True
+                    self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
 
                 self.logger.info('Starting AFC distance Calibrations')
 
@@ -1377,9 +1377,9 @@ class afcFunction:
 
                 self.logger.info("Bowden length calibration Done!")
 
+            finally:
                 if set_tool_start_back_to_none:
                     cur_lane.extruder_obj.tool_start = None
-            finally:
                 if snapmaker_tool_selected:
                     self.afc.gcode.run_script_from_command("AFC_UNSELECT_TOOL")
 
