@@ -1514,7 +1514,6 @@ class afc:
                 self.do_poop_kick_wipe(cur_lane=cur_lane, cur_extruder=cur_lane.extruder_obj,
                                     purge_length=purge_length)
             finally:
-                cur_lane.need_purge = False
                 if self.post_load_macro is not None:
                     self.gcode.run_script_from_command(self.post_load_macro)
                     # TODO: Add afcDeltaTime log
