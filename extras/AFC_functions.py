@@ -1362,6 +1362,7 @@ class afcFunction:
                     if not self.check_homed(error_msg):
                         return
                     self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
+                    snapmaker_tool_selected = True
                     selected_tool = self.get_current_extruder_obj()
                     if (selected_tool is None
                         or selected_tool.name != cur_lane.extruder_obj.name):
@@ -1370,7 +1371,6 @@ class afcFunction:
                             pause=False,
                         )
                         return
-                    snapmaker_tool_selected = True
                     self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
 
                 self.logger.info('Starting AFC distance Calibrations')

@@ -69,6 +69,7 @@ class TestcmdAFCSelectTool:
         }.get(key, default)
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
+        tool.tool_swap.assert_not_called()
         error_msg = [m for lvl, m in tool.logger.messages if lvl == "error"]
         assert any(f"Key:{key_tool} invalid for TOOL" in m for m in error_msg)
 
@@ -86,5 +87,6 @@ class TestcmdAFCSelectTool:
         }.get(key, default)
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
+        tool.tool_swap.assert_not_called()
         error_msg = [m for lvl, m in tool.logger.messages if lvl == "error"]
         assert any(f"Tool '{key_tool}' does not have a valid 'tc_lane' attribute." in m for m in error_msg)
