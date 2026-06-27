@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-06-27]
 ### Added
 - The ability to purge on next toolchange for standalone toolheads
+- When running bowden calibration on Snapmaker printers, toolhead is now moved to Y120 so that filament can go all the way to the gears when calibration. Without this move, it has been found that sometimes filament gets caught on the inside lip of the toolhead and does not give an accurate bowden length.
 
 ## [2026-06-21]
 ### Added
