@@ -131,13 +131,16 @@ class AfcToolchanger(afcUnit):
         ```
         """
         tool_key = gcmd.get("TOOL")
-        tool = None
-        # Since adding custom AFC_extruder name, tools need to be looked up this way now since
-        # the key for tools is extruder name not AFC_extruder name
-        for afc_extruder in self.afc.tools.values():
-            if afc_extruder.name == tool_key:
-                tool = afc_extruder
-                break
+        # First try by dictionary key
+        tool = self.afc.tools.get(tool_key)
+        # Now try with afc_extruder.name since adding custom AFC_extruder name, tools need to be
+        # looked up this way now since the key for tools is extruder name not AFC_extruder name.
+        # This way both extruder and e0 should lookup successfully.
+        if tool is None:
+            for afc_extruder in self.afc.tools.values():
+                if afc_extruder.name == tool_key:
+                    tool = afc_extruder
+                    break
 
         if tool:
             if hasattr(tool, 'tc_lane') and tool.tc_lane is not None:
