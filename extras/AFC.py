@@ -1318,7 +1318,6 @@ class afc:
             else:
                 self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.poop_cmd, cur_extruder.name))
 
-            cur_lane.need_purge = False
 
             self.afcDeltaTime.log_with_time("TOOL_LOAD: After poop")
             self.function.log_toolhead_pos()
@@ -1340,6 +1339,8 @@ class afc:
 
         # Wait for moves to finish
         self.toolhead.wait_moves()
+        # Always clear since some people could have poop turned off
+        cur_lane.need_purge = False
 
     cmd_TOOL_LOAD_help = "Load lane into tool"
     def cmd_TOOL_LOAD(self, gcmd):
@@ -1513,10 +1514,11 @@ class afc:
                     self.afcDeltaTime.log_with_time("Done heating toolhead")
                 self.do_poop_kick_wipe(cur_lane=cur_lane, cur_extruder=cur_lane.extruder_obj,
                                     purge_length=purge_length)
-            finally:
+
                 if self.post_load_macro is not None:
                     self.gcode.run_script_from_command(self.post_load_macro)
                     # TODO: Add afcDeltaTime log
+            finally:
                 self.restore_toolhead_temp(temp_state)
                 self.save_vars()
 

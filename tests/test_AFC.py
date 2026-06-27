@@ -2678,9 +2678,8 @@ class TestDoPoopKickWipe:
             call("TOOL_LOAD: After first wipe"),
             call("TOOL_LOAD: After second wipe")
         ]
-        afc.gcode.run_script_from_command.assert_has_calls(gcode_calls)
-        afc.afcDeltaTime.log_with_time.assert_has_calls(log_with_time_calls)
-        
+        assert afc.gcode.run_script_from_command.call_args_list == gcode_calls
+        assert afc.afcDeltaTime.log_with_time.call_args_list == log_with_time_calls
         assert afc.function.log_toolhead_pos.call_count == 3
 
     def test_poop_kick_wipe(self):
@@ -2713,8 +2712,8 @@ class TestDoPoopKickWipe:
             call("TOOL_LOAD: After kick"),
             call("TOOL_LOAD: After second wipe")
         ]
-        afc.gcode.run_script_from_command.assert_has_calls(gcode_calls)
-        afc.afcDeltaTime.log_with_time.assert_has_calls(log_with_time_calls)
+        assert afc.gcode.run_script_from_command.call_args_list == gcode_calls
+        assert afc.afcDeltaTime.log_with_time.call_args_list == log_with_time_calls
         
         assert afc.function.log_toolhead_pos.call_count == 4
 
@@ -2741,8 +2740,8 @@ class TestDoPoopKickWipe:
             call("TOOL_LOAD: After kick"),
             call("TOOL_LOAD: After second wipe")
         ]
-        afc.gcode.run_script_from_command.assert_has_calls(gcode_calls)
-        afc.afcDeltaTime.log_with_time.assert_has_calls(log_with_time_calls)
+        assert afc.gcode.run_script_from_command.call_args_list == gcode_calls
+        assert afc.afcDeltaTime.log_with_time.call_args_list == log_with_time_calls
         
         assert afc.function.log_toolhead_pos.call_count == 2
-        assert lane.need_purge
+        assert not lane.need_purge
