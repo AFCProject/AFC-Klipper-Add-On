@@ -1351,34 +1351,37 @@ class afcFunction:
             # the printer to be homed first. Toolhead needs to be selected because filament can be
             # caught on the inside lip of the toolhead if its docked. By moving the toolhead to Y 120
             # it has been found to make loading filament into the toolhead more reliable.
-            if (self.afc.snapmaker_printer
-                and self.afc.park_pre_load):
-                if not self.is_homed():
-                    self.afc.error.AFC_error("Printer needs to be homed before calibrating PTFE length "
-                                            "to toolhead", pause=False)
+            snapmaker_tool_selected = False
+            try:
+                if (self.afc.snapmaker_printer
+                    and self.afc.park_pre_load):
+                    if not self.is_homed():
+                        self.afc.error.AFC_error("Printer needs to be homed before calibrating PTFE length "
+                                                "to toolhead", pause=False)
+                        return
+                    self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
+                    self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
+                    snapmaker_tool_selected = True
+
+                self.logger.info('Starting AFC distance Calibrations')
+
+                checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(cur_lane, dis, tol)
+                if not checked:
+                    msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
+                    self.afc.error.AFC_error(msg, pause=False)
+
+                    self._afc_cali_fail(cali=cur_lane.name, dis=abs(pos), reset_lane=(pos!=0),
+                                        title="AFC Bowden Calibration Failed", fail_message=msg)
                     return
-                self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
-                self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
+                else: calibrated.append('Bowden_length: {}'.format(afc_bl))
 
-            self.logger.info('Starting AFC distance Calibrations')
+                self.logger.info("Bowden length calibration Done!")
 
-            checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(cur_lane, dis, tol)
-            if not checked:
-                msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
-                self.afc.error.AFC_error(msg, pause=False)
-
-                self._afc_cali_fail(cali=cur_lane.name, dis=abs(pos), reset_lane=(pos!=0),
-                                    title="AFC Bowden Calibration Failed", fail_message=msg)
-                return
-            else: calibrated.append('Bowden_length: {}'.format(afc_bl))
-
-            self.logger.info("Bowden length calibration Done!")
-
-            if set_tool_start_back_to_none:
-                cur_lane.extruder_obj.tool_start = None
-
-            if self.afc.snapmaker_printer:
-                self.afc.gcode.run_script_from_command("AFC_UNSELECT_TOOL")
+                if set_tool_start_back_to_none:
+                    cur_lane.extruder_obj.tool_start = None
+            finally:
+                if snapmaker_tool_selected:
+                    self.afc.gcode.run_script_from_command("AFC_UNSELECT_TOOL")
 
         # Calibration for TD-1 bowden length
         if td1 is not None:
