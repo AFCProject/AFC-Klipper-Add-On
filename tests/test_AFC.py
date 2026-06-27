@@ -23,14 +23,14 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 import pytest
 
 from extras.AFC import afc, State, AFC_VERSION
 from extras.AFC_lane import AFCLaneState
 from klippy import Printer
 
-
+from tests.test_AFC_lane import _make_afc_lane
 # ── State constants ───────────────────────────────────────────────────────────
 
 class TestStateConstants:
@@ -124,10 +124,16 @@ def _make_afc():
     obj.in_toolchange = False
     obj.get_bypass_state = MagicMock(return_value=False)
     obj._get_quiet_mode = MagicMock(return_value=False)
+    obj.poop = False
+    obj.poop_cmd = None
     obj.park = False
     obj.park_cmd = None
     obj.wipe = False
     obj.wipe_cmd = None
+    obj.kick = False
+    obj.kick_cmd = None
+    obj.afcDeltaTime = MagicMock()
+    obj.toolhead = MagicMock()
     return obj
 
 
@@ -2608,4 +2614,135 @@ class TestUnitOrdering:
         key_order = list(obj.units.keys())
 
         assert key_order == ["Turtle_1", "Vivid_1", "HTLF_Claymore_1", "Tools", "EMU_1"], key_order
+
+class TestDoPoopKickWipe:
+    def test_poop_no_purge(self):
+        afc = _make_afc()
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "e0"
+        lane.need_purge = True
+
+        afc.poop = True
+        afc.poop_cmd = "AFC_POOP"
+
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj)
+
+        afc.gcode.run_script_from_command.assert_called_once_with("AFC_POOP EXTRUDER=e0")
+        afc.afcDeltaTime.log_with_time.assert_called_once_with("TOOL_LOAD: After poop")
+        afc.function.log_toolhead_pos.assert_called_once()
+
+        afc.toolhead.wait_moves.assert_called_once()
+        assert not lane.need_purge
+    
+    def test_poop_purge_length(self):
+        afc = _make_afc()
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "e0"
+        lane.need_purge = True
+
+        afc.poop = True
+        afc.poop_cmd = "AFC_POOP"
+
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+
+        afc.gcode.run_script_from_command.assert_called_once_with("AFC_POOP PURGE_LENGTH=100 EXTRUDER=e0")
+        afc.afcDeltaTime.log_with_time.assert_called_once_with("TOOL_LOAD: After poop")
+        afc.function.log_toolhead_pos.assert_called_once()
+
+        afc.toolhead.wait_moves.assert_called_once()
+
+        assert not lane.need_purge
+    
+    def test_poop_wipe(self):
+        afc = _make_afc()
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "e0"
+        lane.need_purge = True
+
+        afc.poop = True
+        afc.poop_cmd = "AFC_POOP"
+
+        afc.wipe = True
+        afc.wipe_cmd = "AFC_BRUSH"
+
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+
+        gcode_calls = [
+            call("AFC_POOP PURGE_LENGTH=100 EXTRUDER=e0"),
+            call("AFC_BRUSH EXTRUDER=e0"),
+            call("AFC_BRUSH EXTRUDER=e0")
+        ]
+
+        log_with_time_calls = [
+            call("TOOL_LOAD: After poop"),
+            call("TOOL_LOAD: After first wipe"),
+            call("TOOL_LOAD: After second wipe")
+        ]
+        afc.gcode.run_script_from_command.assert_has_calls(gcode_calls)
+        afc.afcDeltaTime.log_with_time.assert_has_calls(log_with_time_calls)
         
+        assert afc.function.log_toolhead_pos.call_count == 3
+
+    def test_poop_kick_wipe(self):
+        afc = _make_afc()
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "e0"
+        lane.need_purge = True
+
+        afc.poop = True
+        afc.poop_cmd = "AFC_POOP"
+
+        afc.wipe = True
+        afc.wipe_cmd = "AFC_BRUSH"
+
+        afc.kick = True
+        afc.kick_cmd = "AFC_KICK"
+
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+
+        gcode_calls = [
+            call("AFC_POOP PURGE_LENGTH=100 EXTRUDER=e0"),
+            call("AFC_BRUSH EXTRUDER=e0"),
+            call("AFC_KICK EXTRUDER=e0"),
+            call("AFC_BRUSH EXTRUDER=e0")
+        ]
+
+        log_with_time_calls = [
+            call("TOOL_LOAD: After poop"),
+            call("TOOL_LOAD: After first wipe"),
+            call("TOOL_LOAD: After kick"),
+            call("TOOL_LOAD: After second wipe")
+        ]
+        afc.gcode.run_script_from_command.assert_has_calls(gcode_calls)
+        afc.afcDeltaTime.log_with_time.assert_has_calls(log_with_time_calls)
+        
+        assert afc.function.log_toolhead_pos.call_count == 4
+
+    def test_kick_wipe(self):
+        afc = _make_afc()
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "e0"
+        lane.need_purge = True
+
+        afc.wipe = True
+        afc.wipe_cmd = "AFC_BRUSH"
+
+        afc.kick = True
+        afc.kick_cmd = "AFC_KICK"
+
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+
+        gcode_calls = [
+            call("AFC_KICK EXTRUDER=e0"),
+            call("AFC_BRUSH EXTRUDER=e0")
+        ]
+
+        log_with_time_calls = [
+            call("TOOL_LOAD: After kick"),
+            call("TOOL_LOAD: After second wipe")
+        ]
+        afc.gcode.run_script_from_command.assert_has_calls(gcode_calls)
+        afc.afcDeltaTime.log_with_time.assert_has_calls(log_with_time_calls)
+        
+        assert afc.function.log_toolhead_pos.call_count == 2
+        assert lane.need_purge
