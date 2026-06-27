@@ -1302,6 +1302,45 @@ class afc:
 
         self.current_state = State.IDLE
 
+    def do_poop_kick_wipe(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
+                          purge_length: Optional[float]=None):
+        """
+        Helper method for easily calling poop,kick,wipe macros. Macros only run if users have them
+        enabled
+
+        :param cur_lane: Current lane that is in toolhead
+        :param cur_extruder: Current active toolhead extruder
+        :param purge_length: Length to purge filament
+        """
+        if self.poop:
+            if purge_length is not None:
+                self.gcode.run_script_from_command("{} PURGE_LENGTH={} EXTRUDER={}".format(self.poop_cmd, purge_length, cur_extruder.name))
+            else:
+                self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.poop_cmd, cur_extruder.name))
+
+            cur_lane.need_purge = False
+
+            self.afcDeltaTime.log_with_time("TOOL_LOAD: After poop")
+            self.function.log_toolhead_pos()
+
+            if self.wipe:
+                self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.wipe_cmd, cur_extruder.name))
+                self.afcDeltaTime.log_with_time("TOOL_LOAD: After first wipe")
+                self.function.log_toolhead_pos()
+
+        if self.kick:
+            self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.kick_cmd, cur_extruder.name))
+            self.afcDeltaTime.log_with_time("TOOL_LOAD: After kick")
+            self.function.log_toolhead_pos()
+
+        if self.wipe:
+            self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.wipe_cmd, cur_extruder.name))
+            self.afcDeltaTime.log_with_time("TOOL_LOAD: After second wipe")
+            self.function.log_toolhead_pos()
+
+        # Wait for moves to finish
+        self.toolhead.wait_moves()
+
     cmd_TOOL_LOAD_help = "Load lane into tool"
     def cmd_TOOL_LOAD(self, gcmd):
         """
@@ -1422,33 +1461,9 @@ class afc:
                     # Activate the tool-loaded LED and handle filament operations if enabled.
                     cur_lane.unit_obj.lane_tool_loaded( cur_lane )
                     cur_lane.espooler.do_assist_move()
-                    if self.poop:
-                        if purge_length is not None:
-                            self.gcode.run_script_from_command("{} PURGE_LENGTH={} EXTRUDER={}".format(self.poop_cmd, purge_length, cur_extruder.name))
 
-                        else:
-                            self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.poop_cmd, cur_extruder.name))
-
-                        self.afcDeltaTime.log_with_time("TOOL_LOAD: After poop")
-                        self.function.log_toolhead_pos()
-
-                        if self.wipe:
-                            self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.wipe_cmd, cur_extruder.name))
-                            self.afcDeltaTime.log_with_time("TOOL_LOAD: After first wipe")
-                            self.function.log_toolhead_pos()
-
-                    if self.kick:
-                        self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.kick_cmd, cur_extruder.name))
-                        self.afcDeltaTime.log_with_time("TOOL_LOAD: After kick")
-                        self.function.log_toolhead_pos()
-
-                    if self.wipe:
-                        self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.wipe_cmd, cur_extruder.name))
-                        self.afcDeltaTime.log_with_time("TOOL_LOAD: After second wipe")
-                        self.function.log_toolhead_pos()
-
-                    # Wait for moves to finish
-                    self.toolhead.wait_moves()
+                    self.do_poop_kick_wipe(cur_lane=cur_lane, cur_extruder=cur_extruder,
+                                           purge_length=purge_length)
 
                     cur_lane.enable_fault_detection()
                     # Update lane and extruder state for tracking.
@@ -1487,6 +1502,25 @@ class afc:
                         message += '\nOnce issue is resolved please manually load {} with {} macro and click resume to continue printing.'.format(cur_lane.name, cur_lane.map)
                     self.error.handle_lane_failure(cur_lane, message, pause=self.function.in_print())
                     return False
+
+        # Check if toolhead needs to purge, this normally should only apply for standalone toolheads
+        if cur_lane.need_purge:
+            temp_state = self.capture_toolhead_temp()
+            try:
+                self.logger.info(f"Flag set to purge for {cur_lane.extruder_obj}:{cur_lane.map}")
+                # Make sure toolhead is up to temp before purging
+                if self._check_extruder_temp(cur_lane):
+                    self.afcDeltaTime.log_with_time("Done heating toolhead")
+                self.do_poop_kick_wipe(cur_lane=cur_lane, cur_extruder=cur_lane.extruder_obj,
+                                    purge_length=purge_length)
+            finally:
+                cur_lane.need_purge = False
+                if self.post_load_macro is not None:
+                    self.gcode.run_script_from_command(self.post_load_macro)
+                    # TODO: Add afcDeltaTime log
+                self.restore_toolhead_temp(temp_state)
+                self.save_vars()
+
         return True
 
     def load_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub, cur_extruder: AFCExtruder):
@@ -2318,6 +2352,7 @@ class afc:
                     self._wait_for_temp_within_tolerance(next_heater, target_temp, next_extruder_obj.deadband)
                     self.logger.info("{} heated and ready to print".format(next_extruder_obj.name))
 
+                    # TODO: should do_purge_kick_wipe be called here instead?
                     if (current_lane_name is not None
                         and infinite_runout
                         and self.wipe
@@ -2513,7 +2548,7 @@ class afc:
         M109 S250
         ```
         """
-
+        self.logger.debug(f"AFC_M104/M109 raw cmd: {gcmd.get_commandline()}")
         # TODO: this currently does not work correctly when lanes are remapped and KTC calls M109
         toolnum: int = gcmd.get_int('T', None, minval=0)
         temp: float  = gcmd.get_float('S', 0.0)

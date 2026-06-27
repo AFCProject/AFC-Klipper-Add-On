@@ -134,6 +134,7 @@ class AFCLane:
         self.td1_data           = {}
         self.runout_lane        = None
         self.status             = AFCLaneState.NONE
+        self.need_purge         = False
         # END TODO
 
         self.multi_hubs_found   = False
@@ -2127,6 +2128,7 @@ class AFCLane:
             response["density"]=self.filament_density
             response["diameter"]=self.filament_diameter
             response["empty_spool_weight"]=self.empty_spool_weight
+            response["need_purge"] = self.need_purge
 
         response["remember_spool"]= bool(self.remember_spool)
         response["spool_id"]= int(self.spool_id) if self.spool_id else None

@@ -628,8 +628,10 @@ class AFCExtruder:
         if distance > 0:
             self.tc_lane.unit_obj.lane_loading(self.tc_lane)
             self.tc_lane.status = AFCLaneState.TOOL_LOADING
+            self.tc_lane.need_purge = True
         else:
             self.tc_lane.status = AFCLaneState.TOOL_UNLOADING
+            self.tc_lane.need_purge = False
 
         self._captured_toolhead_temp = self.afc.capture_toolhead_temp( extruder=self, async_capture=True)
         self.afc._check_extruder_temp(self.tc_lane, no_wait=True)

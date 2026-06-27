@@ -171,6 +171,7 @@ class afcPrep:
                             cur_lane.empty_spool_weight= units[cur_lane.unit][cur_lane.name]["empty_spool_weight"]
                         if 'bed_temp' in units[cur_lane.unit][cur_lane.name]: cur_lane.bed_temp = units[cur_lane.unit][cur_lane.name]['bed_temp']
                         if 'extruder_temp' in units[cur_lane.unit][cur_lane.name]: cur_lane.extruder_temp = units[cur_lane.unit][cur_lane.name]['extruder_temp']
+                        cur_lane.need_purge = units[cur_lane.unit][cur_lane.name].get("need_purge", False)
 
                         for attr_name in ("bed_temp", "extruder_temp", "weight"):
                             value = getattr(cur_lane, attr_name, None)
