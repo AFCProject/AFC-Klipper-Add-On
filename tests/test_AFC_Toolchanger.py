@@ -1,10 +1,8 @@
+# Unit tests for extras/AFC_Toolchanger.py
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
-import pytest
-
-
-from klippy import Printer
 
 from extras.AFC_Toolchanger import AfcToolchanger
 from tests.conftest import MockLogger

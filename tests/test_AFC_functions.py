@@ -13,11 +13,16 @@ Covers:
 
 from __future__ import annotations
 
-import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, call
 import pytest
 
 from extras.AFC_functions import afcFunction, afcDeltaTime
+from extras.AFC_respond import AFCprompt
+
+from tests.test_AFC import _make_afc
+from tests.test_AFC_lane import _make_afc_lane
+
+from copy import deepcopy
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -554,3 +559,598 @@ class TestGetExtruderPos_ReturnValue:
 
         assert isinstance(result, float)
 # ── end get_extruder_pos ──────────────────────────────────────────────────────
+
+class TestCalibrateAFC:
+    # ------------------------------------------------------------------
+    # Fixtures / builders
+    # ------------------------------------------------------------------
+
+    def _make_afc_lane_for_calibration(self, standalone=False):
+        afc = _make_afc()
+        afc.error = MagicMock()
+        lane = _make_afc_lane()
+        lane.is_direct_hub = MagicMock()
+        lane.hub_obj = MagicMock()
+
+        afc.function.get_current_lane = MagicMock(return_value=None)
+        lane.extruder_obj.is_standalone = MagicMock(return_value=standalone)
+        lane.extruder_obj.name = "extruder"
+
+        afc.lanes[lane.name] = lane
+
+        return afc, lane
+
+    def _make_gcmd_for_calibration(self, distance=25, tolerance=5, bowden=None, lane=None,
+                                   unit=None, TD1=None):
+        gcmd = MagicMock()
+        gcmd.get.side_effect = lambda key, default=None: {
+            "BOWDEN": bowden,
+            "LANE": lane,
+            "UNIT": unit,
+            "TD1": TD1
+        }.get(key, default)
+
+        gcmd.get_float.side_effect = lambda key, default=None: {
+            "DISTANCE": distance,
+            "TOLERANCE": tolerance,
+        }.get(key, default)
+        return gcmd
+
+    def _setup_calibration(self, standalone=False, td1_present=False, moonraker=None):
+        """Builds func/afc/lane with the defaults nearly every test relies on."""
+        func = _make_func()
+        func._lane_calibration = MagicMock()
+        func._afc_cali_comp = MagicMock()
+        func._afc_cali_fail = MagicMock()
+        afc, lane = self._make_afc_lane_for_calibration(standalone=standalone)
+        func.afc = afc
+        func.afc._td1_present = td1_present
+        func.afc.moonraker = moonraker
+        return func, afc, lane
+
+    # ------------------------------------------------------------------
+    # Action helper
+    # ------------------------------------------------------------------
+
+    def _call_cmd_calibrate_afc(self, func, gcmd):
+        """Runs cmd_CALIBRATE_AFC and verifies the AFCprompt wrapper, which
+        every test does regardless of outcome."""
+        with patch("extras.AFC_functions.AFCprompt") as mocked_afc_prompt:
+            func.cmd_CALIBRATE_AFC(gcmd)
+        mocked_afc_prompt.assert_called_once_with(gcmd, func.logger)
+        mocked_afc_prompt.return_value.p_end.assert_called_once()
+        return mocked_afc_prompt
+
+    # ------------------------------------------------------------------
+    # Logger assertions
+    # ------------------------------------------------------------------
+
+    def _get_messages(self, func, level):
+        return [m for lvl, m in func.logger.messages if lvl == level]
+
+    def _assert_info_contains(self, func, substring):
+        assert any(substring in m for m in self._get_messages(func, "info"))
+
+    def _assert_info_not_contains(self, func, substring):
+        assert not any(substring in m for m in self._get_messages(func, "info"))
+
+    def _assert_error_contains(self, func, substring):
+        assert any(substring in m for m in self._get_messages(func, "error"))
+
+    def _assert_afc_error(self, func, message):
+        func.afc.error.AFC_error.assert_called_once_with(message, pause=False)
+
+    # ------------------------------------------------------------------
+    # _lane_calibration helpers
+    # ------------------------------------------------------------------
+
+    def _set_lane_calibration_result(self, func, result):
+        func._lane_calibration = MagicMock(return_value=deepcopy(result))
+
+    def _assert_lane_calibration_called(self, func, lane_name, bowden=None, tolerance=5, distance=25):
+        func._lane_calibration.assert_called_once_with(lane_name, bowden, tolerance, distance)
+
+    def _assert_lane_calibration_not_called(self, func):
+        func._lane_calibration.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Bowden / direct-hub helpers
+    # ------------------------------------------------------------------
+
+    def _set_calibrate_bowden_result(self, lane, result):
+        lane.unit_obj.calibrate_bowden = MagicMock(return_value=result)
+
+    def _assert_calibrate_bowden_called(self, lane, distance=25, tolerance=5):
+        lane.unit_obj.calibrate_bowden.assert_called_once_with(lane, distance, tolerance)
+
+    def _assert_calibrate_bowden_not_called(self, lane):
+        lane.unit_obj.calibrate_bowden.assert_not_called()
+
+    def _assert_calibrate_td1_not_called(self, lane):
+        lane.unit_obj.calibrate_td1.assert_not_called()
+
+    def _assert_bowden_calibration_not_attempted(self, lane):
+        """Neither the standard nor the direct-hub bowden path ran."""
+        self._assert_calibrate_bowden_not_called(lane)
+        self._assert_calibrate_td1_not_called(lane)
+
+    def _assert_no_calibration_attempted(self, func, lane):
+        """Calibration was aborted before any lane/bowden work happened."""
+        self._assert_lane_calibration_not_called(func)
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def _assert_select_unselect_tool_called(self, func, lane):
+        expected = [
+            call(f"AFC_SELECT_TOOL TOOL={lane.extruder_obj.name}"),
+            call("AFC_UNSELECT_TOOL")
+        ]
+        assert func.afc.gcode.run_script_from_command.call_args_list == expected
+
+    def _assert_afc_cali_comp_called(self, func, lanes, messages, title="AFC Calibration"):
+        func._afc_cali_comp.assert_called_once_with(
+            ", ".join(lanes),
+            title,
+            " ".join(messages)
+        )
+
+    # ------------------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------------------
+
+    def test_calibration_current_lane(self):
+        func, afc, lane = self._setup_calibration()
+        gcmd = self._make_gcmd_for_calibration()
+        afc.function.get_current_lane = MagicMock(return_value=lane.name)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_info_contains(func, f"current afc {lane.name} is not None, cannot calibrate")
+        self._assert_error_contains(func, "Tool must be unloaded to calibrate system")
+
+    def test_calibration_current_none_lane_none(self):
+        func, afc, lane = self._setup_calibration()
+        gcmd = self._make_gcmd_for_calibration()
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_info_contains(func, "No lanes selected to calibrate dist_hub")
+        self._assert_no_calibration_attempted(func, lane)
+
+    def test_calibration_lane_not_in_afc(self):
+        func, afc, lane = self._setup_calibration()
+        lane_name = "lane2"
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, f"'{lane_name}' is not a valid lane")
+        self._assert_no_calibration_attempted(func, lane)
+
+    def test_calibration_lane_is_standalone(self):
+        func, afc, lane = self._setup_calibration(standalone=True)
+        gcmd = self._make_gcmd_for_calibration(lane=lane.name)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, f"{lane.name} is a standalone lane, cannot calibrate")
+        self._assert_no_calibration_attempted(func, lane)
+
+    def test_calibration_unit_not_valid(self):
+        func, afc, lane = self._setup_calibration()
+        unit_name = "test"
+        gcmd = self._make_gcmd_for_calibration(lane=lane.name, unit=unit_name)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, f"'{unit_name}' is not a valid unit")
+        self._assert_no_calibration_attempted(func, lane)
+
+    def test_calibration_bowden_no_in_lanes(self):
+        func, afc, lane = self._setup_calibration()
+        lane_name = "lane2"
+        gcmd = self._make_gcmd_for_calibration(bowden=lane_name)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, f"'{lane_name}' is not a valid lane to calibrate bowden length")
+        self._assert_no_calibration_attempted(func, lane)
+
+    def test_calibration_td1_not_present(self):
+        func, afc, lane = self._setup_calibration()
+        gcmd = self._make_gcmd_for_calibration(TD1="lane2")
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, "TD-1 is not present, will not be able to calibrate bowden length for TD-1")
+        self._assert_no_calibration_attempted(func, lane)
+    
+    def test_calibration_td1_lane_not_valid(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        gcmd = self._make_gcmd_for_calibration(TD1="lane2")
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, "'lane2' is not a valid lane to calibrate TD-1 bowden length")
+        self._assert_no_calibration_attempted(func, lane)
+
+    def test_calibration_lane_valid_success(self):
+        func, afc, lane = self._setup_calibration()
+        lane_name = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], lane_calibration_call[2])
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def test_calibration_lane_valid_success_no_additional_msg(self):
+        func, afc, lane = self._setup_calibration()
+        lane_name = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name)
+        lane_calibration_call = (True, [lane_name], [])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], [])
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def test_calibration_lane_valid_checked_false(self):
+        func, afc, lane = self._setup_calibration()
+        lane_name = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name)
+        lane_calibration_call = (False, [lane_name], [])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        func._afc_cali_comp.assert_not_called()
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def test_calibration_all_lanes_valid_success(self):
+        func, afc, lane = self._setup_calibration()
+        lane_name = "all"
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], lane_calibration_call[2])
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def test_calibration_lanes_valid_bowden_fail_tool_start_and_tool_end_none(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = None
+        lane.extruder_obj.tool_end = None
+        lane_name = "all"
+        bowden_lane = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        bowden_error = (
+            "\nBowden Calibration Error:"
+             "\nCannot calibrate with only post extruder sensor and no turtleneck buffer defined in config"
+        )
+        additional_msg = [
+            lane_calibration_call[2][0],
+            bowden_error
+        ]
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], additional_msg)
+        self._assert_bowden_calibration_not_attempted(lane)
+        self._assert_afc_error(func, bowden_error)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_none_tool_end_buffer_set_lane(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = None
+        lane.extruder_obj.tool_end = MagicMock(return_value="Turtle_1:SW1")
+        lane.buffer_obj = "Test"
+        lane_name = "all"
+        bowden_lane = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        calibrated_msg = [lane_calibration_call[1][0], f"Bowden_length: {bowden_lane}"]
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        assert lane.extruder_obj.tool_start is None
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_calibrate_bowden_called(lane)
+        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2])
+        self._assert_info_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
+        self._assert_info_contains(func, "Starting AFC distance Calibrations")
+        self._assert_info_contains(func, "Bowden length calibration Done!")
+        self._assert_calibrate_td1_not_called(lane)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_buffer(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        calibrated_msg = [lane_calibration_call[1][0], f"Bowden_length: {bowden_lane}"]
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_calibrate_bowden_called(lane)
+        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2])
+        self._assert_info_not_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
+        self._assert_info_contains(func, "Starting AFC distance Calibrations")
+        self._assert_info_contains(func, "Bowden length calibration Done!")
+        self._assert_calibrate_td1_not_called(lane)
+
+    def test_calibration_lanes_valid_bowden_fail_tool_start_buffer(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        fail_msg = f"{bowden_lane} failed to calibrate bowden length Bowden Calibration Failed"
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (False, "Bowden Calibration Failed", 0))
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_calibrate_bowden_called(lane)
+        self._assert_afc_error(func, fail_msg)
+        func._afc_cali_fail.assert_called_once_with(
+            cali=lane.name, dis=0, reset_lane=False, title= "AFC Bowden Calibration Failed",
+            fail_message=fail_msg
+        )
+        func._afc_cali_comp.assert_not_called()
+        self._assert_info_not_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
+        self._assert_info_contains(func, "Starting AFC distance Calibrations")
+        self._assert_info_not_contains(func, "Bowden length calibration Done!")
+        self._assert_calibrate_td1_not_called(lane)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_buffer_snapmaker_no_park_pre_load(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        calibrated_msg = [lane_calibration_call[1][0], f"Bowden_length: {bowden_lane}"]
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        func.afc.snapmaker_printer = MagicMock(return_value=True)
+        func.afc.park_pre_load = False
+        func.check_homed = MagicMock()
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        self._assert_calibrate_bowden_called(lane)
+        func.check_homed.assert_not_called()
+        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2])
+        self._assert_info_not_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
+        self._assert_info_contains(func, "Starting AFC distance Calibrations")
+        self._assert_info_contains(func, "Bowden length calibration Done!")
+        self._assert_calibrate_td1_not_called(lane)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_buffer_snapmaker_fail_check_home(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        func.afc.snapmaker_printer = MagicMock(return_value=True)
+        func.afc.park_pre_load = True
+        func.check_homed = MagicMock(return_value=False)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        func.check_homed.assert_called_once_with(
+            "Printer needs to be homed before calibrating PTFE length to toolhead")
+        self._assert_info_not_contains(func, "Starting AFC distance Calibrations")
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_buffer_snapmaker_homed_selected_tool_none_fail(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        func.get_current_extruder_obj = MagicMock(return_value=None)
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        func.afc.snapmaker_printer = MagicMock(return_value=True)
+        func.afc.park_pre_load = True
+        func.check_homed = MagicMock(return_value=True)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        func.check_homed.assert_called_once_with(
+            "Printer needs to be homed before calibrating PTFE length to toolhead")
+        self._assert_select_unselect_tool_called(func, lane)
+        self._assert_info_not_contains(func, "Starting AFC distance Calibrations")
+        self._assert_afc_error(func, f"Failed to select tool '{lane.extruder_obj.name}' before Bowden calibration")
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_buffer_snapmaker_homed_fail_selected_tool_extruder1_fail(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        func.get_current_extruder_obj = MagicMock(return_value=MagicMock())
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        func.afc.snapmaker_printer = MagicMock(return_value=True)
+        func.afc.park_pre_load = True
+        func.check_homed = MagicMock(return_value=True)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        func.check_homed.assert_called_once_with(
+            "Printer needs to be homed before calibrating PTFE length to toolhead")
+        self._assert_select_unselect_tool_called(func, lane)
+        self._assert_info_not_contains(func, "Starting AFC distance Calibrations")
+        self._assert_afc_error(func, f"Failed to select tool '{lane.extruder_obj.name}' before Bowden calibration")
+        self._assert_bowden_calibration_not_attempted(lane)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_buffer_snapmaker_homed_fail_selected_tool_success_park_pre_load_cmd_none(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        func.get_current_extruder_obj = MagicMock(return_value=lane.extruder_obj)
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        func.afc.snapmaker_printer = MagicMock(return_value=True)
+        func.afc.park_pre_load = True
+        func.check_homed = MagicMock(return_value=True)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        func.check_homed.assert_called_once_with(
+            "Printer needs to be homed before calibrating PTFE length to toolhead")
+        self._assert_select_unselect_tool_called(func, lane)
+        self._assert_info_contains(func, "Starting AFC distance Calibrations")
+        func.afc.error.AFC_error.assert_not_called()
+        lane.unit_obj.calibrate_bowden.assert_called_once()
+        self._assert_calibrate_td1_not_called(lane)
+
+    def test_calibration_lanes_valid_bowden_success_tool_start_buffer_snapmaker_homed_fail_selected_tool_success(self):
+        func, afc, lane = self._setup_calibration()
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane_name = "all"
+        bowden_lane = lane.name
+        func.get_current_extruder_obj = MagicMock(return_value=lane.extruder_obj)
+        gcmd = self._make_gcmd_for_calibration(lane=lane_name, bowden=bowden_lane)
+        lane_calibration_call = (True, [lane_name], ["success"])
+        self._set_lane_calibration_result(func, lane_calibration_call)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        func.afc.snapmaker_printer = MagicMock(return_value=True)
+        func.afc.park_pre_load = True
+        func.afc.park_pre_load_cmd = "AFC_PARK_PRE_LOAD"
+        func.check_homed = MagicMock(return_value=True)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_lane_calibration_called(func, lane_name)
+        func.check_homed.assert_called_once_with(
+            "Printer needs to be homed before calibrating PTFE length to toolhead")
+        expected_calls = [
+            call(f"AFC_SELECT_TOOL TOOL={lane.extruder_obj.name}"),
+            call("AFC_PARK_PRE_LOAD"),
+            call("AFC_UNSELECT_TOOL")
+        ]
+        assert func.afc.gcode.run_script_from_command.call_args_list == expected_calls
+        self._assert_info_contains(func, "Starting AFC distance Calibrations")
+        func.afc.error.AFC_error.assert_not_called()
+        lane.unit_obj.calibrate_bowden.assert_called_once()
+        self._assert_calibrate_td1_not_called(lane)
+
+    def test_calibration_td1_valid_direct_hub_loaded_toolhead(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.tool_loaded = True
+        gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(
+            func,
+            f"{lane.name} loaded to toolhead, unload from toolhead before "
+            "trying to calibrate td1_bowden_length."
+        )
+        self._assert_lane_calibration_not_called(func)
+        self._assert_calibrate_bowden_not_called(lane)
+        func._afc_cali_comp.assert_not_called()
+
+    def test_calibration_td1_valid_direct_hub_toolhead_not_loaded_hub_true(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.tool_loaded = False
+        lane.hub_obj.state = True
+        lane.hub_obj.name = "Hub_1"
+        gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+
+        error_message = (f"{lane.hub_obj.name} hub is triggered, make sure hub is clear "
+                          "before trying to calibrate TD-1 bowden length")
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, error_message)
+        func.afc.gcode.run_script_from_command.assert_called_once_with(
+            f"AFC_CALI_FAIL TITLE='TD-1 Calibration Failed' FAIL={lane.name} DISTANCE=0 msg='{error_message}' RESET=0"
+        )
+        self._assert_lane_calibration_not_called(func)
+        self._assert_calibrate_bowden_not_called(lane)
+        func._afc_cali_comp.assert_not_called()
+
+    def test_calibration_td1_valid_direct_hub_toolhead_not_loaded_hub_not_loaded_calibration_fail(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.tool_loaded = False
+        lane.hub_obj.state = False
+        lane.hub_obj.name = "Hub_1"
+        gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+
+        cal_td1_return = (False, "TD-1 failed to detect filament after moving 1000mm", 1000)
+        lane.unit_obj.calibrate_td1 = MagicMock(return_value=cal_td1_return)
+        error_message = f"{lane.name} failed to calibrate TD-1 bowden length, {cal_td1_return[1]}"
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_afc_error(func, error_message)
+        func.afc.gcode.run_script_from_command.assert_called_once_with(
+            f"AFC_CALI_FAIL TITLE='TD-1 Calibration Failed' FAIL={lane.name} DISTANCE={cal_td1_return[2]} msg='{error_message}' RESET=1"
+        )
+        self._assert_lane_calibration_not_called(func)
+        self._assert_calibrate_bowden_not_called(lane)
+        func._afc_cali_comp.assert_not_called()
+
+    def test_calibration_td1_valid_direct_hub_toolhead_not_loaded_hub_not_loaded_calibration_pass(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.tool_loaded = False
+        lane.hub_obj.state = False
+        lane.hub_obj.name = "Hub_1"
+        gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+
+        cal_td1_return = (True, "td1_bowden_length calibration successful", 1000)
+        lane.unit_obj.calibrate_td1 = MagicMock(return_value=cal_td1_return)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        func.afc.error.AFC_error.assert_not_called()
+        self._assert_lane_calibration_not_called(func)
+        self._assert_calibrate_bowden_not_called(lane)
+        self._assert_afc_cali_comp_called(
+            func, [f"'TD1_Bowden_length: {lane.name}'"], [], title="TD-1 Calibration"
+        )

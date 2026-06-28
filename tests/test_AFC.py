@@ -129,6 +129,8 @@ def _make_afc():
     obj.park_cmd = None
     obj.wipe = False
     obj.wipe_cmd = None
+    obj.park_pre_load = False
+    obj.park_pre_load_cmd = None
     obj.kick = False
     obj.kick_cmd = None
     obj.post_load_macro = None

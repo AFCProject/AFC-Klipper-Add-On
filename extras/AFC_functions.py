@@ -1023,6 +1023,36 @@ class afcFunction:
                 length = float(new_length)
 
         return length
+
+    def _calibration_check_tool_start(self, cur_lane: AFCLane) -> tuple[bool, bool, str]:
+        """
+        Helper method for bowden calibration to verify that tool_start pin exists. If tool_end
+        exists and current lane has a buffer, buffer will be assigned to tool_start if tool_start
+        is None
+
+        :param cur_lane: Current lane that bowden calibration is being calibrated with
+        :return tuple(bool,bool, str):
+            bool: Error set to true when tool_start is None, tool_end is set, but lane does note have a
+                valid buffer object
+            bool: Set to true when tool_start is none, tool_end is set and lane has a valid buffer object
+            str: Error message when error is set to True
+        """
+        set_tool_start_back_to_none = False
+        error = False
+        failed_msg = ""
+        if cur_lane.extruder_obj.tool_start is None:
+            if cur_lane.extruder_obj.tool_end is not None and cur_lane.buffer_obj is not None:
+                self.logger.info("Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
+                cur_lane.extruder_obj.tool_start = "buffer"
+                set_tool_start_back_to_none = True
+            else:
+                # Cannot calibrate
+                failed_msg = (
+                    "\nBowden Calibration Error:"
+                    "\nCannot calibrate with only post extruder sensor and no turtleneck buffer defined in config"
+                )
+                error = True
+        return error, set_tool_start_back_to_none, failed_msg
     # ---------------------------------------------------------------------------------------------
     # Macros only below
     # ---------------------------------------------------------------------------------------------
@@ -1305,6 +1335,7 @@ class afcFunction:
         checked     = False
         title       = "AFC Calibration"
         additional_msg = []
+        td1_lane_valid = False
 
         # Check to make sure lane and unit is valid
         if lanes is not None and lanes != 'all' and lanes not in self.afc.lanes:
@@ -1325,107 +1356,114 @@ class afcFunction:
             self.afc.error.AFC_error("'{}' is not a valid lane to calibrate bowden length".format(afc_bl), pause=False)
             return
 
-        if td1 is not None and not self.afc.td1_present:
-            self.afc.error.AFC_error("TD-1 is not present, will not be able to calibrate bowden length for TD-1", pause=False)
+        if td1 is not None:
+            if not self.afc.td1_present:
+                self.afc.error.AFC_error("TD-1 is not present, will not be able to calibrate bowden length for TD-1", pause=False)
+            else:
+                if td1 not in self.afc.lanes:
+                    self.afc.error.AFC_error(f"'{td1}' is not a valid lane to calibrate TD-1 bowden length", pause=False)
+                else:
+                    td1_lane_valid = True
 
         # Determine if a specific lane is provided
-        if lanes is not None:
-            checked, calibrated, additional_msg = self._lane_calibration(lanes, unit, tol, dis)
-        else:
-            self.logger.info('No lanes selected to calibrate dist_hub')
-
-        # Calibrate Bowden length with specified lane
-        if afc_bl is not None:
-            set_tool_start_back_to_none = False
-            cur_lane=self.afc.lanes[afc_bl]
-
-            # Setting tool start to buffer if only tool_end is set and user has buffer so calibration can run
-            if cur_lane.extruder_obj.tool_start is None:
-                if cur_lane.extruder_obj.tool_end is not None and cur_lane.buffer_obj is not None:
-                    self.logger.info("Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
-                    cur_lane.extruder_obj.tool_start = "buffer"
-                    set_tool_start_back_to_none = True
-                else:
-                    # Cannot calibrate
-                    self.afc.error.AFC_error("Cannot calibrate with only post extruder sensor and no turtleneck buffer defined in config", pause=False)
-                    return
-            # Need to select the tool first before calibrating for Snapmaker printers. This requires
-            # the printer to be homed first. Toolhead needs to be selected because filament can be
-            # caught on the inside lip of the toolhead if its docked. By moving the toolhead to Y 120
-            # it has been found to make loading filament into the toolhead more reliable.
-            snapmaker_tool_selected = False
-            try:
-                if (self.afc.snapmaker_printer
-                    and self.afc.park_pre_load):
-                    error_msg = ("Printer needs to be homed before calibrating PTFE length "
-                                "to toolhead")
-                    if not self.check_homed(error_msg):
-                        return
-                    self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
-                    snapmaker_tool_selected = True
-                    selected_tool = self.get_current_extruder_obj()
-                    if (selected_tool is None
-                        or selected_tool.name != cur_lane.extruder_obj.name):
-                        self.afc.error.AFC_error(
-                            f"Failed to select tool '{cur_lane.extruder_obj.name}' before Bowden calibration",
-                            pause=False,
-                        )
-                        return
-                    self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
-
-                self.logger.info('Starting AFC distance Calibrations')
-
-                checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(cur_lane, dis, tol)
-                if not checked:
-                    msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
-                    self.afc.error.AFC_error(msg, pause=False)
-
-                    self._afc_cali_fail(cali=cur_lane.name, dis=abs(pos), reset_lane=(pos!=0),
-                                        title="AFC Bowden Calibration Failed", fail_message=msg)
-                    return
-                else: calibrated.append('Bowden_length: {}'.format(afc_bl))
-
-                self.logger.info("Bowden length calibration Done!")
-
-            finally:
-                if set_tool_start_back_to_none:
-                    cur_lane.extruder_obj.tool_start = None
-                if snapmaker_tool_selected:
-                    self.afc.gcode.run_script_from_command("AFC_UNSELECT_TOOL")
-
-        # Calibration for TD-1 bowden length
-        if td1 is not None:
-            title = "TD-1 Calibration"
-            td1_lane = self.afc.lanes[td1]
-            if (td1_lane.is_direct_hub()
-                and td1_lane.tool_loaded):
-                msg = f"{td1_lane.name} loaded to toolhead, unload from toolhead before "
-                msg += "trying to calibrate td1_bowden_length."
-                self.afc.error.AFC_error(msg, pause=False)
-                return
-            if td1_lane.hub_obj.state:
-                msg = f"{td1_lane.hub_obj.name} hub is triggered, make sure hub is clear before trying to calibrate TD-1 bowden length"
-                self.afc.error.AFC_error(msg, pause=False)
-                self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE=0 msg='{msg}' RESET=0")
-                return
-
-            checked, msg, pos = td1_lane.unit_obj.calibrate_td1( td1_lane, dis, tol)
-            if not checked:
-                fail_string = f"{td1} failed to calibrate TD-1 bowden length, {msg}"
-                self.afc.error.AFC_error(fail_string, pause=False)
-                self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE={pos} msg='{fail_string}' RESET=1")
-                return
+        try:
+            if lanes is not None:
+                checked, calibrated, additional_msg = self._lane_calibration(lanes, unit, tol, dis)
             else:
-                calibrated.append(f"'TD1_Bowden_length: {td1}'")
+                self.logger.info('No lanes selected to calibrate dist_hub')
 
-        if checked:
-            lanes_calibrated = ', '.join(calibrated)
+            # Calibrate Bowden length with specified lane
+            if afc_bl is not None:
+                set_tool_start_back_to_none = False
+                cur_lane=self.afc.lanes[afc_bl]
 
-            msg = ""
-            if additional_msg:
-                msg = " ".join(additional_msg)
+                # Setting tool start to buffer if only tool_end is set and user has buffer so calibration can run
+                failed_check, set_tool_start_back_to_none, msg = self._calibration_check_tool_start(cur_lane)
+                if failed_check:
+                    additional_msg.append(msg)
+                    self.afc.error.AFC_error(msg, pause=False)
+                    return
 
-            self._afc_cali_comp(lanes_calibrated, title, msg)
+                # Need to select the tool first before calibrating for Snapmaker printers. This requires
+                # the printer to be homed first. Toolhead needs to be selected because filament can be
+                # caught on the inside lip of the toolhead if its docked. By moving the toolhead to Y 120
+                # it has been found to make loading filament into the toolhead more reliable.
+                snapmaker_tool_selected = False
+                try:
+                    if (self.afc.snapmaker_printer
+                        and self.afc.park_pre_load):
+                        error_msg = ("Printer needs to be homed before calibrating PTFE length "
+                                    "to toolhead")
+                        if not self.check_homed(error_msg):
+                            return
+                        self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
+                        snapmaker_tool_selected = True
+                        selected_tool = self.get_current_extruder_obj()
+                        if (selected_tool is None
+                            or selected_tool.name != cur_lane.extruder_obj.name):
+                            self.afc.error.AFC_error(
+                                f"Failed to select tool '{cur_lane.extruder_obj.name}' before Bowden calibration",
+                                pause=False,
+                            )
+                            return
+                        if self.afc.park_pre_load_cmd:
+                            self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
+
+                    self.logger.info('Starting AFC distance Calibrations')
+
+                    checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(cur_lane, dis, tol)
+                    if not checked:
+                        msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
+                        self.afc.error.AFC_error(msg, pause=False)
+
+                        self._afc_cali_fail(cali=cur_lane.name, dis=abs(pos), reset_lane=(pos!=0),
+                                            title="AFC Bowden Calibration Failed", fail_message=msg)
+                        return
+                    else: calibrated.append('Bowden_length: {}'.format(afc_bl))
+
+                    self.logger.info("Bowden length calibration Done!")
+
+                finally:
+                    if set_tool_start_back_to_none:
+                        cur_lane.extruder_obj.tool_start = None
+                    if snapmaker_tool_selected:
+                        self.afc.gcode.run_script_from_command("AFC_UNSELECT_TOOL")
+
+            # Calibration for TD-1 bowden length
+            if (td1 is not None
+                and td1_lane_valid
+                and self.afc.td1_present):
+                title = "TD-1 Calibration"
+                td1_lane = self.afc.lanes[td1]
+                if (td1_lane.is_direct_hub()
+                    and td1_lane.tool_loaded):
+                    msg = f"{td1_lane.name} loaded to toolhead, unload from toolhead before "
+                    msg += "trying to calibrate td1_bowden_length."
+                    self.afc.error.AFC_error(msg, pause=False)
+                    return
+                if td1_lane.hub_obj.state:
+                    msg = f"{td1_lane.hub_obj.name} hub is triggered, make sure hub is clear before trying to calibrate TD-1 bowden length"
+                    self.afc.error.AFC_error(msg, pause=False)
+                    self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE=0 msg='{msg}' RESET=0")
+                    return
+
+                checked, msg, pos = td1_lane.unit_obj.calibrate_td1( td1_lane, dis, tol)
+                if not checked:
+                    fail_string = f"{td1} failed to calibrate TD-1 bowden length, {msg}"
+                    self.afc.error.AFC_error(fail_string, pause=False)
+                    self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE={pos} msg='{fail_string}' RESET=1")
+                    return
+                else:
+                    calibrated.append(f"'TD1_Bowden_length: {td1}'")
+        finally:
+            if checked:
+                lanes_calibrated = ', '.join(calibrated)
+
+                msg = ""
+                if additional_msg:
+                    msg = " ".join(additional_msg)
+
+                self._afc_cali_comp(lanes_calibrated, title, msg)
 
     cmd_AFC_HAPPY_P_help = 'Opens prompt after calibration is complete'
     def cmd_AFC_HAPPY_P(self, gcmd):
