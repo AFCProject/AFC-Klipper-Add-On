@@ -97,6 +97,8 @@ class AFCExtruderStepper(AFCLane):
 
         self.extruder_stepper   = extruder.ExtruderStepper(config)
         self.stepper_enable     = self.printer.lookup_object('stepper_enable')
+        self._synced_to_extruder= False
+        self._print_current_set = False
 
         # Homing-related configuration
         self.default_homing_endstop = config.get('default_homing_endstop', 'load')
@@ -253,12 +255,20 @@ class AFCExtruderStepper(AFCLane):
 
         :param enable: Enables/disables stepper motor
         """
+        stepper_name = f"AFC_stepper {self.name}"
+        enabled = self.stepper_enable.enable_lines.get(stepper_name, None)
+        if enabled is None:
+            return
+
+        if enabled.is_motor_enabled() == enable:
+            return
+
         if hasattr(self.stepper_enable, "set_motors_enable"):
             # New klipper enable function
-            self.stepper_enable.set_motors_enable([f"AFC_stepper {self.name}"], enable)
+            self.stepper_enable.set_motors_enable([stepper_name], enable)
         else:
             # Old klipper and kalico enable function
-            self.stepper_enable.motor_debug_enable(f"AFC_stepper {self.name}", enable)
+            self.stepper_enable.motor_debug_enable(stepper_name, enable)
 
     def sync_print_time(self):
         """
@@ -283,6 +293,7 @@ class AFCExtruderStepper(AFCLane):
             th_extruder_name = self.extruder_obj.th_extruder_name
 
         self.extruder_stepper.sync_to_extruder(th_extruder_name)
+        self._synced_to_extruder = True
         if update_current: self.set_print_current()
 
     def unsync_to_extruder(self, update_current=True):
@@ -291,7 +302,9 @@ class AFCExtruderStepper(AFCLane):
 
         :param update_current: Sets current to specified load current when True
         """
-        self.extruder_stepper.sync_to_extruder(None)
+        if self._synced_to_extruder:
+            self.extruder_stepper.sync_to_extruder(None)
+            self._synced_to_extruder = False
         if update_current: self.set_load_current()
 
     def _set_current(self, current):
@@ -309,13 +322,16 @@ class AFCExtruderStepper(AFCLane):
         """
         Helper function to update TMC current to use run current value
         """
-        self._set_current( self.tmc_load_current )
+        if self._print_current_set:
+            self._set_current( self.tmc_load_current )
+            self._print_current_set = False
 
     def set_print_current(self):
         """
         Helper function to update TMC current to use print current value
         """
         self._set_current( self.tmc_print_current )
+        self._print_current_set = True
 
     def update_rotation_distance(self, multiplier):
         """

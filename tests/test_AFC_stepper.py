@@ -41,6 +41,8 @@ def _make_stepper(name="lane1", extruder_name="extruder"):
     stepper.extruder_obj = MagicMock()
     stepper.extruder_obj.th_extruder_name = stepper.extruder_obj.name = extruder_name
     stepper.afc_extruder_name = extruder_name
+    stepper._synced_to_extruder = False
+    stepper._print_current_set = False
 
     # Extruder stepper mock
     stepper.extruder_stepper = MagicMock()
@@ -171,9 +173,20 @@ class TestCurrentHelpers:
         s = _make_stepper()
         s.tmc_print_current = 0.8
         s.tmc_load_current = 1.2
+        s._print_current_set = True
         s._set_current = MagicMock()
         s.set_load_current()
         s._set_current.assert_called_once_with(1.2)
+        assert not s._print_current_set
+    
+    def test_set_load_current_print_current_not_set(self):
+        s = _make_stepper()
+        s.tmc_print_current = 0.8
+        s.tmc_load_current = 1.2
+        s._print_current_set = False
+        s._set_current = MagicMock()
+        s.set_load_current()
+        s._set_current.assert_not_called()
 
     def test_set_print_current_calls_set_current_with_print_value(self):
         s = _make_stepper()
@@ -182,6 +195,7 @@ class TestCurrentHelpers:
         s._set_current = MagicMock()
         s.set_print_current()
         s._set_current.assert_called_once_with(0.5)
+        assert s._print_current_set
 
 
 # ── update_rotation_distance ──────────────────────────────────────────────────
@@ -310,12 +324,15 @@ class TestSyncUnsync:
         s.set_print_current = MagicMock()
         s.sync_to_extruder(update_current=False, th_extruder_name="extruder2")
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder2")
+        assert s._synced_to_extruder
 
     def test_unsync_calls_sync_with_none(self):
         s = _make_stepper()
         s.set_load_current = MagicMock()
+        s._synced_to_extruder = True
         s.unsync_to_extruder(update_current=False)
         s.extruder_stepper.sync_to_extruder.assert_called_once_with(None)
+        assert not s._synced_to_extruder
 
     def test_unsync_calls_set_load_current_when_update_current(self):
         s = _make_stepper()
@@ -418,3 +435,116 @@ class TestTrapqAppend:
         fn = MagicMock()
         obj.trapq_append(fn, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
         assert fn.call_count == 1
+
+class TestDoEnable:
+    def test_do_enable_enable_lines_is_none(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock()
+        s.stepper_enable.set_motors_enable = MagicMock()
+        s.stepper_enable.enable_lines = {}
+        s.do_enable(True)
+
+        s.stepper_enable.set_motors_enable.assert_not_called()
+        s.stepper_enable.motor_debug_enable.assert_not_called()
+
+    def test_do_enable_motor_is_enabled_noop_klipper(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock()
+        s.stepper_enable.set_motors_enable = MagicMock()
+        s.stepper_enable.enable_lines = {stepper_name: extruder_stepper}
+        extruder_stepper.is_motor_enabled = MagicMock(return_value=True)
+        s.do_enable(True)
+
+        s.stepper_enable.set_motors_enable.assert_not_called()
+        s.stepper_enable.motor_debug_enable.assert_not_called()
+    
+    def test_do_enable_motor_is_disabled_noop_klipper(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock()
+        s.stepper_enable.set_motors_enable = MagicMock()
+        s.stepper_enable.enable_lines = {stepper_name: extruder_stepper}
+        extruder_stepper.is_motor_enabled = MagicMock(return_value=False)
+        s.do_enable(False)
+
+        s.stepper_enable.set_motors_enable.assert_not_called()
+        s.stepper_enable.motor_debug_enable.assert_not_called()
+
+    def test_do_enable_motor_is_enabled_old_klipper(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock()
+        s.stepper_enable.motor_debug_enable = MagicMock()
+        s.stepper_enable.enable_lines = {stepper_name: extruder_stepper}
+        extruder_stepper.is_motor_enabled = MagicMock(return_value=True)
+
+        # Need to make sure hasattr always returns False for this test
+        with patch('builtins.hasattr', return_value=False):
+            s.do_enable(True)
+
+        s.stepper_enable.set_motors_enable.assert_not_called()
+        s.stepper_enable.motor_debug_enable.assert_not_called()
+
+    def test_do_enable_motor_is_enabled_disable_klipper(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock()
+        s.stepper_enable.set_motors_enable = MagicMock()
+        s.stepper_enable.enable_lines = {stepper_name: extruder_stepper}
+        extruder_stepper.is_motor_enabled = MagicMock(return_value=True)
+        s.do_enable(False)
+
+        s.stepper_enable.set_motors_enable.assert_called_once_with([stepper_name], False)
+        s.stepper_enable.motor_debug_enable.assert_not_called()
+
+    def test_do_enable_motor_is_enabled_disable_old_klipper(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock(autospec=True)
+        s.stepper_enable.motor_debug_enable = MagicMock()
+        s.stepper_enable.enable_lines = {stepper_name: extruder_stepper}
+        extruder_stepper.is_motor_enabled = MagicMock(return_value=True)
+
+        # Need to make sure hasattr always returns False for this test
+        with patch('builtins.hasattr', return_value=False):
+            s.do_enable(False)
+
+        s.stepper_enable.set_motors_enable.assert_not_called()
+        s.stepper_enable.motor_debug_enable.assert_called_once_with(stepper_name, False)
+
+    def test_do_enable_motor_is_disabled_enable_klipper(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock()
+        s.stepper_enable.set_motors_enable = MagicMock()
+        s.stepper_enable.enable_lines = {stepper_name: extruder_stepper}
+        extruder_stepper.is_motor_enabled = MagicMock(return_value=False)
+        s.do_enable(True)
+
+        s.stepper_enable.set_motors_enable.assert_called_once_with([stepper_name], True)
+        s.stepper_enable.motor_debug_enable.assert_not_called()
+
+    def test_do_enable_motor_is_disabled_enable_old_klipper(self):
+        s = _make_stepper()
+        stepper_name = f"AFC_stepper {s.name}"
+        extruder_stepper = MagicMock()
+        s.stepper_enable = MagicMock(autospec=True)
+        s.stepper_enable.motor_debug_enable = MagicMock()
+        s.stepper_enable.enable_lines = {stepper_name: extruder_stepper}
+        extruder_stepper.is_motor_enabled = MagicMock(return_value=False)
+
+        # Need to make sure hasattr always returns False for this test
+        with patch('builtins.hasattr', return_value=False):
+            s.do_enable(True)
+
+        s.stepper_enable.set_motors_enable.assert_not_called()
+        s.stepper_enable.motor_debug_enable.assert_called_once_with(stepper_name, True)
