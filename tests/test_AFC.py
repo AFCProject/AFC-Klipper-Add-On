@@ -2851,7 +2851,7 @@ class TestToolLoadNeedPurge:
 
         afc._check_extruder_temp = MagicMock(side_effect = Exception("Error Occurred"))
 
-        assert afc.TOOL_LOAD(lane, purge_length=purge_length)
+        assert not afc.TOOL_LOAD(lane, purge_length=purge_length)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)
@@ -2875,7 +2875,7 @@ class TestToolLoadNeedPurge:
 
         afc._check_extruder_temp = MagicMock(side_effect = Exception("Error Occurred"))
 
-        assert afc.TOOL_LOAD(lane, purge_length=purge_length)
+        assert not afc.TOOL_LOAD(lane, purge_length=purge_length)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)

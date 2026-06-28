@@ -1524,7 +1524,8 @@ class afc:
                      " See AFC.log for error trace."),
                     pause=self.function.in_print()
                 )
-                self.logger.debug(f"Exception: {e}")
+                self.logger.debug(f"Exception: {e}\n{traceback.format_exc()}")
+                return False
             finally:
                 self.restore_toolhead_temp(temp_state)
                 self.save_vars()
