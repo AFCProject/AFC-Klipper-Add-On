@@ -292,8 +292,10 @@ class AFCExtruderStepper(AFCLane):
         if th_extruder_name is None:
             th_extruder_name = self.extruder_obj.th_extruder_name
 
-        self.extruder_stepper.sync_to_extruder(th_extruder_name)
-        self._synced_to_extruder = True
+        if not self._synced_to_extruder:
+            self.extruder_stepper.sync_to_extruder(th_extruder_name)
+            self._synced_to_extruder = True
+
         if update_current: self.set_print_current()
 
     def unsync_to_extruder(self, update_current=True):
@@ -330,8 +332,9 @@ class AFCExtruderStepper(AFCLane):
         """
         Helper function to update TMC current to use print current value
         """
-        self._set_current( self.tmc_print_current )
-        self._print_current_set = True
+        if not self._print_current_set:
+            self._set_current( self.tmc_print_current )
+            self._print_current_set = True
 
     def update_rotation_distance(self, multiplier):
         """
