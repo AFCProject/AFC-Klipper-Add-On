@@ -1375,7 +1375,7 @@ class afc:
 
         self.TOOL_LOAD(cur_lane, purge_length)
 
-    def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: int=None, set_start_time=False):
+    def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: Optional[float]=None, set_start_time=False):
         """
         This function handles the loading of a specified lane into the tool. It performs
         several checks and movements to ensure the lane is properly loaded.
@@ -1508,7 +1508,7 @@ class afc:
         if cur_lane.need_purge:
             temp_state = self.capture_toolhead_temp()
             try:
-                self.logger.info(f"Flag set to purge for {cur_lane.extruder_obj}:{cur_lane.map}")
+                self.logger.info(f"Flag set to purge for {cur_lane.extruder_obj.name}:{cur_lane.map}")
                 # Make sure toolhead is up to temp before purging
                 if self._check_extruder_temp(cur_lane):
                     self.afcDeltaTime.log_with_time("Done heating toolhead")
@@ -1518,6 +1518,13 @@ class afc:
                 if self.post_load_macro is not None:
                     self.gcode.run_script_from_command(self.post_load_macro)
                     # TODO: Add afcDeltaTime log
+            except Exception as e:
+                self.error.AFC_error(
+                    (f"Error occurred when trying to purge {cur_lane.extruder_obj.name}."
+                     " See AFC.log for error trace."),
+                    pause=self.function.in_print()
+                )
+                self.logger.debug(f"Exception: {e}")
             finally:
                 self.restore_toolhead_temp(temp_state)
                 self.save_vars()
