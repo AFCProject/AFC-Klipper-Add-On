@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The ability to purge on next toolchange for standalone toolheads
 - When running bowden calibration on Snapmaker printers, the toolhead is now moved to Y120 so filament can reach the gears during calibration. Without this move, filament can catch on the inside lip of the toolhead and produce an inaccurate bowden length.
 
+### Fixed
+- Improved extruder stepper enable/disable handling to avoid redundant updates and gracefully handle missing enable lines.
+- Fixed extruder sync/unsync so repeated calls don’t re-trigger the same actions.
+- Improved TMC current switching to reliably alternate between load and print modes.
+
 ## [2026-06-21]
 ### Added
 - Ability to have AFC_extruder config section a custom name thats not `extruder(x)`, if `extruder(x)` is not being used then `extruder_name` variable needs to have the correct toolhead extruder name.
