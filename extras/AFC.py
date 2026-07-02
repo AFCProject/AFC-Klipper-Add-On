@@ -2279,6 +2279,22 @@ class afc:
             adjusting_temperature: bool = new_extruder_temp is not None or \
                 (infinite_runout and self.function.get_current_extruder() != next_extruder)
 
+            # Ensure heat when driving a toolchange to a different physical
+            # extruder whose current target is below its min_extrude_temp.
+            # Rationale: AFC owns the toolchange, so it must guarantee the
+            # destination is safe to extrude regardless of whether the slicer's
+            # M109/M104 arrived and successfully set a target on it. The
+            # existing gate above only fires for infinite_runout or when a
+            # caller explicitly passes new_extruder_temp; in a normal
+            # slicer-driven T(n) change to a cold standby extruder, neither
+            # applies and the following extrusion would fail cold.
+            if (not adjusting_temperature
+                and self.function.get_current_extruder() != next_extruder):
+                _next_heater = cur_lane.extruder_obj.get_heater()
+                _, _next_target = _next_heater.get_temp(self.reactor.monotonic())
+                if _next_target < _next_heater.min_extrude_temp:
+                    adjusting_temperature = True
+
             _last_lane = None
             if adjusting_temperature:
                 # Heat the next extruder FIRST so that _heat_next_extruder reads the
