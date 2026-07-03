@@ -196,6 +196,7 @@ class afc:
         self.wipe_cmd               = config.get('wipe_cmd', None)                  # Macro to use when nozzle wiping. Change macro name if you would like to use your own wipe macro
         self.poop                   = config.getboolean("poop", False)              # Set to True to enable pooping(purging color) after lane loads
         self.poop_cmd               = config.get('poop_cmd', None)                  # Macro to use when pooping. Change macro name if you would like to use your own poop/purge macro
+        self.enable_standalone_purge: bool = config.getboolean("enable_standalone_purge", True)
 
         self.post_load_macro        = config.get("post_load_macro", None)
         self.post_unload_macro      = config.get("post_unload_macro", None)

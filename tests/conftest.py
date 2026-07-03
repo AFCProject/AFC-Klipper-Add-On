@@ -431,43 +431,46 @@ class MockPrinter:
         self.start_args: dict = {}
         self.objects: dict = {}
         self._event_handlers: dict = {}
-
-    # ------------------------------------------------------------------
+    
     def lookup_object(self, name, default=None):
         mapping = {
             "AFC": self._afc,
             "gcode": self._gcode,
         }
+        val = default
         if name in mapping:
             return mapping[name]
         if name in self._objects:
             return self._objects[name]
         if name == "webhooks":
-            return MagicMock()
+            val = MagicMock()
         if name == "pause_resume":
             obj = MagicMock()
             obj.send_pause_command = MagicMock()
-            return obj
+            val = obj
         if name == "idle_timeout":
             obj = MagicMock()
             obj.idle_timeout = 600
-            return obj
+            val = obj
         if name == "toolhead":
-            return MagicMock()
+            val = MagicMock()
         if name == "heaters":
-            return MagicMock()
+            val = MagicMock()
         if name == "pins":
-            return MagicMock()
+            val = MagicMock()
         if name == "buttons":
-            return MagicMock()
+            val = MagicMock()
         if name == "extruder":
-            return MagicMock()
-        return default
+            val = MagicMock()
+        if val is not default:
+            self._objects[name] = val
+        return val
 
     def load_object(self, config, name):
         result = self.lookup_object(name)
         if result is None:
             result = MagicMock()
+
         return result
 
     def get_reactor(self):
@@ -492,6 +495,8 @@ class MockConfig:
         self._printer = printer or MockPrinter()
         self._values: dict = values or {}
         self.fileconfig = _make_fileconfig()
+        self.section = "Test"
+        self.fileconfig.add_section(self.section)
 
     def get_printer(self):
         return self._printer
@@ -500,7 +505,11 @@ class MockConfig:
         return self._name
 
     def get(self, option, default=None):
-        return self._values.get(option, default)
+        try:
+            val = self.fileconfig.get(self.section, option)
+        except:
+            val = self._values.get(option, default)
+        return val
 
     def getfloat(self, option, default=0.0, **kwargs):
         val = self._values.get(option, default)
@@ -518,11 +527,18 @@ class MockConfig:
 
     def getint(self, option, default=0, **kwargs):
         val = self._values.get(option, default)
-        return int(val)
+        if val is not None:
+            return int(val)
+        else:
+            return val
 
     def getlist(self, option, default=None, **kwargs):
         val = self._values.get(option, default)
         return val if val is not None else []
+
+    def getlists(self, option, default=None, **kwargs):
+        val = self._values.get(option, default)
+        return val if val is not None else ()
 
     def error(self, msg):
         from configfile import error as KlipperError

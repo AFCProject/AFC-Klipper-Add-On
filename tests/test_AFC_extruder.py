@@ -17,7 +17,7 @@ import sys
 import types
 
 from extras.AFC_extruder import AFCExtruderStats, AFCExtruder
-from tests.test_AFC_lane import _make_afc_lane, AFCLane
+from tests.test_AFC_lane import _make_afc_lane, AFCLaneState
 # ── Helpers ─────────────────────────────────────────────────────────
 
 def _make_extruder_obj(name="extruder"):
@@ -210,7 +210,7 @@ class TestResetStats:
 
 def _make_afc_extruder(name="extruder"):
     """Build an AFCExtruder bypassing __init__."""
-    from tests.conftest import MockAFC, MockPrinter, MockLogger, MockReactor
+    from tests.conftest import MockAFC, MockPrinter, MockLogger, MockReactor, MockConfig
 
     afc = MockAFC()
     reactor = MockReactor()
@@ -257,6 +257,27 @@ def _make_afc_extruder(name="extruder"):
     ext.mutex = MagicMock()
     return ext
 
+def _make_afc_extruder_as_standalone(name="extruder", extruder_values={}, afc_values={}):
+    """Build an AFCExtruder bypassing __init__."""
+    from extras import AFC
+    from tests.conftest import MockAFC, MockPrinter, MockLogger, MockReactor, MockConfig
+
+    afc_config = MockConfig("AFC", MockPrinter())
+    afc = AFC.load_config(afc_config)
+    for key, value in afc_values.items():
+        if hasattr(afc, key):
+            setattr(afc, key, value)
+
+    reactor = MockReactor()
+    printer = MockPrinter(afc=afc)
+    printer._reactor = reactor
+    
+    config = MockConfig(f"AFC_extruder {name}", printer, extruder_values)
+
+    ext = AFCExtruder(config)
+
+    ext.logger = MockLogger()
+    return ext
 
 # ── AFCExtruder.__str__ ────────────────────────────────────────────────────────
 
@@ -1285,3 +1306,108 @@ class TestPrepOnShuttleCheck:
         lane.unit_obj.lane_tool_loaded.assert_called_once_with(lane)
         lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
         assert "<span class=primary--text> in ToolHead and toolhead on shuttle</span>" in msg
+
+class TestExtruderMoveCB:
+    def _make_afc_extruder_for_move_cb(self, extruder_values={}, afc_values={}):
+        values = {
+            "toolchanger_unit": "Tools"
+        }
+        values = values | extruder_values
+        ext = _make_afc_extruder_as_standalone(extruder_values=values, afc_values=afc_values)
+        ext.function = MagicMock()
+        ext.afc.restore_toolhead_temp = MagicMock()
+        ext.printer.lookup_object = MagicMock()
+        ext.toolhead_extruder = MagicMock()
+        ext.afc.save_vars = MagicMock()
+        ext.tc_lane = _make_afc_lane(fullname="AFC_stepper extruder")
+        return ext
+
+    def test_motion_queue_current_move_is_none(self):
+        ext = self._make_afc_extruder_for_move_cb()
+        ext.motion_queuing = None
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+        assert AFCLaneState.NONE == ext.tc_lane.status
+        assert None == ext.motion_queuing
+    
+    def test_motion_queue_current_move_is_none_check_asserts(self):
+        ext = self._make_afc_extruder_for_move_cb()
+        ext.motion_queuing = None
+        ext.current_move_distance = 0
+        ext.prev_trapq = MagicMock()
+        ext.prev_sk = MagicMock()
+        toolhead = ext.printer.lookup_object("toolhead")
+        stepper = ext.toolhead_extruder.extruder_stepper.stepper
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+        ext.toolhead_extruder.extruder_stepper.stepper.set_trapq.assert_called_once_with(ext.prev_trapq)
+        toolhead.flush_step_generation.assert_called_once()
+        stepper.set_trapq.assert_called_once_with(ext.prev_trapq)
+        stepper.set_stepper_kinematics.assert_called_once_with(ext.prev_sk)
+        ext.function.do_enable.assert_called_once_with(False, ext.th_extruder_name)
+        ext.afc.restore_toolhead_temp.assert_called_once_with(temp_state=ext._captured_toolhead_temp,
+                                                              async_restore=True)
+        assert ext.tc_lane.status == AFCLaneState.NONE
+        assert ext.tc_lane.need_purge == False
+        ext.afc.save_vars.assert_called_once()
+
+        info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert any(f"{ext.name} unloading done" in m for m in info_msgs)
+    
+    def test_motion_queue_not_none(self):
+        ext = self._make_afc_extruder_for_move_cb()
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+        ext.motion_queuing.wipe_trapq.assert_called_once_with(ext.trapq)
+    
+    def test_load_active(self):
+        ext = self._make_afc_extruder_for_move_cb()
+        ext.load_active = True
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+        assert not ext.load_active
+    
+    def test_captured_toolhead_temp(self):
+        ext = self._make_afc_extruder_for_move_cb()
+        capture_toolhead = True
+        ext._captured_toolhead_temp = capture_toolhead
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+        ext.afc.restore_toolhead_temp.assert_called_once_with(temp_state=capture_toolhead,
+                                                              async_restore=True)
+        assert None == ext._captured_toolhead_temp
+    
+    def test_current_move_not_zero_loading(self):
+        ext = self._make_afc_extruder_for_move_cb()
+        ext.current_move_distance = 100
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+
+        assert AFCLaneState.TOOLED == ext.tc_lane.status
+        assert ext.tc_lane.need_purge
+        assert 0 == ext.current_move_distance
+
+        info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
+        assert any(f"{ext.name} loading done" in m for m in info_msgs)
+
+    def test_standalone_purge_disabled(self):
+        ext = self._make_afc_extruder_for_move_cb()
+        ext.current_move_distance = 100
+        ext.enable_standalone_purge = False
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+
+        assert AFCLaneState.TOOLED == ext.tc_lane.status
+        assert not ext.tc_lane.need_purge
+        assert 0 == ext.current_move_distance
+    
+    def test_standalone_purge_disabled_from_afc(self):
+        afc_values = {"enable_standalone_purge": False}
+        ext = self._make_afc_extruder_for_move_cb(afc_values=afc_values)
+        ext.current_move_distance = 100
+
+        assert ext.reactor.NEVER == ext.extruder_move_cb(100)
+
+        assert AFCLaneState.TOOLED == ext.tc_lane.status
+        assert not ext.tc_lane.need_purge
+        assert 0 == ext.current_move_distance

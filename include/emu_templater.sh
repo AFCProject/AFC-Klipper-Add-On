@@ -141,6 +141,7 @@ led_spool_index: ${unit_name}_Indicator_Box_${i}:1
 #led_spool_index: ${unit_name}_Indicator_${i}:2
 prep: ^!${unit_name}_lane${i}:TRG
 load: ^${unit_name}_lane${i}:LOAD
+print_current: 0.4
 
 [tmc2209 AFC_stepper lane${i}]
 uart_pin: ${unit_name}_lane${i}:MOT_UART
@@ -241,6 +242,7 @@ led_spool_index: ${unit_name}_Indicator_${i}:2
 #led_spool_index: ${unit_name}_Indicator_Box_${i}:1
 prep: ^!${unit_name}_lane${i}:TRG
 load: ^${unit_name}_lane${i}:LOAD
+print_current: 0.4
 
 [tmc2209 AFC_stepper lane${i}]
 uart_pin: ${unit_name}_lane${i}:MOT_UART

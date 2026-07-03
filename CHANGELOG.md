@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-07-03]
+### Added
+- Defaulting `tool_max_unload_attempts` to zero in Snapmaker U1 AFC config file.
+- Defaulting `restore_extruder_temp_on_load_or_unload` to True in Snapmaker U1 AFC config file.
+- Defaulting print_current for EMU lanes to 0.4 since having print current at 0.8 can risk melting PLA filament.
+- Ability to disable purging after first toolswap for standalone toolheads. This is enabled by default, to disable add `enable_standalone_purge: False` to AFC.cfg or per toolhead in AFC_extruder config sections.
+
 ## [2026-06-27]
 ### Added
 - The ability to purge on next toolchange for standalone toolheads

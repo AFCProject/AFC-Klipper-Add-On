@@ -273,6 +273,7 @@ class AFCExtruder:
         self.no_lanes                   = False
         self.custom_tool_swap: Optional[str] = config.get("custom_tool_swap", None)
         self.custom_unselect: Optional[str] = config.get("custom_unselect", None)
+        self.enable_standalone_purge: bool  = config.getboolean("enable_standalone_purge", self.afc.enable_standalone_purge)
 
         self.lane_loaded: Optional[str] = None
         self.lanes: Dict                = {}
@@ -340,6 +341,7 @@ class AFCExtruder:
                 ffi_lib.cartesian_stepper_alloc(b'x'), ffi_lib.free)
 
             trapq_append_wrapper = TrapqAppendWrapper()
+            self.prev_sk = self.prev_trapq = None
             if self.motion_queuing is not None:
                 self.trapq          = self.motion_queuing.allocate_trapq()
                 _trapq_append       = self.motion_queuing.lookup_trapq_append()
@@ -686,8 +688,6 @@ class AFCExtruder:
         :param eventtime: Event time when callback function is called, currently not used
         :return float: Always returns reactor NEVER to stop function from being called again
         """
-        # TODO: set a flag so that AFC knows to purge properly when switched to a toolhead that
-        # was asynchronously loaded
         toolhead: ToolHead = self.printer.lookup_object("toolhead")
         stepper = self.toolhead_extruder.extruder_stepper.stepper
         toolhead.flush_step_generation()
@@ -701,11 +701,10 @@ class AFCExtruder:
 
         self.afc.restore_toolhead_temp(temp_state=self._captured_toolhead_temp, async_restore=True)
         self._captured_toolhead_temp = None
-
         if self.current_move_distance > 0:
             info_str = "loading"
             self.tc_lane.status = AFCLaneState.TOOLED
-            self.tc_lane.need_purge = True
+            self.tc_lane.need_purge = bool(self.enable_standalone_purge)
         else:
             info_str = "unloading"
             self.tc_lane.status = AFCLaneState.NONE
