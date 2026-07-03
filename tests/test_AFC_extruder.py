@@ -257,10 +257,13 @@ def _make_afc_extruder(name="extruder"):
     ext.mutex = MagicMock()
     return ext
 
-def _make_afc_extruder_as_standalone(name="extruder", extruder_values={}, afc_values={}):
+def _make_afc_extruder_as_standalone(name="extruder", extruder_values=None, afc_values=None):
     """Build an AFCExtruder bypassing __init__."""
     from extras import AFC
     from tests.conftest import MockAFC, MockPrinter, MockLogger, MockReactor, MockConfig
+
+    extruder_values = extruder_values or {}
+    afc_values = afc_values or {}
 
     afc_config = MockConfig("AFC", MockPrinter())
     afc = AFC.load_config(afc_config)
@@ -1391,9 +1394,9 @@ class TestExtruderMoveCB:
         assert any(f"{ext.name} loading done" in m for m in info_msgs)
 
     def test_standalone_purge_disabled(self):
-        ext = self._make_afc_extruder_for_move_cb()
+        extruder_values = {"enable_standalone_purge": False}
+        ext = self._make_afc_extruder_for_move_cb(extruder_values=extruder_values)
         ext.current_move_distance = 100
-        ext.enable_standalone_purge = False
 
         assert ext.reactor.NEVER == ext.extruder_move_cb(100)
 

@@ -437,12 +437,15 @@ class MockPrinter:
             "AFC": self._afc,
             "gcode": self._gcode,
         }
+        magic_mock_objects = (
+            "webhooks", "toolhead", "heaters", "pins", "buttons", "extruder"
+        )
         val = default
         if name in mapping:
             return mapping[name]
         if name in self._objects:
             return self._objects[name]
-        if name == "webhooks":
+        if name in magic_mock_objects:
             val = MagicMock()
         if name == "pause_resume":
             obj = MagicMock()
@@ -452,16 +455,6 @@ class MockPrinter:
             obj = MagicMock()
             obj.idle_timeout = 600
             val = obj
-        if name == "toolhead":
-            val = MagicMock()
-        if name == "heaters":
-            val = MagicMock()
-        if name == "pins":
-            val = MagicMock()
-        if name == "buttons":
-            val = MagicMock()
-        if name == "extruder":
-            val = MagicMock()
         if val is not default:
             self._objects[name] = val
         return val
@@ -469,7 +462,7 @@ class MockPrinter:
     def load_object(self, config, name):
         result = self.lookup_object(name)
         if result is None:
-            result = MagicMock()
+            result = self._objects[name] = MagicMock()
 
         return result
 
