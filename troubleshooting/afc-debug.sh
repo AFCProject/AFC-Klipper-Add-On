@@ -241,7 +241,7 @@ append_file_to_log() {
 	fi
 }
 
-echo "This script will collect diagnostic information and upload it to Armored Turtle support."
+echo "This script will collect diagnostic information and upload it to AFCProject support."
 echo "Please review the script if you have concerns about its contents."
 echo "Klipper will be stopped during this process — do not run this while printing."
 echo ""
@@ -342,7 +342,7 @@ if [ "$NO_NC" = true ]; then
     zipfile="$HOME/afc_debug_logs_$(date +%Y%m%d_%H%M%S).zip"
     zip -j "$zipfile" "$temp_log" "$temp_dir"/* > /dev/null
     echo "Logs have been saved to $zipfile"
-    echo "Please share this file with the Armored Turtle support team."
+    echo "Please share this file with the AFCProject support team."
 else
   for file in "$temp_dir"/*; do
     if [[ "$file" == *config* || "$file" == *shutdown* || "$file" == *AFC* || "$file" == *klippy.log ]]; then
@@ -372,7 +372,7 @@ else
     OUTPUTURL=$(tr -d '\0' < "$tmp_url_main")
     rm -f "$tmp_url_main"
     echo "Logs are available at ${OUTPUTURL}"
-    echo "Please share this URL with the Armored Turtle support team."
+    echo "Please share this URL with the AFCProject support team."
   else
     echo "Failed to connect to termbin.com"
   fi
