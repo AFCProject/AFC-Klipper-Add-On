@@ -1,1 +1,1 @@
-This documentation has moved [here](https://www.armoredturtle.xyz/docs/afc-klipper-add-on/klipper/macros.html).
+This documentation has moved [here](https://www.afcproject.dev/klipper/external/macros.html).
