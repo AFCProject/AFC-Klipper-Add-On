@@ -77,6 +77,7 @@ check_and_move_afc_files() {
         echo "Making AFC directories in printer_data/config directory"
         mkdir -p "${printer_config_dir}/AFC"
         mkdir -p "${printer_config_dir}/AFC/macros"
+        mkdir -p "${printer_config_dir}/AFC/mcu"
 
         echo "Copying AFC config files to printer_data/config/AFC directory"
         cp "${afc_dir}/templates/u1_macros/AFC.cfg" "${printer_config_dir}/AFC/"
