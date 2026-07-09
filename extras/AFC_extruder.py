@@ -394,6 +394,46 @@ class AFCExtruder:
             self.afc.lanes.pop(self.tc_lane.name)
             self.printer.objects.pop(f"AFC_lane {self.name}")
 
+    def _u1_bay_filament_exist(self):
+        """
+        Snapmaker U1: check if filament is staged in this toolhead's rear bay.
+
+        The U1 stages filament in its rear bay feeder before it is ever fed to
+        the toolhead, so the toolhead motion sensor (u1_filament_sensor_name)
+        cannot see it there. Bay presence is reported by print_task_config's
+        filament_exist array, indexed by physical extruder number.
+
+        :return: True when filament is staged in the bay, False otherwise
+        """
+        if self.filament_sensor_name is None:
+            return False
+        ptc = self.printer.lookup_object("print_task_config", None)
+        if ptc is None:
+            return False
+        try:
+            idx = int(self.name.replace("extruder", "") or 0)
+            return bool(ptc.get_status()["filament_exist"][idx])
+        except Exception:
+            return False
+
+    def _u1_bay_poll(self, eventtime):
+        """
+        Periodically OR bay presence into the standalone lane's prep/load state
+        so a staged (but not tool-loaded) bay shows as present in the UIs and
+        CHANGE_TOOL/TOOL_LOAD can start a load from it instead of refusing with
+        "LOAD TRIGGER NOT TRIGGERED" (which was unrecoverable from gcode, as
+        the toolhead sensor can only trigger after a load already happened).
+
+        :param eventtime: Current event time from the reactor
+        :return: Next time to run this poll
+        """
+        if self.tc_lane is not None:
+            present = self.tool_start_state or self._u1_bay_filament_exist()
+            if present != self.tc_lane.prep_state:
+                self.tc_lane.prep_state = present
+                self.tc_lane._load_state = present
+        return eventtime + 2.
+
     def handle_ready(self):
         # Check to see if extruder name is currently in `self.lanes`, if it is then that means that
         # no other lanes are setup for this extruder, and that this is a "standalone" toolhead
@@ -402,11 +442,16 @@ class AFCExtruder:
             self.logger.info(f"{self.name} no lanes")
             # Due to race conditions at startup, these variables might not be set correctly,
             #  set to current tool start state
-            self.tc_lane._load_state = self.tc_lane.prep_state = self.tool_start_state
+            self.tc_lane._load_state = self.tc_lane.prep_state = self.tool_start_state or self._u1_bay_filament_exist()
 
             if self.tool_start_state:
                 self.tc_lane.set_tool_loaded()
                 self.tc_lane.set_loaded()
+
+            # Snapmaker U1: filament staged in the rear bay is invisible to the
+            # toolhead sensor - keep lane presence in sync with the bay state
+            if self.filament_sensor_name is not None:
+                self.reactor.register_timer(self._u1_bay_poll, self.reactor.NOW)
 
             if self.tool_start == "buffer":
                 raise error(
