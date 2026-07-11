@@ -241,6 +241,8 @@ def _make_afc_extruder(name="extruder"):
     ext.tool_unload_speed = 25.0
     ext.tool_load_speed = 25.0
     ext.buffer_name = None
+    ext.enable_runout = True
+    ext.disable_runout_in_bypass = False
     ext.common_save_msg = f"\nRun SAVE_EXTRUDER_VALUES EXTRUDER={name} once done."
     ext.estats = MagicMock()
     ext.function = afc.function
