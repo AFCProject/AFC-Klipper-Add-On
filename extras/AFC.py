@@ -262,7 +262,7 @@ class afc:
         self.enable_assist_weight   = config.getfloat("enable_assist_weight",   500.0)
         self.enable_hub_runout      = config.getboolean("enable_hub_runout",    True)
         self.enable_tool_runout     = config.getboolean("enable_tool_runout",   True)
-        self.disable_tool_runout_in_bypass = config.getboolean("disable_tool_runout_in_bypass", False)
+        self.enable_runout_in_bypass = config.getboolean("enable_runout_in_bypass", False)
         self.debounce_delay         = config.getfloat("debounce_delay",         0.)
 
         self.td1_when_loaded        = config.getboolean("capture_td1_when_loaded", False)

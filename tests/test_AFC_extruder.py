@@ -242,7 +242,7 @@ def _make_afc_extruder(name="extruder"):
     ext.tool_load_speed = 25.0
     ext.buffer_name = None
     ext.enable_runout = True
-    ext.disable_runout_in_bypass = False
+    ext.enable_runout_in_bypass = False
     ext.common_save_msg = f"\nRun SAVE_EXTRUDER_VALUES EXTRUDER={name} once done."
     ext.estats = MagicMock()
     ext.function = afc.function
@@ -399,6 +399,24 @@ class TestHandleToolheadSensorRunout:
         ext.lane_loaded = None
         ext._handle_toolhead_sensor_runout(False, "tool_start")
         lane.handle_toolhead_runout.assert_not_called()
+
+    def test_bypass_runout_does_not_pause_when_disabled_by_default(self):
+        ext = _make_afc_extruder()
+        ext.lane_loaded = None
+        ext.enable_runout_in_bypass = False
+        ext.afc.function.is_printing.return_value = True
+        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext.afc.error.AFC_error.assert_not_called()
+
+    def test_bypass_runout_pauses_when_enabled(self):
+        ext = _make_afc_extruder()
+        ext.lane_loaded = None
+        ext.enable_runout_in_bypass = True
+        ext.afc.function.is_printing.return_value = True
+        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext.afc.error.AFC_error.assert_called_once_with(
+            "Toolhead runout detected by tool_start sensor in bypass/manual mode."
+        )
 
     def test_no_runout_when_lane_not_in_lanes_dict(self):
         ext = _make_afc_extruder()

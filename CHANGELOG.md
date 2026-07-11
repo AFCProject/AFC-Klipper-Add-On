@@ -7,10 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-07-11]
 ### Added
-- Added `disable_tool_runout_in_bypass` configuration option (defaults to `False`) to allow users to toggle toolhead filament sensor runout pausing when printing in bypass/manual mode.
+- Added `enable_runout_in_bypass` configuration option (defaults to `False`) to allow users to enable toolhead filament sensor runout pausing when printing in bypass/manual mode.
 
 ### Fixed
-- Fixed toolhead filament sensor runout pausing print when printing in bypass/manual mode (where no AFC lane is registered as loaded).
+- Fixed unexpected toolhead filament sensor runout pausing when printing in bypass/manual mode by defaulting the behavior to disabled.
 
 ## [2026-07-03]
 ### Added
