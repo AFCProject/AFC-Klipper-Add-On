@@ -509,8 +509,14 @@ class AFCExtruder:
                   and not self.afc.error_state
                   and self.on_shuttle()
                   and self.afc.function.is_printing()):
-                # We are printing, but no lane is loaded (bypass/manual printing mode).
-                # Trigger an AFC error and pause the print.
+                # We are printing in bypass/manual mode (no lane is loaded).
+                # Only pause the print if:
+                #   1. Toolhead runout is globally enabled (enable_runout).
+                #   2. Bypass runout protection is explicitly enabled (enable_runout_in_bypass).
+                #   3. We are NOT in a toolchange sequence (which would cause false pauses during unloads).
+                #   4. We are NOT already in an error state (prevents duplicate pauses during async transitions).
+                #   5. The toolhead is active on the shuttle (prevents docked/parked toolheads from pausing in multi-tool setups).
+                #   6. The printer is actively printing.
                 msg = f"Toolhead runout detected by {sensor_name} sensor in bypass/manual mode."
                 self.afc.error.AFC_error(msg)
 
