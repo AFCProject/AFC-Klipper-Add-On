@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 if TYPE_CHECKING:
     from extras.AFC_lane import afc, AFCLane, AFCMoveWarning
     from extras.AFC_stepper import AFCExtruderStepper
-    from extras.AFC_buffer import AFCTrigger
+    from extras.AFC_buffer import AFCBuffer
     from extras.AFC_hub import afc_hub
     from extras.AFC_extruder import AFCExtruder
     from gcode import GCodeCommand
@@ -41,6 +41,8 @@ CALI_WARN = "The following lanes ({lanes}) have already been calibrated, if you 
 CALI_WARN += "with calibration then the filament for selected lanes will be ejected. "
 CALI_WARN += "Once filament is reinserted, then lanes will be calibrated.\n"
 
+SENSORLESS_UNITS = ["OpenAMS"]
+
 class afcUnit:
     HOMING_DELTA = 300  # Delta for which to warn if homing move delta is not within this amount from
                         # command move distance.
@@ -60,11 +62,12 @@ class afcUnit:
         self._eject_to_calibrate = False
 
         # Objects
-        self.buffer_obj: Optional[AFCTrigger|None] = None
+        self.buffer_obj: Optional[AFCBuffer|None] = None
         self.hub_obj: Optional[afc_hub|None]       = None
         self.extruder_obj: Optional[AFCExtruder|None] = None
         self.drive_stepper_obj: AFCExtruderStepper = None
         self.selector_stepper_obj: AFCExtruderStepper = None
+        self.stepperless_drive: bool = False
 
         # Config get section
         self.full_name                   = config.get_name().split()

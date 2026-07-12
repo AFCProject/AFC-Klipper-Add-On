@@ -174,8 +174,9 @@ class afc:
         self.led_tool_loaded        = config.get('led_tool_loaded','0,0,1,0')          # LED color to set when lane is loaded into tool
         self.led_tool_loaded_idle   = config.get('led_tool_loaded_idle','0.4,0.4,0,0') # LED color to set when lane is loaded into tool and idle
         self.led_tool_unloaded      = config.get('led_tool_unloaded', '1,0,0,0')       # LED color to set when lanes extruder is unloaded
-        self.led_advancing          = config.get('led_buffer_advancing','0,0,1,0')     # LED color to set when buffer is advancing
-        self.led_trailing           = config.get('led_buffer_trailing','0,1,0,0')      # LED color to set when buffer is trailing
+        self.led_buffer_advancing   = config.get('led_buffer_advancing','0,0,1,0')     # LED color to set when buffer is advancing
+        self.led_buffer_trailing    = config.get('led_buffer_trailing','0,1,0,0')      # LED color to set when buffer is trailing
+        self.led_buffer_neutral     = config.get('led_buffer_neutral', "1,1,1,1")
         self.led_buffer_disabled    = config.get('led_buffer_disable', '0,0,0,0.25')   # LED color to set when buffer is disabled
         self.led_spool_illum        = config.get('led_spool_illuminate', "1,1,1,1")    # LED color to illuminate under spool
 

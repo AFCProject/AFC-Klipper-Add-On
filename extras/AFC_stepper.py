@@ -152,6 +152,22 @@ class AFCExtruderStepper(AFCLane):
         # Get and save base rotation dist
         self.base_rotation_dist = self.extruder_stepper.stepper.get_rotation_distance()[0]
 
+    def _handle_ready(self) -> None:
+        """
+        Handles klippy:ready callback, check to see if buffer_obj is a FPS_PFS sensor. If buffer is
+        FPS_PFS sensor then endstops are registered for tool_start, buffer_adv, and buffer_trailing
+        """
+        super()._handle_ready()
+
+        if (self.buffer_obj
+            and self.buffer_obj.type == "FPS_PFS"):
+            self._add_endstop('tool_start', None, f'{self.name}_tool_start',
+                              mcu_endstop=self.buffer_obj.fps_endstop)
+            self._add_endstop('buffer_advance', None, f'{self.name}_buffer_adv',
+                              mcu_endstop=self.buffer_obj.fps_endstop)
+            self._add_endstop('buffer_trailing', None, f'{self.name}_buffer_trailing',
+                              mcu_endstop=self.buffer_obj.fps_trailing_endstop)
+
     def _get_tmc_values(self, config):
         """
         Searches for TMC driver that corresponds to stepper to get run current that is specified in config
@@ -547,6 +563,8 @@ class AFCExtruderStepper(AFCLane):
             buffer_name = self._get_section_value('AFC_extruder', afc_extruder_name, 'buffer') or self._inherit_from_unit('buffer')
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
+        fps_pfs_buffer   = self._get_section_value('AFC_buffer', buffer_name, 'type')
+        is_fps_pfs_buffer = bool(fps_pfs_buffer is not None  and fps_pfs_buffer == "FPS_PFS")
 
         # Check to verify that hub is not a virtual sensor
         if (hub_pin
@@ -557,6 +575,8 @@ class AFCExtruderStepper(AFCLane):
         else:
             if buffer_adv_pin is not None:
                 self._add_endstop('tool_start', buffer_adv_pin, 'tool_start')
+            elif is_fps_pfs_buffer:
+                pass
             else:
                 error_string = f"Error: buffer set as pin_tool_start in [AFC_extruder {afc_extruder_name}] config section,"
                 error_string += f" but [AFC_buffer {buffer_name}] is not found in config. Please make sure config "
@@ -623,7 +643,7 @@ class AFCExtruderStepper(AFCLane):
             self.logger.debug(f"Missing or invalid section '{section}': {e}")
             return default
 
-    def _add_endstop(self, key: str, pin: str, suffix: str, fullname:str=None):
+    def _add_endstop(self, key: str, pin: str, suffix: str, fullname:str=None, mcu_endstop=None):
         """
         Helper to create/register an endstop and bind it to the drive stepper.
 
@@ -632,18 +652,22 @@ class AFCExtruderStepper(AFCLane):
         :param suffix: String to append at end of endstop key
         :param fullname: Fullname to register endstop name as
         """
-        if pin is None:
-            self.logger.info(f"Pin for {key} is none for {self.name}")
-            return
-        # Normalize and create endstop
-        try:
-            self._ppins.allow_multi_use_pin(pin.strip("!^"))
-            self._ppins.parse_pin(pin, True, True)
-            mcu_endstop = self._ppins.setup_pin('endstop', pin)
-        except Exception as e:
-            self.logger.info(f"Error parsing pin for {key} is none for {self.name}")
-            self.logger.info(f"{e}")
-            return
+        if (pin is None
+            and mcu_endstop is not None):
+            pass
+        else:
+            if pin is None:
+                self.logger.info(f"Pin for {key} is none for {self.name}")
+                return
+            # Normalize and create endstop
+            try:
+                self._ppins.allow_multi_use_pin(pin.strip("!^"))
+                self._ppins.parse_pin(pin, True, True)
+                mcu_endstop = self._ppins.setup_pin('endstop', pin)
+            except Exception as e:
+                self.logger.info(f"Error parsing pin for {key} is none for {self.name}")
+                self.logger.info(f"{e}")
+                return
 
         single_key_aliases = {'hub', 'tool_start', 'tool_end', 'buffer_advance', 'buffer_trailing'}
         if fullname:

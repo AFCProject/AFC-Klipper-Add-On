@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from extras.AFC import afc
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_hub import afc_hub
-    from extras.AFC_buffer import AFCTrigger
+    from extras.AFC_buffer import AFCBuffer
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_unit import afcUnit
     from pins import PrinterPins
@@ -110,7 +110,7 @@ class AFCLane:
 
         self.unit_obj: afcUnit  = None
         self.hub_obj: Optional[afc_hub|None] = None
-        self.buffer_obj: Optional[AFCTrigger|None] = None
+        self.buffer_obj: Optional[AFCBuffer|None] = None
         self.extruder_obj: AFCExtruder
         self.endstops = {}
 
@@ -295,8 +295,9 @@ class AFCLane:
                                      self.hub_obj.switch_pin, AFCHomingPoints.HUB)
         if self.buffer_name:
             self._get_buffer_object()
-            self._set_homing_endstop(query_endstops, ppins,
-                                     self.buffer_obj.advance_pin, AFCHomingPoints.BUFFER)
+            if self.buffer_obj.advance_pin is not None:
+                self._set_homing_endstop(query_endstops, ppins,
+                                         self.buffer_obj.advance_pin, AFCHomingPoints.BUFFER)
 
         if (self.afc_extruder_name
             and not self.standalone_lane): # Protects against standalone lanes
