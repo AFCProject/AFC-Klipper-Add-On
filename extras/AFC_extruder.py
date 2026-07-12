@@ -503,7 +503,11 @@ class AFCExtruder:
                 lane = self.lanes[self.lane_loaded]
                 if hasattr(lane, "handle_toolhead_runout"):
                     lane.handle_toolhead_runout(sensor=sensor_name)
-            elif (self.enable_runout_in_bypass
+            elif (self.enable_runout
+                  and self.enable_runout_in_bypass
+                  and not self.afc.in_toolchange
+                  and not self.afc.error_state
+                  and self.on_shuttle()
                   and self.afc.function.is_printing()):
                 # We are printing, but no lane is loaded (bypass/manual printing mode).
                 # Trigger an AFC error and pause the print.

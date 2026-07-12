@@ -418,6 +418,33 @@ class TestHandleToolheadSensorRunout:
             "Toolhead runout detected by tool_start sensor in bypass/manual mode."
         )
 
+    def test_bypass_runout_does_not_pause_during_toolchange(self):
+        ext = _make_afc_extruder()
+        ext.lane_loaded = None
+        ext.enable_runout_in_bypass = True
+        ext.afc.in_toolchange = True
+        ext.afc.function.is_printing.return_value = True
+        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext.afc.error.AFC_error.assert_not_called()
+
+    def test_bypass_runout_does_not_pause_during_error_state(self):
+        ext = _make_afc_extruder()
+        ext.lane_loaded = None
+        ext.enable_runout_in_bypass = True
+        ext.afc.error_state = True
+        ext.afc.function.is_printing.return_value = True
+        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext.afc.error.AFC_error.assert_not_called()
+
+    def test_bypass_runout_does_not_pause_when_not_on_shuttle(self):
+        ext = _make_afc_extruder()
+        ext.lane_loaded = None
+        ext.enable_runout_in_bypass = True
+        ext.on_shuttle = MagicMock(return_value=False)
+        ext.afc.function.is_printing.return_value = True
+        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext.afc.error.AFC_error.assert_not_called()
+
     def test_no_runout_when_lane_not_in_lanes_dict(self):
         ext = _make_afc_extruder()
         ext.lanes = {}
