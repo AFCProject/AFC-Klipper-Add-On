@@ -283,6 +283,22 @@ class MockReactor:
     def unregister_timer(self, timer):
         pass
 
+    def completion(self):
+        return MockCompletion()
+
+
+class MockCompletion:
+    """Lightweight stand-in for Klipper's ReactorCompletion."""
+
+    def __init__(self):
+        self.result = None
+
+    def complete(self, value):
+        self.result = value
+
+    def wait(self, waketime=None, waketime_result=None):
+        return self.result if self.result is not None else waketime_result
+
 
 class MockGcode:
     def __init__(self):
@@ -364,6 +380,10 @@ class MockAFC:
         self.units: dict = {}
         self.buffers: dict = {}
         self.led_obj: dict = {}
+        self.led_buffer_advancing = "1,0,0,0"
+        self.led_buffer_trailing = "0,0,1,0"
+        self.led_buffer_neutral = "0,1,0,0"
+        self.led_buffer_disabled = "0,0,0,0"
         self.current = None
         self.enable_sensors_in_gui = False
         self.debounce_delay = 0.1
@@ -407,13 +427,32 @@ class MockAFC:
         self.led_loading = "0,0,1,0"
         self.led_unloading = "0,0,1,0"
         self.led_tool_loaded = "0,1,0,0"
+        self.led_tool_loaded_idle = "0.4,0.4,0,0"
+        self.led_tool_unloaded = "1,0,0,0"
         self.led_spool_illum = "1,1,1,0"
         self.led_off = "0,0,0,0"
+        self.led_use_filament_color = False
+        # afcUnit.__init__ movement/behavior defaults (mirrors extras/AFC.py)
+        self.short_move_dis = 10
+        self.max_move_dis = 999999
+        self.load_then_home_var = True
+        self.load_undershoot = 20
+        self.rev_long_moves_speed_factor = 1.0
+        self.tool_max_unload_attempts = 4
+        self.n20_break_delay_time = 0.200
+        self.enable_assist = True
+        self.enable_assist_weight = 500.0
+        self.assisted_unload = True
+        self.unload_on_runout = False
+        self.td1_when_loaded = False
+        self.home_to_tool = True
+        self.homing_enabled = True
         # function mock helpers
         self.function.HexConvert = lambda x: x
         self.toolhead = MagicMock()
 
         self.save_pos = MagicMock()
+        self.move_z_pos = MagicMock()
         self.CHANGE_TOOL = MagicMock()
         self.restore_pos = MagicMock()
 
