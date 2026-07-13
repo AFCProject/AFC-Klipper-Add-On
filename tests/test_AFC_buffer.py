@@ -273,7 +273,7 @@ class TestAFCBufferInit:
         with patch("extras.AFC_buffer.add_filament_switch",
                    side_effect=[(adv_sensor, MagicMock()), (trail_sensor, MagicMock())]):
             buf = AFCBuffer(config)
-        assert buf.fila_avd is adv_sensor
+        assert buf.fila_adv is adv_sensor
         assert buf.fila_trail is trail_sensor
 
     def test_registers_query_buffer_mux_command(self):
@@ -1889,6 +1889,13 @@ class TestFPSEndstopWrapperSteppers:
         endstop.add_stepper(s1)
         endstop.add_stepper(s2)
         assert endstop._steppers == [s1, s2]
+    
+    def test_add_stepper_duplicate_stepper(self):
+        endstop, fps_buffer, triggered = _make_endstop()
+        s1 = MagicMock()
+        endstop.add_stepper(s1)
+        endstop.add_stepper(s1)
+        assert endstop._steppers == [s1]
 
     def test_get_steppers_returns_copy(self):
         endstop, fps_buffer, triggered = _make_endstop()
@@ -2186,8 +2193,8 @@ class TestAdcCallback:
         buf.trailing_state = True  # seed True so the reset to False is proven
         buf._adc_callback(1.0, 0.1)  # well below set_point - half_db (0.35)
         assert buf.last_state == ADVANCING_STATE_NAME
-        assert buf.advance_state is True
-        assert buf.trailing_state is False
+        assert buf.advance_state is False
+        assert buf.trailing_state is True
 
     def test_non_stepper_low_reading_with_latch_enabled_sets_latch(self):
         buf, afc, reactor, printer = _make_fps_buffer()
@@ -2195,7 +2202,7 @@ class TestAdcCallback:
         buf.set_point = 0.5
         buf.deadband = 0.3
         buf._latch_enabled = True
-        buf._adc_callback(1.0, 0.1)
+        buf._adc_callback(1.0, 0.9)
         assert buf._advance_latched is True
 
     def test_non_stepper_low_reading_with_latch_disabled_does_not_latch(self):
@@ -2204,7 +2211,7 @@ class TestAdcCallback:
         buf.set_point = 0.5
         buf.deadband = 0.3
         buf._latch_enabled = False
-        buf._adc_callback(1.0, 0.1)
+        buf._adc_callback(1.0, 0.9)
         assert buf._advance_latched is False
 
     def test_non_stepper_latched_keeps_advance_true_despite_neutral_reading(self):
@@ -2226,8 +2233,8 @@ class TestAdcCallback:
         buf.advance_state = True  # seed True so the reset to False is proven
         buf._adc_callback(1.0, 0.9)  # well above set_point + half_db (0.65)
         assert buf.last_state == TRAILING_STATE_NAME
-        assert buf.advance_state is False
-        assert buf.trailing_state is True
+        assert buf.advance_state is True
+        assert buf.trailing_state is False
 
     def test_non_stepper_neutral_reading_sets_neutral(self):
         buf, afc, reactor, printer = _make_fps_buffer()
@@ -2412,8 +2419,8 @@ class TestCorrectionEvent:
         buf.trailing_state = True  # seed True so the reset to False is proven
         buf._correction_event(100.0)
         assert buf.last_state == ADVANCING_STATE_NAME
-        assert buf.advance_state is True
-        assert buf.trailing_state is False
+        assert buf.advance_state is False
+        assert buf.trailing_state is True
         afc.function.afc_led.assert_called_once_with(buf.led_advancing, buf.led_index)
 
     def test_reading_above_high_deadband_is_trailing(self):
@@ -2425,8 +2432,8 @@ class TestCorrectionEvent:
         buf.advance_state = True  # seed True so the reset to False is proven
         buf._correction_event(100.0)
         assert buf.last_state == TRAILING_STATE_NAME
-        assert buf.advance_state is False
-        assert buf.trailing_state is True
+        assert buf.advance_state is True
+        assert buf.trailing_state is False
         assert buf._last_correction_direction == TRAILING_STATE_NAME
         afc.function.afc_led.assert_called_once_with(buf.led_trailing, buf.led_index)
 

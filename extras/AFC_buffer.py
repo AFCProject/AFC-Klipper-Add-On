@@ -100,7 +100,7 @@ class AFCBuffer:
             self.trailing_pin       = config.get('trailing_pin') # Trailing pin for buffer
 
             self.adv_filament_switch_name = "{}_{}".format(self.name, "expanded")
-            self.fila_avd, _ = add_filament_switch(self.adv_filament_switch_name, self.advance_pin,
+            self.fila_adv, _ = add_filament_switch(self.adv_filament_switch_name, self.advance_pin,
                                                    self.printer, show_sensor=self.enable_sensors_in_gui)
 
             self.trail_filament_switch_name = "{}_{}".format(self.name, "compressed")
@@ -745,6 +745,8 @@ class FPSEndstopWrapper:
 
         :param stepper: Stepper object to associate with the endstop.
         """
+        if stepper in self._steppers:
+            return
         self._steppers.append(stepper)
 
     def get_steppers(self) -> list:
@@ -1086,9 +1088,8 @@ class AFCFPSBuffer(AFCBuffer):
             self._correction_running = True
         if not has_stepper:
             half_db = self.deadband / 2.0
-            # elif self.smoothed_fps > self.set_point + half_db:
-            if self.smoothed_fps < self.set_point - half_db:
-                self.last_state = ADVANCING_STATE_NAME
+            if self.smoothed_fps > self.set_point + half_db:
+                self.last_state = TRAILING_STATE_NAME
                 self.advance_state = True
                 if self._latch_enabled:
                     self._advance_latched = True
@@ -1097,9 +1098,8 @@ class AFCFPSBuffer(AFCBuffer):
                 # Latched during load: keep advance_state True even if
                 # pressure drops briefly between motor pulses.
                 self.advance_state = True
-            elif self.smoothed_fps > self.set_point + half_db:
-            # elif self.smoothed_fps < self.set_point - half_db:
-                self.last_state = TRAILING_STATE_NAME
+            elif self.smoothed_fps < self.set_point - half_db:
+                self.last_state = ADVANCING_STATE_NAME
                 self.advance_state = False
                 self.trailing_state = True
             else:
@@ -1212,8 +1212,8 @@ class AFCFPSBuffer(AFCBuffer):
             if self.last_state != ADVANCING_STATE_NAME:
                 log_event = True
             self.last_state = ADVANCING_STATE_NAME
-            self.advance_state = True
-            self.trailing_state = False
+            self.advance_state = False
+            self.trailing_state = True
 
             self._last_correction_direction = ADVANCING_STATE_NAME
             if self.led:
@@ -1222,8 +1222,8 @@ class AFCFPSBuffer(AFCBuffer):
             if self.last_state != TRAILING_STATE_NAME:
                 log_event = True
             self.last_state = TRAILING_STATE_NAME
-            self.advance_state = False
-            self.trailing_state = True
+            self.advance_state = True
+            self.trailing_state = False
             self._last_correction_direction = TRAILING_STATE_NAME
             if self.led:
                 self.afc.function.afc_led(self.led_trailing, self.led_index)
