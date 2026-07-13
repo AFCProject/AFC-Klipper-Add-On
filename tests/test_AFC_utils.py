@@ -17,7 +17,10 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 
 # conftest installs Klipper mocks; extras is on sys.path via REPO_ROOT
-from extras.AFC_utils import check_and_return, section_in_config, DebounceButton, AFC_moonraker
+from extras.AFC_utils import (
+    check_and_return, section_in_config, DebounceButton, AFC_moonraker,
+    VirtualRunoutHelper, VirtualFilamentSensor,
+)
 
 
 # ── check_and_return ──────────────────────────────────────────────────────────
@@ -569,3 +572,230 @@ class TestAFCMoonraker:
         assert error is True
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) >= 1
+
+
+# ── VirtualRunoutHelper ─────────────────────────────────────────────────────
+
+class TestVirtualRunoutHelper:
+    """VirtualRunoutHelper is the minimal runout-tracking backend used by
+    VirtualFilamentSensor (FPS_PFS virtual sensors)."""
+
+    def _make_helper(self, runout_cb=None, enable_runout=False):
+        from tests.conftest import MockPrinter
+        printer = MockPrinter()
+        helper = VirtualRunoutHelper(printer, "FPS1_expanded", runout_cb=runout_cb,
+                                     enable_runout=enable_runout)
+        return helper, printer
+
+    def test_init_defaults(self):
+        helper, printer = self._make_helper()
+        assert helper.printer is printer
+        assert helper.name == "FPS1_expanded"
+        assert helper.sensor_enabled is False
+        assert helper.filament_present is False
+        assert helper.runout_callback is None
+        assert helper.insert_gcode is None
+        assert helper.runout_gcode is None
+        assert helper.event_delay == 0.0
+        assert helper._reactor is printer.get_reactor()
+        assert helper.min_event_systime == helper._reactor.NEVER
+
+    def test_init_enable_runout_coerced_to_bool(self):
+        helper, _ = self._make_helper(enable_runout=1)
+        assert helper.sensor_enabled is True
+
+    def test_note_filament_present_updates_state(self):
+        helper, _ = self._make_helper()
+        helper.note_filament_present(100.0, True)
+        assert helper.filament_present is True
+
+    def test_note_filament_present_same_state_is_noop(self):
+        """No state change -> early return, no callback invoked even if enabled."""
+        cb = MagicMock()
+        helper, _ = self._make_helper(runout_cb=cb, enable_runout=True)
+        # filament_present already False; calling with False again should no-op
+        helper.note_filament_present(100.0, False)
+        cb.assert_not_called()
+        assert helper.filament_present is False
+
+    def test_note_filament_present_transition_to_absent_fires_callback(self):
+        cb = MagicMock()
+        helper, _ = self._make_helper(runout_cb=cb, enable_runout=True)
+        helper.note_filament_present(100.0, True)   # present
+        cb.assert_not_called()
+        helper.note_filament_present(101.0, False)  # -> absent, should fire
+        cb.assert_called_once_with(101.0)
+        assert helper.filament_present is False
+
+    def test_note_filament_present_transition_to_present_never_fires_callback(self):
+        """Callback only fires on transition to absent, never on transition to present."""
+        cb = MagicMock()
+        helper, _ = self._make_helper(runout_cb=cb, enable_runout=True)
+        helper.note_filament_present(100.0, True)  # absent -> present
+        cb.assert_not_called()
+        assert helper.filament_present is True
+
+    def test_note_filament_present_no_callback_when_runout_disabled(self):
+        cb = MagicMock()
+        helper, _ = self._make_helper(runout_cb=cb, enable_runout=False)
+        helper.note_filament_present(100.0, True)
+        helper.note_filament_present(101.0, False)
+        cb.assert_not_called()
+
+    def test_note_filament_present_no_callback_when_none(self):
+        """runout_callback is None -> callable() check prevents a crash."""
+        helper, _ = self._make_helper(runout_cb=None, enable_runout=True)
+        helper.note_filament_present(100.0, True)
+        helper.note_filament_present(101.0, False)  # should not raise
+        assert helper.filament_present is False
+
+    def test_note_filament_present_typeerror_fallback_uses_kwarg(self):
+        """Some callers' runout callbacks only accept eventtime as a kwarg;
+        the TypeError fallback should retry with eventtime=eventtime."""
+        calls = []
+
+        def picky_callback(*, eventtime):
+            calls.append(eventtime)
+
+        helper, _ = self._make_helper(runout_cb=picky_callback, enable_runout=True)
+        helper.note_filament_present(100.0, True)
+        helper.note_filament_present(101.0, False)
+        assert calls == [101.0]
+
+    def test_note_filament_present_eventtime_defaults_to_monotonic(self):
+        helper, printer = self._make_helper()
+        printer.get_reactor()._monotonic = 555.0
+        helper.note_filament_present(None, True)
+        assert helper.filament_present is True
+
+    def test_note_filament_present_ignores_extra_kwargs(self):
+        """**_kwargs lets this be called with the same signature as the real
+        Klipper runout_helper.note_filament_present (which some callers use)."""
+        helper, _ = self._make_helper()
+        helper.note_filament_present(eventtime=100.0, is_filament_present=True,
+                                     extra_unused_kwarg="ignored")
+        assert helper.filament_present is True
+
+    def test_get_status_reports_present_and_enabled(self):
+        helper, _ = self._make_helper(enable_runout=True)
+        helper.note_filament_present(100.0, True)
+        status = helper.get_status()
+        assert status == {"filament_detected": True, "enabled": True}
+
+    def test_get_status_reports_absent_and_disabled(self):
+        helper, _ = self._make_helper(enable_runout=False)
+        status = helper.get_status(123.0)
+        assert status == {"filament_detected": False, "enabled": False}
+
+
+# ── VirtualFilamentSensor ───────────────────────────────────────────────────
+
+class TestVirtualFilamentSensor:
+    """VirtualFilamentSensor lets FPS_PFS buffers expose a
+    filament_switch_sensor-shaped object for Mainsail/Fluidd, without
+    requiring a physical sensor pin."""
+
+    def _make_printer_with_add_object(self):
+        from tests.conftest import MockPrinter
+        printer = MockPrinter()
+        # MockPrinter has no add_object; give it a real dict-backed one so we
+        # can exercise the success path (including the GUI-hide rename).
+        def add_object(name, obj):
+            printer.objects[name] = obj
+        printer.add_object = add_object
+        return printer
+
+    def test_init_registers_object_visible_in_gui(self):
+        printer = self._make_printer_with_add_object()
+        mock_logger = MagicMock()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=mock_logger,
+                                       show_in_gui=True)
+        assert "filament_switch_sensor FPS1_expanded" in printer.objects
+        assert printer.objects["filament_switch_sensor FPS1_expanded"] is sensor
+        assert sensor.printer is printer
+        assert sensor.logger is mock_logger
+        assert sensor._object_name == "filament_switch_sensor FPS1_expanded"
+
+    def test_init_hides_object_from_gui_when_requested(self):
+        printer = self._make_printer_with_add_object()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock(),
+                                       show_in_gui=False)
+        assert "filament_switch_sensor FPS1_expanded" not in printer.objects
+        assert "_filament_switch_sensor FPS1_expanded" in printer.objects
+        assert printer.objects["_filament_switch_sensor FPS1_expanded"] is sensor
+
+    def test_init_falls_back_to_dict_registration_when_add_object_missing(self):
+        """MockPrinter has no add_object attribute by default -- this exercises
+        the except-Exception fallback path (direct dict registration)."""
+        from tests.conftest import MockPrinter
+        printer = MockPrinter()
+        assert not hasattr(printer, "add_object")
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        assert printer.objects.get("filament_switch_sensor FPS1_expanded") is sensor
+
+    def test_init_registers_gcode_commands(self):
+        printer = self._make_printer_with_add_object()
+        gcode = printer.lookup_object("gcode")
+        gcode.register_mux_command = MagicMock()
+        VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        registered = [c.args[0] for c in gcode.register_mux_command.call_args_list]
+        assert "QUERY_FILAMENT_SENSOR" in registered
+        assert "SET_FILAMENT_SENSOR" in registered
+
+    def test_init_returns_early_when_gcode_object_missing(self):
+        """When printer has no gcode object yet, init should not raise and
+        should simply skip command registration."""
+        printer = self._make_printer_with_add_object()
+        printer._gcode = None
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        assert sensor.name == "FPS1_expanded"
+
+    def test_init_swallows_gcode_registration_exceptions(self):
+        """If register_mux_command raises (e.g. duplicate registration),
+        init should not propagate the exception."""
+        printer = self._make_printer_with_add_object()
+        gcode = printer.lookup_object("gcode")
+        gcode.register_mux_command = MagicMock(side_effect=Exception("already registered"))
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        assert sensor.name == "FPS1_expanded"
+
+    def test_get_status_delegates_to_runout_helper(self):
+        printer = self._make_printer_with_add_object()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        sensor.runout_helper.note_filament_present(100.0, True)
+        assert sensor.get_status(100.0) == {"filament_detected": True, "enabled": False}
+
+    def test_cmd_query_filament_sensor_reports_detected(self):
+        printer = self._make_printer_with_add_object()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        sensor.runout_helper.note_filament_present(100.0, True)
+        gcmd = MagicMock()
+        sensor.cmd_QUERY_FILAMENT_SENSOR(gcmd)
+        gcmd.respond_info.assert_called_once_with(
+            "Filament Sensor FPS1_expanded: filament detected")
+
+    def test_cmd_query_filament_sensor_reports_not_detected(self):
+        printer = self._make_printer_with_add_object()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        gcmd = MagicMock()
+        sensor.cmd_QUERY_FILAMENT_SENSOR(gcmd)
+        gcmd.respond_info.assert_called_once_with(
+            "Filament Sensor FPS1_expanded: filament not detected")
+
+    def test_cmd_set_filament_sensor_enables(self):
+        printer = self._make_printer_with_add_object()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        gcmd = MagicMock()
+        gcmd.get_int = MagicMock(return_value=1)
+        sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
+        gcmd.get_int.assert_called_once_with("ENABLE", 1)
+        assert sensor.runout_helper.sensor_enabled is True
+
+    def test_cmd_set_filament_sensor_disables(self):
+        printer = self._make_printer_with_add_object()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        sensor.runout_helper.sensor_enabled = True
+        gcmd = MagicMock()
+        gcmd.get_int = MagicMock(return_value=0)
+        sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
+        assert sensor.runout_helper.sensor_enabled is False

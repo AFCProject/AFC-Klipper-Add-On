@@ -564,7 +564,7 @@ class AFCExtruderStepper(AFCLane):
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
         fps_pfs_buffer   = self._get_section_value('AFC_buffer', buffer_name, 'type')
-        is_fps_pfs_buffer = bool(fps_pfs_buffer is not None  and fps_pfs_buffer == "FPS_PFS")
+        is_fps_pfs_buffer = fps_pfs_buffer is not None and fps_pfs_buffer == "FPS_PFS"
 
         # Check to verify that hub is not a virtual sensor
         if (hub_pin
@@ -651,6 +651,8 @@ class AFCExtruderStepper(AFCLane):
         :param pin: Pin to register as endstop for stepper
         :param suffix: String to append at end of endstop key
         :param fullname: Fullname to register endstop name as
+        :param mcu_endstop: Pre-built MCU endstop to register directly (e.g. an
+                            FPS software endstop) instead of creating one from pin
         """
         if (pin is None
             and mcu_endstop is not None):

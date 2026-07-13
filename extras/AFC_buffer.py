@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from extras.AFC_stepper import AFCExtruderStepper
     from gcode import GCodeCommand
     from configfile import ConfigWrapper
-    from klippy import Printer
     from reactor import SelectReactor as Reactor, ReactorCompletion
     from mcu import MCU, MCU_adc
 
@@ -1389,7 +1388,7 @@ class AFCFPSBuffer(AFCBuffer):
     def _is_extruding(self) -> bool:
         """
         Checks if lanes extruder has actually moved in either direction.
-        
+
         :return boolean: Return True when the extruder has actually moved (either direction)
                          by more than integral_extrusion_threshold since the last correction
                          tick.

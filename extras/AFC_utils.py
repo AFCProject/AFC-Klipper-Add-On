@@ -331,7 +331,7 @@ class VirtualFilamentSensor:
             msg = f"Filament Sensor {self.name}: filament detected"
         else:
             msg = f"Filament Sensor {self.name}: filament not detected"
-        self.logger.info(msg)
+        gcmd.respond_info(msg)
 
     def cmd_SET_FILAMENT_SENSOR(self, gcmd: GCodeCommand) -> None:
         """
