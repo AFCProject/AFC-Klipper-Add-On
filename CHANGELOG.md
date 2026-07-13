@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-07-12]
 ### Added
-- Added FPS_PFS (Filament Pressure Sensor / Proportional Sync-Feedback) buffer support, including virtual filament sensors for Mainsail/Fluidd integration.
+- Added FPS_PSF (Filament Pressure Sensor / Proportional Sync-Feedback) buffer support, including virtual filament sensors for Mainsail/Fluidd integration.
 
 ## [2026-07-11]
 ### Added

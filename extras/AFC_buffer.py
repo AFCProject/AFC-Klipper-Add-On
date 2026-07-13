@@ -1582,8 +1582,8 @@ def load_config_prefix(config):
     if buffer_type == "switched":
         return AFCBuffer(config)
 
-    if buffer_type == "FPS_PFS":
+    if buffer_type == "FPS_PSF":
         return AFCFPSBuffer(config)
 
-    msg = f"{buffer_type} not valid, only switched(turtleneck style) or FPS_PFS are valid options"
+    msg = f"{buffer_type} not valid, only switched(turtleneck style) or FPS_PSF are valid options"
     raise error(msg)

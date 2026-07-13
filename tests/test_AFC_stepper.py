@@ -630,13 +630,13 @@ class TestDoEnable:
         s.stepper_enable.set_motors_enable.assert_not_called()
         s.stepper_enable.motor_debug_enable.assert_called_once_with(stepper_name, True)
 
-# ── FPS_PFS endstop wiring ──────────────────────────────────────────────────
+# ── FPS_PSF endstop wiring ──────────────────────────────────────────────────
 #
-# Covers the FPS_PFS-specific additions in AFC_stepper.py:
+# Covers the FPS_PSF-specific additions in AFC_stepper.py:
 #   - _handle_ready(): registers tool_start/buffer_advance/buffer_trailing
-#     against the buffer's software FPS endstops when buffer_obj.type == "FPS_PFS"
-#   - _init_endstops(): the is_fps_pfs_buffer branch that lets tool_start
-#     resolution succeed (skip, no error) when a FPS_PFS buffer has no
+#     against the buffer's software FPS endstops when buffer_obj.type == "FPS_PSF"
+#   - _init_endstops(): the is_fps_psf_buffer branch that lets tool_start
+#     resolution succeed (skip, no error) when a FPS_PSF buffer has no
 #     advance_pin, since the FPS endstop is wired up later in _handle_ready
 #   - _add_endstop(): the mcu_endstop parameter path that registers a
 #     pre-built MCU endstop (e.g. FPSEndstopWrapper) instead of building one
@@ -646,11 +646,11 @@ from extras.AFC_lane import AFCLane
 
 
 class TestHandleReadyFpsEndstops:
-    def test_registers_fps_endstops_when_buffer_is_fps_pfs(self):
+    def test_registers_fps_endstops_when_buffer_is_fps_psf(self):
         s = _make_stepper()
         s._add_endstop = MagicMock()
         s.buffer_obj = MagicMock()
-        s.buffer_obj.type = "FPS_PFS"
+        s.buffer_obj.type = "FPS_PSF"
         s.buffer_obj.fps_endstop = "SENTINEL_ADVANCE_ENDSTOP"
         s.buffer_obj.fps_trailing_endstop = "SENTINEL_TRAILING_ENDSTOP"
 
@@ -701,8 +701,8 @@ class TestHandleReadyFpsEndstops:
 
 
 class TestInitEndstopsFpsPfsBuffer:
-    """Exercises the is_fps_pfs_buffer branch inside _init_endstops(), where
-    tool_start is configured as 'buffer' but the FPS_PFS buffer section has
+    """Exercises the is_fps_psf_buffer branch inside _init_endstops(), where
+    tool_start is configured as 'buffer' but the FPS_PSF buffer section has
     no advance_pin (it uses adc_pin instead)."""
 
     def _make_endstop_stepper(self, section_values, name="lane1"):
@@ -740,13 +740,13 @@ class TestInitEndstopsFpsPfsBuffer:
 
         return s
 
-    def test_fps_pfs_buffer_missing_advance_pin_skips_without_error(self):
+    def test_fps_psf_buffer_missing_advance_pin_skips_without_error(self):
         s = self._make_endstop_stepper({
             ("AFC_extruder", "extruder", "pin_tool_start"): "buffer",
             ("AFC_extruder", "extruder", "buffer"): "FPS_buffer1",
             ("AFC_buffer", "FPS_buffer1", "advance_pin"): None,
             ("AFC_buffer", "FPS_buffer1", "trailing_pin"): None,
-            ("AFC_buffer", "FPS_buffer1", "type"): "FPS_PFS",
+            ("AFC_buffer", "FPS_buffer1", "type"): "FPS_PSF",
         })
 
         s._init_endstops()  # should not raise
@@ -759,7 +759,7 @@ class TestInitEndstopsFpsPfsBuffer:
         assert s._qes is not None
 
     def test_switched_buffer_missing_advance_pin_still_raises(self):
-        """Regression check: a non-FPS_PFS buffer with tool_start=buffer and
+        """Regression check: a non-FPS_PSF buffer with tool_start=buffer and
         no advance_pin should still raise, same as before this branch."""
         s = self._make_endstop_stepper({
             ("AFC_extruder", "extruder", "pin_tool_start"): "buffer",
@@ -773,11 +773,11 @@ class TestInitEndstopsFpsPfsBuffer:
         with pytest.raises(Exception):
             s._init_endstops()
 
-    def test_non_fps_pfs_type_value_missing_advance_pin_still_raises(self):
-        """Proves is_fps_pfs_buffer requires the *equality* check against
-        "FPS_PFS", not just a not-None check -- a buffer with a real but
+    def test_non_fps_psf_type_value_missing_advance_pin_still_raises(self):
+        """Proves is_fps_psf_buffer requires the *equality* check against
+        "FPS_PSF", not just a not-None check -- a buffer with a real but
         different `type` value (e.g. "switched") and no advance_pin must
-        still raise, not silently skip like a true FPS_PFS buffer would."""
+        still raise, not silently skip like a true FPS_PSF buffer would."""
         s = self._make_endstop_stepper({
             ("AFC_extruder", "extruder", "pin_tool_start"): "buffer",
             ("AFC_extruder", "extruder", "buffer"): "Turtle_1",
@@ -792,7 +792,7 @@ class TestInitEndstopsFpsPfsBuffer:
 
     def test_switched_buffer_with_advance_pin_registers_tool_start(self):
         """Regression check: normal switched-buffer path is unaffected by the
-        is_fps_pfs_buffer addition."""
+        is_fps_psf_buffer addition."""
         s = self._make_endstop_stepper({
             ("AFC_extruder", "extruder", "pin_tool_start"): "buffer",
             ("AFC_extruder", "extruder", "buffer"): "Turtle_1",

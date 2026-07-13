@@ -1,7 +1,7 @@
 # AFC buffer commands integration test
 #
 # Verifies that AFC_buffer GCode commands register and execute correctly
-# in a Klipper environment with one FPS_PFS-style buffer (FPS_buffer1) configured.
+# in a Klipper environment with one FPS_PSF-style buffer (FPS_buffer1) configured.
 # No lane needs to be loaded — commands that depend on an active lane are
 # safe no-ops when get_current_lane_obj() returns None.
 #
@@ -10,7 +10,7 @@
 #   - KLIPPER_PATH must point to a Klipper clone with chelper built
 
 DICTIONARY stm32h723.dict
-CONFIG afc_with_pfs_buffer.cfg
+CONFIG afc_with_psf_buffer.cfg
 
 # --- Query buffer state ---
 # Reports current enable state, last_state, and fault-detection info.

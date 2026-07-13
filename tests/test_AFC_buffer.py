@@ -98,12 +98,12 @@ def _make_fps_buffer(name="FPS_buffer1", **overrides):
     printer = MockPrinter(afc=afc)
     printer.lookup_object("pins").setup_pin = MagicMock(return_value=MagicMock())
     config = MockConfig(name="AFC_FPS {}".format(name), printer=printer,
-                        values={"type": "FPS_PFS"})
+                        values={"type": "FPS_PSF"})
     buf = AFCFPSBuffer(config)
     reactor = buf.reactor  # alias -- buf.reactor is afc.reactor from real construction
 
     buf.function = MagicMock()
-    buf.type = "FPS_PFS"
+    buf.type = "FPS_PSF"
     buf.lanes = {}
     buf.last_state = "Unknown"
     buf.enable = False
@@ -323,7 +323,7 @@ class TestAFCBufferInit:
         afc = MockAFC()
         printer = MockPrinter(afc=afc)
         buttons = printer.lookup_object("buttons")
-        config = MockConfig(name="AFC_buffer TN", printer=printer, values={"type": "FPS_PFS"})
+        config = MockConfig(name="AFC_buffer TN", printer=printer, values={"type": "FPS_PSF"})
         with patch("extras.AFC_buffer.add_filament_switch",
                    return_value=(MagicMock(), MagicMock())):
             AFCBuffer(config)
@@ -1105,7 +1105,7 @@ class TestCmdSetBufferMultiplier:
 
     def test_high_not_switched_type_skips_set_multiplier(self):
         buf, lane = self._ready_buf()
-        buf.type = "FPS_PFS"
+        buf.type = "FPS_PSF"
         buf.cmd_SET_BUFFER_MULTIPLIER(_make_gcmd({"MULTIPLIER": "HIGH"}, {"FACTOR": 1.3}))
         lane.update_rotation_distance.assert_not_called()
 
@@ -1757,10 +1757,10 @@ class TestCmdSetErrorSensitivity:
         assert multiplier == buf.multiplier_high
 
     def test_disabled_to_enabled_non_switched_type_uses_fixed_args(self):
-        """Non-switched buffer types (e.g. FPS_PFS) skip the last_state
+        """Non-switched buffer types (e.g. FPS_PSF) skip the last_state
         branch entirely and always start_fault_detection(0, 1.0)."""
         buf = _make_buffer(error_sensitivity=0.0)
-        buf.type = "FPS_PFS"
+        buf.type = "FPS_PSF"
         buf.setup_fault_timer = MagicMock()
         buf.start_fault_detection = MagicMock()
         buf.cmd_AFC_SET_ERROR_SENSITIVITY(_gcmd(5.0))
@@ -2771,7 +2771,7 @@ def _build_real_fps_buffer(values=None, adc=None):
     printer = MockPrinter(afc=afc)
     adc = adc if adc is not None else _FakeADC()
     printer.lookup_object("pins").setup_pin = MagicMock(return_value=adc)
-    merged = {"type": "FPS_PFS"}
+    merged = {"type": "FPS_PSF"}
     merged.update(values or {})
     config = MockConfig(name="AFC_FPS FPS1", printer=printer, values=merged)
     buf = AFCFPSBuffer(config)
@@ -2875,7 +2875,7 @@ class TestAFCFPSBufferInit:
         afc.gcode.register_mux_command = MagicMock(wraps=afc.gcode.register_mux_command)
         printer = MockPrinter(afc=afc)
         printer.lookup_object("pins").setup_pin = MagicMock(return_value=_FakeADC())
-        config = MockConfig(name="AFC_FPS FPS1", printer=printer, values={"type": "FPS_PFS"})
+        config = MockConfig(name="AFC_FPS FPS1", printer=printer, values={"type": "FPS_PSF"})
         AFCFPSBuffer(config)
         names = [c[0][0] for c in afc.gcode.register_mux_command.call_args_list]
         assert "AFC_SET_FPS_SET_POINT" in names
@@ -3749,13 +3749,13 @@ class TestLoadConfigPrefix:
             result = load_config_prefix(config)
         assert isinstance(result, AFCBuffer)
 
-    def test_fps_pfs_type_builds_afcfpsbuffer(self):
+    def test_fps_psf_type_builds_afcfpsbuffer(self):
         from extras.AFC_buffer import load_config_prefix
         from tests.conftest import MockConfig, MockPrinter, MockAFC
         afc = MockAFC()
         printer = MockPrinter(afc=afc)
         printer.lookup_object("pins").setup_pin = MagicMock(return_value=_FakeADC())
-        config = MockConfig(name="AFC_FPS FPS1", printer=printer, values={"type": "FPS_PFS"})
+        config = MockConfig(name="AFC_FPS FPS1", printer=printer, values={"type": "FPS_PSF"})
         result = load_config_prefix(config)
         assert isinstance(result, AFCFPSBuffer)
 

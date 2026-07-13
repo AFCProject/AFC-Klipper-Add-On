@@ -578,7 +578,7 @@ class TestAFCMoonraker:
 
 class TestVirtualRunoutHelper:
     """VirtualRunoutHelper is the minimal runout-tracking backend used by
-    VirtualFilamentSensor (FPS_PFS virtual sensors)."""
+    VirtualFilamentSensor (FPS_PSF virtual sensors)."""
 
     def _make_helper(self, runout_cb=None, enable_runout=False):
         from tests.conftest import MockPrinter
@@ -696,7 +696,7 @@ class TestVirtualRunoutHelper:
 # ── VirtualFilamentSensor ───────────────────────────────────────────────────
 
 class TestVirtualFilamentSensor:
-    """VirtualFilamentSensor lets FPS_PFS buffers expose a
+    """VirtualFilamentSensor lets FPS_PSF buffers expose a
     filament_switch_sensor-shaped object for Mainsail/Fluidd, without
     requiring a physical sensor pin."""
 

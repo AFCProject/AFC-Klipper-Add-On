@@ -191,7 +191,7 @@ class DebounceButton:
 
 
 class VirtualRunoutHelper:
-    """Minimal runout helper used by FPS_PFS virtual sensors."""
+    """Minimal runout helper used by FPS_PSF virtual sensors."""
 
     def __init__(self, printer: Printer, name: str, runout_cb: Optional[Callable] = None,
                  enable_runout: bool = False) -> None:

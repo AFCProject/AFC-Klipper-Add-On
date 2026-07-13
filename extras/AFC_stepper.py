@@ -154,13 +154,13 @@ class AFCExtruderStepper(AFCLane):
 
     def _handle_ready(self) -> None:
         """
-        Handles klippy:ready callback, check to see if buffer_obj is a FPS_PFS buffer. If buffer is
-        a FPS_PFS buffer then endstops are registered for tool_start, buffer_adv, and buffer_trailing
+        Handles klippy:ready callback, check to see if buffer_obj is a FPS_PSF buffer. If buffer is
+        a FPS_PSF buffer then endstops are registered for tool_start, buffer_adv, and buffer_trailing
         """
         super()._handle_ready()
 
         if (self.buffer_obj
-            and self.buffer_obj.type == "FPS_PFS"):
+            and self.buffer_obj.type == "FPS_PSF"):
             self._add_endstop('tool_start', None, f'{self.name}_tool_start',
                               mcu_endstop=self.buffer_obj.fps_endstop)
             self._add_endstop('buffer_advance', None, f'{self.name}_buffer_adv',
@@ -563,8 +563,8 @@ class AFCExtruderStepper(AFCLane):
             buffer_name = self._get_section_value('AFC_extruder', afc_extruder_name, 'buffer') or self._inherit_from_unit('buffer')
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
-        fps_pfs_buffer   = self._get_section_value('AFC_buffer', buffer_name, 'type')
-        is_fps_pfs_buffer = fps_pfs_buffer is not None and fps_pfs_buffer == "FPS_PFS"
+        fps_psf_buffer   = self._get_section_value('AFC_buffer', buffer_name, 'type')
+        is_fps_psf_buffer = fps_psf_buffer is not None and fps_psf_buffer == "FPS_PSF"
 
         # Check to verify that hub is not a virtual sensor
         if (hub_pin
@@ -575,7 +575,7 @@ class AFCExtruderStepper(AFCLane):
         else:
             if buffer_adv_pin is not None:
                 self._add_endstop('tool_start', buffer_adv_pin, 'tool_start')
-            elif is_fps_pfs_buffer:
+            elif is_fps_psf_buffer:
                 pass
             else:
                 error_string = f"Error: buffer set as pin_tool_start in [AFC_extruder {afc_extruder_name}] config section,"
