@@ -641,6 +641,7 @@ class TestVirtualRunoutHelper:
         helper.note_filament_present(100.0, True)
         helper.note_filament_present(101.0, False)
         cb.assert_not_called()
+        assert helper.filament_present is False
 
     def test_note_filament_present_no_callback_when_none(self):
         """runout_callback is None -> callable() check prevents a crash."""
@@ -661,12 +662,16 @@ class TestVirtualRunoutHelper:
         helper.note_filament_present(100.0, True)
         helper.note_filament_present(101.0, False)
         assert calls == [101.0]
+        assert helper.filament_present is False
 
     def test_note_filament_present_eventtime_defaults_to_monotonic(self):
-        helper, printer = self._make_helper()
+        seen_eventtimes = []
+        helper, printer = self._make_helper(runout_cb=seen_eventtimes.append, enable_runout=True)
         printer.get_reactor()._monotonic = 555.0
-        helper.note_filament_present(None, True)
-        assert helper.filament_present is True
+        helper.note_filament_present(None, True)   # present, no callback yet
+        helper.note_filament_present(None, False)  # absent -> callback fires with monotonic()
+        assert seen_eventtimes == [555.0]
+        assert helper.filament_present is False
 
     def test_note_filament_present_ignores_extra_kwargs(self):
         """**_kwargs lets this be called with the same signature as the real
@@ -732,6 +737,37 @@ class TestVirtualFilamentSensor:
         assert not hasattr(printer, "add_object")
         sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
         assert printer.objects.get("filament_switch_sensor FPS1_expanded") is sensor
+
+    def test_init_hide_rename_skipped_when_add_object_does_not_populate_objects(self):
+        """add_object succeeds without raising, but doesn't actually land the
+        entry in printer.objects (e.g. a real backend that stores elsewhere) --
+        the 'if self._object_name in objects' guard should just no-op rather
+        than KeyError."""
+        from tests.conftest import MockPrinter
+        printer = MockPrinter()
+        printer.add_object = MagicMock()  # succeeds, but printer.objects stays empty
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock(),
+                                       show_in_gui=False)
+        printer.add_object.assert_called_once_with(
+            "filament_switch_sensor FPS1_expanded", sensor)
+        assert printer.objects == {}
+
+    def test_init_fallback_noop_when_objects_is_not_a_dict(self):
+        """When add_object is missing AND printer.objects isn't a dict, the
+        fallback registration should silently no-op rather than raise."""
+        class BarePrinter:
+            def get_reactor(self):
+                from tests.conftest import MockReactor
+                return MockReactor()
+
+            def lookup_object(self, name, default=None):
+                return default
+
+        printer = BarePrinter()
+        assert not hasattr(printer, "add_object")
+        assert not hasattr(printer, "objects")
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        assert sensor.name == "FPS1_expanded"
 
     def test_init_registers_gcode_commands(self):
         printer = self._make_printer_with_add_object()

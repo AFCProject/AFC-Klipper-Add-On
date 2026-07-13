@@ -658,12 +658,15 @@ class TestHandleReadyFpsEndstops:
             s._handle_ready()
         super_ready.assert_called_once()
 
-        registered = {call.args[0]: call.kwargs.get("mcu_endstop")
+        registered = {call.args[0]: (call.args[2], call.kwargs.get("mcu_endstop"))
                      for call in s._add_endstop.call_args_list}
-        assert registered["tool_start"] == "SENTINEL_ADVANCE_ENDSTOP"
-        assert registered["buffer_advance"] == "SENTINEL_ADVANCE_ENDSTOP"
-        assert registered["buffer_trailing"] == "SENTINEL_TRAILING_ENDSTOP"
+        assert registered["tool_start"] == ("lane1_tool_start", "SENTINEL_ADVANCE_ENDSTOP")
+        assert registered["buffer_advance"] == ("lane1_buffer_adv", "SENTINEL_ADVANCE_ENDSTOP")
+        assert registered["buffer_trailing"] == ("lane1_buffer_trailing", "SENTINEL_TRAILING_ENDSTOP")
         assert s._add_endstop.call_count == 3
+        # pin (args[1]) should always be None -- the FPS endstop is pre-built,
+        # not created from a pin
+        assert all(call.args[1] is None for call in s._add_endstop.call_args_list)
 
     def test_skips_fps_endstops_when_buffer_is_switched(self):
         s = _make_stepper()
@@ -751,6 +754,9 @@ class TestInitEndstopsFpsPfsBuffer:
         tool_start_calls = [c for c in s._add_endstop.call_args_list
                             if c.args[0] == "tool_start"]
         assert tool_start_calls == []
+        # _init_endstops always wires these up regardless of buffer type
+        assert s._ppins is s.printer.lookup_object('pins')
+        assert s._qes is not None
 
     def test_switched_buffer_missing_advance_pin_still_raises(self):
         """Regression check: a non-FPS_PFS buffer with tool_start=buffer and
@@ -763,6 +769,23 @@ class TestInitEndstopsFpsPfsBuffer:
             ("AFC_buffer", "missing_buffer", "type"): None,
         })
         s.buffer_name = "missing_buffer"
+
+        with pytest.raises(Exception):
+            s._init_endstops()
+
+    def test_non_fps_pfs_type_value_missing_advance_pin_still_raises(self):
+        """Proves is_fps_pfs_buffer requires the *equality* check against
+        "FPS_PFS", not just a not-None check -- a buffer with a real but
+        different `type` value (e.g. "switched") and no advance_pin must
+        still raise, not silently skip like a true FPS_PFS buffer would."""
+        s = self._make_endstop_stepper({
+            ("AFC_extruder", "extruder", "pin_tool_start"): "buffer",
+            ("AFC_extruder", "extruder", "buffer"): "Turtle_1",
+            ("AFC_buffer", "Turtle_1", "advance_pin"): None,
+            ("AFC_buffer", "Turtle_1", "trailing_pin"): None,
+            ("AFC_buffer", "Turtle_1", "type"): "switched",
+        })
+        s.buffer_name = "Turtle_1"
 
         with pytest.raises(Exception):
             s._init_endstops()
@@ -873,6 +896,29 @@ class TestAddEndstopMcuEndstopParam:
         s._qes.register_endstop.assert_called_once_with(pin_based_endstop, "hub")
         pin_based_endstop.add_stepper.assert_called_once_with(
             s.extruder_stepper.stepper)
+        assert s._endstops["hub"] == (pin_based_endstop, "hub")
+        assert s.logger.messages == [
+            ("debug", "lane1 adding endstop hub:hub:PC5"),
+        ]
+
+    def test_pin_and_mcu_endstop_both_provided_pin_wins(self):
+        """Proves `pin is None` is required for the mcu_endstop bypass, not
+        just `mcu_endstop is not None` alone: when both are supplied, the
+        pin-based path is used and the passed-in mcu_endstop is discarded in
+        favor of the one built from the pin."""
+        s = self._make_add_endstop_stepper()
+        pin_based_endstop = MagicMock(name="pin_based_endstop")
+        s._ppins.setup_pin.return_value = pin_based_endstop
+        ignored_endstop = MagicMock(name="should_be_ignored")
+
+        s._add_endstop("hub", "PC5", "hub", mcu_endstop=ignored_endstop)
+
+        s._ppins.allow_multi_use_pin.assert_called_once_with("PC5")
+        s._ppins.setup_pin.assert_called_once_with("endstop", "PC5")
+        s._qes.register_endstop.assert_called_once_with(pin_based_endstop, "hub")
+        pin_based_endstop.add_stepper.assert_called_once_with(
+            s.extruder_stepper.stepper)
+        ignored_endstop.add_stepper.assert_not_called()
         assert s._endstops["hub"] == (pin_based_endstop, "hub")
         assert s.logger.messages == [
             ("debug", "lane1 adding endstop hub:hub:PC5"),
