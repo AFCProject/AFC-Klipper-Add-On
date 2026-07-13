@@ -154,7 +154,7 @@ class AFCBuffer:
         """Return the active toolhead extruder.
 
         The native fps.py stored a direct extruder reference.  OAMSMonitor
-        accesses ``fps.extruder.last_position`` for clog detection.
+        accesses `fps.extruder.last_position` for clog detection.
         This property provides the same interface without requiring an
         extruder config option — it simply returns whatever extruder is
         currently active on the toolhead.
@@ -790,7 +790,7 @@ class FPSEndstopWrapper:
         Reactor timer callback that checks the FPS trigger condition.
 
         :param eventtime: Reactor event time of the poll.
-        :return: ``reactor.NEVER`` once triggered, otherwise the next poll time.
+        :return: `reactor.NEVER` once triggered, otherwise the next poll time.
         """
         if self._trigger_func():
             mcu = self.get_mcu()
@@ -820,7 +820,9 @@ class FPSEndstopWrapper:
         """
         return 1 if self._trigger_func() else 0
 
-# - Any Hall-effect + spring slider producing a 0.0-1.0 analog signal
+# Works with any analog filament-position sensor reporting a 0.0-1.0 signal,
+# including:
+# - The native OpenAMS FPS (Filament Pressure Sensor)
 #
 # FPS reading semantics:
 #   0.1 (low)  -> buffer stretched / tension -> increase feed
@@ -850,7 +852,7 @@ class AFCFPSBuffer(AFCBuffer):
         Initialize the FPS buffer from its config section.
 
         Sets up the ADC sensor and sampling/callbacks, validates the tuning
-        points (``low_point`` < ``set_point`` < ``high_point`` and deadband),
+        points (`low_point` < `set_point` < `high_point` and deadband),
         creates the virtual filament sensors, registers G-code commands and the
         software endstops, and registers the buffer with AFC.
 

@@ -154,8 +154,8 @@ class AFCExtruderStepper(AFCLane):
 
     def _handle_ready(self) -> None:
         """
-        Handles klippy:ready callback, check to see if buffer_obj is a FPS_PFS sensor. If buffer is
-        FPS_PFS sensor then endstops are registered for tool_start, buffer_adv, and buffer_trailing
+        Handles klippy:ready callback, check to see if buffer_obj is a FPS_PFS buffer. If buffer is
+        a FPS_PFS buffer then endstops are registered for tool_start, buffer_adv, and buffer_trailing
         """
         super()._handle_ready()
 

@@ -246,7 +246,7 @@ class VirtualRunoutHelper:
         Return the sensor status.
 
         :param _eventtime: Reactor event time (unused).
-        :return: Dict with ``filament_detected`` and ``enabled`` booleans.
+        :return: Dict with `filament_detected` and `enabled` booleans.
         """
         return {
             "filament_detected": bool(self.filament_present),
@@ -265,7 +265,7 @@ class VirtualFilamentSensor:
         """
         Register a lightweight virtual filament sensor.
 
-        Adds the object under the ``filament_switch_sensor`` namespace (hiding it
+        Adds the object under the `filament_switch_sensor` namespace (hiding it
         from the GUI by underscore-prefixing when requested) and registers the
         QUERY/SET filament-sensor G-code commands.
 
@@ -314,7 +314,7 @@ class VirtualFilamentSensor:
         Return the sensor status from the runout helper.
 
         :param eventtime: Reactor event time passed through to the helper.
-        :return: Dict with ``filament_detected`` and ``enabled`` booleans.
+        :return: Dict with `filament_detected` and `enabled` booleans.
         """
         return self.runout_helper.get_status(eventtime)
 
