@@ -2196,7 +2196,7 @@ class TestAdcCallback:
         assert buf.advance_state is False
         assert buf.trailing_state is True
 
-    def test_non_stepper_low_reading_with_latch_enabled_sets_latch(self):
+    def test_non_stepper_high_reading_with_latch_enabled_sets_latch(self):
         buf, afc, reactor, printer = _make_fps_buffer()
         buf._lane_has_rotation_control = MagicMock(return_value=False)
         buf.set_point = 0.5
@@ -2205,7 +2205,7 @@ class TestAdcCallback:
         buf._adc_callback(1.0, 0.9)
         assert buf._advance_latched is True
 
-    def test_non_stepper_low_reading_with_latch_disabled_does_not_latch(self):
+    def test_non_stepper_high_reading_with_latch_disabled_does_not_latch(self):
         buf, afc, reactor, printer = _make_fps_buffer()
         buf._lane_has_rotation_control = MagicMock(return_value=False)
         buf.set_point = 0.5
