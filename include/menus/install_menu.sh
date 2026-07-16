@@ -14,6 +14,14 @@ cycle_array() {
   message="$4: ${!var_name}"
 }
 
+buffer_type_label() {
+  # Maps the internal buffer_type token to a user-facing display label.
+  case "$1" in
+    "FPS_PSF") echo "Proportional Sync-Feedback(PSF)" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 toggle_option() {
   local var_name=$1
   local label=$2
@@ -294,9 +302,11 @@ fi
         printf "A. Toolhead sensor pin : %s \n" "$toolhead_sensor_pin"
       fi
       fi
+      if [ "$installation_type" != "ViViD" ] && [ "$installation_type" != "OpenAMS" ]; then
+        printf "B. Buffer type : %s \n" "$(buffer_type_label "$buffer_type")"
+      fi
       case "$installation_type" in
         "BoxTurtle (4-Lane)"|"BoxTurtle (8-Lane)")
-          printf "B. Buffer type : %s \n" "$buffer_type"
           printf "C. BoxTurtle Name : %s \n" "$boxturtle_name"
           ;;
         "HTLF")
@@ -326,7 +336,21 @@ fi
 
     case $choice in
       T)
-        cycle_array installation_options counter installation_type "Installation Type" ;;
+        cycle_array installation_options counter installation_type "Installation Type"
+        if [ "$installation_type" == "ViViD" ]; then
+          # FPS_PSF isn't supported for ViViD by default, don't leave a stale selection
+          # displayed that would silently be skipped at install time.
+          buffer_type="None"
+        elif [ "$installation_type" == "OpenAMS" ]; then
+          # OpenAMS's buffer isn't picked via B -- it follows the current
+          # toolhead-sensor/ramming state (option 9) instead.
+          if [ "$toolhead_sensor" == "Ramming" ]; then
+            buffer_type="FPS_PSF"
+          else
+            buffer_type="None"
+          fi
+        fi
+        ;;
       [1-8])
         index=$((choice - 1))
         toggle_option "${toggle_items[$index]}" "${toggle_labels[$index]}" ;;
@@ -334,8 +358,10 @@ fi
         toolhead_sensor=$([ "$toolhead_sensor" == "Sensor" ] && echo "Ramming" || echo "Sensor")
         if [ "$toolhead_sensor" == "Sensor" ]; then
           message="Using toolhead sensor"
+          [ "$installation_type" == "OpenAMS" ] && buffer_type="None"
         elif [ "$installation_type" == "OpenAMS" ]; then
           message="Using ramming with an FPS board"
+          buffer_type="FPS_PSF"
         else
           message="Using ramming with a TurtleNeck buffer"
         fi ;;
@@ -343,8 +369,13 @@ fi
         read -p "Enter toolhead sensor pin (Example: nhk:gpio13): " toolhead_sensor_pin
         message="Toolhead sensor pin set to $toolhead_sensor_pin" ;;
       B)
-        buffer_type=$(case "$buffer_type" in "TurtleNeck") echo "TurtleNeckV2";; "TurtleNeckV2") echo "None";; "None"|*) echo "TurtleNeck";; esac)
-        message="Buffer Type: $buffer_type" ;;
+        if [ "$installation_type" == "ViViD" ] || [ "$installation_type" == "OpenAMS" ]; then
+          # Buffer type isn't a user choice for these currently.
+          message="Buffer type is not selectable for $installation_type"
+        else
+          buffer_type=$(case "$buffer_type" in "TurtleNeck") echo "TurtleNeckV2";; "TurtleNeckV2") echo "FPS_PSF";; "FPS_PSF") echo "None";; "None"|*) echo "TurtleNeck";; esac)
+          message="Buffer Type: $(buffer_type_label "$buffer_type")"
+        fi ;;
       C)
         if [ "$installation_type" == "EMU" ]; then
           name_additional_unit

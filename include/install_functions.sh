@@ -155,6 +155,82 @@ esac
 
 
 
+get_unit_buffer_target() {
+  # Sets globals describing where a buffer selection should be applied for
+  # the current $installation_type:
+  #   buffer_unit_name           - the unit's section name, e.g. Turtle_1, HTLF_1, AMS_1
+  #   buffer_unit_section_prefix - the unit's section prefix, e.g. AFC_BoxTurtle, AFC_HTLF
+  #   buffer_extruder_file       - the config file containing that unit section
+  #   buffer_section_name        - the name to give the [AFC_buffer <name>] section itself.
+  #                                 For types who's template configs contains a buffer block, this MUST match
+  #                                 the `buffer:` value already referenced in the unit section
+  #                                 (e.g. `buffer: Vivid_1_buffer`), or that reference breaks.
+  #   buffer_prebaked_header      - the exact "[AFC_buffer <name>]" header already
+  #                                 present in that file's default template, or ""
+  #                                 if the type has no pre-baked buffer section
+  local board_type
+
+  buffer_unit_name=""
+  buffer_unit_section_prefix=""
+  buffer_extruder_file=""
+  buffer_section_name=""
+  buffer_prebaked_header=""
+
+  case "$installation_type" in
+    "BoxTurtle (4-Lane)"|"BoxTurtle (8-Lane)")
+      buffer_unit_name="$boxturtle_name"
+      buffer_unit_section_prefix="AFC_BoxTurtle"
+      buffer_extruder_file="${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+      buffer_section_name="$boxturtle_name"
+      ;;
+    "NightOwl")
+      buffer_unit_name="NightOwl"
+      buffer_unit_section_prefix="AFC_NightOwl"
+      buffer_extruder_file="${afc_config_dir}/AFC_NightOwl_1.cfg"
+      buffer_section_name="NightOwl"
+      ;;
+    "HTLF")
+      board_type="$htlf_board_type"
+      [[ "$board_type" == "MMB_1.0" || "$board_type" == "MMB_1.1" ]] && board_type="MMB"
+      buffer_unit_name="HTLF_1"
+      buffer_unit_section_prefix="AFC_HTLF"
+      buffer_extruder_file="${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
+      buffer_section_name="HTLF_1"
+      ;;
+    "Claymore")
+      buffer_unit_name="Claymore_1"
+      buffer_unit_section_prefix="AFC_Claymore"
+      buffer_extruder_file="${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+      buffer_prebaked_header="[AFC_buffer Claymore_buffer]"
+      buffer_section_name="Claymore_buffer"
+      ;;
+    "QuattroBox")
+      buffer_unit_name="QuattroBox_1"
+      buffer_unit_section_prefix="AFC_QuattroBox"
+      buffer_extruder_file="${afc_config_dir}/AFC_QuattroBox_1.cfg"
+      buffer_prebaked_header="[AFC_buffer QuattroBox_1]"
+      buffer_section_name="QuattroBox_1"
+      ;;
+    "OpenAMS")
+      buffer_unit_name="AMS_1"
+      buffer_unit_section_prefix="AFC_OpenAMS"
+      buffer_extruder_file="${afc_config_dir}/AFC_AMS_1.cfg"
+      buffer_section_name="AMS_1"
+      ;;
+    # NOTE: ViViD is intentionally not included here. FPS_PSF buffers are
+    # not currently supported by default for ViViD units. buffer_unit_name stays empty,
+    # which triggers the "no unit target known" warning below and skips
+    # applying FPS_PSF for this type.
+    "EMU")
+      buffer_unit_name="$boxturtle_name"
+      buffer_unit_section_prefix="AFC_EMU"
+      buffer_extruder_file="${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+      buffer_prebaked_header="[AFC_buffer ${boxturtle_name}_buffer]"
+      buffer_section_name="${boxturtle_name}_buffer"
+      ;;
+  esac
+}
+
 install_afc() {
   # Link the python extensions
   if [ "$is_snapmaker" == "True" ]; then
@@ -199,20 +275,37 @@ install_afc() {
     fi
   fi
 
-  # When using Boxturtle as Installation Type then insert selected buffer configuration
-  # NightOwl uses Turtleneck as default for now
-  if [ "$installation_type" == "BoxTurtle (4-Lane)" ] || [ "$installation_type" == "BoxTurtle (8-Lane)" ]; then
-    # Make sure the unit name is correct per the user choice
-    if [ "$boxturtle_name" != "Turtle_1" ]; then
-      find "$afc_config_dir" -type f -exec sed -i "s/Turtle_1/$boxturtle_name/g" {} +
-    fi
-    if [ "$buffer_type" == "TurtleNeck" ]; then
-      query_tn_pins "TN" "$boxturtle_name"
-      append_buffer_config "TurtleNeck" "$tn_advance_pin" "$tn_trailing_pin" "$boxturtle_name"
-      add_buffer_to_extruder "${afc_config_dir}/AFC_${boxturtle_name}.cfg" "${boxturtle_name}" "${boxturtle_name}"
-    elif [ "$buffer_type" == "TurtleNeckV2" ]; then
-      append_buffer_config "TurtleNeckV2" "" "" "$boxturtle_name"
-      add_buffer_to_extruder "${afc_config_dir}/AFC_${boxturtle_name}.cfg" "${boxturtle_name}" "${boxturtle_name}"
+  # Make sure the unit name is correct per the user choice
+  if [ "$boxturtle_name" != "Turtle_1" ] && { [ "$installation_type" == "BoxTurtle (4-Lane)" ] || [ "$installation_type" == "BoxTurtle (8-Lane)" ]; }; then
+    find "$afc_config_dir" -type f -exec sed -i "s/Turtle_1/$boxturtle_name/g" {} +
+  fi
+
+ 
+  if [ "$buffer_type" == "TurtleNeck" ] || [ "$buffer_type" == "TurtleNeckV2" ] || [ "$buffer_type" == "FPS_PSF" ]; then
+    get_unit_buffer_target
+    if [ -z "$buffer_unit_name" ]; then
+      print_msg WARNING "PSF buffer selected but no unit target is known for installation type '${installation_type}'; skipping."
+    else
+      case "$buffer_type" in
+        TurtleNeck)
+          query_tn_pins "TN" "$buffer_unit_name"
+          append_buffer_config "TurtleNeck" "$tn_advance_pin" "$tn_trailing_pin" "$buffer_section_name" "$buffer_extruder_file"
+          ;;
+        TurtleNeckV2)
+          append_buffer_config "TurtleNeckV2" "" "" "$buffer_section_name" "$buffer_extruder_file"
+          ;;
+        FPS_PSF)
+          if [ "$installation_type" == "EMU" ]; then
+            # EMU's MCU board_pins config already defines a dedicated alias
+            # for this sensor per lane.
+            query_fps_pin "FPS_PSF" "$buffer_unit_name" "${buffer_unit_name}_lane1:TN"
+          else
+            query_fps_pin "FPS_PSF" "$buffer_unit_name"
+          fi
+          append_buffer_config "FPS_PSF" "" "" "$buffer_section_name" "$buffer_extruder_file"
+          ;;
+      esac
+      add_buffer_to_extruder "$buffer_extruder_file" "$buffer_section_name" "$buffer_unit_name" "$buffer_unit_section_prefix"
     fi
   fi
   check_and_append_prep "${afc_config_dir}/AFC.cfg"
@@ -245,23 +338,25 @@ elif [ "$installation_type" == "NightOwl" ]; then
 - Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_NightOwl_1.cfg file
   """
 elif [ "$installation_type" == "HTLF" ]; then
+  htlf_msg_board_type="$htlf_board_type"
+  [[ "$htlf_msg_board_type" == "MMB_1.0" || "$htlf_msg_board_type" == "MMB_1.1" ]] && htlf_msg_board_type="MMB"
   message+="""
-- Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}_1.cfg file.
+- Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_${htlf_msg_board_type}_${boxturtle_name}.cfg file.
 
-- Ensure you modify the ${afc_config_dir}/AFC_${htlf_board_type}_${boxturtle_name}_1.cfg file to select the proper rotation distance
+- Ensure you modify the ${afc_config_dir}/AFC_${htlf_msg_board_type}_${boxturtle_name}.cfg file to select the proper rotation distance
   and gear ratio for your stepper motors.
 
-- Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_Hardware.cfg file
+- Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_${htlf_msg_board_type}_${boxturtle_name}.cfg file
   """
 elif [ "$installation_type" == "Claymore" ]; then
   message+="""
 - Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_${boxturtle_name}.cfg file.
 
-- Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_Hardware.cfg file
+- Ensure you update any necessary buffer information in the ${afc_config_dir}/AFC_${boxturtle_name}.cfg file
   """
 elif [ "$installation_type" == "QuattroBox" ]; then
   message+="""
-- You must update the ${afc_config_dir}/AFC_Hardware.cfg file to reference the proper buffer configuration and pins.
+- You must update the ${afc_config_dir}/AFC_QuattroBox_1.cfg file to reference the proper buffer configuration and pins.
 
 - Ensure you enter either your CAN bus or serial information in the ${afc_config_dir}/AFC_QuattroBox_1.cfg file
   """
@@ -275,7 +370,7 @@ elif [ "$installation_type" == "ViViD" ]; then
   message+="""
 - Ensure you enter your serial information in the ${afc_config_dir}/AFC_Vivid_1.cfg file
 
-- Review the ${afc_config_dir}/AFC_Hardware.cfg file to reference the proper buffer configuration and pins.
+- Review the ${afc_config_dir}/AFC_Vivid_1.cfg file to reference the proper buffer configuration and pins.
   """
 elif [ "$installation_type" == "EMU" ]; then
   message+="""
@@ -288,6 +383,12 @@ fi
 if [ "$buffer_type" == "TurtleNeckV2" ]; then
   message+="""
 - Ensure you add the correct serial information to the ${afc_config_dir}/mcu/TurtleNeckv2.cfg file
+  """
+fi
+
+if [ "$buffer_type" == "FPS_PSF" ]; then
+  message+="""
+- Ensure the PSF ADC pin in your buffer configuration matches where your wiring in connected on your MCU.
   """
 fi
 
