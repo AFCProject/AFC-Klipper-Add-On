@@ -1,1 +1,1 @@
-This documentation has moved [here](https://www.armoredturtle.xyz/docs/afc-klipper-add-on/configuration/configuration_overview.html).
+This documentation has moved [here](https://www.afcproject.dev/configuration/configuration_overview.html).

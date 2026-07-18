@@ -247,7 +247,7 @@ Each `tests/klippy/*.test` file describes one test scenario:
 ```
 DICTIONARY stm32h723.dict   # MCU dict to simulate against
 CONFIG     afc_base.cfg     # Klipper config file (relative to the .test file)
-AFC_STATUS                  # GCode lines to execute
+AFC_CLEAR_MESSAGE           # GCode lines to execute
 ```
 
 The `conftest.py` in `tests/` automatically symlinks AFC's `extras/` modules

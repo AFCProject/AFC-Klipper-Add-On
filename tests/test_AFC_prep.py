@@ -63,39 +63,6 @@ class TestPrepInit:
         p = _make_prep()
         assert p.delay == 0.1
 
-
-# ── _rename ───────────────────────────────────────────────────────────────────
-
-class TestRename:
-    def test_rename_calls_register_command_for_base(self):
-        prep = _make_prep()
-        prep.afc.gcode.register_command = MagicMock(return_value=MagicMock())
-        mock_func = MagicMock()
-        prep._rename("RESUME", "_AFC_RENAMED_RESUME_", mock_func, "help text")
-        calls = prep.afc.gcode.register_command.call_args_list
-        # Should call at least: register_command("RESUME", None) and
-        # register_command("RESUME", mock_func, ...)
-        names = [c[0][0] for c in calls]
-        assert "RESUME" in names
-
-    def test_rename_registers_afc_function_under_base_name(self):
-        prep = _make_prep()
-        mock_func = MagicMock()
-        prev_cmd = MagicMock()
-        # _rename calls register_command 3 times: unregister, re-register old, register new
-        prep.afc.gcode.register_command = MagicMock(side_effect=[prev_cmd, None, None])
-        prep._rename("RESUME", "_AFC_RENAMED_RESUME_", mock_func, "help")
-        final_call = prep.afc.gcode.register_command.call_args_list[-1]
-        assert final_call[0][1] is mock_func
-
-    def test_rename_logs_debug_when_command_not_found(self):
-        prep = _make_prep()
-        prep.afc.gcode.register_command = MagicMock(return_value=None)
-        prep._rename("RESUME", "_AFC_RENAMED_RESUME_", MagicMock(), "help")
-        debug_msgs = [m for lvl, m in prep.logger.messages if lvl == "debug"]
-        assert any("RESUME" in m for m in debug_msgs)
-
-
 # ── _rename_macros ────────────────────────────────────────────────────────────
 
 class TestRenameMacros:
@@ -112,16 +79,16 @@ class TestRenameMacros:
         """Second call to _rename_macros should be a no-op (rename_occurred guard)."""
         prep = _make_prep({"dis_unload_macro": True})  # skip UNLOAD_FILAMENT rename
         self._setup_error_obj(prep)
-        prep._rename = MagicMock()
+        prep.afc.function._rename = MagicMock()
         prep._rename_macros()
-        count_after_first = prep._rename.call_count
+        count_after_first = prep.afc.function._rename.call_count
         prep._rename_macros()  # Second call should be a no-op
-        assert prep._rename.call_count == count_after_first  # no additional calls
+        assert prep.afc.function._rename.call_count == count_after_first  # no additional calls
 
     def test_rename_occurred_set_after_first_call(self):
         prep = _make_prep({"dis_unload_macro": True})
         self._setup_error_obj(prep)
-        prep._rename = MagicMock()
+        prep.afc.function._rename = MagicMock()
         prep._rename_macros()
         assert prep.rename_occurred is True
 
@@ -132,19 +99,27 @@ class TestRenameMacros:
         prep.afc.RENAMED_UNLOAD_FILAMENT = "_AFC_RENAMED_UNLOAD_FILAMENT_"
         prep.afc.cmd_TOOL_UNLOAD = MagicMock()
         prep.afc.cmd_TOOL_UNLOAD_help = "help"
-        prep._rename = MagicMock()
+        prep.afc.function._rename = MagicMock()
         prep._rename_macros()
         # Expect 3 renames: RESUME, PAUSE, UNLOAD_FILAMENT
-        assert prep._rename.call_count == 3
+        assert prep.afc.function._rename.call_count == 3
 
     def test_unload_filament_not_renamed_when_disabled(self):
         prep = _make_prep({"dis_unload_macro": True})
         self._setup_error_obj(prep)
         prep.afc.BASE_UNLOAD_FILAMENT = "UNLOAD_FILAMENT"
-        prep._rename = MagicMock()
+        prep.afc.function._rename = MagicMock()
         prep._rename_macros()
         # Expect only 2 renames: RESUME + PAUSE
-        assert prep._rename.call_count == 2
+        assert prep.afc.function._rename.call_count == 2
+    
+    def test_rename_occurred(self):
+        prep = _make_prep({"rename_occurred": True})
+        self._setup_error_obj(prep)
+        prep.afc.function._rename = MagicMock()
+        prep._rename_macros()
+        # Expect only 2 renames: RESUME + PAUSE
+        assert prep.afc.function._rename.call_count == 0
 
 
 # ── _td1_prep ─────────────────────────────────────────────────────────────────

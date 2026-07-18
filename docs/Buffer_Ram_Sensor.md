@@ -1,1 +1,1 @@
-This documentation has moved [here](https://www.armoredturtle.xyz/docs/afc-klipper-add-on/installation/buffer-ram-sensor.html).
+This documentation has moved [here](https://www.afcproject.dev/installation/buffer-ram-sensor.html).

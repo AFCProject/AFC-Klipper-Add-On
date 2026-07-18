@@ -350,8 +350,9 @@ class TestHubCut:
         cur_lane = MagicMock()
         # Sequence: loop1 enter(F), loop1 exit(T), loop2 enter(T), loop2 exit(F),
         #           loop3 enter(F), loop3 exit(T)
-        type(hub).state = PropertyMock(side_effect=[False, True, True, False, False, True])
-        hub.hub_cut(cur_lane)
+        with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[False, True, True, False, False, True]
+            hub.hub_cut(cur_lane)
         # Should call run_script_from_command for prep, clip, and pass angles
         calls = hub.gcode.run_script_from_command.call_args_list
         assert len(calls) >= 3  # prep + clip + pass
@@ -361,8 +362,9 @@ class TestHubCut:
         hub = _make_hub(switch_pin="PA0")
         hub.cut_confirm = False
         cur_lane = MagicMock()
-        type(hub).state = PropertyMock(side_effect=[False, True, True, False, False, True])
-        hub.hub_cut(cur_lane)
+        with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[False, True, True, False, False, True]
+            hub.hub_cut(cur_lane)
         calls = [c[0][0] for c in hub.gcode.run_script_from_command.call_args_list]
         assert any(str(hub.cut_servo_prep_angle) in c for c in calls)
         assert any(str(hub.cut_servo_clip_angle) in c for c in calls)
@@ -373,8 +375,9 @@ class TestHubCut:
         hub = _make_hub(switch_pin="PA0")
         hub.cut_confirm = True
         cur_lane = MagicMock()
-        type(hub).state = PropertyMock(side_effect=[False, True, True, False, False, True])
-        hub.hub_cut(cur_lane)
+        with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[False, True, True, False, False, True]
+            hub.hub_cut(cur_lane)
         # With confirm: prep + clip + prep + clip + pass = 5 calls
         calls = hub.gcode.run_script_from_command.call_args_list
         assert len(calls) >= 5
@@ -384,8 +387,9 @@ class TestHubCut:
         hub = _make_hub(switch_pin="PA0")
         hub.cut_confirm = False
         cur_lane = MagicMock()
-        type(hub).state = PropertyMock(side_effect=[False, True, True, False, False, True])
-        hub.hub_cut(cur_lane)
+        with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect=[False, True, True, False, False, True]
+            hub.hub_cut(cur_lane)
         # Last move should be negative (retract by cut_clear)
         all_move_calls = cur_lane.move.call_args_list
         last_call_dist = all_move_calls[-1][0][0]

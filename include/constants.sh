@@ -9,6 +9,7 @@
 # Path related constants
 printer_config_dir="$HOME/printer_data/config"
 klipper_dir="$HOME/klipper"
+klipper_extra_path="$klipper_dir/klippy/extras"
 afc_path="$HOME/AFC-Klipper-Add-On"
 afc_config_dir="${printer_config_dir}/AFC"
 afc_file="$afc_config_dir/AFC.cfg"
@@ -34,11 +35,12 @@ uninstall="False"
 backup_date=$(date +%Y%m%d%H%M%S)
 files_updated_or_installed="False"
 test_mode="False"
-installation_options=("BoxTurtle (4-Lane)" "BoxTurtle (8-Lane)" "NightOwl" "HTLF" "QuattroBox" "ViViD")
+installation_options=("BoxTurtle (4-Lane)" "BoxTurtle (8-Lane)" "NightOwl" "HTLF" "Claymore" "QuattroBox" "OpenAMS" "ViViD" "EMU")
 invalid_name="False"
 minimum_python_major="3"
 minimum_python_minor="8"
 is_k1_os="False"
+is_snapmaker="False"
 
 # AFC default configs
 park_macro="True"
@@ -49,16 +51,23 @@ toolhead_cutter="True"
 hub_cutter="False"
 kick_macro="True"
 wipe_macro="True"
-toolhead_sensor="Sensor"
+toolhead_sensor="Ramming"
 toolhead_sensor_pin="Unknown"
 buffer_type="TurtleNeck"
 boxturtle_name="Turtle_1"
 htlf_board_types=("ERB" "MMB_1.1" "MMB_1.0")
 htlf_board_type="ERB"
+htlf2_board_types=("AFC_Lite")
+htlf2_board_type="AFC_Lite"
 qb_board_types=("MMB_1.0" "MMB_1.1" "MMB_2.0")
 qb_board_type="MMB_2.0"
 qb_motor_types=("NEMA_17" "NEMA_14")
 qb_motor_type="NEMA_14"
+emu_num_lanes=5
+emu_num_lanes_options=("1" "2" "3" "4" "5" "6" "7" "8")
+emu_num_lanes_index=4
+emu_board_types=("EBB" "SLB")
+emu_board_type="EBB"
 
 # Moonraker Config
 moonraker_update_config="""

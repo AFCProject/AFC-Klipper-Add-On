@@ -11,6 +11,7 @@ import traceback
 from kinematics import extruder
 from configfile import error
 from extras.force_move import calc_move_time
+from functools import cached_property
 
 from typing import Optional, TYPE_CHECKING, Dict
 
@@ -19,7 +20,7 @@ except:
     raise_string = "Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc())
     raise error(raise_string)
 
-try: from extras.AFC_lane import AFCLane, SpeedMode, AFCHomingPoints
+try: from extras.AFC_lane import AFCLane, AFCHomingPoints, VALID_DIRECT_HUB
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
@@ -35,12 +36,69 @@ STEPCOMPRESS_FLUSH_TIME=0.050
 BUFFER_TIME_HIGH=1.0
 DRIP_SEGMENT_TIME=0.050
 
+class TrapqAppendWrapper:
+    """
+    Wraps trapq_append to handle signature differences between standard
+    Klipper and Snapmaker U1 Klipper.
+
+    On initialization, inspects the FFI signature of trapq_append and
+    sets `snapmaker_trapq_append_sig` to True if the Snapmaker extended
+    signature (15 args) is detected. The `trapq_append` method uses this
+    flag to append a trailing zero to the args tuple when needed.
+
+    Attributes:
+        SNAPMAKER_TRAPQ_APPEND_LEN (int): Expected argument count for the
+            Snapmaker variant of trapq_append (15).
+        snapmaker_trapq_append_sig (bool): True if the Snapmaker 15-arg
+            signature is detected; False otherwise.
+    """
+    SNAPMAKER_TRAPQ_APPEND_LEN = 15
+    def __init__(self):
+        self.snapmaker_trapq_append_sig
+    @cached_property
+    def snapmaker_trapq_append_sig(self) -> bool:
+        """
+        Detect whether the loaded FFI library exposes the Snapmaker variant
+        of trapq_append.
+
+        :returns bool: True if the Snapmaker 15-arg signature is present.
+        """
+        ffi_main, ffi_lib = chelper.get_ffi()
+        trapq_append_sig = ffi_main.typeof(ffi_lib.trapq_append)
+        return len(trapq_append_sig.args) == self.SNAPMAKER_TRAPQ_APPEND_LEN
+
+    def trapq_append(self, trapq_append_fn, trapq, print_time:float, accel_t:float, cruise_t:float,
+                     decel_t: float, start_pos_x: float, start_pos_y: float, t_pos_z: float,
+                     axes_r_x: float, axes_r_y: float, axes_r_z: float, start_v: float,
+                     cruise_v: float, accel: float ) -> None:
+        """
+        Wrapper method for checking if Snapmakers signature exists and pads trapq_append args
+        with zero to satisfy the extra 'line' parameter expected by the Snapmaker
+        FFI variant.
+
+        :param trapq_append_fn: The resolved FFI function object for trapq_append.
+        :param args: Normal Klipper trapq_append arguments to send to trapq_append,
+            arguments should be in the following order:
+                trapq, print_time, accel_t, cruise_t, decel_t, start_pos_x, start_pos_y,
+                start_pos_z, axes_r_x, axes_r_y, axes_r_z, start_v, cruise_v, accel
+        """
+        trapq_append_args = (trapq, print_time, accel_t, cruise_t, decel_t, start_pos_x,
+                             start_pos_y, t_pos_z, axes_r_x, axes_r_y, axes_r_z, start_v,
+                             cruise_v, accel)
+        if self.snapmaker_trapq_append_sig == True:
+            trapq_append_args = trapq_append_args + (0,)
+
+        trapq_append_fn(*trapq_append_args)
+
+
 class AFCExtruderStepper(AFCLane):
     def __init__(self, config):
         super().__init__(config)
 
         self.extruder_stepper   = extruder.ExtruderStepper(config)
         self.stepper_enable     = self.printer.lookup_object('stepper_enable')
+        self._synced_to_extruder= False
+        self._print_current_set = False
 
         # Homing-related configuration
         self.default_homing_endstop = config.get('default_homing_endstop', 'load')
@@ -71,13 +129,16 @@ class AFCExtruderStepper(AFCLane):
         self.stepper_kinematics = ffi_main.gc(
             ffi_lib.cartesian_stepper_alloc(b'x'), ffi_lib.free)
 
+        trapq_append_wrapper = TrapqAppendWrapper()
         if self.motion_queuing is not None:
             self.trapq          = self.motion_queuing.allocate_trapq()
-            self.trapq_append   = self.motion_queuing.lookup_trapq_append()
+            _trapq_append       = self.motion_queuing.lookup_trapq_append()
         else:
             self.trapq                  = ffi_main.gc(ffi_lib.trapq_alloc(), ffi_lib.trapq_free)
-            self.trapq_append           = ffi_lib.trapq_append
+            _trapq_append               = ffi_lib.trapq_append
             self.trapq_finalize_moves   = ffi_lib.trapq_finalize_moves
+
+        self.trapq_append = lambda *args: trapq_append_wrapper.trapq_append(_trapq_append, *args)
 
         self.assist_activate=False
 
@@ -90,6 +151,22 @@ class AFCExtruderStepper(AFCLane):
 
         # Get and save base rotation dist
         self.base_rotation_dist = self.extruder_stepper.stepper.get_rotation_distance()[0]
+
+    def _handle_ready(self) -> None:
+        """
+        Handles klippy:ready callback, check to see if buffer_obj is a FPS_PSF buffer. If buffer is
+        a FPS_PSF buffer then endstops are registered for tool_start, buffer_adv, and buffer_trailing
+        """
+        super()._handle_ready()
+
+        if (self.buffer_obj
+            and self.buffer_obj.type == "FPS_PSF"):
+            self._add_endstop('tool_start', None, f'{self.name}_tool_start',
+                              mcu_endstop=self.buffer_obj.fps_endstop)
+            self._add_endstop('buffer_advance', None, f'{self.name}_buffer_adv',
+                              mcu_endstop=self.buffer_obj.fps_endstop)
+            self._add_endstop('buffer_trailing', None, f'{self.name}_buffer_trailing',
+                              mcu_endstop=self.buffer_obj.fps_trailing_endstop)
 
     def _get_tmc_values(self, config):
         """
@@ -117,8 +194,10 @@ class AFCExtruderStepper(AFCLane):
         """
         self.extruder_stepper.stepper.set_position((0., 0., 0.))
         axis_r, accel_t, cruise_t, cruise_v = calc_move_time(distance, speed, accel)
+
         self.trapq_append(self.trapq, movetime, accel_t, cruise_t, accel_t,
-                              0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel)
+                          0., 0., 0., axis_r, 0., 0., 0., cruise_v, accel)
+
         return accel_t + cruise_t + accel_t
 
     def _move(self, distance: float, speed: float, accel: float, assist_active: bool=False,
@@ -192,12 +271,20 @@ class AFCExtruderStepper(AFCLane):
 
         :param enable: Enables/disables stepper motor
         """
+        stepper_name = f"AFC_stepper {self.name}"
+        enabled = self.stepper_enable.enable_lines.get(stepper_name, None)
+        if enabled is None:
+            return
+
+        if enabled.is_motor_enabled() == enable:
+            return
+
         if hasattr(self.stepper_enable, "set_motors_enable"):
             # New klipper enable function
-            self.stepper_enable.set_motors_enable([f"AFC_stepper {self.name}"], enable)
+            self.stepper_enable.set_motors_enable([stepper_name], enable)
         else:
             # Old klipper and kalico enable function
-            self.stepper_enable.motor_debug_enable(f"AFC_stepper {self.name}", enable)
+            self.stepper_enable.motor_debug_enable(stepper_name, enable)
 
     def sync_print_time(self):
         """
@@ -212,16 +299,19 @@ class AFCExtruderStepper(AFCLane):
         else:
             self.next_cmd_time = print_time
 
-    def sync_to_extruder(self, update_current=True, extruder_name=None):
+    def sync_to_extruder(self, update_current=True, th_extruder_name=None):
         """
         Helper function to sync lane to extruder and set print current if specified.
 
         :param update_current: Sets current to specified print current when True
         """
-        if extruder_name is None:
-            extruder_name = self.extruder_name
+        if th_extruder_name is None:
+            th_extruder_name = self.extruder_obj.th_extruder_name
 
-        self.extruder_stepper.sync_to_extruder(extruder_name)
+        if not self._synced_to_extruder:
+            self.extruder_stepper.sync_to_extruder(th_extruder_name)
+            self._synced_to_extruder = True
+
         if update_current: self.set_print_current()
 
     def unsync_to_extruder(self, update_current=True):
@@ -230,7 +320,9 @@ class AFCExtruderStepper(AFCLane):
 
         :param update_current: Sets current to specified load current when True
         """
-        self.extruder_stepper.sync_to_extruder(None)
+        if self._synced_to_extruder:
+            self.extruder_stepper.sync_to_extruder(None)
+            self._synced_to_extruder = False
         if update_current: self.set_load_current()
 
     def _set_current(self, current):
@@ -248,13 +340,17 @@ class AFCExtruderStepper(AFCLane):
         """
         Helper function to update TMC current to use run current value
         """
-        self._set_current( self.tmc_load_current )
+        if self._print_current_set:
+            self._set_current( self.tmc_load_current )
+            self._print_current_set = False
 
     def set_print_current(self):
         """
         Helper function to update TMC current to use print current value
         """
-        self._set_current( self.tmc_print_current )
+        if not self._print_current_set:
+            self._set_current( self.tmc_print_current )
+            self._print_current_set = True
 
     def update_rotation_distance(self, multiplier):
         """
@@ -452,29 +548,40 @@ class AFCExtruderStepper(AFCLane):
         hub_pin = self.hub_endstop
         if hub_pin is None:
             hub_name = getattr(self, 'hub', None)
-            if not hub_name or hub_name == 'direct':
+            if not hub_name or hub_name in VALID_DIRECT_HUB:
                 hub_name = self._inherit_from_unit('hub')
             hub_pin = self._get_section_value('AFC_hub', hub_name, 'switch_pin')
 
         # Toolhead endstops from AFC_extruder (tool_start/tool_end)
-        extruder_name = getattr(self, 'extruder_name', None) or self._inherit_from_unit('extruder')
-        tool_start_pin = self._get_section_value('AFC_extruder', extruder_name, 'pin_tool_start')
-        tool_end_pin   = self._get_section_value('AFC_extruder', extruder_name, 'pin_tool_end')
+        afc_extruder_name = getattr(self, 'afc_extruder_name', None) or self._inherit_from_unit('extruder')
+        tool_start_pin = self._get_section_value('AFC_extruder', afc_extruder_name, 'pin_tool_start')
+        tool_end_pin   = self._get_section_value('AFC_extruder', afc_extruder_name, 'pin_tool_end')
 
         # Buffer endstops from AFC_buffer (advance/trailing), inherit from extruder or unit if needed
         buffer_name = getattr(self, 'buffer_name', None)
         if not buffer_name:
-            buffer_name = self._get_section_value('AFC_extruder', extruder_name, 'buffer') or self._inherit_from_unit('buffer')
+            buffer_name = self._get_section_value('AFC_extruder', afc_extruder_name, 'buffer') or self._inherit_from_unit('buffer')
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
+        fps_psf_buffer   = self._get_section_value('AFC_buffer', buffer_name, 'type')
+        is_fps_psf_buffer = fps_psf_buffer is not None and fps_psf_buffer == "FPS_PSF"
 
         # Check to verify that hub is not a virtual sensor
-        if hub_pin.lower() != "virtual":
+        if (hub_pin
+            and hub_pin.lower() != "virtual"):
             self._add_endstop('hub', hub_pin, 'hub')
         if tool_start_pin != 'buffer':
             self._add_endstop('tool_start', tool_start_pin, 'tool_start')
         else:
-            self._add_endstop('tool_start', buffer_adv_pin, 'tool_start')
+            if buffer_adv_pin is not None:
+                self._add_endstop('tool_start', buffer_adv_pin, 'tool_start')
+            elif is_fps_psf_buffer:
+                pass
+            else:
+                error_string = f"Error: buffer set as pin_tool_start in [AFC_extruder {afc_extruder_name}] config section,"
+                error_string += f" but [AFC_buffer {buffer_name}] is not found in config. Please make sure config "
+                error_string += f"section exists or remove `buffer: {buffer_name}` variable from your extruder config section."
+                raise error(error_string)
         self._add_endstop('tool_end', tool_end_pin, 'tool_end')
         self._add_endstop('buffer_advance', buffer_adv_pin, 'buffer_adv')
         self._add_endstop('buffer_trailing', buffer_trail_pin, 'buffer_trailing')
@@ -536,7 +643,7 @@ class AFCExtruderStepper(AFCLane):
             self.logger.debug(f"Missing or invalid section '{section}': {e}")
             return default
 
-    def _add_endstop(self, key: str, pin: str, suffix: str, fullname:str=None):
+    def _add_endstop(self, key: str, pin: str, suffix: str, fullname:str=None, mcu_endstop=None):
         """
         Helper to create/register an endstop and bind it to the drive stepper.
 
@@ -544,19 +651,25 @@ class AFCExtruderStepper(AFCLane):
         :param pin: Pin to register as endstop for stepper
         :param suffix: String to append at end of endstop key
         :param fullname: Fullname to register endstop name as
+        :param mcu_endstop: Pre-built MCU endstop to register directly (e.g. an
+                            FPS software endstop) instead of creating one from pin
         """
-        if pin is None:
-            self.logger.info(f"Pin for {key} is none for {self.name}")
-            return
-        # Normalize and create endstop
-        try:
-            self._ppins.allow_multi_use_pin(pin.strip("!^"))
-            self._ppins.parse_pin(pin, True, True)
-            mcu_endstop = self._ppins.setup_pin('endstop', pin)
-        except Exception as e:
-            self.logger.info(f"Error parsing pin for {key} is none for {self.name}")
-            self.logger.info(f"{e}")
-            return
+        if (pin is None
+            and mcu_endstop is not None):
+            pass
+        else:
+            if pin is None:
+                self.logger.info(f"Pin for {key} is none for {self.name}")
+                return
+            # Normalize and create endstop
+            try:
+                self._ppins.allow_multi_use_pin(pin.strip("!^"))
+                self._ppins.parse_pin(pin, True, True)
+                mcu_endstop = self._ppins.setup_pin('endstop', pin)
+            except Exception as e:
+                self.logger.info(f"Error parsing pin for {key} is none for {self.name}")
+                self.logger.info(f"{e}")
+                return
 
         single_key_aliases = {'hub', 'tool_start', 'tool_end', 'buffer_advance', 'buffer_trailing'}
         if fullname:
@@ -585,7 +698,8 @@ class AFCExtruderStepper(AFCLane):
         Perform's a homing move using the specified endstop, speed/accel and distance.
 
         :param movepos: target absolute position along the filament axis
-        :param speed/accel: motion params (fallbacks applied if None)
+        :param speed: The speed of the movement.
+        :param accel: The acceleration of the movement.
         :param endstop_spec: 'load' | raw pin string
         :param triggered/check_trigger: same semantics as manual_stepper
         :param assist_active: When true espoolers(if configured) activate during homing move
@@ -650,10 +764,11 @@ class AFCExtruderStepper(AFCLane):
                 steps_moved = abs(trig_mcu_pos - start_mcu_pos)
                 dist_mm = steps_moved * step_dist
             except Exception as e:
+                steps_moved = 0
+                dist_mm = 0.0
                 self.logger.debug(f"Exception {e}")
-                pass
-            self.logger.debug(f"Homed lane {self.name}'to ENDSTOP={endstop_spec} trigger after "\
-                              f"{dist_mm:.3f}mm (steps={steps_moved} dt={(end_ts-start_ts):.3f}s")
+            self.logger.debug(f"Homed lane {self.name} to ENDSTOP={endstop_spec} trigger after "\
+                              f"{dist_mm:.3f}mm (steps={steps_moved} dt={(end_ts-start_ts):.3f}s)")
 
             return True, dist_mm
         except Exception as e:
@@ -679,7 +794,7 @@ class AFCExtruderStepper(AFCLane):
             raise self.gcode.error(str(e))
 
     # ------------------ Convenience homing helpers ------------------
-    def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed_mode: SpeedMode,
+    def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed: float, accel: float,
                 triggered=True, check_trigger=True, assist_active=True) -> tuple[bool, float, bool]:
         """
         Home towards an endstop relative to current position by distance (mm).
@@ -690,18 +805,20 @@ class AFCExtruderStepper(AFCLane):
                              or a logical name such as 'load', 'toolhead', etc.
         :param distance: Relative distance to move toward the endstop in millimeters.
                          Required unless using a helper method.
+        :param speed: The speed of the movement.
+        :param accel: The acceleration of the movement.
         :param speed_mode: Enum or configuration selecting the speed and acceleration
                            profile to use for this move. Defaults to `SpeedMode`.
         :param triggered: If True, movement stops when the endstop triggers. Defaults to True.
         :param check_trigger: If True, verify that the endstop is actually triggered at the
                               end of the move. Defaults to True.
-        :return tuple: bool: indicated if homing was successful or not.
-                       float: indicated movement wheather homing was successful or not. When not
-                         successful distance will equal max move distance.
-                       bool: indicate if an error happened while homing
+        :return :return tuple: 3-tuple consisting of:
+                        bool: indicated if homing was successful or not.
+                        float: indicated movement wheather homing was successful or not. When not
+                               successful distance will equal max move distance.
+                        bool: indicate if an error happened while homing
         """
         error = False
-        speed, accel = self.get_speed_accel(speed_mode)
 
         if distance is None:
             raise self.gcode.error("home_to requires an explicit distance; use home_to_hub/toolhead/buffer for sensible defaults")

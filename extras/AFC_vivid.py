@@ -167,7 +167,7 @@ class AFC_vivid(afcBoxTurtle):
                          goes into the PTFE
         :return tuple: Returns tuple of homed(True/False) and distance moved
         """
-        if lane.selector_endstop:
+        if lane.selector_endstop_name:
             sel_dir = MoveDirection.NEG if sel_prep else MoveDirection.POS
             selector_state = self._get_lane_selector_state(lane)
             selector_enabled= self._get_selector_enabled()
@@ -181,8 +181,8 @@ class AFC_vivid(afcBoxTurtle):
                     and selector_state):
                     self.unselect_lane()
 
-                self.logger.info(f"ViViD: Selecting {lane.name}")
-                homed, distance= self.selector_stepper_obj.do_homing_move(
+                self.logger.debug(f"{self.type}: Selecting {lane.name}")
+                homed, distance = self.selector_stepper_obj.do_homing_move(
                     movepos=self.max_selector_movement * sel_dir,
                     speed=self.selector_homing_speed,
                     accel=self.selector_homing_accel,
@@ -195,7 +195,7 @@ class AFC_vivid(afcBoxTurtle):
                     self.selector_stepper_obj.move(lane.selector_cal_dis, lane.short_moves_speed,
                                                    lane.short_moves_accel, False)
 
-                self.logger.debug(f"ViViD: Homing done, success:{homed}, distance:{distance}")
+                self.logger.debug(f"{self.type}: Homing done, success:{homed}, distance:{distance}")
                 return homed, round(distance, 2)
 
     def prep_load(self, lane: AFCLane):
@@ -266,7 +266,8 @@ class AFC_vivid(afcBoxTurtle):
 
         :param move_distance: Distance in millimeters to move the selector. Defaults to 50 mm.
         """
-        self.selector_stepper_obj.move(move_distance, 100, 100, False)
+        self.selector_stepper_obj.move(move_distance, self.selector_homing_speed,
+                                       self.selector_homing_accel, False)
 
     def eject_lane(self, lane: AFCLane):
         """
@@ -290,9 +291,11 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
 
-    def move_to_hub(self, lane: AFCLane, dist: float, dir:MoveDirection, use_homing=True,
-                    speedMode=SpeedMode.HUB, assist_active=AssistActive.DYNAMIC
-                    ) -> tuple[bool, float|int, AFCMoveWarning]:
+    def move_to_hub(self, lane: AFCLane, dist: float,
+                    dir: MoveDirection, use_homing: bool=True,
+                    speed_mode: SpeedMode=SpeedMode.HUB,
+                    assist_active: AssistActive=AssistActive.DYNAMIC
+                ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
         point when homing is enabled.
@@ -301,7 +304,7 @@ class AFC_vivid(afcBoxTurtle):
         :param dist: Distance in mm to move filament
         :param dir: Direction(+/-) to move filament
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
-        :param speedMode: SpeedMode type to use when moving stepper
+        :param speed_mode: SpeedMode type to use when moving stepper
         :param assist_active: ViViD does not have spoolers, setting this parameter does nothing.
 
         :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
@@ -313,7 +316,7 @@ class AFC_vivid(afcBoxTurtle):
                   when no error or not full movement detected. When homing is disabled, always returns
                   True, 0, AFCMoveWarning.NONE.
         """
-        homed, distance, warn = lane.move_to(dist * dir, speedMode, assist_active=assist_active,
+        homed, distance, warn = lane.move_to(dist * dir, speed_mode, assist_active=assist_active,
                                              endstop=lane.load_es, use_homing=use_homing)
         return homed, distance, warn
 

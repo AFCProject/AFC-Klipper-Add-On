@@ -189,6 +189,34 @@ def _make_force_move_mock():
     mod.calc_move_time = calc_move_time
     return mod
 
+def _make_klippy_ready_mock():
+    mod = types.ModuleType("klippy")
+    mod.message_ready = "Printer is ready"
+    
+    class Printer:
+        pass
+    mod.Printer = Printer
+    return mod
+
+def _make_print_task_config():
+    config = {
+        "filament_vendor": ["NONE"] * 4,
+        "filament_type": ["NONE"] * 4,
+        "filament_sub_type": ["NONE"] * 4,
+        "filament_color": [0xFFFFFFFF] * 4,
+        "filament_color_rgba": ['FFFFFFFF'] * 4,
+        "filament_color_multi": [
+            {"nums": 1, "alpha": 0xFF, "mode": 0, "colors": ["FFFFFF"]}
+            for _ in range(4)
+        ],
+    }
+    mod = types.ModuleType("print_task_config")
+    mod.DEFAULT_PRINT_TASK_CONFIG = config
+    mod.print_task_config = config
+    mod.config_path = MagicMock()
+
+    return mod
+
 
 # Install mocks before any extras imports happen
 sys.modules.setdefault("configfile", _make_configfile_mock())
@@ -201,6 +229,7 @@ _kin_mod, _kin_ext_mod = _make_kinematics_mocks()
 sys.modules.setdefault("kinematics", _kin_mod)
 sys.modules.setdefault("kinematics.extruder", _kin_ext_mod)
 sys.modules.setdefault("extras.force_move", _make_force_move_mock())
+sys.modules.setdefault("klippy", _make_klippy_ready_mock())
 
 _led_mock = _make_led_mock()
 sys.modules.setdefault("extras.led", _led_mock)
@@ -254,6 +283,22 @@ class MockReactor:
     def unregister_timer(self, timer):
         pass
 
+    def completion(self):
+        return MockCompletion()
+
+
+class MockCompletion:
+    """Lightweight stand-in for Klipper's ReactorCompletion."""
+
+    def __init__(self):
+        self.result = None
+
+    def complete(self, value):
+        self.result = value
+
+    def wait(self, waketime=None, waketime_result=None):
+        return self.result if self.result is not None else waketime_result
+
 
 class MockGcode:
     def __init__(self):
@@ -273,6 +318,9 @@ class MockGcode:
 
     def respond_raw(self, msg):
         pass
+
+    def create_gcode_command(self, command, commandline, params):
+        return MagicMock()
 
 
 class MockLogger:
@@ -335,10 +383,16 @@ class MockAFC:
         self.units: dict = {}
         self.buffers: dict = {}
         self.led_obj: dict = {}
+        self.led_buffer_advancing = "0,0,1,0"
+        self.led_buffer_trailing = "0,1,0,0"
+        self.led_buffer_neutral = "1,1,1,1"
+        self.led_buffer_disabled = "0,0,0,0.25"
         self.current = None
         self.enable_sensors_in_gui = False
         self.debounce_delay = 0.1
         self.enable_hub_runout = False
+        self.enable_tool_runout = True
+        self.enable_runout_in_bypass = False
         self.show_macros = True
         self.message_queue: list = []
         self.log_frame_data = True
@@ -362,6 +416,8 @@ class MockAFC:
         self.spoolman = None
         self.disable_weight_check = False
         self.ignore_spoolman_material_temps = False
+        self.auto_spool_switch = False
+        self.auto_spool_switch_threshold = 25.0
         self.default_material_type = "PLA"
         self.bypass = MagicMock()
         self.save_vars = MagicMock()
@@ -374,15 +430,41 @@ class MockAFC:
         self.led_loading = "0,0,1,0"
         self.led_unloading = "0,0,1,0"
         self.led_tool_loaded = "0,1,0,0"
-        self.led_spool_illum = "1,1,1,0"
+        self.led_tool_loaded_idle = "0.4,0.4,0,0"
+        self.led_tool_unloaded = "1,0,0,0"
+        self.led_spool_illum = "1,1,1,1"
         self.led_off = "0,0,0,0"
+        self.led_use_filament_color = False
+        # afcUnit.__init__ movement/behavior defaults (mirrors extras/AFC.py)
+        self.short_move_dis = 10
+        self.max_move_dis = 999999
+        self.load_then_home_var = True
+        self.load_undershoot = 20
+        self.rev_long_moves_speed_factor = 1.0
+        self.tool_max_unload_attempts = 4
+        self.n20_break_delay_time = 0.200
+        self.enable_assist = True
+        self.enable_assist_weight = 500.0
+        self.assisted_unload = True
+        self.unload_on_runout = False
+        self.td1_when_loaded = False
+        self.home_to_tool = True
+        self.homing_enabled = True
         # function mock helpers
         self.function.HexConvert = lambda x: x
+        self.toolhead = MagicMock()
+
+        self.save_pos = MagicMock()
+        self.move_z_pos = MagicMock()
+        self.CHANGE_TOOL = MagicMock()
+        self.restore_pos = MagicMock()
+
+        self.snapmaker_printer = False
 
 
 class MockPrinter:
     """Mock for Klipper's printer object."""
-
+    command_error = Exception
     def __init__(self, afc=None):
         self._afc = afc or MockAFC()
         self._reactor = MockReactor()
@@ -393,41 +475,39 @@ class MockPrinter:
         self.start_args: dict = {}
         self.objects: dict = {}
         self._event_handlers: dict = {}
-
-    # ------------------------------------------------------------------
+    
     def lookup_object(self, name, default=None):
         mapping = {
             "AFC": self._afc,
             "gcode": self._gcode,
         }
+        magic_mock_objects = (
+            "webhooks", "toolhead", "heaters", "pins", "buttons", "extruder"
+        )
+        val = default
         if name in mapping:
             return mapping[name]
         if name in self._objects:
             return self._objects[name]
-        if name == "webhooks":
-            return MagicMock()
+        if name in magic_mock_objects:
+            val = MagicMock()
         if name == "pause_resume":
             obj = MagicMock()
             obj.send_pause_command = MagicMock()
-            return obj
+            val = obj
         if name == "idle_timeout":
             obj = MagicMock()
             obj.idle_timeout = 600
-            return obj
-        if name == "toolhead":
-            return MagicMock()
-        if name == "heaters":
-            return MagicMock()
-        if name == "pins":
-            return MagicMock()
-        if name == "buttons":
-            return MagicMock()
-        return default
+            val = obj
+        if val is not default:
+            self._objects[name] = val
+        return val
 
     def load_object(self, config, name):
         result = self.lookup_object(name)
         if result is None:
-            result = MagicMock()
+            result = self._objects[name] = MagicMock()
+
         return result
 
     def get_reactor(self):
@@ -452,6 +532,8 @@ class MockConfig:
         self._printer = printer or MockPrinter()
         self._values: dict = values or {}
         self.fileconfig = _make_fileconfig()
+        self.section = "Test"
+        self.fileconfig.add_section(self.section)
 
     def get_printer(self):
         return self._printer
@@ -460,7 +542,11 @@ class MockConfig:
         return self._name
 
     def get(self, option, default=None):
-        return self._values.get(option, default)
+        try:
+            val = self.fileconfig.get(self.section, option)
+        except:
+            val = self._values.get(option, default)
+        return val
 
     def getfloat(self, option, default=0.0, **kwargs):
         val = self._values.get(option, default)
@@ -478,11 +564,18 @@ class MockConfig:
 
     def getint(self, option, default=0, **kwargs):
         val = self._values.get(option, default)
-        return int(val)
+        if val is not None:
+            return int(val)
+        else:
+            return val
 
     def getlist(self, option, default=None, **kwargs):
         val = self._values.get(option, default)
         return val if val is not None else []
+
+    def getlists(self, option, default=None, **kwargs):
+        val = self._values.get(option, default)
+        return val if val is not None else ()
 
     def error(self, msg):
         from configfile import error as KlipperError

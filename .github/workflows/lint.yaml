@@ -3,6 +3,7 @@ on:
     branches:
       - main
       - DEV
+      - multi_extruder
   workflow_dispatch:
 
 

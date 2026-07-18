@@ -26,23 +26,39 @@ from urllib.error import (
     HTTPError
 )
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Callable
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
     from configfile import ConfigWrapper
+    from extras.filament_switch_sensor import SwitchSensor
+    from klippy import Printer
+    from reactor import SelectReactor as Reactor
+    from gcode import GCodeCommand, GCodeDispatch
+    from extras.pause_resume import PauseResume
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
-def add_filament_switch( switch_name, switch_pin, printer, show_sensor=True, runout_callback = None, enable_runout=False, debounce_delay=0. ):
+def add_filament_switch(switch_name: str, switch_pin: str, printer: Printer,
+                        show_sensor: bool=True, runout_callback: Callable = None,
+                        enable_runout: bool=False, debounce_delay: float=0.
+                        ) -> tuple[SwitchSensor, DebounceButton]:
     """
     Helper function to register pins as filament switch sensor so it will show up in web guis
 
     :param switch_name: Name of switch to register, should be in the following format: `filament_switch_sensor <name>`
     :param switch_pin: Pin to add to config for switch
     :param printer: printer object
+    :param show_sensor: Controls weather or not this sensor will show up in Fluidd/Mainsail UI,
+                        True to show sensor, False to hide sensor from showing up.
+    :param runout_callback: Pass in method to replace existing _runout_event_handler in klippers
+                            runout_helper class.
+    :param enable_runout: If True automatically turns off runout, user can always reenable from UI
+                          if sensor is showing or from klipper macro.
+    :param debounce_delay: A period of time in seconds to debounce switches prior to detecting
+                           runouts
 
-    :return returns filament_switch_sensor object
+    :return tuple: filament_switch_sensor object and DebounceButton object
     """
     import configparser
     import configfile
@@ -54,6 +70,10 @@ def add_filament_switch( switch_name, switch_pin, printer, show_sensor=True, run
     filament_switch_config.set( new_switch_name, 'switch_pin', switch_pin)
     filament_switch_config.set( new_switch_name, 'pause_on_runout', 'False')
     filament_switch_config.set( new_switch_name, 'debounce_delay', 0.0)
+
+    # Following needs to be added for Snapmaker U1 klipper version, does not hurt to always
+    # have here for non U1 klipper versions.
+    filament_switch_config.set( new_switch_name, "extruder")
 
     cfg_wrap = configfile.ConfigWrapper( printer, filament_switch_config, {}, new_switch_name)
 
@@ -79,10 +99,7 @@ def add_filament_switch( switch_name, switch_pin, printer, show_sensor=True, run
         fila.runout_helper.runout_gcode = 1
         fila.runout_helper._runout_event_handler = runout_callback # Overriding filament event handler with AFC handler
 
-    if enable_runout:
-        return fila, debounce_button
-
-    return fila
+    return fila, debounce_button
 
 
 def check_and_return( value_str:str, data_values:dict ) -> str:
@@ -113,6 +130,7 @@ def section_in_config(config: ConfigWrapper, name: str):
     for s in config.fileconfig.sections():
         if name in s:
             in_cfg = True
+            break
     return in_cfg
 
 # Copied from klipper for kalico and older klipper support
@@ -120,6 +138,7 @@ class DebounceButton:
     def __init__(self, config, filament_sensor):
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
+        self.gcode: GCodeDispatch = self.printer.lookup_object('gcode')
         sig = inspect.signature(filament_sensor.runout_helper.note_filament_present)
         # Saving reference to normal function
         self._old_note_filament_present = filament_sensor.runout_helper.note_filament_present
@@ -129,10 +148,13 @@ class DebounceButton:
         # Checking parameter length since kalico's note_filament_present function is different
         # and also checking for older klipper versions before hash 272e8155
         expected_params = ['eventtime', 'is_filament_present', 'force', 'immediate']
+        snapmaker_expected = ['is_filament_present', 'force']
         param_keys = list(sig.parameters.keys())
         if param_keys == expected_params:
             # Exact match for the expected signature
             filament_sensor.runout_helper.note_filament_present = self._button_handler
+        elif param_keys == snapmaker_expected:
+            filament_sensor.runout_helper.note_filament_present = self.button_handler
         elif len(sig.parameters) > 2 or len(sig.parameters) == 1:
             filament_sensor.runout_helper.note_filament_present = self.button_handler
         else:
@@ -165,9 +187,183 @@ class DebounceButton:
         self.logical_state = self.physical_state
         # Kalico is different from klipper and eventtime is not passed in
         try:
-            self.button_action(is_filament_present=self.logical_state)
-        except:
-            self.button_action(eventtime, self.logical_state)
+            try:
+                self.button_action(is_filament_present=self.logical_state)
+            except TypeError:
+                self.button_action(eventtime, self.logical_state)
+        # Catching error here since klipper can also throw and error and don't want this
+        # to actually crash klipper
+        except Exception:
+            # Last ditch effort to call klipper pause since something bad happened
+            pause_resume: PauseResume = self.printer.lookup_object("pause_resume")
+            pause_cmd: GCodeCommand = self.gcode.create_gcode_command("PAUSE", "PAUSE", {})
+            # Calling Pause command directly since user/plugins could have overridden this command
+            pause_resume.cmd_PAUSE(pause_cmd)
+
+
+class VirtualRunoutHelper:
+    """Minimal runout helper used by FPS_PSF virtual sensors."""
+
+    def __init__(self, printer: Printer, name: str, runout_cb: Optional[Callable] = None,
+                 enable_runout: bool = False) -> None:
+        """
+        Initialize the minimal runout helper.
+
+        :param printer: Klipper printer object.
+        :param name: Sensor name.
+        :param runout_cb: Optional callable invoked on a runout transition.
+        :param enable_runout: Whether runout callbacks are enabled.
+        """
+        self.printer: Printer = printer
+        self.gcode: GCodeDispatch = self.printer.lookup_object('gcode')
+        self._reactor: Reactor = printer.get_reactor()
+        self.name: str = name
+        self.runout_callback: Optional[Callable] = runout_cb
+        self.sensor_enabled: bool = bool(enable_runout)
+        self.filament_present: bool = False
+        self.insert_gcode: Optional[str] = None
+        self.runout_gcode: Optional[str] = None
+        self.event_delay: float = 0.0
+        self.min_event_systime: float = self._reactor.NEVER
+
+    def note_filament_present(self, eventtime: Optional[float] = None,
+                              is_filament_present: bool = False, **_kwargs) -> None:
+        """
+        Update the tracked filament-present state and fire runout if needed.
+
+        Only acts on a state change; invokes the runout callback when filament
+        transitions to absent and runout is enabled.
+
+        :param eventtime: Reactor event time; defaults to now when None.
+        :param is_filament_present: New filament-present state.
+        :param _kwargs: Ignored extra keyword arguments for API compatibility.
+        """
+        if eventtime is None:
+            eventtime = self._reactor.monotonic()
+
+        new_state: bool = bool(is_filament_present)
+        if new_state == self.filament_present:
+            return
+
+        self.filament_present = new_state
+        idle_timeout = self.printer.lookup_object("idle_timeout")
+        is_printing = idle_timeout.get_status(eventtime)["state"] == "Printing"
+
+        if (not new_state
+            and self.sensor_enabled
+            and callable(self.runout_callback)
+            and is_printing):
+            try:
+                try:
+                    self.runout_callback(eventtime)
+                except TypeError:
+                    self.runout_callback(eventtime=eventtime)
+            # Catching error here since klipper can also throw and error and don't want this
+            # to actually crash klipper
+            except Exception:
+                # Last ditch effort to call klipper pause since something bad happened
+                pause_resume: PauseResume = self.printer.lookup_object("pause_resume")
+                pause_cmd: GCodeCommand = self.gcode.create_gcode_command("PAUSE", "PAUSE", {})
+                # Calling Pause command directly since user/plugins could have overridden this command
+                pause_resume.cmd_PAUSE(pause_cmd)
+
+    def get_status(self, _eventtime: Optional[float] = None) -> dict:
+        """
+        Return the sensor status.
+
+        :param _eventtime: Reactor event time (unused).
+        :return: Dict with `filament_detected` and `enabled` booleans.
+        """
+        return {
+            "filament_detected": bool(self.filament_present),
+            "enabled": bool(self.sensor_enabled),
+        }
+
+class VirtualFilamentSensor:
+    """Lightweight filament sensor placeholder for FPS virtual pins."""
+
+    QUERY_HELP = "Query the status of the Filament Sensor"
+    SET_HELP = "Sets the filament sensor on/off"
+
+    def __init__(self, printer: Printer, name: str, logger: AFC_logger,
+                show_in_gui: bool = True, runout_cb: Optional[Callable] = None,
+                enable_runout: bool = False) -> None:
+        """
+        Register a lightweight virtual filament sensor.
+
+        Adds the object under the `filament_switch_sensor` namespace (hiding it
+        from the GUI by underscore-prefixing when requested) and registers the
+        QUERY/SET filament-sensor G-code commands.
+
+        :param printer: Klipper printer object.
+        :param name: Sensor name.
+        :param show_in_gui: When False, hide the sensor from the GUI.
+        :param runout_cb: Optional runout callback passed to the runout helper.
+        :param enable_runout: Whether runout callbacks are enabled.
+        """
+        self.printer: Printer = printer
+        self.name: str = name
+        self.logger: AFC_logger = logger
+        self._object_name: str = f"filament_switch_sensor {name}"
+        self._object_name = self._object_name if show_in_gui else "_" + self._object_name
+        self.runout_helper: VirtualRunoutHelper = VirtualRunoutHelper(
+            printer, name, runout_cb=runout_cb, enable_runout=enable_runout)
+
+        try:
+            printer.add_object(self._object_name, self)
+        except Exception:
+            # Fallback: direct dict registration
+            objects = getattr(printer, "objects", None)
+            if isinstance(objects, dict):
+                objects.setdefault(self._object_name, self)
+
+        gcode = printer.lookup_object("gcode", None)
+        if gcode is None:
+            return
+        try:
+            gcode.register_mux_command("QUERY_FILAMENT_SENSOR", "SENSOR", name,
+                                       self.cmd_QUERY_FILAMENT_SENSOR, desc=self.QUERY_HELP)
+        except Exception:
+            pass
+        try:
+            gcode.register_mux_command("SET_FILAMENT_SENSOR", "SENSOR", name,
+                                       self.cmd_SET_FILAMENT_SENSOR, desc=self.SET_HELP)
+        except Exception:
+            pass
+
+    def get_status(self, eventtime: Optional[float]) -> dict:
+        """
+        Return the sensor status from the runout helper.
+
+        :param eventtime: Reactor event time passed through to the helper.
+        :return: Dict with `filament_detected` and `enabled` booleans.
+        """
+        return self.runout_helper.get_status(eventtime)
+
+    def cmd_QUERY_FILAMENT_SENSOR(self, gcmd: GCodeCommand) -> None:
+        """
+        G-code handler that reports whether filament is detected.
+
+        Usage: `QUERY_FILAMENT_SENSOR SENSOR=<name>`
+
+        :param gcmd: The parsed G-code command.
+        """
+        status = self.runout_helper.get_status(None)
+        if status["filament_detected"]:
+            msg = f"Filament Sensor {self.name}: filament detected"
+        else:
+            msg = f"Filament Sensor {self.name}: filament not detected"
+        gcmd.respond_info(msg)
+
+    def cmd_SET_FILAMENT_SENSOR(self, gcmd: GCodeCommand) -> None:
+        """
+        G-code handler that enables or disables the virtual sensor.
+
+        Usage: `SET_FILAMENT_SENSOR SENSOR=<name> ENABLE=<0|1>`
+
+        :param gcmd: The parsed G-code command.
+        """
+        self.runout_helper.sensor_enabled = bool(gcmd.get_int("ENABLE", 1, minval=0, maxval=1))
 
 class AFC_moonraker:
     """

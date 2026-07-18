@@ -27,6 +27,21 @@ NO_NC=false
 
 ALL_CAN_IDS=()
 
+check_prereqs() {
+    if ! command -v jq > /dev/null 2>&1; then
+        echo "jq is required but not found. Please install it and rerun the script."
+        exit 1
+    fi
+    if ! command -v curl > /dev/null 2>&1; then
+        echo "curl is required but not found. Please install it and rerun the script."
+        exit 1
+    fi
+    if ! command -v column > /dev/null 2>&1; then
+        echo "column is required but not found. Please install it and rerun the script."
+        exit 1
+    fi
+}
+
 log_can_interfaces() {
     local interfaces
     interfaces=$(ip -br link show | awk '{print $1}' ) # Let's get all the network interfaces in case someone named a CAN interface something weird
@@ -143,16 +158,22 @@ temp_dir_creation() {
 }
 
 clean_up_temp_dir() {
-	trap 'rm -rf -- "$temp_dir"' EXIT
+	if [ -n "${temp_dir:-}" ]; then
+		rm -rf -- "$temp_dir"
+	fi
 }
 
 extract_klipper_logs() {
 	echo "Extracting Klipper logs..."
 	temp_dir_creation
 	cp "$printer_log_dir"/klippy.log "$temp_dir"
-	cp "$printer_log_dir"/AFC.log* "$temp_dir"
-	cd "$temp_dir" || exit
-	"$klipper_venv"/python "$klipper_dir"/scripts/logextract.py ./klippy.log
+	# Use nullglob to avoid errors if no AFC.log files exist
+	local afc_logs
+	afc_logs=("$printer_log_dir"/AFC.log*)
+	if [[ -e "${afc_logs[0]}" ]]; then
+		cp "${afc_logs[@]}" "$temp_dir"
+	fi
+	(cd "$temp_dir" && "$klipper_venv"/python "$klipper_dir"/scripts/logextract.py ./klippy.log)
 }
 
 create_temp_log() {
@@ -166,31 +187,37 @@ clean_up_temp_log() {
 	fi
 }
 
-trap clean_up_temp_log EXIT
+clean_up_all() {
+	clean_up_temp_dir
+	clean_up_temp_log
+}
+
+trap clean_up_all EXIT
 
 get_afc_version() {
-	cd "$afc_path"
-	git_hash=$(git -C . rev-parse --short HEAD)
-	git_commit_num=$(git -C . rev-list HEAD --count)
+	local git_hash
+	local git_commit_num
+	git_hash=$(git -C "$afc_path" rev-parse --short HEAD)
+	git_commit_num=$(git -C "$afc_path" rev-list HEAD --count)
 	afc_version="${git_commit_num}-${git_hash}"
-	cd - > /dev/null
 }
 
 get_klipper_version() {
-	cd "$klipper_dir"
-	klipper_version=$(git describe --tags)
-	cd - > /dev/null
+	klipper_version=$(git -C "$klipper_dir" describe --tags)
 }
 
 # Upload a file to termbin, return a plain text string (no colors)
 upload_file_to_termbin() {
 	local file="$1"
-	local file_name=$(basename "$file")
+	local file_name
+  file_name=$(basename "$file")
 
 	# Upload only (no colors or print_msg in this function)
-	local tmp_url_file=$(mktemp)
+	local tmp_url_file
+  local url
+  tmp_url_file=$(mktemp)
 	tr -d '\0' < "$file" | nc termbin.com 9999 > "$tmp_url_file"
-	local url=$(tr -d '\0' < "$tmp_url_file")
+  url=$(tr -d '\0' < "$tmp_url_file")
 	rm -f "$tmp_url_file"
 
 	if [[ -n "$url" ]]; then
@@ -214,10 +241,12 @@ append_file_to_log() {
 	fi
 }
 
-echo "This script will collect diagnostic information and upload it to Armored Turtle support."
+echo "This script will collect diagnostic information and upload it to AFCProject support."
 echo "Please review the script if you have concerns about its contents."
 echo "Klipper will be stopped during this process — do not run this while printing."
 echo ""
+
+check_prereqs
 
 read -p "Do you wish to continue? [y/n]: " yn < /dev/tty
 case $yn in
@@ -233,10 +262,22 @@ extract_klipper_logs
 
 echo "Gathering system information..."
 
-DISTRO=$(strings /etc/*-release 2>/dev/null || echo "Unknown")
+DISTRO=$(cat /etc/*-release 2>/dev/null || echo "Unknown")
 KERNEL=$(uname -a)
 UPTIME=$(uptime)
-LSUSB=$(lsusb | tr -d '\0')
+LSUSB=$(lsusb -tv; echo "==="; for dev in /sys/bus/usb/devices/*/; do
+  [ "$(cat "$dev/bDeviceClass" 2>/dev/null)" = "09" ] || continue
+  bus=$(cat "$dev/busnum")
+  devnum=$(cat "$dev/devnum")
+  active=$(cat "$dev"*/bAlternateSetting 2>/dev/null | head -1 | tr -d ' ')
+  lsusb -v -s "$bus:$devnum" 2>/dev/null | awk -v active="$active" -v path="$dev" '
+    /iProduct/{ product=$0 }
+    /bDeviceProtocol/{ proto=$0 }
+    /bAlternateSetting/{ alt=$NF }
+    /bInterfaceProtocol/{ iproto = iproto ? iproto "\n" $0 (alt==active ? " (active)" : "") : $0 (alt==active ? " (active)" : "") }
+    END{ print "Path:              " path; print product; print proto; print iproto; print "---" }
+  '
+done | tr -d '\0')
 SERIAL_IDS=$(ls -l /dev/serial/by-id/ || echo "No serial devices found.")
 
 get_afc_version
@@ -253,18 +294,18 @@ log_can_interfaces
 	printf "AFC Version: %s\n" "$afc_version"
 	printf "Klipper Version: %s\n" "$klipper_version"
 
-	prepout "lsusb output"
+	prepout "USB Topology"
 	echo "$LSUSB"
 
 	prepout "Serial IDs"
 	echo "$SERIAL_IDS"
 
 	prepout "CAN Bus IDs"
-  if [ ${#ALL_CAN_IDS[@]} -eq 0 ]; then
-      echo "No CAN devices found."
-  else
-      printf "%s\n" "${ALL_CAN_IDS[@]}"
-  fi
+	if [ ${#ALL_CAN_IDS[@]} -eq 0 ]; then
+		echo "No CAN devices found."
+	else
+		printf "%s\n" "${ALL_CAN_IDS[@]}"
+	fi
 } >> "$temp_log"
 
 echo "Gathering AFC statistics "
@@ -277,10 +318,10 @@ echo "Gathering AFC statistics "
 } >> "$temp_log"
 
 # Let's get all the AFC config files
-find "$afc_config_dir" -type f | while read -r file; do
+while read -r file; do
     file_name=$(basename "$file")
     append_file_to_log "$file_name" "$file"
-done
+done < <(find "$afc_config_dir" -type f)
 
 # Add the moonraker config if it exists
 if [ -f "$moonraker_config" ]; then
@@ -292,11 +333,16 @@ fi
 uploaded_files=()
 
 if [ "$NO_NC" = true ]; then
+    if ! command -v zip > /dev/null 2>&1; then
+        echo "zip is required but not found. Please install it and rerun the script."
+        exit 1
+    fi
+
     echo "NetCat is unavailable. Creating a zip archive of logs instead."
     zipfile="$HOME/afc_debug_logs_$(date +%Y%m%d_%H%M%S).zip"
     zip -j "$zipfile" "$temp_log" "$temp_dir"/* > /dev/null
     echo "Logs have been saved to $zipfile"
-    echo "Please share this file with the Armored Turtle support team."
+    echo "Please share this file with the AFCProject support team."
 else
   for file in "$temp_dir"/*; do
     if [[ "$file" == *config* || "$file" == *shutdown* || "$file" == *AFC* || "$file" == *klippy.log ]]; then
@@ -321,16 +367,15 @@ else
 
   if nc -z -w 3 termbin.com 9999; then
     echo "Uploading logs to termbin.com..."
-    tr -d '\0' < "$temp_log" | nc termbin.com 9999 > /tmp/afc_upload_url
-    OUTPUTURL=$(tr -d '\0' < /tmp/afc_upload_url)
+    tmp_url_main=$(mktemp)
+    tr -d '\0' < "$temp_log" | nc termbin.com 9999 > "$tmp_url_main"
+    OUTPUTURL=$(tr -d '\0' < "$tmp_url_main")
+    rm -f "$tmp_url_main"
     echo "Logs are available at ${OUTPUTURL}"
-    echo "Please share this URL with the Armored Turtle support team."
+    echo "Please share this URL with the AFCProject support team."
   else
     echo "Failed to connect to termbin.com"
   fi
 fi
 
 start_klipper
-clean_up_temp_dir
-clean_up_temp_log
-rm -rf /tmp/afc_upload_url

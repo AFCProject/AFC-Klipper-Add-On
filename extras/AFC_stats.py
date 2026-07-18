@@ -380,8 +380,8 @@ class AFCStats:
             string = f"{lane.name:{' '}>{max(max_lane_name_size,7)}} : Lane change count: {lane.lane_load_count.value:{' '}>7}"
             if short: string = f"|{string:{' '}^{MAX_SPAN}}|\n"
             if len(espooler_stats) > 0:
-                if short: string += f"|{espooler_stats:{' '}^{MAX_WIDTH}}|\n"
-                else: string += f"    {espooler_stats}"
+                if short: string += f"|{espooler_stats:{' '}^{MAX_WIDTH-2}}|\n"
+                else: string += f"  {espooler_stats}"
             strings.append(string)
 
         if short:

@@ -31,12 +31,108 @@ function show_help() {
   echo " $0 [-a <moonraker address>] [-k <klipper_path>] [-s <klipper_service_name>] [-m <moonraker_config_path>] [-n <moonraker_port>] [-p <printer_config_dir>] [-p <printer_config_dir>] [-b <branch>] [-y <klipper venv dir>] [-h] "
 }
 
+safe_copy() {
+  # Safe copy that prompts the user before overwriting existing files/directories.
+  # Usage: safe_copy <source> <destination>
+  # Drop-in replacement for cp / cp -R.
+  # Returns: 0 on success (including skip), 1 on error.
+  # Sets safe_copy_result: "copied" | "skipped" after each call.
+  local src="$1"
+  local dst="$2"
+  local effective_dst="$dst"
+  local is_dir_copy="false"
+  safe_copy_result="copied"
+
+  # Determine if source is a directory
+  if [ -d "$src" ]; then
+    is_dir_copy="true"
+  fi
+
+  # Resolve effective destination path
+  # cp behaves the same for files and directories: when the destination is an
+  # existing directory, the source is placed *inside* it.
+  #   cp file dir/       -> dir/file
+  #   cp -R src_dir dir/ -> dir/src_dir
+  if [ -d "$dst" ]; then
+    effective_dst="${dst%/}/$(basename "$src")"
+  fi
+
+  # If destination doesn't exist, just copy
+  if [ ! -e "$effective_dst" ]; then
+    if [ "$is_dir_copy" = "true" ]; then
+      cp -R "$src" "$dst"
+    else
+      cp "$src" "$dst"
+    fi
+    return 0
+  fi
+
+  # Destination exists — prompt the user
+  local choice
+  print_msg WARNING "Destination already exists: ${effective_dst}"
+  while true; do
+    read -p "  (o)verwrite / (s)kip / (b)ackup and copy? [o/s/b]: " choice
+    choice="${choice,,}"
+    case "$choice" in
+      o)
+        # Remove existing destination first so directory copies don't
+        # merge into stale content.
+        rm -rf "$effective_dst"
+        if [ "$is_dir_copy" = "true" ]; then
+          cp -R "$src" "$dst"
+        else
+          cp "$src" "$dst"
+        fi
+        print_msg INFO "Overwritten: ${effective_dst}"
+        return 0
+        ;;
+      s)
+        print_msg INFO "Skipped: ${effective_dst}"
+        safe_copy_result="skipped"
+        return 0
+        ;;
+      b)
+        mv "$effective_dst" "${effective_dst}.bak.${backup_date}"
+        print_msg INFO "Backed up to: ${effective_dst}.bak.${backup_date}"
+        if [ "$is_dir_copy" = "true" ]; then
+          cp -R "$src" "$dst"
+        else
+          cp "$src" "$dst"
+        fi
+        return 0
+        ;;
+      *)
+        echo "  Invalid choice. Please enter o, s, or b."
+        ;;
+    esac
+  done
+}
+
 function copy_config() {
   mkdir -p "${afc_config_dir}"
-  cp "${afc_path}/config/AFC.cfg" "${afc_config_dir}/"
-  cp "${afc_path}/config/AFC_Macro_Vars.cfg" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/AFC.cfg" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/AFC_Macro_Vars.cfg" "${afc_config_dir}/"
   mkdir -p "${afc_config_dir}/mcu"
-  cp -R "${afc_path}/config/macros" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/macros" "${afc_config_dir}/"
+}
+
+function copy_openams_config() {
+  mkdir -p "${afc_config_dir}"
+  safe_copy "${afc_path}/config/AFC.cfg" "${afc_config_dir}/"
+  safe_copy "${afc_path}/config/AFC_Macro_Vars.cfg" "${afc_config_dir}/"
+  mkdir -p "${afc_config_dir}/mcu"
+  safe_copy "${afc_path}/config/macros" "${afc_config_dir}/"
+}
+
+function copy_snapmaker_config() {
+    mkdir -p "${afc_config_dir}"
+    safe_copy "${afc_path}/templates/u1_macros/AFC.cfg" "${afc_config_dir}/"
+    safe_copy "${afc_path}/config/AFC_Macro_Vars.cfg" "${afc_config_dir}/"
+    mkdir -p "${afc_config_dir}/mcu"
+    mkdir -p "${afc_config_dir}/macros"
+    safe_copy "${afc_path}/templates/u1_macros/Snapmaker_macros.cfg" "${afc_config_dir}/macros/"
+    safe_copy "${afc_path}/config/macros/AFC_macros.cfg" "${afc_config_dir}/macros"
+    safe_copy "${afc_path}/templates/AFC_Hardware_U1.cfg" "${afc_config_dir}/AFC_Hardware.cfg"
 }
 
 get_git_version() {
@@ -150,9 +246,18 @@ restart_service() {
 
 restart_klipper() {
   if query_printer_status; then
-    restart_service klipper
+    if [ "$is_snapmaker" == "True" ]; then
+      u1_restart_klipper
+    else
+      restart_service klipper
+    fi
+
   else
-    print_msg WARNING "Your printer is not idle/ready, or its status could not be confirmed. Automatic Klipper restart has been skipped; please restart the Klipper service manually once the printer is idle."
+    if [ "$is_snapmaker" == "True" ]; then
+      print_msg WARNING "Please manually restart klipper through <ip_address>/firmware-config panel, or fully power-cycle printer."
+    else
+      print_msg WARNING "Your printer is not idle/ready, or its status could not be confirmed. Automatic Klipper restart has been skipped; please restart the Klipper service manually once the printer is idle."
+    fi
   fi
 }
 
@@ -230,6 +335,10 @@ del_var_file() {
 check_for_k1() {
   if grep -Fqs "ID=buildroot" /etc/os-release; then
     is_k1_os="True"
+    if grep -Fqs RK_BUILD_INFO=\"snapmaker /etc/os-release; then
+      is_snapmaker="True"
+      klipper_venv="/usr/bin"
+    fi
   fi
 }
 

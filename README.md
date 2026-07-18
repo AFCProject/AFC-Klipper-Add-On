@@ -4,7 +4,7 @@ This Klipper plugin is for use with modern filament control systems such as BoxT
 
 More information about BoxTurtle can be found [here](https://github.com/ArmoredTurtle/BoxTurtle)
 
-Further information to include command references can be found [here](https://armoredturtle.xyz/docs/).
+Further information to include command references can be found [here](https://www.afcproject.dev/).
 
 ## Usage
 
@@ -69,8 +69,12 @@ Once the plugin is updated, please uncomment the lines in your `printer.cfg` fil
 
 Further documentation on the plugin, it's various commands and configuration references can be found [here](https://www.afcproject.dev/).
 
+Armored Turtle Configuration / Build Manuals [here](https://armoredturtle.xyz/)
 ## Support
 
 [![Join me on Discord](https://discord.com/api/guilds/1495561254293471282/widget.png?style=banner2)](https://discord.gg/z2tgWEnfDT)
 
-Armored Turtle Configuration / Build Manuals [here](https://armoredturtle.xyz/)
+## Support via Donations
+AFC-Klipper-Add-On plugin is fully open source and comes at not cost to the user. If you feel that you would like to contribute by donating, please use the following links below.
+
+<a href="https://www.buymeacoffee.com/afcproject" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>

@@ -3,12 +3,22 @@
 # Copyright (C) 2024-2026 Armored Turtle
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
 
+from typing import TYPE_CHECKING
+import copy
+import traceback
+
+if TYPE_CHECKING:
+    from extras.AFC import afc
+    from extras.AFC_lane import AFCLane
 
 class AFCSpool:
     def __init__(self, config):
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
+        self.SPOOLMAN_REMOTE_METHOD = 'spoolman_set_active_spool'
+        self.print_task_config_obj = None
 
         # Temporary status variables
         self.next_spool_id      = None
@@ -19,11 +29,12 @@ class AFCSpool:
         This function is called when the printer connects. It looks up the AFC object
         and assigns it to the instance variable `self.AFC`.
         """
-        self.afc        = self.printer.lookup_object('AFC')
+        self.afc: afc   = self.printer.lookup_object('AFC')
         self.error      = self.afc.error
         self.reactor    = self.afc.reactor
         self.gcode      = self.afc.gcode
         self.logger     = self.afc.logger
+        self.print_task_config_obj = self.printer.lookup_object('print_task_config', None)
 
         self.disable_weight_check = self.afc.disable_weight_check
 
@@ -33,7 +44,7 @@ class AFCSpool:
         self.gcode.register_command("RESET_AFC_MAPPING", self.cmd_RESET_AFC_MAPPING, desc=self.cmd_RESET_AFC_MAPPING_help)
         self.gcode.register_command("SET_NEXT_SPOOL_ID", self.cmd_SET_NEXT_SPOOL_ID, desc=self.cmd_SET_NEXT_SPOOL_ID_help)
 
-    def register_lane_macros(self, lane_obj):
+    def register_lane_macros(self, lane_obj: AFCLane):
         """
         Callback function to register macros with proper lane names so that klipper errors out correctly when users supply lanes that
         are not valid
@@ -46,6 +57,92 @@ class AFCSpool:
         self.gcode.register_mux_command('SET_SPOOL_ID',         "LANE", lane_obj.name, self.cmd_SET_SPOOL_ID,           desc=self.cmd_SET_SPOOL_ID_help)
         self.gcode.register_mux_command('SET_RUNOUT',           "LANE", lane_obj.name, self.cmd_SET_RUNOUT,             desc=self.cmd_SET_RUNOUT_help)
         self.gcode.register_mux_command('SET_MAP',              "LANE", lane_obj.name, self.cmd_SET_MAP,                desc=self.cmd_SET_MAP_help)
+        self.gcode.register_mux_command('AFC_SET_SPOOL_TEMP',   "LANE", lane_obj.name, self.cmd_AFC_SET_SPOOL_TEMP,     desc=self.cmd_AFC_SET_SPOOL_TEMP_help)
+
+    def set_snapmaker_filament_params(self, lane: AFCLane):
+        """
+        This method is only for snapmaker printers, this method updates filament color, material,
+        vendor into snapmakers print_task_config object. This is needed so that the proper filament
+        reflects correctly per toolhead on the screen UI and its needed to be able to properly resume
+        a print. Without updating these values into print_task_config object snapmakers internal
+        python logic will not resume once paused.
+
+        Logic is based off this file in u1-klipper repo:
+            https://github.com/Snapmaker/u1-klipper/blob/main/klippy/extras/print_task_config.py
+
+        :param lane: AFC lane to update correct toolhead with color, material, vendor, etc information.
+        """
+        if (self.afc.snapmaker_printer
+            and self.print_task_config_obj is not None
+            and lane.tool_loaded
+            and lane.name == lane.extruder_obj.lane_loaded):
+            try:
+                # Below could also be done with the following macro for multi color spools
+                # SET_PRINT_FILAMENT_CONFIG CONFIG_EXTRUDER=3 COLORS=123456,654321 COLOR_NUMS=2 MULTI_MODE=1
+                from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+                extruder_num = lane.lane_extruder_index
+
+                tmp_config = copy.deepcopy(self.print_task_config_obj.print_task_config)
+
+                tmp_config['filament_vendor'][extruder_num] = (lane.spool_vendor or "Generic")
+                tmp_config['filament_type'][extruder_num] = (
+                    lane.material
+                    or getattr(self.afc, "default_material_type", None)
+                    or "NONE"
+                )
+                tmp_config['filament_sub_type'][extruder_num] = "NONE"
+
+                tmp_config['filament_color'][extruder_num] = int("FFFFFFFF", 16)
+                tmp_config['filament_color_rgba'][extruder_num] = "FFFFFFFF"
+                tmp_config['filament_color_multi'][extruder_num]["colors"] = ["FFFFFF"]
+                tmp_config['filament_color_multi'][extruder_num]["mode"] = 0
+                tmp_config['filament_color_multi'][extruder_num]["nums"] = 1
+
+                if lane.color:
+                    tmp_config['filament_color'][extruder_num] = int(lane.color.replace('#', ''), 16) | 0xFF000000
+                    tmp_config['filament_color_rgba'][extruder_num] = lane.color.replace('#', '') + "FF"
+                    tmp_config['filament_color_multi'][extruder_num]["colors"] = [f"{lane.color.replace('#', '')}"]
+
+                if lane.multi_color:
+                    tmp_config['filament_color_multi'][extruder_num]["nums"] = len(lane.multi_color)
+                    tmp_config['filament_color_multi'][extruder_num]["colors"] = lane.multi_color
+                    tmp_config['filament_color_multi'][extruder_num]["mode"] = 1
+
+                self.print_task_config_obj.print_task_config = tmp_config
+                self.printer.update_snapmaker_config_file(self.print_task_config_obj.config_path,
+                                                          self.print_task_config_obj.print_task_config,
+                                                          DEFAULT_PRINT_TASK_CONFIG)
+            except Exception:
+                self.logger.error("Error when trying to update colors for snapmaker print_task_config")
+                self.logger.debug(traceback.format_exc())
+
+    cmd_AFC_SET_SPOOL_TEMP_help = "Set spool temperatures for a lane"
+    def cmd_AFC_SET_SPOOL_TEMP(self, gcmd):
+        """
+        This function handles setting the bed and extruder temperatures for a specified lane's spool.
+
+        Usage
+        -----
+        `AFC_SET_SPOOL_TEMP LANE=<lane> BED_TEMP=<temp> EXTRUDER_TEMP=<temp>`
+
+        Example
+        -----
+        ```
+        AFC_SET_SPOOL_TEMP LANE=lane1 BED_TEMP=60 EXTRUDER_TEMP=210
+        ```
+        """
+        lane = gcmd.get('LANE', None)
+        if lane is None:
+            self.logger.info("No LANE parameter provided, please specify a valid LANE parameter.")
+            return
+        cur_lane = self.afc.lanes.get(lane)
+        if cur_lane is None:
+            self.logger.info('{} Unknown'.format(lane))
+            return
+        cur_lane.bed_temp = gcmd.get_int('BED_TEMP', cur_lane.bed_temp, minval=0)
+        cur_lane.extruder_temp = gcmd.get_int('EXTRUDER_TEMP', cur_lane.extruder_temp, minval=0)
+        cur_lane.send_lane_data()
+        self.afc.save_vars()
 
     cmd_SET_MAP_help = "Changes T(n) mapping for a lane"
     def cmd_SET_MAP(self, gcmd):
@@ -123,8 +220,14 @@ class AFCSpool:
             return
         cur_lane = self.afc.lanes[lane]
         cur_lane.color = '#{}'.format(color.replace('#',''))
+        cur_lane.multi_color = []
         cur_lane.send_lane_data()
+        # Refresh LED only if filament is loaded — empty lanes keep their state color
+        if cur_lane.load_state and cur_lane.unit in self.afc.units:
+            unit = cur_lane.unit_obj
+            self.afc.function.afc_led(unit._get_lane_color(cur_lane, cur_lane.led_ready), cur_lane.led_index)
         self.afc.save_vars()
+        self.set_snapmaker_filament_params(cur_lane)
 
     cmd_SET_WEIGHT_help = "Sets filaments weight for a lane"
     def cmd_SET_WEIGHT(self, gcmd):
@@ -202,6 +305,7 @@ class AFCSpool:
 
         cur_lane.send_lane_data()
         self.afc.save_vars()
+        self.set_snapmaker_filament_params(cur_lane)
 
     def set_active_spool(self, ID):
         webhooks = self.printer.lookup_object('webhooks')
@@ -213,7 +317,7 @@ class AFCSpool:
 
             args = {'spool_id' : id }
             try:
-                webhooks.call_remote_method("spoolman_set_active_spool", **args)
+                webhooks.call_remote_method(self.SPOOLMAN_REMOTE_METHOD, **args)
             except self.printer.command_error as e:
                 self.logger.error("Error trying to set active spool \n{}".format(e))
 
@@ -282,8 +386,13 @@ class AFCSpool:
         """
         Helper function for setting lane spool values
         """
-        # set defaults if there's no spool id, or the spoolman lookup fails
-        if not cur_lane.remember_spool:
+        # Always reset debounce on spool change
+        cur_lane.auto_switch_triggered = False
+        # Only apply defaults (material type, 1000g weight) when no spool data has been
+        # assigned to this lane. If SET_SPOOL_ID or SET_COLOR was called before loading
+        # (e.g. from an NFC tag scan), the spool_id and/or color will already be set with
+        # real values — don't overwrite them with defaults during the load sequence.
+        if not cur_lane.remember_spool and cur_lane.spool_id is None and not cur_lane.color:
             cur_lane.material = self.afc.default_material_type
             cur_lane.weight = 1000 # Defaulting weight to 1000 upon load
 
@@ -292,24 +401,28 @@ class AFCSpool:
             self.next_spool_id = None
             self.set_spoolID(cur_lane, spool_id)
 
-    def clear_values(self, cur_lane):
+    def clear_values(self, cur_lane: AFCLane):
         """
         Helper function for clearing out lane spool values
         """
         cur_lane.spool_id = None
         cur_lane.material = ''
         cur_lane.color = ''
+        cur_lane.multi_color = []
         cur_lane.weight = 0
+        cur_lane.auto_switch_triggered = False
         cur_lane.extruder_temp = None
         cur_lane.bed_temp = None
         cur_lane.clear_lane_data()
+        cur_lane.spool_vendor = ""
 
-    def set_spoolID(self, cur_lane, SpoolID, save_vars=True):
+    def set_spoolID(self, cur_lane: AFCLane, SpoolID: str, save_vars=True):
         if self.afc.spoolman is not None:
             if SpoolID not in ('', None):
                 try:
                     result = self.afc.moonraker.get_spool(SpoolID)
                     cur_lane.spool_id = SpoolID
+                    cur_lane.auto_switch_triggered = False
 
                     cur_lane.material           = self._get_filament_values(result['filament'], 'material')
                     if not self.afc.ignore_spoolman_material_temps:
@@ -320,6 +433,11 @@ class AFCSpool:
                     cur_lane.empty_spool_weight = self._get_filament_values(result, 'spool_weight', default=190)
                     cur_lane.weight             = self._get_filament_values(result, 'remaining_weight')
                     cur_lane.espooler.espooler_values.full_weight = self._get_filament_values(result, 'initial_weight', default=1000)
+
+                    vendor_result  = result["filament"].get("vendor", None)
+                    cur_lane.spool_vendor       = ""
+                    if vendor_result:
+                        cur_lane.spool_vendor   = self._get_filament_values(vendor_result, "name", None)
 
                     weight_check = self.disable_weight_check
 
@@ -336,12 +454,19 @@ class AFCSpool:
 
                     # Check to see if filament is defined as multi-color and take the first color for now
                     # Once support for multicolor is added this needs to be updated
-                    if "multi_color_hexes" in result['filament']:
-                        cur_lane.color = '#{}'.format(self._get_filament_values(result['filament'], 'multi_color_hexes').split(",")[0])
+                    multi_color_hex = self._get_filament_values(result['filament'], 'multi_color_hexes')
+                    if multi_color_hex:
+                        cur_lane.multi_color = multi_color_hex.split(",")
+                        cur_lane.color = f"#{cur_lane.multi_color[0]}"
                     else:
                         cur_lane.color = '#{}'.format(self._get_filament_values(result['filament'], 'color_hex'))
+                        cur_lane.multi_color = []
 
                     cur_lane.send_lane_data()
+                    # Refresh LED only if filament is loaded — empty lanes keep their state color
+                    if cur_lane.load_state and cur_lane.unit in self.afc.units:
+                        unit = cur_lane.unit_obj
+                        self.afc.function.afc_led(unit._get_lane_color(cur_lane, cur_lane.led_ready), cur_lane.led_index)
 
                 except Exception as e:
                     self.afc.error.AFC_error("Error when trying to get Spoolman data for ID:{}, Error: {}".format(SpoolID, e), False)
@@ -351,6 +476,9 @@ class AFCSpool:
             # Clears out values if users are not using spoolman and lane isn't set to remember spool, this is to cover this function being called from LANE UNLOAD and clearing out
             # Manually entered information
             self.clear_values(cur_lane)
+
+        self.set_snapmaker_filament_params(cur_lane)
+
         if save_vars: self.afc.save_vars()
 
     cmd_SET_RUNOUT_help = "Set runout lane"
@@ -375,6 +503,7 @@ class AFCSpool:
             return
 
         runout = gcmd.get('RUNOUT', 'NONE')
+        is_none = runout.upper() == 'NONE'
         # Check to make sure runout does not equal lane
         if lane == runout:
             self.logger.error("Lane({}) and runout({}) cannot be the same".format(lane, runout))
@@ -384,12 +513,12 @@ class AFCSpool:
             self.logger.error('Unknown lane: {}'.format(lane))
             return
         # Check to make sure specified runout lane exists as long as runout is not set as 'NONE'
-        if runout != 'NONE' and runout not in self.afc.lanes:
+        if not is_none and runout not in self.afc.lanes:
             self.logger.error('Unknown runout lane: {}'.format(runout))
             return
 
         cur_lane = self.afc.lanes[lane]
-        cur_lane.runout_lane = None if runout == 'NONE' else runout
+        cur_lane.runout_lane = None if is_none else runout
         self.afc.save_vars()
 
     cmd_RESET_AFC_MAPPING_help = "Resets all lane mapping in AFC"

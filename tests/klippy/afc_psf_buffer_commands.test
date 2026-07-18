@@ -1,0 +1,44 @@
+# AFC buffer commands integration test
+#
+# Verifies that AFC_buffer GCode commands register and execute correctly
+# in a Klipper environment with one FPS_PSF-style buffer (FPS_buffer1) configured.
+# No lane needs to be loaded — commands that depend on an active lane are
+# safe no-ops when get_current_lane_obj() returns None.
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_with_psf_buffer.cfg
+
+# --- Query buffer state ---
+# Reports current enable state, last_state, and fault-detection info.
+QUERY_BUFFER BUFFER=FPS_buffer1
+
+# --- Enable / disable buffer ---
+ENABLE_BUFFER BUFFER=FPS_buffer1 LANE=lane1
+
+# --- Multiplier adjustment ---
+# Buffer is enabled with lane1 loaded, so multiplier comparisons are exercised.
+SET_BUFFER_MULTIPLIER BUFFER=FPS_buffer1 MULTIPLIER=high FACTOR=1.15
+ASSERT TEST="{ printer['AFC_buffer FPS_buffer1'].multiplier_high == 1.15 }"
+SET_BUFFER_MULTIPLIER BUFFER=FPS_buffer1 MULTIPLIER=LOW FACTOR=0.85
+ASSERT TEST="{ printer['AFC_buffer FPS_buffer1'].multiplier_low == 0.85 }"
+
+DISABLE_BUFFER BUFFER=FPS_buffer1 LANE=lane1
+
+# --- Fault detection sensitivity transitions ---
+# 0 → 5: registers extruder position timer and starts fault detection.
+AFC_SET_ERROR_SENSITIVITY BUFFER=FPS_buffer1 SENSITIVITY=5.0
+# 5 → 7: both non-zero — updates filament error position threshold only.
+AFC_SET_ERROR_SENSITIVITY BUFFER=FPS_buffer1 SENSITIVITY=7.0
+# 7 → 0: stops the fault detection timer.
+AFC_SET_ERROR_SENSITIVITY BUFFER=FPS_buffer1 SENSITIVITY=0
+
+
+# Making sure homing to advance works
+AFC_STEPPER_HOME STEPPER=lane1 DIST=100 SPEED=100 STOP_ON_ENDSTOP=1 ENDSTOP=buffer
+
+AFC_SET_FPS_SET_POINT BUFFER=FPS_buffer1 SET_POINT=0.55 DEADBAND=0.20
+ASSERT TEST="{ printer['AFC_buffer FPS_buffer1'].set_point == 0.55 }"

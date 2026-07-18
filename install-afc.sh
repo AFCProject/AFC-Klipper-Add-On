@@ -58,6 +58,7 @@ source include/install_functions.sh
 source include/uninstall.sh
 source include/update_commands.sh
 source include/update_functions.sh
+source include/emu_templater.sh
 
 source include/unit_functions.sh
 
@@ -94,13 +95,19 @@ main() {
   check_root
   echo "Ensuring no conflicting software is present..."
   check_for_hh
-  echo "Checking to ensure crudini and jq are present..."
-  check_for_prereqs
+  
+  if [ "$is_snapmaker" == "True" ]; then
+    echo "Sourcing u1 extended file"
+    source include/U1_extended_firmware_install.sh
+  else
+    echo "Checking to ensure crudini and jq are present..."
+    check_for_prereqs
+  fi
   echo "Checking installation method..."
   check_for_zip_install
   if [ "$test_mode" == "False" ]; then
     check_python_version
-    if [ "$git_install" == "True" ]; then
+    if [ "$git_install" == "True" ] && [ "$is_snapmaker" == "False" ]; then
       clone_and_maybe_restart
     fi
   fi
