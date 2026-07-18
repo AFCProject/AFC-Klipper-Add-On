@@ -600,8 +600,9 @@ class Espooler:
         :param print_time: Pre-computed print_time for scheduling assist pins
         """
 
-        if self.afc_motor_rwd is None:
+        if self.afc_motor_fwd is None:
             return
+
         time = print_time = print_time if print_time is not None else self._get_print_time()
         if self.lane_obj.weight < self.enable_assist_weight:
             print_time = self._kick_start(print_time)
