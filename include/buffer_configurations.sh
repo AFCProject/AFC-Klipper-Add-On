@@ -61,7 +61,7 @@ EOF
     "FPS_PSF")
       buffer_config=$(cat <<EOF
 [AFC_buffer ${unit_name}]
-type: FPS_PFS
+type: FPS_PSF
 adc_pin: ${fps_adc_pin}
 neutral_point: 0.5
 max_tension: 0.1

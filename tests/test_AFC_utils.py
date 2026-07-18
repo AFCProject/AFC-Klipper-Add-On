@@ -229,10 +229,31 @@ class TestDebounceButton:
         btn.physical_state = True
         btn.latest_eventtime = 100.0
 
-        # A callback that only accepts positional args → raises TypeError on kwargs call
+        # A callback that only accepts positional args → raises Exception on kwargs call
         calls = []
         def positional_only(eventtime, state):
             calls.append((eventtime, state))
+
+        btn.button_action = positional_only
+        btn._debounce_event(101.0)
+        assert len(calls) == 1
+        assert calls[0] == (101.0, True)
+    
+    def test_debounce_event_falls_back_to_positional_args_raise_exception(self):
+        """Covers lines 169-170: button_action that doesn't accept kwargs → except branch."""
+        cfg = self._make_config(debounce_delay=0.0)
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn.logical_state = False
+        btn.physical_state = True
+        btn.latest_eventtime = 100.0
+
+        # A callback that only accepts positional args → raises Exception on kwargs call
+        calls = []
+
+        def positional_only(eventtime, state):
+            calls.append((eventtime, state))
+            raise Exception("Raise Exception 1")
 
         btn.button_action = positional_only
         btn._debounce_event(101.0)
@@ -621,6 +642,8 @@ class TestVirtualRunoutHelper:
     def test_note_filament_present_transition_to_absent_fires_callback(self):
         cb = MagicMock()
         helper, _ = self._make_helper(runout_cb=cb, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Printing"}
         helper.note_filament_present(100.0, True)   # present
         cb.assert_not_called()
         helper.note_filament_present(101.0, False)  # -> absent, should fire
@@ -650,23 +673,73 @@ class TestVirtualRunoutHelper:
         helper.note_filament_present(101.0, False)  # should not raise
         assert helper.filament_present is False
 
-    def test_note_filament_present_typeerror_fallback_uses_kwarg(self):
+    def test_note_filament_present_exception_fallback_uses_kwarg(self):
         """Some callers' runout callbacks only accept eventtime as a kwarg;
-        the TypeError fallback should retry with eventtime=eventtime."""
+        the Exception fallback should retry with eventtime=eventtime."""
         calls = []
 
         def picky_callback(*, eventtime):
             calls.append(eventtime)
 
         helper, _ = self._make_helper(runout_cb=picky_callback, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Printing"}
         helper.note_filament_present(100.0, True)
         helper.note_filament_present(101.0, False)
         assert calls == [101.0]
         assert helper.filament_present is False
 
+    def test_callback_exception_on_both(self):
+        failing_callback = MagicMock()
+        failing_callback.side_effect = [
+            Exception("Raise Error 1"),
+            Exception("Raise Error 2")
+        ]
+        helper, _ = self._make_helper(
+            runout_cb=failing_callback, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Printing"}
+        # Setting filament present
+        helper.note_filament_present(100.0, True)
+        helper.runout_callback.assert_not_called()
+        helper.note_filament_present(101.0, False)
+
+        assert helper.runout_callback.call_count == 2
+        first_call = helper.runout_callback.call_args_list[0]
+        second_call = helper.runout_callback.call_args_list[1]
+
+        assert first_call.args == (101.0,)
+        assert first_call.kwargs == {}
+        assert second_call.args == ()
+        assert second_call.kwargs == {"eventtime": 101.0}
+    
+    def test_callback_does_not_try_second_time(self):
+        failing_callback = MagicMock()
+        helper, _ = self._make_helper(
+            runout_cb=failing_callback, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.side_effect = [
+            {"state": "Printing"},
+            {"state": "Printing"},
+            {"state": "Paused"},
+        ]
+        # Setting filament present
+        helper.note_filament_present(100.0, True)
+        helper.runout_callback.assert_not_called()
+        helper.note_filament_present(101.0, False)
+        helper.note_filament_present(102.0, False)
+
+        assert helper.runout_callback.call_count == 1
+        first_call = helper.runout_callback.call_args_list[0]
+
+        assert first_call.args == (101.0,)
+        assert first_call.kwargs == {}
+
     def test_note_filament_present_eventtime_defaults_to_monotonic(self):
         seen_eventtimes = []
         helper, printer = self._make_helper(runout_cb=seen_eventtimes.append, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Printing"}
         printer.get_reactor()._monotonic = 555.0
         helper.note_filament_present(None, True)   # present, no callback yet
         helper.note_filament_present(None, False)  # absent -> callback fires with monotonic()
@@ -737,20 +810,6 @@ class TestVirtualFilamentSensor:
         assert not hasattr(printer, "add_object")
         sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
         assert printer.objects.get("filament_switch_sensor FPS1_expanded") is sensor
-
-    def test_init_hide_rename_skipped_when_add_object_does_not_populate_objects(self):
-        """add_object succeeds without raising, but doesn't actually land the
-        entry in printer.objects (e.g. a real backend that stores elsewhere) --
-        the 'if self._object_name in objects' guard should just no-op rather
-        than KeyError."""
-        from tests.conftest import MockPrinter
-        printer = MockPrinter()
-        printer.add_object = MagicMock()  # succeeds, but printer.objects stays empty
-        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock(),
-                                       show_in_gui=False)
-        printer.add_object.assert_called_once_with(
-            "filament_switch_sensor FPS1_expanded", sensor)
-        assert printer.objects == {}
 
     def test_init_fallback_noop_when_objects_is_not_a_dict(self):
         """When add_object is missing AND printer.objects isn't a dict, the

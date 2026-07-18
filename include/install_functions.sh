@@ -388,7 +388,7 @@ fi
 
 if [ "$buffer_type" == "FPS_PSF" ]; then
   message+="""
-- Ensure the PSF ADC pin in your buffer configuration matches where your wiring in connected on your MCU.
+- Ensure the PSF ADC pin in your buffer configuration matches where your wiring is connected to your MCU.
   """
 fi
 

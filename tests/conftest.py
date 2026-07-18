@@ -380,10 +380,10 @@ class MockAFC:
         self.units: dict = {}
         self.buffers: dict = {}
         self.led_obj: dict = {}
-        self.led_buffer_advancing = "1,0,0,0"
-        self.led_buffer_trailing = "0,0,1,0"
-        self.led_buffer_neutral = "0,1,0,0"
-        self.led_buffer_disabled = "0,0,0,0"
+        self.led_buffer_advancing = "0,0,1,0"
+        self.led_buffer_trailing = "0,1,0,0"
+        self.led_buffer_neutral = "1,1,1,1"
+        self.led_buffer_disabled = "0,0,0,0.25"
         self.current = None
         self.enable_sensors_in_gui = False
         self.debounce_delay = 0.1
@@ -429,7 +429,7 @@ class MockAFC:
         self.led_tool_loaded = "0,1,0,0"
         self.led_tool_loaded_idle = "0.4,0.4,0,0"
         self.led_tool_unloaded = "1,0,0,0"
-        self.led_spool_illum = "1,1,1,0"
+        self.led_spool_illum = "1,1,1,1"
         self.led_off = "0,0,0,0"
         self.led_use_filament_color = False
         # afcUnit.__init__ movement/behavior defaults (mirrors extras/AFC.py)

@@ -187,7 +187,12 @@ class DebounceButton:
         try:
             self.button_action(is_filament_present=self.logical_state)
         except:
-            self.button_action(eventtime, self.logical_state)
+            try:
+                # Catching error here since klipper can also throw and error and don't want this
+                # to actually crash klipper
+                self.button_action(eventtime, self.logical_state)
+            except Exception:
+                pass
 
 
 class VirtualRunoutHelper:
@@ -234,12 +239,22 @@ class VirtualRunoutHelper:
             return
 
         self.filament_present = new_state
+        idle_timeout = self.printer.lookup_object("idle_timeout")
+        is_printing = idle_timeout.get_status(eventtime)["state"] == "Printing"
 
-        if (not new_state and self.sensor_enabled and callable(self.runout_callback)):
+        if (not new_state
+            and self.sensor_enabled
+            and callable(self.runout_callback)
+            and is_printing):
             try:
                 self.runout_callback(eventtime)
-            except TypeError:
-                self.runout_callback(eventtime=eventtime)
+            except Exception:
+                try:
+                    # Catching error here since klipper can also throw and error and don't want this
+                    # to actually crash klipper
+                    self.runout_callback(eventtime=eventtime)
+                except Exception:
+                    pass
 
     def get_status(self, _eventtime: Optional[float] = None) -> dict:
         """
@@ -279,16 +294,12 @@ class VirtualFilamentSensor:
         self.name: str = name
         self.logger: AFC_logger = logger
         self._object_name: str = f"filament_switch_sensor {name}"
+        self._object_name = self._object_name if show_in_gui else "_" + self._object_name
         self.runout_helper: VirtualRunoutHelper = VirtualRunoutHelper(
             printer, name, runout_cb=runout_cb, enable_runout=enable_runout)
 
         try:
             printer.add_object(self._object_name, self)
-            if not show_in_gui:
-                # Hide from GUI by prefixing with underscore
-                objects: dict = getattr(printer, "objects", {})
-                if self._object_name in objects:
-                    objects["_" + self._object_name] = objects.pop(self._object_name)
         except Exception:
             # Fallback: direct dict registration
             objects = getattr(printer, "objects", None)

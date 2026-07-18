@@ -1506,8 +1506,8 @@ class TestExtruderPosUpdateEvent:
         buf.afc.function.is_printing.return_value = True
         buf.get_extruder_pos = MagicMock(return_value=55.0)  # > 50.0
         buf.update_filament_error_pos = MagicMock()
-        with patch('extras.AFC_buffer.getattr', return_value=None):
-            buf.extruder_pos_update_event(100.0)
+        lane.unit_obj.stepperless_drive = None
+        buf.extruder_pos_update_event(100.0)
         buf.afc.error.AFC_error.assert_called_once_with("AFC filament fault detected! Take necessary action.", True)
         buf.update_filament_error_pos.assert_called_once()
     
@@ -1523,8 +1523,8 @@ class TestExtruderPosUpdateEvent:
         buf.afc.function.is_printing.return_value = True
         buf.get_extruder_pos = MagicMock(return_value=55.0)  # > 50.0
         buf.update_filament_error_pos = MagicMock()
-        with patch('extras.AFC_buffer.getattr', return_value=True):
-            buf.extruder_pos_update_event(100.0)
+        lane.unit_obj.stepperless_drive = True
+        buf.extruder_pos_update_event(100.0)
         buf.afc.error.AFC_error.assert_not_called()
         buf.update_filament_error_pos.assert_not_called()
 
@@ -1946,6 +1946,9 @@ class TestFPSEndstopWrapperHomeStart:
 
         assert completion.result is True
         fps_buffer.reactor.register_timer.assert_not_called()
+    
+    # TODO: add test_triggered_false_target_waits_until_untriggered when code is updated to home to
+    # untriggered state
 
     def test_resets_trigger_time_and_creates_new_completion(self):
         endstop, fps_buffer, triggered = _make_endstop(trigger_value=True)
@@ -2250,7 +2253,21 @@ class TestAdcCallback:
         assert buf.trailing_state is False
 
     def test_has_stepper_skips_direction_logic_entirely(self):
-        """When has_stepper=True, last_state/advance_state/trailing_state
+        """When has_stepper=True, enable=True and correction_running=False,
+        last_state/advance_state/trailing_state
+        are left untouched by _adc_callback (the correction loop owns them)."""
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=True)
+        buf.enable = True  # avoid the lazy-timer-start branch complicating this
+        buf.last_state = "untouched"
+        buf.advance_state = "untouched"
+        buf._adc_callback(1.0, 0.1)  # would be "advancing" if has_stepper were False
+        assert buf.last_state == "untouched"
+        assert buf.advance_state == "untouched"
+    
+    def test_has_stepper_does_not_skip_logic(self):
+        """When has_stepper=True, enable=True and correction_running=False,
+        last_state/advance_state/trailing_state
         are left untouched by _adc_callback (the correction loop owns them)."""
         buf, afc, reactor, printer = _make_fps_buffer()
         buf._lane_has_rotation_control = MagicMock(return_value=True)
@@ -2258,8 +2275,9 @@ class TestAdcCallback:
         buf.last_state = "untouched"
         buf.advance_state = "untouched"
         buf._adc_callback(1.0, 0.1)  # would be "advancing" if has_stepper were False
-        assert buf.last_state == "untouched"
-        assert buf.advance_state == "untouched"
+        assert buf.last_state == "Advancing"
+        assert buf.advance_state == False
+        assert buf.trailing_state == True
 
 
 class TestUpdateVirtualSensors:
@@ -2705,11 +2723,25 @@ class TestCorrectionEventFaultDetection:
         buf.smoothed_fps = 0.95  # above high_point
         buf._correction_event(100.0)
         buf.update_filament_error_pos.assert_not_called()
+    
+    def test_enabled_fault_detection_exactly_high_point_skips_update(self):
+        buf, afc, reactor, printer, lane = self._ready()
+        buf.fault_detection_enabled = MagicMock(return_value=True)
+        buf.smoothed_fps = 0.90  # above high_point
+        buf._correction_event(100.0)
+        buf.update_filament_error_pos.assert_not_called()
 
     def test_enabled_fault_detection_below_low_point_skips_update(self):
         buf, afc, reactor, printer, lane = self._ready()
         buf.fault_detection_enabled = MagicMock(return_value=True)
         buf.smoothed_fps = 0.05  # below low_point
+        buf._correction_event(100.0)
+        buf.update_filament_error_pos.assert_not_called()
+    
+    def test_enabled_fault_detection_exactly_low_point_skips_update(self):
+        buf, afc, reactor, printer, lane = self._ready()
+        buf.fault_detection_enabled = MagicMock(return_value=True)
+        buf.smoothed_fps = 0.1  # below low_point
         buf._correction_event(100.0)
         buf.update_filament_error_pos.assert_not_called()
 
@@ -3021,7 +3053,7 @@ class TestFPSEnableBuffer:
         lane.update_rotation_distance = MagicMock()
         buf._lane_has_rotation_control = MagicMock(return_value=True)
         buf.fault_detection_enabled = MagicMock(return_value=False)
-        buf._saved_multipliers["extruder"] = (lane.name, 1.08)
+        buf._saved_multipliers[("extruder", lane.name)] = (lane.name, 1.08)
         buf.set_multiplier = MagicMock()
         buf.logger = MagicMock()
         buf.enable_buffer(lane)
@@ -3156,7 +3188,7 @@ class TestFPSDisableBuffer:
         buf._last_multiplier = 1.09
         buf.logger = MagicMock()
         buf.disable_buffer()
-        assert buf._saved_multipliers["extruder"] == (lane.name, 1.09)
+        assert buf._saved_multipliers[("extruder", lane.name)] == (lane.name, 1.09)
         assert any(
             "saved multiplier 1.0900" in c.args[0]
             for c in buf.logger.debug.call_args_list)
@@ -3325,21 +3357,6 @@ class TestIsExtruding:
         buf._integral_last_extruder_pos = 10.0
         afc.function.get_extruder_pos = MagicMock(return_value=9.0)
         assert buf._is_extruding() is True
-
-    def test_debug_true_logs_diagnostic_line(self):
-        buf, afc, reactor, printer = _make_fps_buffer()
-        buf.debug = True
-        buf.logger = MagicMock()
-        buf.integral_extrusion_threshold = 0.5
-        buf._integral_last_extruder_pos = 10.0
-        afc.function.get_extruder_pos = MagicMock(return_value=10.5)
-        buf._is_extruding()
-        msg = buf.logger.debug.call_args[0][0]
-        assert "is_extruding" in msg
-        assert "pos=10.5000" in msg
-        assert "delta=0.5000" in msg
-        assert "threshold=0.5000" in msg
-        assert "result=True" in msg
 
     def test_debug_false_skips_diagnostic_line(self):
         buf, afc, reactor, printer = _make_fps_buffer()
@@ -3565,7 +3582,7 @@ class TestFPSCmdQueryBuffer:
         buf.logger = MagicMock()
         buf.cmd_QUERY_BUFFER(MagicMock())
         msg = buf.logger.info.call_args[0][0]
-        assert "buffer compressed - filament loaded" in msg
+        assert "buffer is compressed - increasing feed" in msg
 
     def test_trailing_state_message(self):
         buf, afc, reactor, printer = _make_fps_buffer()
@@ -3574,7 +3591,7 @@ class TestFPSCmdQueryBuffer:
         buf.logger = MagicMock()
         buf.cmd_QUERY_BUFFER(MagicMock())
         msg = buf.logger.info.call_args[0][0]
-        assert "buffer stretched - not feeding enough" in msg
+        assert "buffer is expanded - reducing feed" in msg
 
     def test_neutral_state_message(self):
         buf, afc, reactor, printer = _make_fps_buffer()

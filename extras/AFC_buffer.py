@@ -1088,7 +1088,9 @@ class AFCFPSBuffer(AFCBuffer):
             and not getattr(self, "_correction_running", False)):
             self.reactor.update_timer(self.correction_timer, self.reactor.NOW)
             self._correction_running = True
-        if not has_stepper:
+        correction_active = (self.enable and has_stepper
+                             and getattr(self, "_correction_running", False))
+        if (not correction_active):
             half_db = self.deadband / 2.0
             if self.smoothed_fps > self.set_point + half_db:
                 self.last_state = TRAILING_STATE_NAME
@@ -1118,10 +1120,8 @@ class AFCFPSBuffer(AFCBuffer):
         """
         Push buffer state into virtual filament sensors for GUI display.
 
-        The advance sensor reports filament present whenever the FPS reads
-        above low_point (any meaningful pressure = filament exists in buffer).
-        This prevents the indicator from going red during neutral state when
-        filament IS loaded but pressure is balanced.
+        The advance sensor reports filament present whenever the advance state is set.
+        The trailing sensor reports filament present whenever the trailing state is set.
         """
         try:
             if (hasattr(self, 'fila_adv')
@@ -1253,8 +1253,8 @@ class AFCFPSBuffer(AFCBuffer):
         # Update error position while correction is active; stop only when
         # stuck at an extreme despite correction (real clog/feed failure).
         if self.fault_detection_enabled():
-            if (reading <= self.high_point
-                and reading >= self.low_point):
+            if (reading < self.high_point
+                and reading > self.low_point):
                 self.update_filament_error_pos()
 
         self._update_virtual_sensors(eventtime)
@@ -1307,8 +1307,11 @@ class AFCFPSBuffer(AFCBuffer):
             # a different lane on this extruder means a new spool, start at 1.0.
             extruder_name = getattr(getattr(lane, 'extruder_obj', None),
                                     'th_extruder_name', None)
-            saved = self._saved_multipliers.get(extruder_name) if extruder_name else None
-            if saved is not None and saved[0] == lane.name and saved[1] != 1.0:
+            multiplier_key = (extruder_name, lane.name)
+            saved = self._saved_multipliers.get(multiplier_key)
+            if (saved is not None
+                and saved[0] == lane.name
+                and saved[1] != 1.0):
                 self.set_multiplier(saved[1])
                 self.logger.debug(
                     f"{self.name} restored multiplier {saved[1]:.4f} "
@@ -1352,7 +1355,7 @@ class AFCFPSBuffer(AFCBuffer):
             extruder_name = getattr(getattr(self.current_lane, 'extruder_obj', None),
                                     'th_extruder_name', None)
             if extruder_name:
-                self._saved_multipliers[extruder_name] = (
+                self._saved_multipliers[(extruder_name, self.current_lane.name)] = (
                     self.current_lane.name, self._last_multiplier
                 )
                 self.logger.debug(
@@ -1409,12 +1412,7 @@ class AFCFPSBuffer(AFCBuffer):
             return False  # first sample this session -- no delta to compare yet
 
         result = abs(current_pos - previous) >= self.integral_extrusion_threshold
-        if self.debug:
-            self.logger.debug(
-                "FPS_buffer {}: is_extruding pos={:.4f} delta={:.4f} threshold={:.4f} "
-                "result={}".format(
-                    self.name, current_pos, current_pos - previous,
-                    self.integral_extrusion_threshold, result))
+
         return result
 
     def reset_multiplier(self) -> None:
@@ -1499,8 +1497,8 @@ class AFCFPSBuffer(AFCBuffer):
         `QUERY_BUFFER BUFFER=FPS_Buffer1`
         """
         state_mapping = {
-            ADVANCING_STATE_NAME: ' (buffer compressed - filament loaded)',
-            TRAILING_STATE_NAME: ' (buffer stretched - not feeding enough)',
+            ADVANCING_STATE_NAME: ' (buffer is compressed - increasing feed)',
+            TRAILING_STATE_NAME: ' (buffer is expanded - reducing feed)',
             NEUTRAL_STATE_NAME: ' (buffer is centered)',
         }
 
@@ -1532,11 +1530,11 @@ class AFCFPSBuffer(AFCBuffer):
 
         Usage
         -----
-        `SET_FPS_SET_POINT BUFFER=<name> SET_POINT=<0.1-0.9> [DEADBAND=<0.0-0.6>]`
+        `AFC_SET_FPS_SET_POINT BUFFER=<name> SET_POINT=<0.1-0.9> [DEADBAND=<0.0-0.6>]`
 
         Example
         -----
-        `SET_FPS_SET_POINT BUFFER=FPS_Buffer1 SET_POINT=0.1 DEADBAND=0.5`
+        `AFC_SET_FPS_SET_POINT BUFFER=FPS_Buffer1 SET_POINT=0.1 DEADBAND=0.5`
         """
         new_set_point = gcmd.get_float('SET_POINT', self.set_point, minval=0.1, maxval=0.9)
         new_deadband = gcmd.get_float('DEADBAND', self.deadband, minval=0.0, maxval=0.6)
