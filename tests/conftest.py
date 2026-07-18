@@ -482,7 +482,7 @@ class MockPrinter:
             "gcode": self._gcode,
         }
         magic_mock_objects = (
-            "webhooks", "toolhead", "heaters", "pins", "buttons", "extruder"
+            "webhooks", "toolhead", "heaters", "pins", "buttons", "extruder", "mcu"
         )
         val = default
         if name in mapping:
@@ -556,6 +556,8 @@ class MockConfig:
 
     def getboolean(self, option, default=False, **kwargs):
         val = self._values.get(option, default)
+        if val is None:
+            return None
         if isinstance(val, bool):
             return val
         if isinstance(val, str):
