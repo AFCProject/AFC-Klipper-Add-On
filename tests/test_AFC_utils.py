@@ -908,7 +908,7 @@ class TestVirtualFilamentSensor:
         gcmd = MagicMock()
         gcmd.get_int = MagicMock(return_value=1)
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
-        gcmd.get_int.assert_called_once_with("ENABLE", 1)
+        gcmd.get_int.assert_called_once_with("ENABLE", 1, minval=0, maxval=1)
         assert sensor.runout_helper.sensor_enabled is True
 
     def test_cmd_set_filament_sensor_disables(self):
