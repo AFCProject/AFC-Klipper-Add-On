@@ -2261,9 +2261,11 @@ class TestAdcCallback:
         buf.enable = True  # avoid the lazy-timer-start branch complicating this
         buf.last_state = "untouched"
         buf.advance_state = "untouched"
+        buf.trailing_state = "untouched"
         buf._adc_callback(1.0, 0.1)  # would be "advancing" if has_stepper were False
         assert buf.last_state == "untouched"
         assert buf.advance_state == "untouched"
+        assert buf.trailing_state == "untouched"
     
     def test_has_stepper_does_not_skip_logic(self):
         """When has_stepper=True, enable=True and correction_running=False,

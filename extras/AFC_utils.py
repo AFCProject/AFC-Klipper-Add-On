@@ -34,7 +34,8 @@ if TYPE_CHECKING:
     from extras.filament_switch_sensor import SwitchSensor
     from klippy import Printer
     from reactor import SelectReactor as Reactor
-    from gcode import GCodeCommand
+    from gcode import GCodeCommand, GCodeDispatch
+    from extras.pause_resume import PauseResume
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -137,6 +138,7 @@ class DebounceButton:
     def __init__(self, config, filament_sensor):
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
+        self.gcode: GCodeDispatch = self.printer.lookup_object('gcode')
         sig = inspect.signature(filament_sensor.runout_helper.note_filament_present)
         # Saving reference to normal function
         self._old_note_filament_present = filament_sensor.runout_helper.note_filament_present
@@ -185,14 +187,18 @@ class DebounceButton:
         self.logical_state = self.physical_state
         # Kalico is different from klipper and eventtime is not passed in
         try:
-            self.button_action(is_filament_present=self.logical_state)
-        except:
             try:
-                # Catching error here since klipper can also throw and error and don't want this
-                # to actually crash klipper
+                self.button_action(is_filament_present=self.logical_state)
+            except TypeError:
                 self.button_action(eventtime, self.logical_state)
-            except Exception:
-                pass
+        # Catching error here since klipper can also throw and error and don't want this
+        # to actually crash klipper
+        except Exception:
+            # Last ditch effort to call klipper pause since something bad happened
+            pause_resume: PauseResume = self.printer.lookup_object("pause_resume")
+            pause_cmd: GCodeCommand = self.gcode.create_gcode_command("PAUSE", "PAUSE", {})
+            # Calling Pause command directly since user/plugins could have overridden this command
+            pause_resume.cmd_PAUSE(pause_cmd)
 
 
 class VirtualRunoutHelper:
@@ -209,6 +215,7 @@ class VirtualRunoutHelper:
         :param enable_runout: Whether runout callbacks are enabled.
         """
         self.printer: Printer = printer
+        self.gcode: GCodeDispatch = self.printer.lookup_object('gcode')
         self._reactor: Reactor = printer.get_reactor()
         self.name: str = name
         self.runout_callback: Optional[Callable] = runout_cb
@@ -247,14 +254,18 @@ class VirtualRunoutHelper:
             and callable(self.runout_callback)
             and is_printing):
             try:
-                self.runout_callback(eventtime)
-            except Exception:
                 try:
-                    # Catching error here since klipper can also throw and error and don't want this
-                    # to actually crash klipper
+                    self.runout_callback(eventtime)
+                except TypeError:
                     self.runout_callback(eventtime=eventtime)
-                except Exception:
-                    pass
+            # Catching error here since klipper can also throw and error and don't want this
+            # to actually crash klipper
+            except Exception:
+                # Last ditch effort to call klipper pause since something bad happened
+                pause_resume: PauseResume = self.printer.lookup_object("pause_resume")
+                pause_cmd: GCodeCommand = self.gcode.create_gcode_command("PAUSE", "PAUSE", {})
+                # Calling Pause command directly since user/plugins could have overridden this command
+                pause_resume.cmd_PAUSE(pause_cmd)
 
     def get_status(self, _eventtime: Optional[float] = None) -> dict:
         """
@@ -352,7 +363,7 @@ class VirtualFilamentSensor:
 
         :param gcmd: The parsed G-code command.
         """
-        self.runout_helper.sensor_enabled = bool(gcmd.get_int("ENABLE", 1))
+        self.runout_helper.sensor_enabled = bool(gcmd.get_int("ENABLE", 1, minval=0, maxval=1))
 
 class AFC_moonraker:
     """

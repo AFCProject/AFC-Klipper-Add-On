@@ -51,7 +51,6 @@ class TestCheckAndReturn:
 
 
 # ── section_in_config ─────────────────────────────────────────────────────────
-
 class TestSectionInConfig:
     def _make_config(self, *sections):
         """Return a MockConfig whose fileconfig contains the given sections."""
@@ -84,7 +83,6 @@ class TestSectionInConfig:
 
 
 # ── DebounceButton ────────────────────────────────────────────────────────────
-
 class TestDebounceButton:
     """DebounceButton wraps a filament sensor's note_filament_present method."""
 
@@ -221,13 +219,14 @@ class TestDebounceButton:
         btn.button_action.assert_not_called()
 
     def test_debounce_event_falls_back_to_positional_args(self):
-        """Covers lines 169-170: button_action that doesn't accept kwargs → except branch."""
+        """button_action that doesn't accept kwargs → except branch."""
         cfg = self._make_config(debounce_delay=0.0)
         sensor = self._make_filament_sensor(["self", "eventtime", "state"])
         btn = DebounceButton(cfg, sensor)
         btn.logical_state = False
         btn.physical_state = True
         btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
 
         # A callback that only accepts positional args → raises Exception on kwargs call
         calls = []
@@ -238,6 +237,29 @@ class TestDebounceButton:
         btn._debounce_event(101.0)
         assert len(calls) == 1
         assert calls[0] == (101.0, True)
+        pause_resume.cmd_PAUSE.assert_not_called()
+    
+    def test_debounce_event_falls_back_to_positional_args(self):
+        """button_action that doesn't accept kwargs → except branch."""
+        cfg = self._make_config(debounce_delay=0.0)
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn.logical_state = False
+        btn.physical_state = True
+        btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
+
+        # A callback that only accepts positional args → raises Exception on kwargs call
+        calls = []
+
+        def positional_only(eventtime, state):
+            calls.append((eventtime, state))
+
+        btn.button_action = positional_only
+        btn._debounce_event(101.0)
+        assert len(calls) == 1
+        assert calls[0] == (101.0, True)
+        pause_resume.cmd_PAUSE.assert_not_called()
     
     def test_debounce_event_falls_back_to_positional_args_raise_exception(self):
         """Covers lines 169-170: button_action that doesn't accept kwargs → except branch."""
@@ -247,6 +269,7 @@ class TestDebounceButton:
         btn.logical_state = False
         btn.physical_state = True
         btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
 
         # A callback that only accepts positional args → raises Exception on kwargs call
         calls = []
@@ -259,10 +282,10 @@ class TestDebounceButton:
         btn._debounce_event(101.0)
         assert len(calls) == 1
         assert calls[0] == (101.0, True)
+        pause_resume.cmd_PAUSE.assert_called_once()
 
 
 # ── AFC_moonraker ─────────────────────────────────────────────────────────────
-
 class TestAFCMoonraker:
     def _make_moonraker(self, host="http://localhost", port="7125"):
         from tests.conftest import MockLogger
@@ -594,9 +617,7 @@ class TestAFCMoonraker:
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) >= 1
 
-
 # ── VirtualRunoutHelper ─────────────────────────────────────────────────────
-
 class TestVirtualRunoutHelper:
     """VirtualRunoutHelper is the minimal runout-tracking backend used by
     VirtualFilamentSensor (FPS_PSF virtual sensors)."""
@@ -682,23 +703,26 @@ class TestVirtualRunoutHelper:
             calls.append(eventtime)
 
         helper, _ = self._make_helper(runout_cb=picky_callback, enable_runout=True)
+        pause_resume = helper.printer.lookup_object("pause_resume")
         idle_to = helper.printer.lookup_object("idle_timeout")
         idle_to.get_status.return_value = {"state": "Printing"}
         helper.note_filament_present(100.0, True)
         helper.note_filament_present(101.0, False)
         assert calls == [101.0]
         assert helper.filament_present is False
+        pause_resume.cmd_PAUSE.assert_not_called()
 
     def test_callback_exception_on_both(self):
         failing_callback = MagicMock()
         failing_callback.side_effect = [
-            Exception("Raise Error 1"),
+            TypeError("Raise Type Error 1"),
             Exception("Raise Error 2")
         ]
         helper, _ = self._make_helper(
             runout_cb=failing_callback, enable_runout=True)
         idle_to = helper.printer.lookup_object("idle_timeout")
         idle_to.get_status.return_value = {"state": "Printing"}
+        pause_resume = helper.printer.lookup_object("pause_resume")
         # Setting filament present
         helper.note_filament_present(100.0, True)
         helper.runout_callback.assert_not_called()
@@ -712,6 +736,7 @@ class TestVirtualRunoutHelper:
         assert first_call.kwargs == {}
         assert second_call.args == ()
         assert second_call.kwargs == {"eventtime": 101.0}
+        pause_resume.cmd_PAUSE.assert_called_once()
     
     def test_callback_does_not_try_second_time(self):
         failing_callback = MagicMock()

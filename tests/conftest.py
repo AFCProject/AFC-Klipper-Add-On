@@ -319,6 +319,9 @@ class MockGcode:
     def respond_raw(self, msg):
         pass
 
+    def create_gcode_command(self, command, commandline, params):
+        return MagicMock()
+
 
 class MockLogger:
     """Lightweight stand-in for AFC_logger.AFC_logger."""
