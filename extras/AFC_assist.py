@@ -641,7 +641,7 @@ class Espooler:
         self.set_enable_pin(print_time, 1)
         self.afc_motor_rwd._set_pin(print_time, value)
 
-    def assist(self, value):
+    def assist(self, value: int):
         """
         This function is for setting espooler FWD/RWD/EN signals. FWD/RWD is dependent on the value that is
         passed in.  < 0 for RWD, > 0 for FWD and 0 for disable
@@ -665,13 +665,14 @@ class Espooler:
             self.stats.direction = EspoolerDir.FWD
             self.stats.start_time = print_time
             assist_motor=self.afc_motor_fwd
-        elif value == 0:
+        else:
             self.break_espooler()
             self.stats.end_time = print_time
             return
 
         value /= assist_motor.scale
-        if not assist_motor.is_pwm and value not in [0., 1.]:
+        if (not assist_motor.is_pwm
+            and value not in [0., 1.]):
             if value > 0: value = 1
         if self.afc_motor_enb is not None:
             enable = 1 if value != 0 else 0
