@@ -974,6 +974,7 @@ def _make_ext_for_tool_start(name="extruder"):
     tc_lane._load_state   = False
     tc_lane.prep_state    = False
     tc_lane._afc_prep_done = False
+    tc_lane.custom_load_cmd = None
     ext.tc_lane           = tc_lane
 
     return ext
@@ -1008,6 +1009,12 @@ class TestToolStartCallback_StateUnchanged:
     def test_load_unload_sequence_not_called_when_state_unchanged(self):
         ext = _make_ext_for_tool_start()
         ext.tool_start_state = False
+        ext.tool_start_callback(100.0, False)
+        ext.load_unload_sequence.assert_not_called()
+    
+    def test_load_unload_sequence_not_called_when_lane_custom_load_cmd_is_not_none(self):
+        ext = _make_ext_for_tool_start()
+        ext.tc_lane.custom_load_cmd = "CUSTOM_COMMAND"
         ext.tool_start_callback(100.0, False)
         ext.load_unload_sequence.assert_not_called()
 

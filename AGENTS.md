@@ -13,9 +13,41 @@
    surrounding file's conventions rather than imposing a different style.
 - **Correct typing** — including things like `Optional[float]` instead of
    `float = None`.
+- **Use f-strings, not `str.format()`** — `f"Lane {self.name}"` rather than
+   `"Lane {}".format(self.name)`.
+- **Format error/exception strings before raising, not inline** — build the
+   message into a variable first, then raise it as its own statement, rather
+   than constructing the string inside the `raise` call.
+
+   ```python
+   # Bad
+   raise error(f"Lane {self.name}: [filament_feed {self.feed_module}] not found")
+
+   # Good
+   error_str = f"Lane {self.name}: [filament_feed {self.feed_module}] not found"
+   raise error(error_str)
+   ```
 - **Keep comments short and succinct** — a sentence or two at most. Comments
    still need to make sense to the developer reading them, just don't let
    them turn into paragraphs.
+- **Docstring every method** — a short summary line, then a `:param name:`
+   line for each parameter and a `:return type:` (or `:return:`) line for any
+   non-`None` return value, matching the Sphinx-style convention already used
+   throughout `extras/` (e.g. `AFC_lane.py`, `AFC_assist.py`). Skip the
+   `:return:` line when the method returns `None`. A method that raises uses
+   a plain `raises error if ...` line rather than a `:raises:` tag, matching
+   existing convention.
+
+   ```python
+   def _feed_channel_present(self):
+       """
+       Checks whether the feeder currently reports filament present in this
+       lane's channel.
+
+       :return bool: True when the feeder reports filament present, False if
+                     absent, not found, or the feeder can't be queried
+       """
+   ```
 - **All new code needs unit tests** — any code added must come with unit
    tests that follow the Unit Test Rules below.
 
@@ -44,6 +76,15 @@
    for something like `if A and B:`, there need to be tests proving A alone
    can't satisfy the condition and B alone can't either, not just one test
    where both happen to be true together.
+- **One test class per method** — every method on the class under test needs
+   its own dedicated test class (or clearly delimited section for
+   module-level functions), named after the method
+   (`_apply_staged` → `TestAFCU1LaneApplyStaged`). This makes it possible to
+   scan a test file and immediately see which methods have no coverage at
+   all, rather than relying on line/branch coverage tooling alone — a method
+   invoked only as a side effect of testing a caller can hit 100% branch
+   coverage while never being independently verified. When a method gains a
+   new method (or a class gains one), add its test class in the same change.
 - **No `__new__` bypass for construction** — build test objects through the
    real `__init__` (mocking dependencies like config/printer/reactor as
    needed), rather than using `SomeClass.__new__(SomeClass)` and hand-setting

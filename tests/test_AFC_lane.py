@@ -12,7 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 
 from extras.AFC_lane import (
@@ -22,6 +22,7 @@ from extras.AFC_lane import (
     AFCLaneState,
     AFCHomingPoints,
     AFCLane,
+    AFCU1Lane,
     EXCLUDE_TYPES,
     AFCMoveWarning
 )
@@ -1717,3 +1718,483 @@ class TestPerformInfiniteRunout:
         assert afc.lanes.get.call_count == 2
         assert lane2.status is AFCLaneState.INFINITE_RUNOUT
         lane.gcode.run_script_from_command.assert_not_called()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AFCU1Lane — external-feeder standalone lane (e.g. U1 side feeders)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# AFCU1Lane mirrors an external `[filament_feed left|right]` module's per-channel
+# filament presence into the lane's prep_state/_load_state so AFC reads the lane
+# as loaded-and-ready. Instances below are built through the real __init__ chain
+# (MockConfig/MockPrinter/MockAFC). Using "AFC_stepper" as the config section
+# name makes AFCLane.__init__ take its early-return path (no stepper/hub/buffer/
+# extruder pins configured), which keeps construction lightweight while still
+# running every line of real constructor logic AFCU1Lane depends on.
+
+from tests.conftest import MockReactor, MockConfig, MockPrinter
+
+
+def _make_u1_config(feed_module="left", feed_channel="extruder1",
+                    fullname="AFC_stepper lane1", extra_values=None):
+    """Build a MockConfig wired for AFCU1Lane's real __init__ chain."""
+    values = {"unit": "Turtle_1:0"}
+    if feed_module is not None:
+        values["feed_module"] = feed_module
+    if feed_channel is not None:
+        values["feed_channel"] = feed_channel
+    if extra_values:
+        values.update(extra_values)
+    afc = MockAFC()
+    afc.load_to_hub = False
+    printer = MockPrinter(afc=afc)
+    return MockConfig(name=fullname, printer=printer, values=values)
+
+
+def _make_afcu1_lane(feed_module="left", feed_channel="extruder1",
+                     fullname="AFC_stepper lane1", extra_values=None):
+    """Build an AFCU1Lane through its real __init__ chain."""
+    config = _make_u1_config(feed_module, feed_channel, fullname, extra_values)
+    return AFCU1Lane(config)
+
+
+# ── __init__ ──────────────────────────────────────────────────────────────────
+
+class TestAFCU1LaneInit:
+    def test_feed_module_read_from_config(self):
+        lane = _make_afcu1_lane(feed_module="left", feed_channel="e1")
+        assert lane.feed_module == "left"
+
+    def test_feed_channel_read_from_config(self):
+        lane = _make_afcu1_lane(feed_module="right", feed_channel="e2")
+        assert lane.feed_channel == "e2"
+
+    def test_feed_obj_starts_none(self):
+        lane = _make_afcu1_lane(feed_module="left", feed_channel="e1")
+        assert lane._feed_obj is None
+
+    def test_feed_ch_index_starts_none(self):
+        lane = _make_afcu1_lane(feed_module="left", feed_channel="e1")
+        assert lane._feed_ch_index is None
+
+    def test_feed_staged_last_starts_none(self):
+        lane = _make_afcu1_lane(feed_module="left", feed_channel="e1")
+        assert lane._feed_staged_last is None
+
+    def test_load_state_forced_false_when_feed_configured(self):
+        """A fully-configured feeder lane is driven by the feeder, so the
+        (absent) load switch state is seeded False instead of the AFCLane
+        default of True (no load pin configured)."""
+        lane = _make_afcu1_lane(feed_module="left", feed_channel="e1")
+        assert lane._load_state is False
+
+    def test_feed_module_none_when_unconfigured(self):
+        lane = _make_afcu1_lane(feed_module=None, feed_channel=None)
+        assert lane.feed_module is None
+
+    def test_feed_channel_none_when_unconfigured(self):
+        lane = _make_afcu1_lane(feed_module=None, feed_channel=None)
+        assert lane.feed_channel is None
+
+    def test_load_state_default_true_when_fully_unconfigured(self):
+        """Baseline AFCLane behavior (no load switch pin) is untouched when
+        neither feed_module nor feed_channel is set."""
+        lane = _make_afcu1_lane(feed_module=None, feed_channel=None)
+        assert lane._load_state is True
+
+    def test_load_state_not_overridden_when_only_module_configured(self):
+        """feed_module alone must not satisfy the guard."""
+        lane = _make_afcu1_lane(feed_module="left", feed_channel=None)
+        assert lane._load_state is True
+
+    def test_load_state_not_overridden_when_only_channel_configured(self):
+        """feed_channel alone must not satisfy the guard."""
+        lane = _make_afcu1_lane(feed_module=None, feed_channel="e1")
+        assert lane._load_state is True
+
+    def test_registers_port_event_handler_when_feed_configured(self):
+        lane = _make_afcu1_lane(feed_module="left", feed_channel="e1")
+        assert lane.printer._event_handlers["filament_feed:port"] == [lane._feed_port_event]
+
+    def test_no_port_event_handler_when_fully_unconfigured(self):
+        lane = _make_afcu1_lane(feed_module=None, feed_channel=None)
+        assert "filament_feed:port" not in lane.printer._event_handlers
+
+    def test_no_port_event_handler_when_only_module_configured(self):
+        lane = _make_afcu1_lane(feed_module="left", feed_channel=None)
+        assert "filament_feed:port" not in lane.printer._event_handlers
+
+    def test_no_port_event_handler_when_only_channel_configured(self):
+        lane = _make_afcu1_lane(feed_module=None, feed_channel="e1")
+        assert "filament_feed:port" not in lane.printer._event_handlers
+
+
+# ── _apply_staged ─────────────────────────────────────────────────────────────
+
+class TestAFCU1LaneApplyStaged:
+    def test_rising_edge_marks_loaded(self):
+        lane = _make_afcu1_lane()
+        lane._feed_staged_last = False
+        lane._apply_staged(True)
+        assert lane.prep_state is True
+        assert lane._load_state is True
+
+    def test_rising_edge_updates_last(self):
+        lane = _make_afcu1_lane()
+        lane._feed_staged_last = False
+        lane._apply_staged(True)
+        assert lane._feed_staged_last is True
+
+    def test_rising_edge_persists(self):
+        lane = _make_afcu1_lane()
+        lane._feed_staged_last = False
+        lane._apply_staged(True)
+        lane.afc.save_vars.assert_called_once()
+
+    def test_falling_edge_marks_empty(self):
+        lane = _make_afcu1_lane()
+        lane._feed_staged_last = True
+        lane.prep_state = True
+        lane._load_state = True
+        lane._apply_staged(False)
+        assert lane.prep_state is False
+        assert lane._load_state is False
+
+    def test_no_change_does_not_persist(self):
+        """Re-applying the same state must not write vars again."""
+        lane = _make_afcu1_lane()
+        lane._feed_staged_last = True
+        lane._apply_staged(True)
+        lane.afc.save_vars.assert_not_called()
+
+    def test_no_change_leaves_last_untouched(self):
+        lane = _make_afcu1_lane()
+        lane._feed_staged_last = True
+        lane._apply_staged(True)
+        assert lane._feed_staged_last is True
+
+    def test_first_apply_from_none_persists(self):
+        """Initial state is None, so even a False first reading is an edge."""
+        lane = _make_afcu1_lane()
+        lane._feed_staged_last = None
+        lane._apply_staged(False)
+        assert lane._feed_staged_last is False
+        lane.afc.save_vars.assert_called_once()
+
+
+# ── _feed_channel_present ─────────────────────────────────────────────────────
+
+class TestAFCU1LaneFeedChannelPresent:
+    def test_true_when_channel_detected(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {
+            "extruder1": {"filament_detected": True},
+        }
+        assert lane._feed_channel_present() is True
+
+    def test_false_when_channel_not_detected(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {
+            "extruder1": {"filament_detected": False},
+        }
+        assert lane._feed_channel_present() is False
+
+    def test_false_when_channel_missing(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {"extruder0": {"filament_detected": True}}
+        assert lane._feed_channel_present() is False
+
+    def test_false_when_detected_key_absent(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {"extruder1": {}}
+        assert lane._feed_channel_present() is False
+
+    def test_non_true_value_is_false(self):
+        """Only a literal True counts as present."""
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {"extruder1": {"filament_detected": 1}}
+        assert lane._feed_channel_present() is False
+
+    def test_false_when_get_status_raises(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.side_effect = RuntimeError("boom")
+        assert lane._feed_channel_present() is False
+
+    def test_false_when_feed_obj_none(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = None
+        assert lane._feed_channel_present() is False
+
+    def test_queries_status_at_current_monotonic(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {"extruder1": {"filament_detected": True}}
+        lane._feed_channel_present()
+        lane._feed_obj.get_status.assert_called_once_with(lane.reactor.monotonic())
+
+
+# ── _feed_reevaluate ──────────────────────────────────────────────────────────
+
+class TestAFCU1LaneFeedReevaluate:
+    """_feed_reevaluate is _feed_channel_present() piped straight into
+    _apply_staged(); exercised end-to-end via the real feeder-object contract
+    rather than mocking either sub-method, so the assertions prove the actual
+    prep_state/_load_state outcome, not just that some method was invoked."""
+
+    def test_present_marks_loaded(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {"extruder1": {"filament_detected": True}}
+        lane._feed_staged_last = False
+        lane._feed_reevaluate()
+        assert lane.prep_state is True
+        assert lane._load_state is True
+
+    def test_absent_marks_empty(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = MagicMock()
+        lane._feed_obj.get_status.return_value = {"extruder1": {"filament_detected": False}}
+        lane._feed_staged_last = True
+        lane.prep_state = True
+        lane._load_state = True
+        lane._feed_reevaluate()
+        assert lane.prep_state is False
+        assert lane._load_state is False
+
+    def test_no_feed_obj_marks_empty(self):
+        """A missing feeder object is treated as absent (defensive default)."""
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_obj = None
+        lane._feed_staged_last = True
+        lane.prep_state = True
+        lane._load_state = True
+        lane._feed_reevaluate()
+        assert lane.prep_state is False
+        assert lane._load_state is False
+
+
+# ── _feed_port_event ──────────────────────────────────────────────────────────
+
+class TestAFCU1LaneFeedPortEvent:
+    """_feed_port_event filters by channel index, then trusts the event's own
+    `detected` flag directly (no _feed_obj lookup — deliberately, so the
+    handler works even before _handle_ready has set _feed_obj up; see
+    TestAFCU1LaneEventBeforeReady). Tests assert on real prep_state/_load_state
+    outcomes so each would fail if the index guard let the wrong event
+    through or blocked the right one."""
+
+    def test_applies_when_index_matches(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_ch_index = 1
+        lane._feed_staged_last = False
+        lane._feed_port_event(1, True)
+        assert lane.prep_state is True
+        assert lane._load_state is True
+        assert lane._feed_staged_last is True
+
+    def test_ignores_when_index_differs(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_ch_index = 1
+        lane._feed_staged_last = False
+        lane.prep_state = False
+        lane._load_state = False
+        lane._feed_port_event(0, True)
+        assert lane.prep_state is False
+        assert lane._load_state is False
+        assert lane._feed_staged_last is False
+        lane.afc.save_vars.assert_not_called()
+
+    def test_applies_when_index_unknown(self):
+        """A None channel index means we can't filter, so every event applies."""
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_ch_index = None
+        lane._feed_staged_last = True
+        lane.prep_state = True
+        lane._load_state = True
+        lane._feed_port_event(5, False)
+        assert lane.prep_state is False
+        assert lane._load_state is False
+        assert lane._feed_staged_last is False
+
+    def test_passes_detected_true_through(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_ch_index = 2
+        lane._feed_staged_last = False
+        lane._feed_port_event(2, True)
+        assert lane.prep_state is True
+        assert lane._load_state is True
+
+    def test_passes_detected_false_through(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_ch_index = 2
+        lane._feed_staged_last = True
+        lane.prep_state = True
+        lane._load_state = True
+        lane._feed_port_event(2, False)
+        assert lane.prep_state is False
+        assert lane._load_state is False
+
+    def test_logs_debug_message_when_applied(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_ch_index = 1
+        lane._feed_staged_last = False
+        lane._feed_port_event(1, True)
+        assert lane.logger.messages == [("debug", f"AFCU1Lane: feed_port_event: {lane.name} True")]
+
+    def test_no_debug_log_when_index_differs(self):
+        """A filtered-out event must return before the log call."""
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane._feed_ch_index = 1
+        lane._feed_port_event(0, True)
+        assert lane.logger.messages == []
+
+
+# ── _handle_ready ─────────────────────────────────────────────────────────────
+
+class TestAFCU1LaneHandleReady:
+    """_handle_ready is exercised for real, including the AFCLane base-class
+    portion (super()._handle_ready()) — the feeder module and AFC_extruder
+    lookups are injected via MockPrinter._objects, the same pattern other
+    AFC test files already use for wiring lookup_object() dependencies."""
+
+    def _ready_lane(self, feed_module="left", feed_channel="extruder1"):
+        lane = _make_afcu1_lane(feed_module=feed_module, feed_channel=feed_channel)
+        lane.unit_obj = MagicMock()  # normally set later via handle_unit_connect
+        return lane
+
+    def _register_feeder(self, lane, detected=False, channel=None):
+        channel = channel or lane.feed_channel
+        feeder = MagicMock()
+        feeder.get_status.return_value = {channel: {"filament_detected": detected}}
+        lane.printer._objects[f"filament_feed {lane.feed_module}"] = feeder
+        return feeder
+
+    def test_skips_wiring_when_not_configured(self):
+        lane = self._ready_lane(feed_module=None, feed_channel=None)
+        lane._handle_ready()
+        assert lane._feed_obj is None
+        assert "filament_feed:port" not in lane.printer._event_handlers
+
+    def test_base_handle_ready_runs(self):
+        """super()._handle_ready() actually executes: with no espooler motor
+        pins configured it logs instead of starting a stats timer."""
+        lane = self._ready_lane()
+        self._register_feeder(lane)
+        lane._handle_ready()
+        assert ("info", "Not starting timer for lane1") in lane.logger.messages
+
+    def test_raises_when_feeder_missing(self):
+        lane = self._ready_lane()
+        with pytest.raises(Exception) as exc:
+            lane._handle_ready()
+        assert lane.name in str(exc.value)
+
+    def test_raw_channel_key_kept_as_is(self):
+        lane = self._ready_lane(feed_channel="extruder2")
+        self._register_feeder(lane)
+        lane._handle_ready()
+        assert lane.feed_channel == "extruder2"
+
+    def test_raw_channel_index_derived(self):
+        lane = self._ready_lane(feed_channel="extruder2")
+        self._register_feeder(lane)
+        lane._handle_ready()
+        assert lane._feed_ch_index == 2
+
+    def test_afc_extruder_name_resolved_via_extruder_index(self):
+        """A channel given as an AFC extruder name resolves to 'extruder<index>'
+        using the toolhead extruder's extruder_index."""
+        lane = self._ready_lane(feed_channel="e3")
+        ext_obj = MagicMock()
+        ext_obj.toolhead_extruder.extruder_index = 3
+        lane.printer._objects["AFC_extruder e3"] = ext_obj
+        self._register_feeder(lane, channel="extruder3")
+        lane._handle_ready()
+        assert lane.feed_channel == "extruder3"
+        assert lane._feed_ch_index == 3
+
+    def test_afc_extruder_name_resolved_via_th_name_fallback(self):
+        """When extruder_index is None, fall back to the th_extruder_name suffix."""
+        lane = self._ready_lane(feed_channel="e2")
+        ext_obj = MagicMock()
+        ext_obj.toolhead_extruder.extruder_index = None
+        ext_obj.th_extruder_name = "extruder2"
+        lane.printer._objects["AFC_extruder e2"] = ext_obj
+        self._register_feeder(lane, channel="extruder2")
+        lane._handle_ready()
+        assert lane.feed_channel == "extruder2"
+        assert lane._feed_ch_index == 2
+
+    def test_afc_extruder_name_th_name_e0_maps_to_extruder0(self):
+        """The base klipper extruder ('extruder', no digit) maps to channel 0."""
+        lane = self._ready_lane(feed_channel="e0")
+        ext_obj = MagicMock()
+        ext_obj.toolhead_extruder.extruder_index = None
+        ext_obj.th_extruder_name = "extruder"
+        lane.printer._objects["AFC_extruder e0"] = ext_obj
+        self._register_feeder(lane, channel="extruder0")
+        lane._handle_ready()
+        assert lane.feed_channel == "extruder0"
+        assert lane._feed_ch_index == 0
+
+    def test_registers_port_event_handler(self):
+        lane = self._ready_lane()
+        self._register_feeder(lane)
+        lane._handle_ready()
+        assert lane.printer._event_handlers["filament_feed:port"] == [lane._feed_port_event]
+
+    def test_seeds_state_true_from_current_feeder(self):
+        lane = self._ready_lane()
+        self._register_feeder(lane, detected=True)
+        lane._handle_ready()
+        assert lane.prep_state is True
+        assert lane._load_state is True
+
+    def test_seeds_state_false_from_current_feeder(self):
+        lane = self._ready_lane()
+        self._register_feeder(lane, detected=False)
+        lane._handle_ready()
+        assert lane.prep_state is False
+        assert lane._load_state is False
+
+    def test_feed_obj_stored(self):
+        lane = self._ready_lane()
+        feeder = self._register_feeder(lane)
+        lane._handle_ready()
+        assert lane._feed_obj is feeder
+
+
+# ── event ordering: __init__ registers before _handle_ready is ready ─────────
+#
+# __init__ subscribes _feed_port_event to "filament_feed:port" before
+# _handle_ready has set up _feed_obj/_feed_ch_index — event registration order
+# does not guarantee callback order, so the feeder could fire that event in
+# the window between construction and klippy:ready. _feed_port_event is
+# deliberately self-contained (it trusts the event's own `detected` flag
+# instead of re-querying self._feed_obj), so it never touches the
+# not-yet-set feeder object and resolves correctly even this early.
+
+class TestAFCU1LaneEventBeforeReady:
+    def test_premature_event_does_not_touch_feed_obj(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        assert lane._feed_obj is None
+        lane.printer.send_event("filament_feed:port", 0, True)  # must not raise
+        assert lane._feed_obj is None
+
+    def test_premature_event_true_resolves_loaded(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane.printer.send_event("filament_feed:port", 0, True)
+        assert lane.prep_state is True
+        assert lane._load_state is True
+
+    def test_premature_event_false_resolves_empty(self):
+        lane = _make_afcu1_lane(feed_channel="extruder1")
+        lane.printer.send_event("filament_feed:port", 0, False)
+        assert lane.prep_state is False
+        assert lane._load_state is False

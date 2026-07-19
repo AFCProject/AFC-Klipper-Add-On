@@ -2160,37 +2160,44 @@ class AFCLane:
         return response
 
 class AFCU1Lane(AFCLane):
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper):
+        """
+        Initializes lane and, for standalone U1 lanes with no AFC prep/load
+        switch, configures the external-feeder prep/load source and subscribes to
+        its presence events.
+
+        :param config: Klipper config object for this lane's config section
+        """
         super().__init__(config)
 
-        # ── External-feeder prep/load source (standalone lanes, e.g. U1) ──────
-        # A standalone/direct lane has no AFC prep or load switch; an external
-        # feeder module (the U1 `[filament_feed left|right]`) reports filament
-        # presence per channel via get_status. Point feed_module + feed_channel
-        # at that module's status channel and this lane mirrors the feeder's
-        # presence into prep_state/_load_state so AFC sees the lane as
-        # loaded-and-ready — TOOL_LOAD then proceeds and runs custom_load_cmd to
-        # drive the final leg to the toolhead sensor, instead of bailing out as
-        # an empty lane. We trust the feeder to stage the filament correctly, so
-        # a present channel is treated as ready with no wait for preload_finish.
-        self.feed_module  = config.get('feed_module', None)    # 'left' or 'right'
-        self.feed_channel = config.get('feed_channel', None)   # AFC extruder name ('e1') or raw feeder key ('extruder1')
+        # Standalone lanes (e.g. U1) have no AFC prep/load switch; an external
+        # feeder module ([filament_feed left|right]) reports filament presence
+        # per channel instead. feed_module/feed_channel point at that channel,
+        # and this lane mirrors the feeder's presence into prep_state/_load_state.
+
+        # 'left' or 'right'
+        self.feed_module  = config.get('feed_module', None)
+        # AFC extruder name ('e1') or raw feeder key ('extruder1')
+        self.feed_channel = config.get('feed_channel', None)
         self._feed_obj = None
         self._feed_ch_index = None       # int channel index the feeder event carries
         self._feed_staged_last = None
         if (self.feed_module
             and self.feed_channel):
-            # State is driven by the feeder, not the (absent) load switch.
-            self._load_state = False
+            self._load_state = False    # driven by the feeder, not a load switch
+            # Register event call back
+            self.printer.register_event_handler("filament_feed:port", self._feed_port_event)
 
     def _handle_ready(self):
+        """
+        Klippy ready callback. Runs base AFCLane setup, then resolves the
+        configured feeder module/channel and seeds prep/load state from its
+        current status.
+
+        raises error if feed_module/feed_channel are set but the
+        [filament_feed <feed_module>] object is not found
+        """
         super()._handle_ready()
-        # Wire up the external-feeder prep/load source for standalone lanes.
-        # The U1 feeder announces filament *presence* changes via the
-        # "filament_feed:port" event. We trust the feeder to stage the filament
-        # correctly, so both edges come straight from that event — presence
-        # marks the lane ready, absence marks it empty — with no stage-watch
-        # timer bridging up to preload_finish.
         if (self.feed_module
             and self.feed_channel):
             self._feed_obj = self.printer.lookup_object(f"filament_feed {self.feed_module}", None)
@@ -2198,13 +2205,10 @@ class AFCU1Lane(AFCLane):
                 error_str = (f"Lane {self.name}: [filament_feed {self.feed_module}] not found for "
                             "feed_module")
                 raise error(error_str)
-            # feed_channel may be given as an AFC extruder name (e.g. 'e2') or as
-            # the raw feeder channel key ('extruder2'). If it names an
-            # AFC_extruder, resolve to that extruder's physical channel key —
-            # 'extruder<index>', which is how filament_feed keys its channels
-            # (note e0 -> 'extruder0' even though its klipper extruder is
-            # 'extruder'). A raw key that isn't an AFC_extruder is used as-is.
-            ext_obj = self.printer.lookup_object( "AFC_extruder {}".format(self.feed_channel), None)
+            # feed_channel may name an AFC_extruder (e.g. 'e2'); resolve it to the
+            # feeder's channel key 'extruder<index>' (e0 -> 'extruder0'). A raw
+            # feeder key is used as-is.
+            ext_obj = self.printer.lookup_object(f"AFC_extruder {self.feed_channel}", None)
             if ext_obj is not None:
                 kext = getattr(ext_obj, 'toolhead_extruder', None)
                 idx = getattr(kext, 'extruder_index', None)
@@ -2212,19 +2216,17 @@ class AFCU1Lane(AFCLane):
                     suffix = getattr(ext_obj, 'th_extruder_name', 'extruder')[len('extruder'):]
                     idx = int(suffix) if suffix.isdigit() else 0
                 self.feed_channel = f"extruder{idx}"
-            # Integer channel index the feeder passes with its event.
             suffix = self.feed_channel[len('extruder'):]
             self._feed_ch_index = int(suffix) if suffix.isdigit() else None
-            self.printer.register_event_handler("filament_feed:port", self._feed_port_event)
-            # Seed from the current feeder state — no event fires for filament
-            # that is already present at startup.
-            self._feed_reevaluate()
+            self._feed_reevaluate()    # seed from current feeder state at startup
 
     def _feed_channel_present(self):
         """
-        True when the feeder reports filament present in this lane's channel.
-        We trust the feeder to have staged it correctly, so presence alone is
-        enough to read the lane as ready — regardless of channel_state.
+        Checks whether the feeder currently reports filament present in this
+        lane's channel.
+
+        :return bool: True when the feeder reports filament present, False if
+                      absent, not found, or the feeder can't be queried
         """
         try:
             ch = self._feed_obj.get_status(self.reactor.monotonic()).get(self.feed_channel, {})
@@ -2234,29 +2236,33 @@ class AFCU1Lane(AFCLane):
 
     def _feed_port_event(self, channel_index:int, detected: bool):
         """
-        Feeder presence-change event ("filament_feed:port"). Fires for any
-        channel, so filter to ours when we know our index; then re-evaluate our
-        own channel from get_status rather than trusting the event's args.
+        Callback for the feeder's "filament_feed:port" presence-change event.
+
+        :param channel_index: Feeder channel index the event fired for
+        :param detected: Presence flag from the event; unused, since presence
+                         is always re-read from the feeder's current status
         """
         if (self._feed_ch_index is not None
             and channel_index != self._feed_ch_index):
             return
+
+        self.afc.logger.debug(f"AFCU1Lane: feed_port_event: {self.name} {detected}")
         self._apply_staged(detected)
 
     def _feed_reevaluate(self):
         """
-        Reconcile mirrored prep/load state to the feeder channel right now:
-        present: mark loaded-and-ready
-        absent: mark empty.
+        Re-reads the feeder's current channel state and mirrors it into
+        prep_state/_load_state.
         """
         self._apply_staged(self._feed_channel_present())
 
     def _apply_staged(self, staged: bool):
         """
-        Edge-guarded mirror of the feeder's presence into prep/load.
-        On the rising edge TOOL_LOAD becomes valid (custom_load_cmd then drives
-        the final leg to the toolhead sensor); on the falling edge the lane
-        reads empty again. Persists only on an actual change.
+        Mirrors feeder presence into prep_state/_load_state, persisting the
+        change only when it differs from the last-applied state.
+
+        :param staged: True if the feeder channel currently has filament
+                       present, False if not
         """
         if staged != self._feed_staged_last:
             self._feed_staged_last = staged
@@ -2264,5 +2270,5 @@ class AFCU1Lane(AFCLane):
             self._load_state = staged
             self.afc.save_vars()
 
-def load_config_prefix(config):
+def load_config_prefix(config: ConfigWrapper):
     return AFCLane(config)
