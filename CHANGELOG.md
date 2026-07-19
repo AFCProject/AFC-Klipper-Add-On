@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-07-18]
+### Fixed
+- Issue where assist move would crash klipper if user didn't define `afc_motor_fwd` variable
+
 ## [2026-07-12]
 ### Added
 - Added FPS_PSF (Filament Pressure Sensor / Proportional Sync-Feedback) buffer support, including virtual filament sensors for Mainsail/Fluidd integration.
