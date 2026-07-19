@@ -2081,13 +2081,46 @@ class TestAFCU1LaneHandleReady:
         assert lane._feed_obj is None
         assert "filament_feed:port" not in lane.printer._event_handlers
 
+    def test_skips_wiring_when_only_feed_module_configured(self):
+        lane = self._ready_lane(feed_module="left", feed_channel=None)
+        lane._handle_ready()
+        assert lane._feed_obj is None
+        assert lane._feed_ch_index is None
+        assert "filament_feed:port" not in lane.printer._event_handlers
+
+    def test_skips_wiring_when_only_feed_channel_configured(self):
+        lane = self._ready_lane(feed_module=None, feed_channel="extruder1")
+        lane._handle_ready()
+        assert lane._feed_obj is None
+        assert lane._feed_ch_index is None
+        assert "filament_feed:port" not in lane.printer._event_handlers
+
+    def test_feed_ch_indx_none_when_feed_channel_not_have_digit(self):
+        lane = self._ready_lane(feed_channel="extruder")
+        ext_obj = MagicMock()
+        ext_obj.toolhead_extruder.extruder_index = 3
+        lane.printer._objects["AFC_extruder e3"] = ext_obj
+        self._register_feeder(lane, channel="extruder")
+        lane._handle_ready()
+        assert lane._feed_ch_index is None
+
+    def test_feed_channel_is_extruder0_when_feed_channel_not_have_digit(self):
+        lane = self._ready_lane(feed_channel="extruder")
+        ext_obj = MagicMock()
+        ext_obj.toolhead_extruder.extruder_index = 0
+        lane.printer._objects["AFC_extruder extruder"] = ext_obj
+        self._register_feeder(lane, channel="extruder")
+        lane._handle_ready()
+        assert lane._feed_ch_index == 0
+        assert lane.feed_channel == "extruder0"
+
     def test_base_handle_ready_runs(self):
         """super()._handle_ready() actually executes: with no espooler motor
         pins configured it logs instead of starting a stats timer."""
         lane = self._ready_lane()
         self._register_feeder(lane)
         lane._handle_ready()
-        assert ("info", "Not starting timer for lane1") in lane.logger.messages
+        assert lane.logger.messages == [("info", "Not starting timer for lane1")]
 
     def test_raises_when_feeder_missing(self):
         lane = self._ready_lane()
