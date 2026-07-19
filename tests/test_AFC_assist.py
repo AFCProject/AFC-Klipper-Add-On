@@ -1340,7 +1340,11 @@ class TestBreakEspooler:
         assert espooler.afc_motor_rwd.last_value == 0
         assert espooler.afc_motor_fwd.last_value == 0
 
-    def test_enb_present_but_no_fwd_only_brakes_rwd(self):
+    def test_enb_present_but_no_fwd_disables_rwd_and_enb_directly(self):
+        """Without both direction pins there's no electronic-brake trick to
+        do, so this falls to the single-pin path: no brake-to-1 step, just
+        an immediate disable of whatever pins actually exist (rwd + enb;
+        fwd doesn't exist to touch)."""
         espooler = _make_real_espooler(has_rwd=True, has_fwd=False, has_enb=True)
         _connect_stats(espooler)
         espooler._get_print_time = MagicMock(return_value=1000.0)
@@ -1349,40 +1353,125 @@ class TestBreakEspooler:
 
         espooler.break_espooler()  # should not raise despite afc_motor_fwd is None
 
+        espooler.set_enable_pin.assert_called_once_with(1000.0, 0)
         assert espooler.afc_motor_rwd.last_value == 0
 
-    def test_enb_absent_only_sets_rwd_to_zero(self):
-        espooler = _make_real_espooler(has_enb=False)
+    def test_enb_present_but_no_rwd_disables_fwd_and_enb_directly(self):
+        """Symmetric to the no-fwd case above: rwd doesn't exist to touch,
+        but fwd + enb must still be disabled directly."""
+        espooler = _make_real_espooler(has_rwd=False, has_fwd=True, has_enb=True)
         _connect_stats(espooler)
         espooler._get_print_time = MagicMock(return_value=1000.0)
         espooler.set_enable_pin = MagicMock()
 
+        espooler.break_espooler()  # should not raise despite afc_motor_rwd is None
+
+        espooler.set_enable_pin.assert_called_once_with(1000.0, 0)
+        assert espooler.afc_motor_fwd.last_value == 0
+
+    def test_fwd_only_no_enb_still_disables_fwd(self):
+        """The original regression: a fwd-only espooler with no enable pin
+        must still have its fwd motor zeroed, not silently left running."""
+        espooler = _make_real_espooler(has_rwd=False, has_fwd=True, has_enb=False)
+        _connect_stats(espooler)
+        espooler._get_print_time = MagicMock(return_value=1000.0)
+        espooler.assist(1.0)
+        assert espooler.afc_motor_fwd.last_value == 1.0  # sanity: motor is running
+
+        espooler.assist(0)  # routes through break_espooler()
+
+        assert espooler.afc_motor_fwd.last_value == 0
+
+    def test_enb_absent_both_directions_present_disables_both_directly(self):
+        """Without enb there's no way to actually engage the h-bridge brake
+        (per the datasheet, driving both direction pins high does nothing
+        unless the driver is enabled), so both direction pins are zeroed
+        directly -- a single call each, not the brake-to-1-then-release-to-0
+        sequence used when all three pins exist. The call-count assertion is
+        what actually distinguishes this from the full-cycle branch;
+        previously (before either fix) only rwd was ever touched here,
+        silently leaving fwd energized."""
+        espooler = _make_real_espooler(has_enb=False)
+        _connect_stats(espooler)
+        espooler._get_print_time = MagicMock(return_value=1000.0)
+        espooler.n20_break_delay_time = 0.5
+        espooler.set_enable_pin = MagicMock()
+        espooler.afc_motor_rwd._set_pin = MagicMock(wraps=espooler.afc_motor_rwd._set_pin)
+        espooler.afc_motor_fwd._set_pin = MagicMock(wraps=espooler.afc_motor_fwd._set_pin)
+
         espooler.break_espooler()
 
         espooler.set_enable_pin.assert_not_called()
-        assert espooler.afc_motor_rwd.last_value == 0
+        espooler.afc_motor_rwd._set_pin.assert_called_once_with(1000.0, 0)
+        espooler.afc_motor_fwd._set_pin.assert_called_once_with(1000.0, 0)
+
+    def test_no_motors_only_disables_enb(self):
+        """With neither direction pin configured there is nothing to brake
+        or zero, but a stray enable pin (an unusual config) is still
+        disabled defensively."""
+        espooler = _make_real_espooler(has_rwd=False, has_fwd=False, has_enb=True)
+        _connect_stats(espooler)
+        espooler._get_print_time = MagicMock(return_value=1000.0)
+        espooler.set_enable_pin = MagicMock()
+
+        espooler.break_espooler()  # should not raise despite no motors configured
+
+        espooler.set_enable_pin.assert_called_once_with(1000.0, 0)
+
+    def test_nothing_configured_is_a_true_noop(self):
+        espooler = _make_real_espooler(has_rwd=False, has_fwd=False, has_enb=False)
+        _connect_stats(espooler)
+        espooler._get_print_time = MagicMock(return_value=1000.0)
+        espooler.set_enable_pin = MagicMock()
+
+        espooler.break_espooler()  # should not raise despite nothing configured
+
+        espooler.set_enable_pin.assert_not_called()
 
 
 # ── Espooler.assist ──────────────────────────────────────────────────────────
 
 class TestAssist:
-    def test_returns_early_when_no_rwd_motor(self):
-        """The afc_motor_rwd is None check happens before the value-sign
-        branching, so it must short-circuit even for a positive (fwd-bound)
-        value -- verified via real state never mutating, since
-        break_espooler.assert_not_called() would trivially pass for a
-        positive value regardless of whether the early return fired."""
+    def test_positive_value_drives_forward_even_without_rwd_motor(self):
+        """A missing RWD motor must not block FWD-bound assist calls -- only
+        the top-level "both pins missing" guard and each direction's own
+        motor check should gate early return."""
+        espooler = _make_real_espooler(has_rwd=False, has_fwd=True, pwm=True)
+        _connect_stats(espooler)
+        espooler._get_print_time = MagicMock(return_value=1000.0)
+
+        espooler.assist(0.5)
+
+        assert espooler.stats._direction == EspoolerDir.FWD
+        assert espooler.stats.start_time == 1000.0
+        assert espooler.afc_motor_fwd.last_value == pytest.approx(0.5)
+
+    def test_negative_value_returns_early_when_no_rwd_motor(self):
+        """A reverse-bound value with no RWD motor configured must still
+        short-circuit -- verified via state that would have changed had
+        execution continued past the guard."""
         espooler = _make_real_espooler(has_rwd=False, has_fwd=True)
         _connect_stats(espooler)
-        espooler.break_espooler = MagicMock()
         original_fwd_value = espooler.afc_motor_fwd.last_value
 
-        espooler.assist(1.0)
+        espooler.assist(-0.5)
 
-        espooler.break_espooler.assert_not_called()
-        assert espooler.afc_motor_fwd.last_value == original_fwd_value
         assert espooler.stats._direction is None
         assert espooler.stats.start_time is None
+        assert espooler.afc_motor_fwd.last_value == original_fwd_value
+
+    def test_returns_early_when_both_motors_missing(self):
+        """With neither pin configured, assist(0) must not fall through to
+        break_espooler() -- the value==0 branch has no per-motor check of
+        its own, so the top-level guard is the only thing stopping it."""
+        espooler = _make_real_espooler(has_rwd=False, has_fwd=False)
+        _connect_stats(espooler)
+        espooler.break_espooler = MagicMock()
+
+        espooler.assist(0)
+
+        espooler.break_espooler.assert_not_called()
+        assert espooler.stats.end_time is None
 
     def test_negative_value_drives_reverse(self):
         espooler = _make_real_espooler(has_rwd=True, has_fwd=True, pwm=True)

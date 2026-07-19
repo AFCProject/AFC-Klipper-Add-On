@@ -650,10 +650,14 @@ class Espooler:
         """
         reverse = False
         print_time = self._get_print_time()
-        if self.afc_motor_rwd is None:
+        # Return if both pins are not defined
+        if (self.afc_motor_rwd is None
+            and self.afc_motor_fwd is None):
             return
 
         if value < 0:
+            if self.afc_motor_rwd is None:
+                return
             value *= -1
             assist_motor=self.afc_motor_rwd
             reverse = True
@@ -688,21 +692,25 @@ class Espooler:
         Helper function to "brake" n20 motors to hopefully help with keeping down back-feeding into MCU board
         """
         print_time = self._get_print_time()
-        if self.afc_motor_enb is not None:
+
+        if (self.afc_motor_fwd is not None
+            and self.afc_motor_rwd is not None
+            and self.afc_motor_enb is not None):
             self.afc_motor_rwd._set_pin(print_time, 1)
             self.set_enable_pin(print_time, 1)
-            if self.afc_motor_fwd is not None:
-                self.afc_motor_fwd._set_pin(print_time, 1)
+            self.afc_motor_fwd._set_pin(print_time, 1)
 
             # Forward predict delay time instead of adding reactor pause in code
             print_time += self.n20_break_delay_time
 
             self.set_enable_pin(print_time, 0)
+        elif self.afc_motor_enb is not None:
+            self.set_enable_pin(print_time, 0)
+
+        if self.afc_motor_rwd is not None:
             self.afc_motor_rwd._set_pin(print_time, 0)
-            if self.afc_motor_fwd is not None:
-                self.afc_motor_fwd._set_pin(print_time, 0)
-        else:
-            self.afc_motor_rwd._set_pin(print_time, 0)
+        if self.afc_motor_fwd is not None:
+            self.afc_motor_fwd._set_pin(print_time, 0)
 
     def enable_timer(self):
         """
