@@ -38,7 +38,7 @@ except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".f
 try: from extras.AFC_utils import add_filament_switch
 except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.format_exc()))
 
-try: from extras.AFC_lane import AFCLane
+try: from extras.AFC_lane import AFCLane, AFCU1Lane
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 try: from extras.AFC import AFCLaneState
@@ -327,7 +327,10 @@ class AFCExtruder:
             config.fileconfig.set(config.section, "extruder", self.name)
             config.fileconfig.set(config.section, "hub", "direct")
             config.fileconfig.set(config.section, "standalone", "True")
-            self.tc_lane = AFCLane(config)
+            if self.afc.snapmaker_printer:
+                self.tc_lane = AFCU1Lane(config)
+            else:
+                self.tc_lane = AFCLane(config)
             self.printer.objects[f"AFC_lane {self.name}"] = self.tc_lane
             # TODO: Once homing is in create common function for this and AFC_stepper
 
@@ -570,7 +573,18 @@ class AFCExtruder:
                     if (self.tc_lane._afc_prep_done
                         and not actively_printing):
                         if state:
-                            if not self.load_active:
+                            # A extruder config with a custom_load_cmd drives the entire
+                            # load including the tool_stn advance to the nozzle
+                            # and should also return temp back to starting temp.
+                            #
+                            # This check is mainly for users that have a U1 printer and want to have
+                            # their standalone extruder still automatically load into the toolhead.
+                            #
+                            # If this did not exist then an automatic load without this can crash
+                            # klipper since more than one thing is trying to control the toolhead
+                            # extruder at once.
+                            if (not self.load_active
+                                and not getattr(self.tc_lane, 'custom_load_cmd', None)):
                                 self.load_unload_sequence(self.tool_stn)
                         else:
                             self.tc_lane.set_tool_unloaded()
