@@ -13,6 +13,9 @@ Thanks for your interest in contributing! Whether it's a bug report, new feature
 
 ## Guidelines
 
+### Using AI
+- Please read over [AI usage policy](AI_USAGE_POLICY.md)
+
 ### Code Style
 
 - Python code should follow [PEP 8](https://peps.python.org/pep-0008/) as closely as possible.
