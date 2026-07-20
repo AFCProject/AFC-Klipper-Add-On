@@ -14,8 +14,15 @@
 #   min_temp: 0
 #   max_temp: 100
 
+from __future__ import annotations
+
 import logging
+from typing import Callable, Dict, Optional, Tuple, TYPE_CHECKING
 from . import bus
+
+if TYPE_CHECKING:
+    from configfile import ConfigWrapper
+    from klippy import Printer
 
 # HDC1080 register addresses
 TEMP_REG = 0x00
@@ -46,14 +53,14 @@ HUMI_RES = {14: HUMI_RES_14, 11: HUMI_RES_11, 8: HUMI_RES_8}
 class TemperatureOAMS:
     """HDC1080-based temperature and humidity sensor for OpenAMS units."""
 
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper) -> None:
         """
         Initialize the HDC1080 temperature/humidity sensor driver.
 
         :param config: ConfigWrapper providing the sensor name, I2C bus settings,
                        reporting interval, resolution, offsets, and heater option.
         """
-        self.printer = config.get_printer()
+        self.printer: Printer = config.get_printer()
         self.name = config.get_name().split()[-1]
         self.reactor = self.printer.get_reactor()
         self.i2c = bus.MCU_I2C_from_config(
@@ -90,16 +97,16 @@ class TemperatureOAMS:
         self._consecutive_errors = 0
         self._max_consecutive_errors = 5
         self._last_good_temp = 0.0
-        self._callback = None
+        self._callback: Optional[Callable] = None
 
-    def handle_connect(self):
+    def handle_connect(self) -> None:
         """
         Initialize the device and start the sampling timer on klippy:connect.
         """
         self._init_device()
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
 
-    def setup_minmax(self, min_temp, max_temp):
+    def setup_minmax(self, min_temp: float, max_temp: float) -> None:
         """
         Store the allowed temperature range used for shutdown protection.
 
@@ -109,7 +116,7 @@ class TemperatureOAMS:
         self.min_temp = min_temp
         self.max_temp = max_temp
 
-    def setup_callback(self, cb):
+    def setup_callback(self, cb: Callable) -> None:
         """
         Register the heaters callback used to report measured temperatures.
 
@@ -117,7 +124,7 @@ class TemperatureOAMS:
         """
         self._callback = cb
 
-    def get_report_time_delta(self):
+    def get_report_time_delta(self) -> float:
         """
         Return the sensor reporting interval.
 
@@ -125,7 +132,7 @@ class TemperatureOAMS:
         """
         return self.report_time
 
-    def _init_device(self):
+    def _init_device(self) -> None:
         """
         Configure the HDC1080: set resolutions, optional heater, and read IDs.
 
@@ -151,7 +158,7 @@ class TemperatureOAMS:
                      self.name, hex(manufacturer_id), hex(device_id))
         self.init_sent = True
 
-    def _read_register_16(self, reg):
+    def _read_register_16(self, reg: int) -> int:
         """
         Read a 16-bit big-endian value from an HDC1080 register.
 
@@ -164,7 +171,7 @@ class TemperatureOAMS:
         data = bytearray(read['response'])
         return (data[0] << 8) | data[1]
 
-    def _set_resolution(self, reg, mask, value):
+    def _set_resolution(self, reg: int, mask: int, value: int) -> None:
         """
         Update the resolution bits of a configuration register.
 
@@ -178,7 +185,7 @@ class TemperatureOAMS:
         self.i2c.i2c_write(data)
         self.reactor.pause(self.reactor.monotonic() + 0.015)
 
-    def _set_config_bit(self, bit, enable):
+    def _set_config_bit(self, bit: int, enable: bool) -> None:
         """
         Set or clear a single bit in the HDC1080 configuration register.
 
@@ -194,7 +201,7 @@ class TemperatureOAMS:
         self.i2c.i2c_write(data)
         self.reactor.pause(self.reactor.monotonic() + 0.015)
 
-    def _read_temp(self):
+    def _read_temp(self) -> Tuple[float, bool]:
         """
         Read and convert the current temperature from the HDC1080.
 
@@ -212,7 +219,7 @@ class TemperatureOAMS:
             logging.debug("temperature_oams %s: temp read failed: %s", self.name, e)
             return 0.0, False
 
-    def _read_humidity(self):
+    def _read_humidity(self) -> Tuple[float, bool]:
         """
         Read and convert the current relative humidity from the HDC1080.
 
@@ -230,7 +237,7 @@ class TemperatureOAMS:
             logging.debug("temperature_oams %s: humidity read failed: %s", self.name, e)
             return 0.0, False
 
-    def _sample(self, eventtime):
+    def _sample(self, eventtime: float) -> float:
         """
         Reactor timer callback that samples temperature and humidity.
 
@@ -281,7 +288,7 @@ class TemperatureOAMS:
             self._callback(print_time, self.temp)
         return measured_time + self.report_time
 
-    def get_status(self, eventtime):
+    def get_status(self, eventtime: float) -> Dict[str, float]:
         """
         Return the latest measured temperature and humidity.
 
@@ -294,7 +301,7 @@ class TemperatureOAMS:
         }
 
 
-def load_config(config):
+def load_config(config: ConfigWrapper) -> None:
     """
     Register ``temperature_oams`` as a heaters sensor factory.
 

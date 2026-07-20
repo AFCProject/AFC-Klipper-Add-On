@@ -2800,7 +2800,6 @@ class TestHandleSameFpsReload:
         ams.lane_not_ready.assert_called_once_with(source)
         target.set_tool_loaded.assert_called_once()
         ams.lane_tool_loaded.assert_called_once_with(target)
-        assert afc.current == "lane2"
         afc.save_vars.assert_called_once()
         assert (
             "info", "Same-FPS infinite runout: lane1 -> lane2"

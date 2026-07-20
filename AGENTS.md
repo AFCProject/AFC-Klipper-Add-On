@@ -12,7 +12,12 @@
 - **Match existing formatting** as closely as possible — follow the
    surrounding file's conventions rather than imposing a different style.
 - **Correct typing** — including things like `Optional[float]` instead of
-   `float = None`.
+   `float = None`. Methods should be fully annotated (parameters and return
+   type). Local variables and attributes only need an explicit annotation
+   when a linter/type checker (e.g. mypy) can't infer the type on its own —
+   for example an attribute first assigned `None` and later assigned a
+   concrete type elsewhere, or an empty `{}`/`[]` whose element type isn't
+   obvious from that line alone.
 - **Use f-strings, not `str.format()`** — `f"Lane {self.name}"` rather than
    `"Lane {}".format(self.name)`.
 - **Format error/exception strings before raising, not inline** — build the

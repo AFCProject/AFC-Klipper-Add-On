@@ -339,13 +339,6 @@ class AFCLane:
         return self.name
 
     @property
-    def material(self):
-        """
-        Returns lanes filament material type
-        """
-        return self._material
-
-    @property
     def load_es(self) -> str:
         """
         Returns endstop name to use for homing.
@@ -396,6 +389,13 @@ class AFCLane:
     @property
     def tool_endstop_name(self) -> str:
         return self._lookup_endstop(AFCHomingPoints.TOOL)
+
+    @property
+    def material(self):
+        """
+        Returns lanes filament material type
+        """
+        return self._material
 
     @material.setter
     def material(self, value):

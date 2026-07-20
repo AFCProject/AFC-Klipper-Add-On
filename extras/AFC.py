@@ -93,7 +93,7 @@ class afc:
         self.current_state      = State.INIT
         self.position_saved     = False
         self.spoolman           = None
-        self.moonraker          = None
+        self.moonraker: Optional[AFC_moonraker] = None
         self.td1_defined        = False
         self._td1_present       = False
         self._last_td1_query:float    = 0
@@ -1897,7 +1897,7 @@ class afc:
         self.current_state = State.IDLE
         return True
 
-    def do_tool_cut_tip_form(self, cur_lane: AFCLane, cur_extruder: AFCExtruder):
+    def do_tool_cut_tip_form(self, cur_lane: AFCLane, cur_extruder: AFCExtruder) -> None:
         """
         Performs filament cutting/parking and tip forming during unload, if enabled in config.
 
