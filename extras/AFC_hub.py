@@ -16,6 +16,9 @@ except: raise config_error("Error when trying to import AFC_utils.ERROR_STR\n{tr
 try: from extras.AFC_utils import add_filament_switch
 except: raise config_error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.format_exc()))
 
+try: from extras.AFC_unit import SENSORLESS_UNITS
+except: raise config_error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
+
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane
 
@@ -23,6 +26,7 @@ class afc_hub:
     def __init__(self, config):
         self.printer    = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
+        self.printer.register_event_handler("klippy:ready", self.handle_ready)
         self.afc        = self.printer.load_object(config, 'AFC')
         self.reactor    = self.printer.get_reactor()
 
@@ -114,11 +118,15 @@ class afc_hub:
 
         self.printer.send_event("afc_hub:register_macros", self)
 
+    def handle_ready(self):
         if self.is_virtual_pin():
             msg = "The following lanes need load sensors for virtual hub sensor to work correctly:"
             report_error = False
             for lane in self.lanes.values():
-                if lane.load is None:
+                if lane.unit_obj.type in SENSORLESS_UNITS:
+                    continue
+                if (lane.load is None
+                    and lane.prep is not None):
                     report_error = True
                     msg += f"\n{lane.fullname}"
 

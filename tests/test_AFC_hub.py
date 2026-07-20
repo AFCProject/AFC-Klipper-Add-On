@@ -243,9 +243,19 @@ class TestHandleRunout:
 class TestHandleConnect:
     def test_physical_hub_handle_connect_does_not_raise(self):
         hub = _make_hub(switch_pin="PA0")
-        # physical pin — no lane validation needed
-        hub.handle_connect()  # should not raise
+        hub.handle_connect()
         assert hub.gcode is hub.afc.gcode
+        assert hub.reactor is hub.afc.reactor
+
+    def test_handle_connect_sends_register_macros_event(self):
+        hub = _make_hub(switch_pin="PA0")
+        hub.printer.send_event = MagicMock(wraps=hub.printer.send_event)
+        hub.handle_connect()
+        hub.printer.send_event.assert_called_once_with("afc_hub:register_macros", hub)
+
+# ── handle_ready ────────────────────────────────────────────────────────────
+
+class TestHandleReady:
 
     def test_virtual_hub_raises_when_lanes_have_no_load_sensor(self):
         from configparser import Error as config_error
@@ -255,7 +265,7 @@ class TestHandleConnect:
         lane.load = None  # no load sensor
         hub.lanes = {"lane1": lane}
         with pytest.raises(config_error):
-            hub.handle_connect()
+            hub.handle_ready()
 
     def test_virtual_hub_no_error_when_all_lanes_have_load_sensor(self):
         hub = _make_hub(switch_pin="virtual")
@@ -263,16 +273,7 @@ class TestHandleConnect:
         lane.fullname = "AFC_stepper lane1"
         lane.load = MagicMock()  # has load sensor
         hub.lanes = {"lane1": lane}
-        hub.handle_connect()  # should not raise
-
-    def test_handle_connect_sends_register_macros_event(self):
-        hub = _make_hub(switch_pin="PA0")
-        hub.handle_connect()
-        # Verify the event was dispatched (MockPrinter records handlers)
-        # send_event on MockPrinter calls registered handlers — no assert needed
-        # if we got here without error, the event path ran
-        assert True
-
+        hub.handle_ready()  # should not raise
 
 # ── afc_hub.__init__ ──────────────────────────────────────────────────────────
 

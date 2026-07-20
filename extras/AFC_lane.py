@@ -36,7 +36,7 @@ try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
 # Unit types that only have load switch
-ONLY_LOAD_TYPES = ["HTLF", "Claymore"]
+ONLY_LOAD_TYPES = ["HTLF", "Claymore", "OpenAMS"]
 EXCLUDE_TYPES = ONLY_LOAD_TYPES + [ "ViViD"]
 # Class for holding different states so its clear what all valid states are
 
@@ -523,6 +523,10 @@ class AFCLane:
         :param pin: MCU pin to setup as endstop
         :param name: Name of endstop to register
         """
+        # Guarding against hub virtual pins
+        if pin is not None and pin.strip().lower() == "virtual":
+            return
+
         ppins.allow_multi_use_pin(pin.strip("!^"))
         ppins.parse_pin(pin, True, True)
         endstop = ppins.setup_pin('endstop', pin)
@@ -709,6 +713,9 @@ class AFCLane:
                 and s.startswith("AFC_")
                 and not any(x in s for x in INVALID_UNIT_NAMES))
             self.unit_obj: afcUnit = self.printer.load_object(config, unit_cfg.get_name())
+
+            if getattr(self.unit_obj, "stepperless_drive", False):
+                return
 
             drive_stepper = self
             if not config.get("step_pin", None):
@@ -944,6 +951,17 @@ class AFCLane:
         speed_mode (Enum SpeedMode): Identifies which speed to use.
         assist_active (Enum AssistActive): Determines to force assist or to dynamically determine.
         """
+        # Stepperless units (ACE/OpenAMS) have no drive stepper, so the stepper
+        # move below is a silent no-op for their lanes. Delegate to the unit's
+        # lane_move (serial/firmware-driven) when it provides one — this is what
+        # makes LANE_MOVE work for those lanes.
+        unit_obj = getattr(self, 'unit_obj', None)
+        if (unit_obj is not None
+                and getattr(unit_obj, 'stepperless_drive', False)
+                and hasattr(unit_obj, 'lane_move')):
+            unit_obj.lane_move(self, distance, speed_mode)
+            return
+
         speed, accel = self.get_speed_accel(speed_mode)
 
         assist = self.get_active_assist(distance, assist_active)
@@ -1053,6 +1071,13 @@ class AFCLane:
         this by setting `capture_td1_when_loaded: True` and if hub is clear and toolhead is not loaded.
         """
         if self.td1_when_loaded:
+            # Stepperless units (ACE/OpenAMS) capture TD-1 via their own feed
+            # path (in prep_post_load), not the AFC stepper path below. Let the
+            # unit intercept: a non-None return means it handled it. Units without
+            # this hook (e.g. BoxTurtle) fall through unchanged.
+            hook = getattr(self.unit_obj, 'prep_capture_td1', None)
+            if hook is not None and hook(self) is not None:
+                return
             if not self.hub_obj.state and self.afc.function.get_current_lane_obj() is None:
                 self.get_td1_data()
             else:
@@ -1091,17 +1116,36 @@ class AFCLane:
 
         :param eventtime: Event time from the button press
         """
-        # Call filament sensor callback so that state is registered
-        try:
-            self.load_debounce_button._old_note_filament_present(is_filament_present=load_state)
-        except:
-            self.load_debounce_button._old_note_filament_present(eventtime, load_state)
+        button = getattr(self, "load_debounce_button", None)
+        if button:
+            # Call filament sensor callback so that state is registered
+            try:
+                self.load_debounce_button._old_note_filament_present(is_filament_present=load_state)
+            except:
+                self.load_debounce_button._old_note_filament_present(eventtime, load_state)
 
         if (self.printer.state_message == 'Printer is ready'
             and self.unit_obj.type in ONLY_LOAD_TYPES
             and True == self._afc_prep_done):
             if load_state:
+                # Stash any externally-staged spool (scanner -> next_spool_id)
+                # before set_loaded() consumes it via _set_values, so a unit's
+                # on_filament_insert (e.g. ACE, which clear_values()) can tell a
+                # fresh scan apart from a stale/remembered id and keep it.
+                try:
+                    self._afc_staged_spool_id = getattr(
+                        self.afc.spool, 'next_spool_id', None)
+                except Exception:
+                    self._afc_staged_spool_id = None
+                # TODO: maybe set_loaded can happen after the on_filament_insert call so next spool id 
+                # does not have to be stored into _afc_staged_spool_id. need to understand ACE logic better once impementing ACE
                 self.set_loaded()
+                # on_filament_insert only when this wasn't a suppressed
+                # (operation-driven) state change.
+                if not getattr(self, '_load_suppressed', False):
+                    if hasattr(self.unit_obj, 'on_filament_insert'):
+                        self.unit_obj.on_filament_insert(self)
+                self._load_suppressed = False
 
                 # Check if user wants to get TD-1 data when loading
                 if (self.td1_device_id
@@ -1117,15 +1161,27 @@ class AFCLane:
 
                 self._post_prep_user_macro()
             else:
+                self.unit_obj.on_filament_remove(self)
                 # Don't run if user disabled sensor in gui
-                if not self.fila_load.runout_helper.sensor_enabled and self.afc.function.is_printing():
-                    self.logger.warning("Load runout has been detected, but pause and runout detection has been disabled")
+                fila_load = getattr(self, 'fila_load', None)
+                if (fila_load and
+                    not fila_load.runout_helper.sensor_enabled
+                    and self.afc.function.is_printing()):
+                    self.logger.warning("Load runout has been detected, but pause and runout "
+                                        "detection has been disabled")
                 elif self.unit_obj.check_runout(self):
-                    # Checking to make sure runout_lane is set
-                    if self.runout_lane is not None:
-                        self._perform_infinite_runout()
-                    else:
-                        self._perform_pause_runout()
+                    # Let the unit handle runout if it provides custom logic.
+                    # handle_runout() returns True when it fully handled the
+                    # runout itself, or False to defer to AFC's generic
+                    # infinite-spool / pause behavior below.
+                    handle_runout = getattr(self.unit_obj, "handle_runout", None)
+                    handled = handle_runout(self) if handle_runout else False
+                    if not handled:
+                        # Checking to make sure runout_lane is set
+                        if self.runout_lane is not None:
+                            self._perform_infinite_runout()
+                        else:
+                            self._perform_pause_runout()
                 elif self.status != "calibrating":
                     self.set_unloaded()
 
@@ -1736,6 +1792,17 @@ class AFCLane:
         Captures TD-1 data for lane. Has error checking to verify that lane is loaded, hub is not blocked
         and that TD-1 device is still detected before trying to capture data.
         """
+        # Stepperless units (ACE/OpenAMS) can't use the AFC stepper moves below.
+        # They capture TD-1 via their own feed path (load to the TD-1 device,
+        # read, then unload/retract back). Delegate when the unit provides
+        # capture_td1_data; a non-None (success, msg) return means it handled it.
+        # Units without this hook (e.g. BoxTurtle) fall through unchanged.
+        hook = getattr(self.unit_obj, 'capture_td1_data', None)
+        if hook is not None:
+            result = hook(self)
+            if result is not None:
+                return result
+
         max_move_tries = 0
         status = True
         msg = ""

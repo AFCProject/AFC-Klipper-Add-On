@@ -778,6 +778,12 @@ class afcUnit:
         """
         self._print_function_not_defined(self.eject_lane.__name__)
 
+    def on_filament_insert(self, lane):
+        self.printer.send_event("afc:lane_inserted", lane)
+
+    def on_filament_remove(self, lane):
+        return
+
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
