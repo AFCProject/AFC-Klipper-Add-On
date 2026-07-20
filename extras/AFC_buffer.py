@@ -1209,14 +1209,14 @@ class AFCFPSBuffer(AFCBuffer):
             multiplier = max(self.multiplier_low, min(self.multiplier_high, multiplier))
 
 
-        # Apply multiplier -- gated by hysteresis so tiny, insignificant
+        # Apply multiplier, gated by hysteresis when set so tiny, insignificant
         # corrections don't trigger an update_rotation_distance call on
-        # every tick. State/LED/logging above still reflect the freshly
-        # computed multiplier regardless; this only gates the stepper write.
+        # every tick.
         log_event = False
         if self.multiplier_hysteresis <= 0.0:
+            last_applied = self._last_multiplier
             self.set_multiplier(multiplier)
-            if abs(self._last_multiplier - multiplier) > 0.001:
+            if abs(last_applied - multiplier) > 0.001:
                 log_event = True
             if integral != self._last_logged_integral:
                 log_event = True
