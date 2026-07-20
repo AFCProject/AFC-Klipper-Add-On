@@ -711,7 +711,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self._last_load_failure_time    = self.reactor.monotonic()
         lane_name  = self._resolve_lane_name(spool_idx)
         lane_label = f"lane {lane_name}" if lane_name else f"lane (spool {spool_idx})"
-        history_str = "; ".join(attempt_history) if attempt_history else message
+        history_str = "; ".join(attempt_history)
         return False, (
             f"Failed to load {lane_label} after {retry_limit} attempts. "
             f"Attempt history: {history_str}"
@@ -815,7 +815,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self._reset_unload_retry_count()
         self._unload_retry_failures    += 1
         self._last_unload_failure_time  = self.reactor.monotonic()
-        history_str = "; ".join(attempt_history) if attempt_history else message
+        history_str = "; ".join(attempt_history)
         return False, (
             f"Failed to unload after {retry_limit} attempts. "
             f"Attempt history: {history_str}"

@@ -1140,7 +1140,7 @@ class AFCLane:
                         self.afc.spool, 'next_spool_id', None)
                 except Exception:
                     self._afc_staged_spool_id = None
-                # TODO: maybe set_loaded can happen after the on_filament_insert call so next spool id 
+                # TODO: maybe set_loaded can happen after the on_filament_insert call so next spool id
                 # does not have to be stored into _afc_staged_spool_id. need to understand ACE logic better once impementing ACE
                 self.set_loaded()
                 # on_filament_insert only when this wasn't a suppressed

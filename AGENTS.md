@@ -97,6 +97,16 @@
    Pre-existing untested code elsewhere in the same file is out of scope
    unless the task specifically asks for it; don't expand scope to "fix"
    unrelated untested code without being asked.
+- **Inline (ternary) conditionals need both-branch coverage too, verified
+   by hand** — `coverage.py`'s branch tracking does not flag an inline
+   `a if cond else b` expression as partially covered the way it does a
+   full `if`/`else` statement, even when only one outcome was ever
+   exercised. A file can show 100% branch coverage while every ternary in
+   it only ever took one side. Don't trust the coverage report for these —
+   for each inline conditional in new/changed code, find the test(s) that
+   exercise it and confirm by reading them that one drives the condition
+   truthy and another drives it falsy, each with an assertion that would
+   fail under the other outcome.
 - **Multi-condition `if` statements: test each variable independently** —
    for something like `if A and B:`, there need to be tests proving A alone
    can't satisfy the condition and B alone can't either, not just one test

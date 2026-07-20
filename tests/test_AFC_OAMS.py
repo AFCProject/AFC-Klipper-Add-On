@@ -770,6 +770,55 @@ class TestLoadSpoolWithRetry:
             lvl == "info" and "Successfully loaded" in m and "attempt 2" in m
             for lvl, m in oams.logger.messages)
 
+    def test_success_after_one_retry_uses_resolved_lane_name(self):
+        """When hardware_service resolves a real lane name, the retry-wait
+        and success log messages should use 'lane <name>' rather than the
+        'lane (spool N)' fallback used when no lane is bound."""
+        oams = _make_oams()
+        service = MagicMock()
+        service.resolve_lane_for_spool_with_afc.return_value = "lane1"
+        oams.hardware_service = service
+        oams.abort_current_action = MagicMock()
+        oams.reactor.pause = MagicMock()
+        oams.unload_spool_with_retry = MagicMock(return_value=(True, "unloaded"))
+        oams.load_spool = MagicMock(
+            side_effect=[
+                (OAMSOpCode.ERROR_UNSPECIFIED, "fail"),
+                (OAMSOpCode.SUCCESS, "ok"),
+            ]
+        )
+        success, message = oams.load_spool_with_retry(1, max_retries=3)
+        assert success is True
+        assert any(
+            lvl == "info" and "Load retry 2/3 for lane lane1" in m
+            for lvl, m in oams.logger.messages)
+        assert any(
+            lvl == "info" and "Successfully loaded lane lane1 on attempt 2" in m
+            for lvl, m in oams.logger.messages)
+        # No fallback "(spool N)" wording leaked through.
+        assert not any("(spool" in m for _lvl, m in oams.logger.messages)
+
+    def test_all_attempts_fail_uses_resolved_lane_name(self):
+        """Mid-loop warning and final failure message should also use the
+        resolved lane name instead of the 'lane (spool N)' fallback."""
+        oams = _make_oams()
+        service = MagicMock()
+        service.resolve_lane_for_spool_with_afc.return_value = "lane1"
+        oams.hardware_service = service
+        oams.auto_unload_on_failed_load = False
+        oams.abort_current_action = MagicMock()
+        oams.load_spool = MagicMock(return_value=(OAMSOpCode.ERROR_UNSPECIFIED, "nope"))
+
+        success, message = oams.load_spool_with_retry(0, max_retries=2)
+
+        assert success is False
+        assert "Failed to load lane lane1 after 2 attempts" in message
+        assert any(
+            lvl == "warning" and "Load failed for lane lane1" in m
+            for lvl, m in oams.logger.messages)
+        assert not any("(spool" in m for _lvl, m in oams.logger.messages)
+        assert "(spool" not in message
+
     def test_auto_unload_failure_aborts_load(self):
         oams = _make_oams()
         oams.auto_unload_on_failed_load = True
@@ -915,6 +964,25 @@ class TestUnloadSpoolWithRetry:
         assert any(
             lvl == "info" and "Successfully unloaded" in m and "attempt 2" in m
             for lvl, m in oams.logger.messages)
+
+    def test_success_uses_resolved_lane_name_when_current_spool_set(self):
+        """current_spool not None + a hardware_service that resolves a lane
+        name should produce 'lane <name>' in the success message, instead of
+        the 'filament' fallback used when there's no bound lane."""
+        oams = _make_oams()
+        oams.current_spool = 2
+        service = MagicMock()
+        service.resolve_lane_for_spool_with_afc.return_value = "lane2"
+        oams.hardware_service = service
+        oams.unload_spool = MagicMock(return_value=(True, "Spool unloaded successfully"))
+
+        success, message = oams.unload_spool_with_retry()
+
+        assert success is True
+        assert any(
+            lvl == "info" and "Successfully unloaded lane lane2 on attempt 1" in m
+            for lvl, m in oams.logger.messages)
+        service.resolve_lane_for_spool_with_afc.assert_called_once_with("oams0", 2)
 
     def test_retract_failure_is_logged_but_retry_continues(self):
         oams = _make_oams()

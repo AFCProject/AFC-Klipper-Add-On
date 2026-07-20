@@ -66,6 +66,7 @@ try:
 except ImportError:
     pass
 
+import extras.AFC_OpenAMS as AFC_OpenAMS_module  # noqa: E402
 from extras.AFC_OpenAMS import (  # noqa: E402
     afcAMS,
     OAMSStatus,
@@ -167,8 +168,15 @@ class TestAmsBoxLogo:
 
     def test_single_slot_minimum(self):
         logo = _ams_box_logo("X", 0, "ams1")
-        # n_slots <= 0 clamps to at least 1 bay
-        assert logo.count("O") >= 1
+        # n_slots falsy (0) clamps to exactly 1 bay -- distinct from the
+        # n_slots=4 case below, which must draw 4 bays.
+        assert logo.count("O") == 1
+
+    def test_four_slots_draws_four_bays(self):
+        # Title "X" (no "O") keeps the "O" count purely a spool-bay count.
+        logo = _ams_box_logo("X", 4, "ams1")
+        # n_slots truthy (4) uses int(n_slots) directly, not the fallback of 1.
+        assert logo.count("O") == 4
 
     def test_widens_bays_for_long_title(self):
         logo = _ams_box_logo("VERYLONGTITLE", 2, "ams1")
@@ -188,6 +196,26 @@ class TestAmsBoxLogoError:
     def test_contains_name(self):
         logo = _ams_box_logo_error("OpenAMS", 4, "ams1")
         assert "ams1" in logo
+
+    def test_four_slots_widens_box(self):
+        # n_slots=4 with a short title sizes the box off the 4 bays, wider
+        # than the n_slots=0 (clamped to 1 bay) case below.
+        logo = _ams_box_logo_error("X", 4, "ams1")
+        header_line = logo.splitlines()[0]
+        wide_dashes = header_line.count("-")
+
+        logo_narrow = _ams_box_logo_error("X", 0, "ams1")
+        narrow_dashes = logo_narrow.splitlines()[0].count("-")
+
+        assert wide_dashes > narrow_dashes
+        assert narrow_dashes > 0
+
+    def test_single_slot_minimum(self):
+        # n_slots falsy (0) clamps to exactly 1 bay -- verified indirectly
+        # above by being narrower than the n_slots=4 box; here just confirm
+        # it still renders a well-formed box.
+        logo = _ams_box_logo_error("X", 0, "ams1")
+        assert "ERROR" in logo
 
     def test_widens_bays_for_long_title(self):
         logo = _ams_box_logo_error("VERYLONGTITLE", 2, "ams1")
@@ -575,6 +603,24 @@ class TestAMSHardwareService:
         key = "ams1:lane1"
         assert service._lane_snapshots[key]["lane_state"] is True
         assert service._lane_snapshots[key]["spool_index"] == 0
+        # hub_state=False (not None) is coerced through bool(), not left as-is.
+        assert service._lane_snapshots[key]["hub_state"] is False
+
+    def test_update_lane_snapshot_hub_state_none_stays_none(self):
+        """hub_state=None must be stored as None, not bool(None) (=False) --
+        the two are distinguishable downstream (unknown vs known-absent)."""
+        service, printer = self._service()
+        service.update_lane_snapshot(
+            "ams1", "lane1", True, None, 10.0, spool_index=0)
+        key = "ams1:lane1"
+        assert service._lane_snapshots[key]["hub_state"] is None
+
+    def test_update_lane_snapshot_hub_state_truthy_non_bool_is_coerced(self):
+        service, printer = self._service()
+        service.update_lane_snapshot(
+            "ams1", "lane1", True, 1, 10.0, spool_index=0)
+        key = "ams1:lane1"
+        assert service._lane_snapshots[key]["hub_state"] is True
 
     def test_update_lane_snapshot_negative_spool_index_ignored(self):
         service, printer = self._service()
@@ -599,6 +645,22 @@ class TestAMSHardwareService:
             "ams1", "lane1", True, True, 2.0, spool_index=0)
         assert len(received) == 1
         assert received[0]["lane_name"] == "lane1"
+        assert received[0]["spool_index"] == 0
+
+    def test_update_lane_snapshot_event_falls_back_to_old_spool_index(self):
+        """When the triggering call omits spool_index, the published event's
+        spool_index must come from the previously-stored snapshot rather than
+        being None."""
+        service, printer = self._service()
+        received = []
+        service.event_bus.subscribe(
+            "spool_loaded", lambda event_type, **kw: received.append(kw))
+        # Establish spool_index=3 in the snapshot while lane_state is False.
+        service.update_lane_snapshot("ams1", "lane1", False, False, 1.0, spool_index=3)
+        # Transition to loaded without passing spool_index this time.
+        service.update_lane_snapshot("ams1", "lane1", True, True, 2.0)
+        assert len(received) == 1
+        assert received[0]["spool_index"] == 3
 
     def test_update_lane_snapshot_publishes_spool_unloaded_on_transition(self):
         service, printer = self._service()
@@ -1020,6 +1082,10 @@ class TestSetFollowerIfChanged:
         assert (
             "debug", "Follower disabled for ams1 (ctx)"
         ) in logger.messages
+        # The first call (enable=1) should log "enabled", not "disabled".
+        assert (
+            "debug", "Follower enabled for ams1 (ctx)"
+        ) in logger.messages
 
     def test_forced_sends_even_when_unchanged(self):
         fc, reactor, logger = _make_follower_controller()
@@ -1084,6 +1150,9 @@ class TestLedErrorControl:
         fc.set_led_error_if_changed(oams, "ams1", 0, 0, "ctx")
 
         assert oams.set_led_error.call_count == 2
+        assert (
+            "debug", "LED error cleared for ams1 spool 0 (ctx)"
+        ) in logger.messages
 
     def test_clear_error_led_calls_set_with_zero(self):
         fc, reactor, logger = _make_follower_controller()
@@ -1417,6 +1486,11 @@ class TestOAMSMonitorInit:
         assert monitor.clog_post_load_grace == 12.0
         # clog_dwell scales by the sensitivity multiplier (1.0 for "medium")
         assert monitor.clog_dwell == 10.0
+        # stuck_pressure_low/stuck_load_grace omitted (None) -> fall back to
+        # the module-level constants, distinct from the overridden values
+        # exercised in test_custom_thresholds_override_defaults above.
+        assert monitor.stuck_pressure_low == AFC_OpenAMS_module.STUCK_PRESSURE_LOW
+        assert monitor.stuck_load_grace == AFC_OpenAMS_module.STUCK_LOAD_GRACE
 
     def test_clog_dwell_scales_with_clog_multiplier(self):
         monitor, reactor, fps = _make_monitor(clog_sensitivity="high")
@@ -1763,6 +1837,26 @@ class TestCheckClog:
         monitor.state.last_lane_change_time = 0.0
         fps.extruder = MagicMock(last_position=None)
         monitor._check_clog(100.0, encoder_delta=0, pressure=0.5)
+        assert monitor.state.clog_start_time is None
+
+    def test_fps_without_extruder_attribute_skips(self):
+        """hasattr(self.fps, 'extruder') is False (no such attribute at all,
+        as opposed to the attribute existing but being None) -- must still
+        safely no-op rather than raising AttributeError."""
+        monitor, reactor, fps = _make_monitor()
+        monitor.fps = MagicMock(spec=[])  # no 'extruder' attribute
+        monitor.state.last_lane_change_time = 0.0
+        monitor._check_clog(100.0, encoder_delta=0, pressure=0.5)  # must not raise
+        assert monitor.state.clog_start_time is None
+
+    def test_fps_extruder_attribute_is_none_skips(self):
+        """The attribute exists but is None -- distinct from the "no
+        attribute at all" case above; both must fall through to
+        extruder_pos is None and return early."""
+        monitor, reactor, fps = _make_monitor()
+        monitor.state.last_lane_change_time = 0.0
+        fps.extruder = None
+        monitor._check_clog(100.0, encoder_delta=0, pressure=0.5)  # must not raise
         assert monitor.state.clog_start_time is None
 
     def test_starts_dwell_window_on_target_pressure_and_stuck_encoder(self):
@@ -5622,6 +5716,22 @@ class TestOamsUnload:
         afc.gcode.run_script_from_command.assert_any_call("M83")
         afc.gcode.run_script_from_command.assert_any_call("G1 E-20.00 F1500")
 
+    def test_concurrent_retract_uses_configured_tool_stn_unload(self):
+        """When tool_stn_unload is a positive value, the concurrent retract
+        distance must use it directly rather than falling back to 20mm."""
+        oams = self._ready_oams()
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._wait_for_idle = MagicMock(return_value=True)
+        ams._wait_for_hub_settle = MagicMock(return_value=True)
+        ams._oams_extrude = MagicMock()  # skip the separate pre-retract path
+        afc.gcode = MagicMock()
+        lane = self._lane()
+        lane.extruder_obj.tool_stn_unload = 15.0
+
+        ams._oams_unload(lane)
+
+        afc.gcode.run_script_from_command.assert_any_call("G1 E-15.00 F1500")
+
     def test_concurrent_retract_failure_logged_as_warning(self):
         oams = self._ready_oams()
         ams, afc, printer, reactor = _make_ams(oams=oams)
@@ -6526,6 +6636,27 @@ class TestSystemTest:
         assert any(
             lvl == "info" and m.startswith("lane1 tool cmd: T0 ")
             for lvl, m in ams.logger.messages)
+
+    def test_unmapped_lane_treated_as_empty_despite_sensor_values(self):
+        """A lane with no _spool_map entry gets slot=-1; the
+        '0 <= slot < len(...)' guard must force f1s/hub_present to False
+        rather than Python-wrap to index -1 (which would read all-True
+        sensor values here and wrongly report the bay as loaded)."""
+        oams = MagicMock()
+        oams.f1s_hes_value = [1, 1, 1, 1]
+        oams.hub_hes_value = [1, 1, 1, 1]
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams.lane_loaded = MagicMock()
+        lane = _make_lane("lane1", remember_spool=False)
+        # No ams._spool_map["lane1"] entry -> slot defaults to -1.
+
+        result = ams.system_Test(lane, 0, False, True)
+
+        assert result is True
+        assert lane.prep_state is False
+        assert lane._load_state is False
+        assert lane.loaded_to_hub is False
+        ams.lane_loaded.assert_not_called()
 
     def test_remembered_spool_skips_clear_values(self):
         oams = MagicMock()

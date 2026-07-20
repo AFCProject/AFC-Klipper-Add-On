@@ -845,10 +845,10 @@ class afcAMS(afcUnit):
                     on_stuck_cleared=self._on_stuck_spool_cleared,
                     is_printing_fn=lambda: self.afc.function.in_print(),
                     is_lane_loaded_fn=lambda: any(
-                        getattr(l, 'tool_loaded', False)
-                        and getattr(l, 'extruder_obj', None) is not None
-                        and l.extruder_obj.on_shuttle()
-                        for l in self.lanes.values()))
+                        getattr(lane, 'tool_loaded', False)
+                        and getattr(lane, 'extruder_obj', None) is not None
+                        and lane.extruder_obj.on_shuttle()
+                        for lane in self.lanes.values()))
             except Exception as e:
                 self.logger.error(f"Failed to init monitor: {e}")
 
