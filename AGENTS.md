@@ -30,24 +30,44 @@
 - **Keep comments short and succinct** — a sentence or two at most. Comments
    still need to make sense to the developer reading them, just don't let
    them turn into paragraphs.
-- **Docstring every method** — a short summary line, then a `:param name:`
-   line for each parameter and a `:return type:` (or `:return:`) line for any
-   non-`None` return value, matching the Sphinx-style convention already used
-   throughout `extras/` (e.g. `AFC_lane.py`, `AFC_assist.py`). Skip the
-   `:return:` line when the method returns `None`. A method that raises uses
-   a plain `raises error if ...` line rather than a `:raises:` tag, matching
-   existing convention.
+- **Docstrings** — every new or changed method needs a docstring matching
+   Sphinx-style convention in this shape: a short description, a blank line,
+   then one `:param name:` per parameter (skip `self`) and a`:return type:`
+   line if the method returns something meaningful (omit it otherwise).
+   No blank line between the description and the `:param`/`:return` block,
+   and none between that block and the closing `"""`.
 
    ```python
-   def _feed_channel_present(self):
+   def register_lane_macros(self, lane_obj: AFCLane):
        """
-       Checks whether the feeder currently reports filament present in this
-       lane's channel.
+       Callback function to register macros with proper lane names.
 
-       :return bool: True when the feeder reports filament present, False if
-                     absent, not found, or the feeder can't be queried
+       :param lane_obj: object for lane to register
        """
    ```
+
+   `cmd_*` gcode-command handlers follow a different, existing convention
+   instead — description, then `Usage`/`Example` sections — see
+   `cmd_AFC_QUIET_MODE` in `extras/AFC.py` for the pattern to match:
+
+   ~~~python
+   def cmd_AFC_QUIET_MODE(self, gcmd):
+       """
+       Set lower speed on any filament moves.
+
+       Mainly this would be used to turn down motor noise during quiet runs.
+
+       Usage
+       -------
+       `AFC_QUIET_MODE SPEED=<new quietmode speed> ENABLE=<1 or 0>`
+
+       Example
+       -------
+       ```
+       AFC_QUIET_MODE SPEED=75 ENABLE=1
+       ```
+       """
+   ~~~
 - **All new code needs unit tests** — any code added must come with unit
    tests that follow the Unit Test Rules below.
 

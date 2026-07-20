@@ -1154,3 +1154,87 @@ class TestCalibrateAFC:
         self._assert_afc_cali_comp_called(
             func, [f"'TD1_Bowden_length: {lane.name}'"], [], title="TD-1 Calibration"
         )
+
+
+# ── cmd_AFC_LANE_RESET: stepperless unit delegation ─────────────────────────
+# New branch: units that expose get_lane_reset_command (e.g. OpenAMS) can't be
+# retracted with a lane-stepper move loop, so the reset command is delegated
+# to the unit instead of running the default move-to-hub retract loop.
+
+class TestCmdAfcLaneResetUnitDelegation:
+    def _make(self, distance=50):
+        func = _make_func()
+        afc, lane = self._make_afc_lane()
+        func.afc = afc
+        func.get_current_lane_obj = MagicMock(return_value=None)
+        gcmd = MagicMock()
+        gcmd.get.side_effect = lambda key, default=None: {
+            "LANE": lane.name,
+            "DISTANCE": distance,
+        }.get(key, default)
+        return func, lane, gcmd
+
+    def _make_afc_lane(self):
+        afc = _make_afc()
+        afc.error = MagicMock()
+        lane = _make_afc_lane()
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.state = True
+        lane.short_move_dis = 10
+        afc.lanes[lane.name] = lane
+        return afc, lane
+
+    def _run(self, func, gcmd):
+        with patch("extras.AFC_functions.AFCprompt") as mocked_afc_prompt:
+            func.cmd_AFC_LANE_RESET(gcmd)
+        return mocked_afc_prompt
+
+    def test_hook_present_returns_command_runs_it_and_skips_default_retract(self):
+        func, lane, gcmd = self._make()
+        lane.unit_obj = MagicMock(spec=["get_lane_reset_command"])
+        lane.unit_obj.get_lane_reset_command.return_value = "OAMS_RETRACT LANE=lane1"
+
+        self._run(func, gcmd)
+
+        lane.unit_obj.get_lane_reset_command.assert_called_once_with(lane, 50.0)
+        func.afc.gcode.run_script_from_command.assert_called_once_with("OAMS_RETRACT LANE=lane1")
+        func.afc.gcode.respond_info.assert_not_called()
+
+    def test_hook_present_returns_none_runs_nothing_and_skips_default_retract(self):
+        func, lane, gcmd = self._make()
+        lane.unit_obj = MagicMock(spec=["get_lane_reset_command"])
+        lane.unit_obj.get_lane_reset_command.return_value = None
+
+        self._run(func, gcmd)
+
+        lane.unit_obj.get_lane_reset_command.assert_called_once_with(lane, 50.0)
+        func.afc.gcode.run_script_from_command.assert_not_called()
+        # respond_info() is the first call of the default retract path; its
+        # absence proves that path never ran.
+        func.afc.gcode.respond_info.assert_not_called()
+
+    def test_no_hook_falls_through_to_default_retract_path(self):
+        # A tiny stand-in for the hub: reports the hub as blocked on the
+        # first read (so the early "hub already clear" guard is skipped),
+        # then reports it clear on every read after (so the default
+        # move-to-hub retract while-loop exits immediately).
+        class FakeHub:
+            def __init__(self):
+                self.reads = 0
+                self.hub_clear_move_dis = 65.0
+
+            @property
+            def state(self):
+                self.reads += 1
+                return self.reads <= 1
+
+        func, lane, gcmd = self._make()
+        func.afc.homing_enabled = True
+        lane.unit_obj = MagicMock(spec=["move_to_hub"])
+        lane.hub_obj = FakeHub()
+        lane.move = MagicMock()
+
+        self._run(func, gcmd)
+
+        assert not hasattr(lane.unit_obj, "get_lane_reset_command")
+        func.afc.gcode.respond_info.assert_any_call("Resetting lane1 to hub")

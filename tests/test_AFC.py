@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from extras.AFC import afc, State, AFC_VERSION
-from extras.AFC_lane import AFCLaneState
+from extras.AFC_lane import AFCLaneState, AFCMoveWarning
 from klippy import Printer
 
 from tests.test_AFC_lane import _make_afc_lane
@@ -2894,3 +2894,346 @@ class TestToolLoadNeedPurge:
 
         debug_msgs = [m for lvl, m in afc.logger.messages if lvl == "debug"]
         assert any(f"Exception: Error Occurred" in m for m in debug_msgs)
+
+
+# ── do_tool_cut_tip_form ────────────────────────────────────────────────────────
+# Extracted out of unload_sequence; behavior/log-message content is unchanged so
+# these tests exercise it directly through its new standalone entry point.
+
+class TestDoToolCutTipForm:
+    def _make(self):
+        afc = _make_afc()
+        afc.tool_cut = False
+        afc.tool_cut_cmd = None
+        afc.park = False
+        afc.park_cmd = None
+        afc.form_tip = False
+        afc.form_tip_cmd = None
+        lane = _make_afc_lane()
+        lane.extruder_obj.name = "e0"
+        return afc, lane
+
+    def test_tool_cut_true_park_true_cuts_and_parks(self):
+        afc, lane = self._make()
+        afc.tool_cut = True
+        afc.tool_cut_cmd = "AFC_CUT"
+        afc.park = True
+        afc.park_cmd = "AFC_PARK"
+
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+
+        lane.extruder_obj.estats.increase_cut_total.assert_called_once_with()
+        gcode_calls = [
+            call("AFC_CUT EXTRUDER=e0"),
+            call("AFC_PARK EXTRUDER=e0"),
+        ]
+        log_calls = [
+            call("TOOL_UNLOAD: After cut"),
+            call("TOOL_UNLOAD: After park"),
+        ]
+        assert afc.gcode.run_script_from_command.call_args_list == gcode_calls
+        assert afc.afcDeltaTime.log_with_time.call_args_list == log_calls
+        assert afc.function.log_toolhead_pos.call_count == 2
+
+    def test_tool_cut_true_park_false_cuts_without_parking(self):
+        afc, lane = self._make()
+        afc.tool_cut = True
+        afc.tool_cut_cmd = "AFC_CUT"
+        afc.park = False
+
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+
+        lane.extruder_obj.estats.increase_cut_total.assert_called_once_with()
+        assert afc.gcode.run_script_from_command.call_args_list == [call("AFC_CUT EXTRUDER=e0")]
+        assert afc.afcDeltaTime.log_with_time.call_args_list == [call("TOOL_UNLOAD: After cut")]
+        assert afc.function.log_toolhead_pos.call_count == 1
+
+    def test_tool_cut_false_skips_cut_entirely(self):
+        afc, lane = self._make()
+        afc.tool_cut = False
+        afc.park = True
+        afc.park_cmd = "AFC_PARK"
+
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+
+        lane.extruder_obj.estats.increase_cut_total.assert_not_called()
+        afc.gcode.run_script_from_command.assert_not_called()
+        afc.afcDeltaTime.log_with_time.assert_not_called()
+
+    def test_form_tip_true_park_true_afc_cmd_uses_afc_form_tip(self):
+        afc, lane = self._make()
+        afc.form_tip = True
+        afc.form_tip_cmd = "AFC"
+        afc.park = True
+        afc.park_cmd = "AFC_PARK"
+        tip_obj = MagicMock()
+        afc.printer._objects["AFC_form_tip"] = tip_obj
+
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+
+        tip_obj.tip_form.assert_called_once_with()
+        assert afc.tip is tip_obj
+        gcode_calls = [call("AFC_PARK EXTRUDER=e0")]
+        log_calls = [
+            call("TOOL_UNLOAD: After form tip park"),
+            call("TOOL_UNLOAD: After afc form tip"),
+        ]
+        assert afc.gcode.run_script_from_command.call_args_list == gcode_calls
+        assert afc.afcDeltaTime.log_with_time.call_args_list == log_calls
+        assert afc.function.log_toolhead_pos.call_count == 2
+
+    def test_form_tip_true_park_false_afc_cmd_skips_park(self):
+        afc, lane = self._make()
+        afc.form_tip = True
+        afc.form_tip_cmd = "AFC"
+        afc.park = False
+        tip_obj = MagicMock()
+        afc.printer._objects["AFC_form_tip"] = tip_obj
+
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+
+        tip_obj.tip_form.assert_called_once_with()
+        assert afc.gcode.run_script_from_command.call_args_list == []
+        assert afc.afcDeltaTime.log_with_time.call_args_list == [call("TOOL_UNLOAD: After afc form tip")]
+        assert afc.function.log_toolhead_pos.call_count == 1
+
+    def test_form_tip_true_custom_cmd_runs_custom_gcode(self):
+        afc, lane = self._make()
+        afc.form_tip = True
+        afc.form_tip_cmd = "MY_CUSTOM_TIP"
+        afc.park = False
+
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+
+        assert afc.gcode.run_script_from_command.call_args_list == [call("MY_CUSTOM_TIP")]
+        assert afc.afcDeltaTime.log_with_time.call_args_list == [
+            call("TOOL_UNLOAD: After custom form tip")
+        ]
+        assert afc.function.log_toolhead_pos.call_count == 1
+
+    def test_form_tip_false_skips_tip_forming_entirely(self):
+        afc, lane = self._make()
+        afc.form_tip = False
+        afc.park = True
+        afc.park_cmd = "AFC_PARK"
+        afc.form_tip_cmd = "AFC"
+
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+
+        afc.gcode.run_script_from_command.assert_not_called()
+        afc.afcDeltaTime.log_with_time.assert_not_called()
+        afc.function.log_toolhead_pos.assert_not_called()
+
+
+# ── load_sequence: unit_load_lane delegation ────────────────────────────────────
+# New branch: when a lane has no custom_load_cmd and its unit_obj exposes
+# unit_load_lane, load_sequence delegates loading to the unit instead of the
+# default hub/toolhead move sequence.
+
+class TestLoadSequenceUnitLoadLane:
+    def _make(self):
+        afc = _make_afc()
+        afc._check_extruder_temp = MagicMock(return_value=False)
+        afc.save_vars = MagicMock()
+        lane = _make_afc_lane()
+        lane.custom_load_cmd = None
+        lane.unit_obj = MagicMock(spec=["unit_load_lane"])
+        lane.set_tool_loaded = MagicMock()
+        lane.enable_buffer = MagicMock()
+        hub = MagicMock()
+        extruder = MagicMock()
+        return afc, lane, hub, extruder
+
+    def test_unit_load_lane_success_returns_true_and_finalizes(self):
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_load_lane.return_value = True
+
+        result = afc.load_sequence(lane, hub, extruder)
+
+        assert result is True
+        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder)
+        lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True)
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        afc.save_vars.assert_called_once_with()
+
+    def test_unit_load_lane_failure_returns_false_without_finalizing(self):
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_load_lane.return_value = False
+
+        result = afc.load_sequence(lane, hub, extruder)
+
+        assert result is False
+        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder)
+        lane.set_tool_loaded.assert_not_called()
+        afc.save_vars.assert_not_called()
+
+    def test_no_unit_load_lane_hook_falls_through_to_default_path(self):
+        # Without the unit_load_lane hook, load_sequence must take the
+        # default hub/toolhead move path instead, which calls load_then_home
+        # and returns early via the pre-existing homing-error branch.
+        afc, lane, hub, extruder = self._make()
+        afc.homing_enabled = True
+        lane.unit_obj = MagicMock(spec=["move_to_hub", "load_then_home"])
+        lane.hub_obj = None
+        lane.loaded_to_hub = False
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.unit_obj.load_then_home.return_value = (None, None, AFCMoveWarning.ERROR)
+
+        result = afc.load_sequence(lane, hub, extruder)
+
+        assert not hasattr(lane.unit_obj, "unit_load_lane")
+        assert result is False
+        lane.unit_obj.load_then_home.assert_called_once()
+
+    def test_check_extruder_temp_runs_before_branch_selection(self):
+        # _check_extruder_temp moved to the top of load_sequence so it now
+        # runs for every path, including the unit_load_lane delegation path.
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_load_lane.return_value = True
+
+        afc.load_sequence(lane, hub, extruder)
+
+        afc._check_extruder_temp.assert_called_once_with(lane)
+        afc.afcDeltaTime.log_with_time.assert_not_called()
+
+    def test_check_extruder_temp_true_logs_done_heating(self):
+        # When _check_extruder_temp reports it heated the toolhead, the new
+        # top-of-function log call must fire before any branch is selected.
+        afc, lane, hub, extruder = self._make()
+        afc._check_extruder_temp = MagicMock(return_value=True)
+        lane.unit_obj.unit_load_lane.return_value = True
+
+        afc.load_sequence(lane, hub, extruder)
+
+        afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
+
+
+# ── unload_sequence: unit_unload_lane delegation ────────────────────────────────
+
+class TestUnloadSequenceUnitUnloadLane:
+    def _make(self):
+        afc = _make_afc()
+        afc._check_extruder_temp = MagicMock(return_value=False)
+        afc.save_vars = MagicMock()
+        afc.post_unload_macro = None
+        lane = _make_afc_lane()
+        lane.custom_unload_cmd = None
+        lane.unit_obj = MagicMock(spec=["lane_unloading", "unit_unload_lane"])
+        hub = MagicMock()
+        extruder = MagicMock()
+        return afc, lane, hub, extruder
+
+    def test_unit_unload_lane_failure_returns_false(self):
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_unload_lane.return_value = False
+
+        result = afc.unload_sequence(lane, hub, extruder)
+
+        assert result is False
+        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder)
+
+    def test_unit_unload_lane_success_does_not_return_false(self):
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_unload_lane.return_value = True
+        lane.disable_buffer = MagicMock()
+        lane.do_enable = MagicMock()
+
+        result = afc.unload_sequence(lane, hub, extruder)
+
+        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder)
+        assert result is True
+        lane.disable_buffer.assert_called_once_with()
+
+    def test_lane_unloading_led_activated_before_branch_selection(self):
+        # lane_unloading() call was moved to the top of unload_sequence, so
+        # it now fires regardless of which unload path is subsequently taken.
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_unload_lane.return_value = False
+
+        afc.unload_sequence(lane, hub, extruder)
+
+        lane.unit_obj.lane_unloading.assert_called_once_with(lane)
+
+    def test_check_extruder_temp_runs_before_branch_selection(self):
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_unload_lane.return_value = False
+
+        afc.unload_sequence(lane, hub, extruder)
+
+        afc._check_extruder_temp.assert_called_once_with(lane)
+        afc.afcDeltaTime.log_with_time.assert_not_called()
+
+    def test_check_extruder_temp_true_logs_done_heating(self):
+        # When _check_extruder_temp reports it heated the toolhead, the new
+        # top-of-function log call must fire before any branch is selected.
+        afc, lane, hub, extruder = self._make()
+        afc._check_extruder_temp = MagicMock(return_value=True)
+        lane.unit_obj.unit_unload_lane.return_value = False
+
+        afc.unload_sequence(lane, hub, extruder)
+
+        afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
+
+    def test_no_unit_unload_lane_hook_falls_through_to_default_path(self):
+        # Without the unit_unload_lane hook, unload_sequence must take the
+        # default toolhead-retract path instead, which returns early via the
+        # pre-existing "filament stuck in toolhead" branch.
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj = MagicMock(spec=["lane_unloading"])
+        afc.tool_cut = False
+        afc.form_tip = False
+        afc.move_e_pos = MagicMock()
+        lane.disable_buffer = MagicMock()
+        lane.sync_to_extruder = MagicMock()
+        lane.select_lane = MagicMock()
+        lane.tool_max_unload_attempts = 0
+        lane.get_toolhead_pre_sensor_state.return_value = True
+        extruder.tool_start = ""
+        extruder.tool_stn_unload = 5
+        extruder.tool_end_state = False
+
+        result = afc.unload_sequence(lane, hub, extruder)
+
+        assert not hasattr(lane.unit_obj, "unit_unload_lane")
+        assert result is False
+        lane.select_lane.assert_called_once_with()
+        afc.error.handle_lane_failure.assert_called_once()
+
+
+# ── unload_sequence: custom_unload_cmd path runs post_unload_macro ─────────────
+# New branch inside the (pre-existing) custom_unload_cmd path: a configured
+# post_unload_macro is now run after the custom unload command.
+
+class TestUnloadSequenceCustomCmdPostUnloadMacro:
+    def _make(self):
+        afc = _make_afc()
+        afc._check_extruder_temp = MagicMock(return_value=False)
+        afc.save_vars = MagicMock()
+        lane = _make_afc_lane()
+        lane.custom_unload_cmd = "MY_CUSTOM_UNLOAD"
+        lane.unit_obj = MagicMock(spec=["lane_unloading"])
+        lane.set_tool_unloaded = MagicMock()
+        lane.disable_buffer = MagicMock()
+        lane.do_enable = MagicMock()
+        hub = MagicMock()
+        extruder = MagicMock()
+        return afc, lane, hub, extruder
+
+    def test_post_unload_macro_set_runs_macro(self):
+        afc, lane, hub, extruder = self._make()
+        afc.post_unload_macro = "MY_POST_MACRO"
+
+        afc.unload_sequence(lane, hub, extruder)
+
+        gcode_calls = [call("MY_CUSTOM_UNLOAD"), call("MY_POST_MACRO")]
+        assert afc.gcode.run_script_from_command.call_args_list == gcode_calls
+        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True)
+
+    def test_post_unload_macro_none_skips_macro(self):
+        afc, lane, hub, extruder = self._make()
+        afc.post_unload_macro = None
+
+        afc.unload_sequence(lane, hub, extruder)
+
+        assert afc.gcode.run_script_from_command.call_args_list == [call("MY_CUSTOM_UNLOAD")]
+        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True)

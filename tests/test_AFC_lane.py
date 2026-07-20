@@ -12,7 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call
 import pytest
 
 from extras.AFC_lane import (
@@ -180,6 +180,9 @@ class TestExcludeTypes:
     def test_vivid_in_exclude_types(self):
         assert "ViViD" in EXCLUDE_TYPES
 
+    def test_openams_in_exclude_types(self):
+        assert "OpenAMS" in EXCLUDE_TYPES
+
 
 # ── AFCLane initialization ────────────────────────────────────────────────────
 # AFCLane.__init__ is tightly coupled to Klipper's runtime; we bypass it with
@@ -252,6 +255,559 @@ class TestAFCLaneInit:
 
     def test_update_weight_delay_class_constant(self):
         assert AFCLane.UPDATE_WEIGHT_DELAY == 10.0
+
+
+# ── _get_steppers: stepperless unit early return ─────────────────────────────
+# New branch: stepperless units (e.g. OpenAMS) have no drive stepper to set up,
+# so _get_steppers returns immediately after resolving the unit object.
+
+class TestGetSteppersStepperlessEarlyReturn:
+    def _make_config(self, unit_obj):
+        lane = _make_afc_lane()
+        lane.unit = "Turtle_1"
+        lane.printer = MagicMock()
+        lane.printer.load_object.return_value = unit_obj
+        lane.endstops = {}
+        lane.drive_stepper = None
+
+        unit_cfg = MagicMock()
+        unit_cfg.get_name.return_value = "AFC_BoxTurtle Turtle_1"
+        config = MagicMock()
+        config.fileconfig.sections.return_value = ["AFC_BoxTurtle Turtle_1"]
+        config.getsection.return_value = unit_cfg
+        config.get.return_value = None
+        return lane, config
+
+    def test_stepperless_drive_true_returns_before_stepper_setup(self):
+        unit_obj = MagicMock(spec=["stepperless_drive"])
+        unit_obj.stepperless_drive = True
+        lane, config = self._make_config(unit_obj)
+
+        lane._get_steppers(config)
+
+        assert lane.unit_obj is unit_obj
+        # only_lane is set further down in the non-stepperless path; its
+        # absence proves the early return fired before reaching that code.
+        assert not hasattr(lane, "only_lane")
+
+    def test_stepperless_drive_false_continues_past_early_return(self):
+        unit_obj = MagicMock(spec=["drive_stepper_obj", "type"])
+        unit_obj.drive_stepper_obj = None
+        unit_obj.type = "BoxTurtle"
+        lane, config = self._make_config(unit_obj)
+        config.get.return_value = None  # no step_pin configured
+
+        lane._get_steppers(config)
+
+        assert lane.unit_obj is unit_obj
+        assert lane.only_lane is True
+
+    def test_stepperless_drive_missing_attribute_continues_past_early_return(self):
+        unit_obj = MagicMock(spec=["type"])
+        unit_obj.type = "BoxTurtle"
+        lane, config = self._make_config(unit_obj)
+        config.get.return_value = None
+
+        lane._get_steppers(config)
+
+        assert not hasattr(unit_obj, "stepperless_drive")
+        assert lane.only_lane is True
+
+
+# ── _set_homing_endstop ──────────────────────────────────────────────────────
+# Guard added to skip registering a hub's "virtual" pin as a real endstop.
+
+class TestSetHomingEndstop:
+    def test_virtual_pin_returns_without_registering(self):
+        lane = _make_afc_lane()
+        ppins = MagicMock()
+        query_endstops = MagicMock()
+
+        lane._set_homing_endstop(query_endstops, ppins, "virtual", "hub")
+
+        ppins.allow_multi_use_pin.assert_not_called()
+        ppins.setup_pin.assert_not_called()
+        query_endstops.register_endstop.assert_not_called()
+
+    def test_virtual_pin_case_and_whitespace_insensitive(self):
+        lane = _make_afc_lane()
+        ppins = MagicMock()
+        query_endstops = MagicMock()
+
+        lane._set_homing_endstop(query_endstops, ppins, "  Virtual  ", "hub")
+
+        ppins.allow_multi_use_pin.assert_not_called()
+
+    def test_real_pin_registers_endstop(self):
+        lane = _make_afc_lane()
+        ppins = MagicMock()
+        endstop = MagicMock()
+        ppins.setup_pin.return_value = endstop
+        query_endstops = MagicMock()
+
+        lane._set_homing_endstop(query_endstops, ppins, "!PA0", "hub")
+
+        ppins.allow_multi_use_pin.assert_called_once_with("PA0")
+        ppins.parse_pin.assert_called_once_with("!PA0", True, True)
+        ppins.setup_pin.assert_called_once_with("endstop", "!PA0")
+        query_endstops.register_endstop.assert_called_once_with(endstop, f"{lane.name}_hub")
+
+
+# ── move_advanced: stepperless unit delegation ───────────────────────────────
+# New branch: stepperless units (e.g. OpenAMS) delegate the move to the unit's
+# lane_move instead of driving a (non-existent) stepper directly.
+
+class TestMoveAdvancedStepperlessDelegation:
+    def _make(self):
+        lane = _make_afc_lane()
+        lane.get_speed_accel = MagicMock(return_value=(50, 100))
+        lane.get_active_assist = MagicMock(return_value=False)
+        lane.move = MagicMock()
+        return lane
+
+    def test_stepperless_with_lane_move_delegates_and_skips_move(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=["stepperless_drive", "lane_move"])
+        lane.unit_obj.stepperless_drive = True
+
+        lane.move_advanced(25.0, SpeedMode.SHORT)
+
+        lane.unit_obj.lane_move.assert_called_once_with(lane, 25.0, SpeedMode.SHORT)
+        lane.move.assert_not_called()
+
+    def test_unit_obj_none_does_not_delegate(self):
+        lane = self._make()
+        lane.unit_obj = None
+
+        lane.move_advanced(25.0, SpeedMode.SHORT)
+
+        lane.move.assert_called_once_with(25.0, 50, 100, False)
+
+    def test_stepperless_false_does_not_delegate(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=["stepperless_drive", "lane_move"])
+        lane.unit_obj.stepperless_drive = False
+
+        lane.move_advanced(25.0, SpeedMode.SHORT)
+
+        lane.unit_obj.lane_move.assert_not_called()
+        lane.move.assert_called_once_with(25.0, 50, 100, False)
+
+    def test_stepperless_true_but_no_lane_move_does_not_delegate(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=["stepperless_drive"])
+        lane.unit_obj.stepperless_drive = True
+
+        lane.move_advanced(25.0, SpeedMode.SHORT)
+
+        lane.move.assert_called_once_with(25.0, 50, 100, False)
+
+
+# ── _prep_capture_td1: unit hook interception ────────────────────────────────
+# New branch: a unit's prep_capture_td1 hook can intercept TD-1 capture on
+# stepperless units. A non-None return means the unit handled it.
+
+class TestPrepCaptureTd1UnitHook:
+    def _make(self, td1_when_loaded=True):
+        lane = _make_afc_lane()
+        lane.td1_when_loaded = td1_when_loaded
+        lane.get_td1_data = MagicMock()
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.state = False
+        lane.afc.function.get_current_lane_obj.return_value = None
+        return lane
+
+    def test_hook_returns_non_none_skips_default_capture(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=["prep_capture_td1"])
+        lane.unit_obj.prep_capture_td1.return_value = ("ok", "msg")
+
+        lane._prep_capture_td1()
+
+        lane.unit_obj.prep_capture_td1.assert_called_once_with(lane)
+        lane.get_td1_data.assert_not_called()
+
+    def test_hook_returns_none_falls_through_to_default_capture(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=["prep_capture_td1"])
+        lane.unit_obj.prep_capture_td1.return_value = None
+
+        lane._prep_capture_td1()
+
+        lane.unit_obj.prep_capture_td1.assert_called_once_with(lane)
+        lane.get_td1_data.assert_called_once_with()
+
+    def test_no_hook_falls_through_to_default_capture(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=[])
+
+        lane._prep_capture_td1()
+
+        lane.get_td1_data.assert_called_once_with()
+
+    def test_td1_when_loaded_false_skips_entire_block(self):
+        lane = self._make(td1_when_loaded=False)
+        lane.unit_obj = MagicMock(spec=["prep_capture_td1"])
+        lane.unit_obj.prep_capture_td1.return_value = ("ok", "msg")
+
+        lane._prep_capture_td1()
+
+        lane.unit_obj.prep_capture_td1.assert_not_called()
+        lane.get_td1_data.assert_not_called()
+
+
+# ── get_td1_data: unit hook interception ─────────────────────────────────────
+
+class TestGetTd1DataUnitHook:
+    def _make_no_device(self):
+        # Setup so that, if the hook doesn't short-circuit, execution reaches
+        # the "not loaded" check (distinguishable from the hook's own result).
+        lane = _make_afc_lane()
+        lane.td1_device_id = "td1_1"
+        lane.td1_bowden_length = 100.0
+        lane._load_state = False
+        lane.hub_obj = None
+        lane.prep_state = False
+        return lane
+
+    def test_hook_returns_non_none_short_circuits(self):
+        lane = self._make_no_device()
+        lane.unit_obj = MagicMock(spec=["capture_td1_data"])
+        lane.unit_obj.capture_td1_data.return_value = (True, "captured via unit")
+
+        result = lane.get_td1_data()
+
+        assert result == (True, "captured via unit")
+        lane.unit_obj.capture_td1_data.assert_called_once_with(lane)
+
+    def test_hook_returns_none_falls_through_to_default_logic(self):
+        lane = self._make_no_device()
+        lane.unit_obj = MagicMock(spec=["capture_td1_data"])
+        lane.unit_obj.capture_td1_data.return_value = None
+
+        status, msg = lane.get_td1_data()
+
+        lane.unit_obj.capture_td1_data.assert_called_once_with(lane)
+        # Default logic reaches the "not loaded" check, proving execution
+        # actually continued past the hook instead of using its result.
+        assert status is False
+        assert "not loaded" in msg.lower()
+
+    def test_no_hook_falls_through_to_default_logic(self):
+        lane = self._make_no_device()
+        lane.unit_obj = MagicMock(spec=[])
+
+        status, msg = lane.get_td1_data()
+
+        assert status is False
+        assert "not loaded" in msg.lower()
+
+
+# ── handle_load_runout ────────────────────────────────────────────────────────
+
+class TestHandleLoadRunout:
+    def _make(self, load_debounce_button=True):
+        lane = _make_afc_lane()
+        lane.printer = MagicMock()
+        lane.printer.state_message = "Printer is ready"
+        lane.unit_obj = MagicMock()
+        lane.unit_obj.type = "HTLF"
+        lane._afc_prep_done = True
+        lane.set_loaded = MagicMock()
+        lane.set_unloaded = MagicMock()
+        lane._post_prep_user_macro = MagicMock()
+        lane._prep_capture_td1 = MagicMock()
+        lane._perform_infinite_runout = MagicMock()
+        lane._perform_pause_runout = MagicMock()
+        lane.td1_device_id = None
+        lane.tool_loaded = False
+        lane.hub = "PB1"
+        lane.status = "None"
+        lane.runout_lane = None
+        lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane.afc.TOOL_LOAD = MagicMock()
+        lane.afc.error.AFC_error = MagicMock()
+        lane.afc.save_vars = MagicMock()
+        if load_debounce_button:
+            lane.load_debounce_button = MagicMock()
+        else:
+            if hasattr(lane, "load_debounce_button"):
+                del lane.load_debounce_button
+        return lane
+
+    # -- debounce button forwarding --
+
+    def test_button_present_try_path_uses_keyword_form(self):
+        lane = self._make()
+        lane.handle_load_runout(100.0, True)
+        lane.load_debounce_button._old_note_filament_present.assert_called_once_with(
+            is_filament_present=True
+        )
+
+    def test_button_present_except_path_uses_positional_form(self):
+        lane = self._make()
+        lane.load_debounce_button._old_note_filament_present.side_effect = [
+            TypeError("old style"), None
+        ]
+        lane.handle_load_runout(100.0, True)
+        assert lane.load_debounce_button._old_note_filament_present.call_args_list == [
+            call(is_filament_present=True),
+            call(100.0, True),
+        ]
+
+    def test_button_absent_skips_forwarding_entirely(self):
+        lane = self._make(load_debounce_button=False)
+        # Should not raise despite there being no load_debounce_button attribute.
+        lane.handle_load_runout(100.0, True)
+        assert not hasattr(lane, "load_debounce_button")
+
+    # -- outer gate: printer state / unit type / prep done (each alone False) --
+
+    def test_outer_gate_wrong_state_message_blocks_processing(self):
+        lane = self._make()
+        lane.printer.state_message = "Starting"
+        lane.handle_load_runout(100.0, True)
+        lane.set_loaded.assert_not_called()
+
+    def test_outer_gate_unit_type_not_only_load_blocks_processing(self):
+        lane = self._make()
+        lane.unit_obj.type = "BoxTurtle"
+        lane.handle_load_runout(100.0, True)
+        lane.set_loaded.assert_not_called()
+
+    def test_outer_gate_prep_not_done_blocks_processing(self):
+        lane = self._make()
+        lane._afc_prep_done = False
+        lane.handle_load_runout(100.0, True)
+        lane.set_loaded.assert_not_called()
+
+    def test_outer_gate_all_true_processes_load(self):
+        lane = self._make()
+        lane.handle_load_runout(100.0, True)
+        lane.set_loaded.assert_called_once_with()
+
+    # -- load_state True: staged spool id stashing --
+
+    def test_staged_spool_id_captured_from_afc_spool(self):
+        lane = self._make()
+        lane.afc.spool.next_spool_id = "spool-42"
+        lane.handle_load_runout(100.0, True)
+        assert lane._afc_staged_spool_id == "spool-42"
+
+    def test_staged_spool_id_defaults_none_when_attribute_missing(self):
+        lane = self._make()
+        lane.afc.spool = MagicMock(spec=[])
+        lane.handle_load_runout(100.0, True)
+        assert lane._afc_staged_spool_id is None
+
+    def test_staged_spool_id_exception_sets_none(self):
+        class RaisingAfc:
+            @property
+            def spool(self):
+                raise RuntimeError("boom")
+        lane = self._make()
+        lane.afc = RaisingAfc()
+        lane.afc.function = MagicMock()
+        lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane.afc.TOOL_LOAD = MagicMock()
+        lane.afc.error = MagicMock()
+        lane.afc.save_vars = MagicMock()
+        lane.handle_load_runout(100.0, True)
+        assert lane._afc_staged_spool_id is None
+
+    # -- load_state True: on_filament_insert suppression --
+
+    def test_load_suppressed_true_skips_insert_and_resets_flag(self):
+        lane = self._make()
+        lane._load_suppressed = True
+        lane.handle_load_runout(100.0, True)
+        lane.unit_obj.on_filament_insert.assert_not_called()
+        assert lane._load_suppressed is False
+
+    def test_load_suppressed_false_calls_insert_hook(self):
+        lane = self._make()
+        lane._load_suppressed = False
+        lane.handle_load_runout(100.0, True)
+        lane.unit_obj.on_filament_insert.assert_called_once_with(lane)
+
+    def test_no_load_suppressed_attribute_calls_insert_hook(self):
+        lane = self._make()
+        assert not hasattr(lane, "_load_suppressed")
+        lane.handle_load_runout(100.0, True)
+        lane.unit_obj.on_filament_insert.assert_called_once_with(lane)
+
+    def test_missing_on_filament_insert_hook_does_not_raise(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=["type", "check_runout"])
+        lane.unit_obj.type = "HTLF"
+        lane.handle_load_runout(100.0, True)  # should not raise
+        assert not hasattr(lane.unit_obj, "on_filament_insert")
+
+    # -- load_state True: TD-1 capture gate (each condition alone False) --
+
+    def test_td1_device_id_none_skips_capture(self):
+        lane = self._make()
+        lane.td1_device_id = None
+        lane.tool_loaded = False
+        lane.handle_load_runout(100.0, True)
+        lane._prep_capture_td1.assert_not_called()
+
+    def test_tool_loaded_true_skips_capture(self):
+        lane = self._make()
+        lane.td1_device_id = "td1_1"
+        lane.tool_loaded = True
+        lane.handle_load_runout(100.0, True)
+        lane._prep_capture_td1.assert_not_called()
+
+    def test_td1_device_id_set_and_not_tool_loaded_captures(self):
+        lane = self._make()
+        lane.td1_device_id = "td1_1"
+        lane.tool_loaded = False
+        lane.handle_load_runout(100.0, True)
+        lane._prep_capture_td1.assert_called_once_with()
+
+    # -- load_state True: direct_load hub --
+
+    def test_direct_load_and_printer_moving_errors_without_tool_load(self):
+        lane = self._make()
+        lane.hub = "direct_load"
+        lane.afc.function.is_printing = MagicMock(return_value=True)
+        lane.handle_load_runout(100.0, True)
+        lane.afc.function.is_printing.assert_called_once_with(check_movement=True)
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Cannot load spool to toolhead while printer is actively moving or homing", False
+        )
+        lane.afc.TOOL_LOAD.assert_not_called()
+
+    def test_direct_load_and_printer_idle_calls_tool_load(self):
+        lane = self._make()
+        lane.hub = "direct_load"
+        lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane.handle_load_runout(100.0, True)
+        lane.afc.TOOL_LOAD.assert_called_once_with(lane)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_non_direct_load_hub_skips_tool_load_branch(self):
+        lane = self._make()
+        lane.hub = "PB1"
+        lane.handle_load_runout(100.0, True)
+        lane.afc.TOOL_LOAD.assert_not_called()
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_load_state_true_always_runs_post_prep_macro(self):
+        lane = self._make()
+        lane.handle_load_runout(100.0, True)
+        lane._post_prep_user_macro.assert_called_once_with()
+
+    # -- load_state False: on_filament_remove always fires --
+
+    def test_load_state_false_calls_on_filament_remove(self):
+        lane = self._make()
+        lane.unit_obj.check_runout.return_value = False
+        lane.status = "None"
+        lane.handle_load_runout(100.0, False)
+        lane.unit_obj.on_filament_remove.assert_called_once_with(lane)
+
+    # -- load_state False: disabled-sensor warning gate (each alone False) --
+
+    def test_no_fila_load_attribute_skips_disabled_warning(self):
+        lane = self._make()
+        assert not hasattr(lane, "fila_load")
+        lane.unit_obj.check_runout.return_value = False
+        lane.handle_load_runout(100.0, False)
+        assert lane.logger.messages == []
+        lane.set_unloaded.assert_called_once_with()
+
+    def test_sensor_enabled_true_skips_disabled_warning(self):
+        lane = self._make()
+        lane.fila_load = MagicMock()
+        lane.fila_load.runout_helper.sensor_enabled = True
+        lane.afc.function.is_printing = MagicMock(return_value=True)
+        lane.unit_obj.check_runout.return_value = False
+        lane.handle_load_runout(100.0, False)
+        assert lane.logger.messages == []
+        lane.set_unloaded.assert_called_once_with()
+
+    def test_not_printing_skips_disabled_warning(self):
+        lane = self._make()
+        lane.fila_load = MagicMock()
+        lane.fila_load.runout_helper.sensor_enabled = False
+        lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane.unit_obj.check_runout.return_value = False
+        lane.handle_load_runout(100.0, False)
+        assert lane.logger.messages == []
+        lane.set_unloaded.assert_called_once_with()
+
+    def test_disabled_sensor_while_printing_logs_warning_exactly(self):
+        lane = self._make()
+        lane.fila_load = MagicMock()
+        lane.fila_load.runout_helper.sensor_enabled = False
+        lane.afc.function.is_printing = MagicMock(return_value=True)
+        lane.handle_load_runout(100.0, False)
+        assert lane.logger.messages == [
+            ("warning", "Load runout has been detected, but pause and runout "
+                        "detection has been disabled")
+        ]
+        lane.unit_obj.check_runout.assert_not_called()
+
+    # -- load_state False: unit-driven runout handling --
+
+    def test_check_runout_true_and_unit_handles_runout_skips_generic_behavior(self):
+        lane = self._make()
+        lane.unit_obj.check_runout.return_value = True
+        lane.unit_obj.handle_runout = MagicMock(return_value=True)
+        lane.handle_load_runout(100.0, False)
+        lane._perform_infinite_runout.assert_not_called()
+        lane._perform_pause_runout.assert_not_called()
+        lane.set_unloaded.assert_not_called()
+
+    def test_check_runout_true_unit_declines_and_runout_lane_set_uses_infinite(self):
+        lane = self._make()
+        lane.unit_obj.check_runout.return_value = True
+        lane.unit_obj.handle_runout = MagicMock(return_value=False)
+        lane.runout_lane = "lane2"
+        lane.handle_load_runout(100.0, False)
+        lane._perform_infinite_runout.assert_called_once_with()
+        lane._perform_pause_runout.assert_not_called()
+
+    def test_check_runout_true_unit_declines_and_no_runout_lane_uses_pause(self):
+        lane = self._make()
+        lane.unit_obj.check_runout.return_value = True
+        lane.unit_obj.handle_runout = MagicMock(return_value=False)
+        lane.runout_lane = None
+        lane.handle_load_runout(100.0, False)
+        lane._perform_pause_runout.assert_called_once_with()
+        lane._perform_infinite_runout.assert_not_called()
+
+    def test_check_runout_true_no_handle_runout_hook_treated_as_undeclined(self):
+        lane = self._make()
+        lane.unit_obj = MagicMock(spec=["type", "on_filament_remove", "check_runout"])
+        lane.unit_obj.type = "HTLF"
+        lane.unit_obj.check_runout.return_value = True
+        lane.runout_lane = None
+        lane.handle_load_runout(100.0, False)
+        assert not hasattr(lane.unit_obj, "handle_runout")
+        lane._perform_pause_runout.assert_called_once_with()
+
+    def test_check_runout_false_and_not_calibrating_sets_unloaded(self):
+        lane = self._make()
+        lane.unit_obj.check_runout.return_value = False
+        lane.status = "None"
+        lane.handle_load_runout(100.0, False)
+        lane.set_unloaded.assert_called_once_with()
+
+    def test_check_runout_false_and_calibrating_skips_set_unloaded(self):
+        lane = self._make()
+        lane.unit_obj.check_runout.return_value = False
+        lane.status = "calibrating"
+        lane.handle_load_runout(100.0, False)
+        lane.set_unloaded.assert_not_called()
+
+    def test_save_vars_called_after_processing(self):
+        lane = self._make()
+        lane.unit_obj.check_runout.return_value = False
+        lane.handle_load_runout(100.0, False)
+        lane.afc.save_vars.assert_called_once_with()
 
 
 # ── __str__ ───────────────────────────────────────────────────────────────────

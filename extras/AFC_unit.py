@@ -779,9 +779,21 @@ class afcUnit:
         self._print_function_not_defined(self.eject_lane.__name__)
 
     def on_filament_insert(self, lane):
+        """
+        Called when filament is inserted into a lane. Sends the afc:lane_inserted event.
+        Units can override to add unit-specific insert handling.
+
+        :param lane: AFCLane object that had filament inserted
+        """
         self.printer.send_event("afc:lane_inserted", lane)
 
     def on_filament_remove(self, lane):
+        """
+        Called when filament is removed from a lane. No-op by default; units can override
+        to add unit-specific removal handling.
+
+        :param lane: AFCLane object that had filament removed
+        """
         return
 
     def move_to_hub(self, lane: AFCLane, dist: float,

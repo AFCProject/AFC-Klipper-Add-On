@@ -275,6 +275,55 @@ class TestHandleReady:
         hub.lanes = {"lane1": lane}
         hub.handle_ready()  # should not raise
 
+    def test_physical_hub_handle_ready_skips_lane_check_entirely(self):
+        # A physical hub (switch_pin != "virtual") must never evaluate the
+        # per-lane load-sensor check. Prove it by giving a lane that WOULD
+        # raise if the virtual-hub body ran (load is None, prep is not None,
+        # and unit_obj.type is not a sensorless unit).
+        from tests.conftest import MockConfig, MockPrinter, MockAFC
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(
+            name="AFC_hub phys_hub", printer=printer,
+            values={"switch_pin": "PA0"}
+        )
+        with patch("extras.AFC_hub.add_filament_switch") as mock_afs:
+            mock_afs.return_value = (MagicMock(), MagicMock())
+            hub = afc_hub(config)
+        lane = MagicMock()
+        lane.fullname = "AFC_stepper lane1"
+        lane.load = None
+        lane.prep = MagicMock()
+        lane.unit_obj.type = "BoxTurtle"
+        hub.lanes = {"lane1": lane}
+        hub.handle_ready()  # should not raise, is_virtual_pin() is False
+
+    def test_virtual_hub_skips_sensorless_unit_lanes(self):
+        # A lane whose unit type is in SENSORLESS_UNITS (e.g. OpenAMS) is
+        # skipped via `continue` even though it has no load sensor, so no
+        # error should be raised.
+        hub = _make_hub(switch_pin="virtual")
+        lane = MagicMock()
+        lane.fullname = "AFC_stepper lane1"
+        lane.load = None
+        lane.prep = MagicMock()
+        lane.unit_obj.type = "OpenAMS"
+        hub.lanes = {"lane1": lane}
+        hub.handle_ready()  # should not raise, lane is skipped via continue
+
+    def test_virtual_hub_no_error_when_prep_is_none(self):
+        # Condition is `lane.load is None and lane.prep is not None`. With
+        # load missing but prep also None, the second operand alone must be
+        # enough to prevent the report, independent of the first.
+        hub = _make_hub(switch_pin="virtual")
+        lane = MagicMock()
+        lane.fullname = "AFC_stepper lane1"
+        lane.load = None
+        lane.prep = None
+        lane.unit_obj.type = "BoxTurtle"
+        hub.lanes = {"lane1": lane}
+        hub.handle_ready()  # should not raise
+
 # ── afc_hub.__init__ ──────────────────────────────────────────────────────────
 
 class TestAFCHubInit:

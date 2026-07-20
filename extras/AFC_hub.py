@@ -119,6 +119,10 @@ class afc_hub:
         self.printer.send_event("afc_hub:register_macros", self)
 
     def handle_ready(self):
+        """
+        Handle the klippy:ready event. Verifies that lanes using a virtual hub sensor have a
+        load sensor configured, raising a config error if any sensorless lanes are missing one.
+        """
         if self.is_virtual_pin():
             msg = "The following lanes need load sensors for virtual hub sensor to work correctly:"
             report_error = False

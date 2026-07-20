@@ -1897,23 +1897,35 @@ class afc:
         self.current_state = State.IDLE
         return True
 
-    def do_tool_cut_tip_form(self, cur_lane, cur_extruder):
+    def do_tool_cut_tip_form(self, cur_lane: AFCLane, cur_extruder: AFCExtruder):
+        """
+        Performs filament cutting/parking and tip forming during unload, if enabled in config.
+
+        :param cur_lane: The lane object being unloaded.
+        :param cur_extruder: The extruder object associated with the lane.
+        """
         # Perform filament cutting and parking if specified.
         if self.tool_cut:
             cur_lane.extruder_obj.estats.increase_cut_total()
-            self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.tool_cut_cmd, cur_extruder.name))
+            self.gcode.run_script_from_command(
+                "{} EXTRUDER={}".format(self.tool_cut_cmd, cur_extruder.name)
+            )
             self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After cut")
             self.function.log_toolhead_pos()
 
             if self.park:
-                self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.park_cmd, cur_extruder.name))
+                self.gcode.run_script_from_command(
+                    "{} EXTRUDER={}".format(self.park_cmd, cur_extruder.name)
+                )
                 self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After park")
                 self.function.log_toolhead_pos()
 
         # Form filament tip if necessary.
         if self.form_tip:
             if self.park:
-                self.gcode.run_script_from_command("{} EXTRUDER={}".format(self.park_cmd, cur_extruder.name))
+                self.gcode.run_script_from_command(
+                    "{} EXTRUDER={}".format(self.park_cmd, cur_extruder.name)
+                )
                 self.afcDeltaTime.log_with_time("TOOL_UNLOAD: After form tip park")
                 self.function.log_toolhead_pos()
 

@@ -93,7 +93,9 @@ class TemperatureOAMS:
         self._callback = None
 
     def handle_connect(self):
-        """Initialize the device and start the sampling timer on klippy:connect."""
+        """
+        Initialize the device and start the sampling timer on klippy:connect.
+        """
         self._init_device()
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
 
@@ -119,7 +121,7 @@ class TemperatureOAMS:
         """
         Return the sensor reporting interval.
 
-        :return: Reporting interval in seconds.
+        :return float: Reporting interval in seconds.
         """
         return self.report_time
 
@@ -154,7 +156,7 @@ class TemperatureOAMS:
         Read a 16-bit big-endian value from an HDC1080 register.
 
         :param reg: Register address to read from.
-        :return: The 16-bit register value as an integer.
+        :return int: The 16-bit register value.
         """
         self.i2c.i2c_write([reg])
         self.reactor.pause(self.reactor.monotonic() + 0.0635)
@@ -196,8 +198,7 @@ class TemperatureOAMS:
         """
         Read and convert the current temperature from the HDC1080.
 
-        :return: Tuple of (temperature in degrees Celsius, success flag). On an
-                 I2C failure returns (0.0, False).
+        :return tuple: (temperature in degrees Celsius, success flag); (0.0, False) on I2C failure.
         """
         try:
             self.i2c.i2c_write([TEMP_REG])
@@ -215,8 +216,7 @@ class TemperatureOAMS:
         """
         Read and convert the current relative humidity from the HDC1080.
 
-        :return: Tuple of (relative humidity in percent, success flag). On an
-                 I2C failure returns (0.0, False).
+        :return tuple: (relative humidity in percent, success flag); (0.0, False) on I2C failure.
         """
         try:
             self.i2c.i2c_write([HUMI_REG])
@@ -240,7 +240,7 @@ class TemperatureOAMS:
         forwards good temperatures to the registered heaters callback.
 
         :param eventtime: Reactor event time at which the timer fired.
-        :return: The reactor time at which the timer should next fire.
+        :return float: The reactor time at which the timer should next fire.
         """
         if not self.init_sent:
             return eventtime + self.report_time
@@ -286,7 +286,7 @@ class TemperatureOAMS:
         Return the latest measured temperature and humidity.
 
         :param eventtime: Reactor event time (unused).
-        :return: Dict with rounded ``temperature`` and ``humidity`` values.
+        :return dict: Dict with rounded ``temperature`` and ``humidity`` values.
         """
         return {
             'temperature': round(self.temp, 2),

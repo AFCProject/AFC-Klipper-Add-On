@@ -704,7 +704,9 @@ class AFCLane:
 
     def _get_steppers(self, config: ConfigWrapper):
         """
-        Helper function to get steppers for lane and setup for proper homing
+        Helper function to get steppers for lane and setup for proper homing.
+
+        :param config: Klipper config object for this lane
         """
         try:
             unit_cfg = next(
@@ -946,10 +948,10 @@ class AFCLane:
         """
         Wrapper for move function and is used to compute several arguments
         to move the lane accordingly.
-        Parameters:
-        distance (float): The distance to move.
-        speed_mode (Enum SpeedMode): Identifies which speed to use.
-        assist_active (Enum AssistActive): Determines to force assist or to dynamically determine.
+
+        :param distance: The distance to move.
+        :param speed_mode: Identifies which speed to use.
+        :param assist_active: Determines to force assist or to dynamically determine.
         """
         # Stepperless units (ACE/OpenAMS) have no drive stepper, so the stepper
         # move below is a silent no-op for their lanes. Delegate to the unit's
@@ -957,8 +959,8 @@ class AFCLane:
         # makes LANE_MOVE work for those lanes.
         unit_obj = getattr(self, 'unit_obj', None)
         if (unit_obj is not None
-                and getattr(unit_obj, 'stepperless_drive', False)
-                and hasattr(unit_obj, 'lane_move')):
+            and getattr(unit_obj, 'stepperless_drive', False)
+            and hasattr(unit_obj, 'lane_move')):
             unit_obj.lane_move(self, distance, speed_mode)
             return
 
@@ -1115,6 +1117,7 @@ class AFCLane:
         updated then future switch changes will not be detected.
 
         :param eventtime: Event time from the button press
+        :param load_state: True if filament is present at the load switch, False otherwise
         """
         button = getattr(self, "load_debounce_button", None)
         if button:
@@ -1164,8 +1167,8 @@ class AFCLane:
                 self.unit_obj.on_filament_remove(self)
                 # Don't run if user disabled sensor in gui
                 fila_load = getattr(self, 'fila_load', None)
-                if (fila_load and
-                    not fila_load.runout_helper.sensor_enabled
+                if (fila_load
+                    and not fila_load.runout_helper.sensor_enabled
                     and self.afc.function.is_printing()):
                     self.logger.warning("Load runout has been detected, but pause and runout "
                                         "detection has been disabled")
@@ -1791,6 +1794,8 @@ class AFCLane:
         """
         Captures TD-1 data for lane. Has error checking to verify that lane is loaded, hub is not blocked
         and that TD-1 device is still detected before trying to capture data.
+
+        :return tuple: (status, msg) where status is True if data was captured successfully
         """
         # Stepperless units (ACE/OpenAMS) can't use the AFC stepper moves below.
         # They capture TD-1 via their own feed path (load to the TD-1 device,

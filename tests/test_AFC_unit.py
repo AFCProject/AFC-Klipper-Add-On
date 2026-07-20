@@ -220,6 +220,31 @@ class TestReturnToHome:
         assert result is None
 
 
+# ── on_filament_insert / on_filament_remove ──────────────────────────────────
+
+class TestOnFilamentInsert:
+    def test_sends_afc_lane_inserted_event_with_lane(self):
+        unit = _make_unit()
+        unit.printer.send_event = MagicMock()
+        lane = MagicMock()
+
+        unit.on_filament_insert(lane)
+
+        unit.printer.send_event.assert_called_once_with("afc:lane_inserted", lane)
+
+
+class TestOnFilamentRemove:
+    def test_returns_none_and_has_no_side_effects(self):
+        unit = _make_unit()
+        unit.printer.send_event = MagicMock()
+        lane = MagicMock()
+
+        result = unit.on_filament_remove(lane)
+
+        assert result is None
+        unit.printer.send_event.assert_not_called()
+
+
 # ── LED helpers ───────────────────────────────────────────────────────────────
 
 class TestLaneStatusLeds:
