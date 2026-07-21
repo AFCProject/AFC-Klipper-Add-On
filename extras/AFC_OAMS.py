@@ -129,8 +129,7 @@ class AFC_OAMS:
         afc_obj = self.printer.load_object(config, "AFC")
         self.afc = afc_obj
         self.logger: AFC_logger = afc_obj.logger
-
-        self._cached_gcode = None
+        self.gcode = self.printer.lookup_object('gcode')
 
         # Pressure sensor thresholds
         self.fps_upper_threshold = config.getfloat("fps_upper_threshold")
@@ -509,17 +508,11 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         """
         Register this unit's ``OAMS_*`` G-code commands as mux commands.
         Each command is keyed on the ``OAMS`` index so multiple units coexist.
-        No-ops if the gcode object is not yet available.
 
         :param name: short unit name (unused; index is used for muxing).
         """
         oams_id = str(self.oams_idx)
-        if self._cached_gcode is None:
-            self._cached_gcode = self.printer.lookup_object("gcode", None)
-            if self._cached_gcode is None:
-                return
-
-        gcode = self._cached_gcode
+        gcode = self.gcode
 
         commands = [
             ("OAMS_LOAD_SPOOL", self.cmd_OAMS_LOAD_SPOOL, self.cmd_OAMS_LOAD_SPOOL_help),
@@ -541,6 +534,13 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
         for cmd_name, handler, help_text in commands:
             gcode.register_mux_command(cmd_name, "OAMS", oams_id, handler, desc=help_text)
+
+        self.afc.function.register_mux_command(
+            self.afc.show_macros, 'AFC_STOP_OAMS_FOLLOWER', "OAMS", oams_id,
+            self.cmd_AFC_STOP_OAMS_FOLLOWER, self.cmd_AFC_STOP_OAMS_FOLLOWER_help)
+        self.afc.function.register_mux_command(
+            self.afc.show_macros, 'AFC_START_OAMS_FOLLOWER', "OAMS", oams_id,
+            self.cmd_AFC_START_OAMS_FOLLOWER, self.cmd_AFC_START_OAMS_FOLLOWER_help)
 
     cmd_OAMS_RETRY_STATUS_help = "Display retry configuration and state"
 
@@ -775,14 +775,10 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 self.reactor.pause(self.reactor.monotonic() + 1.0)
 
                 try:
-                    gcode = self._cached_gcode
-                    if gcode is None:
-                        gcode = self.printer.lookup_object("gcode")
-                        self._cached_gcode = gcode
-                    gcode.run_script_from_command("M83")
-                    gcode.run_script_from_command("G92 E0")
-                    gcode.run_script_from_command("G1 E-5.00 F1200")
-                    gcode.run_script_from_command("M400")
+                    self.gcode.run_script_from_command("M83")
+                    self.gcode.run_script_from_command("G92 E0")
+                    self.gcode.run_script_from_command("G1 E-5.00 F1200")
+                    self.gcode.run_script_from_command("M400")
                 except Exception as e:
                     self.logger.warning(
                         f"OAMS[{self.oams_idx}]: Failed to retract extruder before unload retry: {e}"
@@ -944,12 +940,9 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         extrusion_speed_per_min = (60 * target_flow / (pi * (1.75 / 2) ** 2))
         extrusion_length = (extrusion_speed_per_min / 60 * 30)
 
-        gcode = self._cached_gcode or self.printer.lookup_object("gcode", None)
-        if gcode is None:
-            raise gcmd.error("Failed to access gcode object")
-
-        gcode.run_script_from_command("M104 S%f" % target_temp)
-        gcode.run_script_from_command("G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min))
+        self.gcode.run_script_from_command("M104 S%f" % target_temp)
+        self.gcode.run_script_from_command(
+            "G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min))
 
     cmd_OAMS_CALIBRATE_HUB_HES_help = "Calibrate the range of a single hub HES"
     def cmd_OAMS_CALIBRATE_HUB_HES(self, gcmd: GCodeCommand) -> None:
@@ -1303,6 +1296,42 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             gcmd.respond_info("Follower enable in forward direction")
         elif enable == 0:
             gcmd.respond_info("Follower disabled")
+
+    cmd_AFC_STOP_OAMS_FOLLOWER_help = "Stop the OAMS follower motor"
+    def cmd_AFC_STOP_OAMS_FOLLOWER(self, gcmd: GCodeCommand) -> None:
+        """
+        Stop this unit's follower motor by disabling it.
+
+        Usage
+        -------
+        `AFC_STOP_OAMS_FOLLOWER OAMS=<oams_name>`
+
+        Example
+        -------
+        ```
+        AFC_STOP_OAMS_FOLLOWER OAMS=oams1
+        ```
+        """
+        self.gcode.run_script_from_command(
+            f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=0 DIRECTION=1")
+
+    cmd_AFC_START_OAMS_FOLLOWER_help = "Start the OAMS follower motor"
+    def cmd_AFC_START_OAMS_FOLLOWER(self, gcmd: GCodeCommand) -> None:
+        """
+        Start this unit's follower motor, enabled in the forward direction.
+
+        Usage
+        -------
+        `AFC_START_OAMS_FOLLOWER OAMS=<oams_name>`
+
+        Example
+        -------
+        ```
+        AFC_START_OAMS_FOLLOWER OAMS=oams1
+        ```
+        """
+        self.gcode.run_script_from_command(
+            f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=1 DIRECTION=1")
 
     def _oams_cmd_stats(self, params: Dict[str, Any]) -> None:
         """

@@ -37,7 +37,7 @@
    them turn into paragraphs.
 - **Docstrings** — every new or changed method needs a docstring matching
    Sphinx-style convention in this shape: a short description, a blank line,
-   then one `:param name:` per parameter (skip `self`) and a`:return type:`
+   then one `:param name:` per parameter (skip `self`) and a `:return type:`
    line if the method returns something meaningful (omit it otherwise).
    No blank line between the description and the `:param`/`:return` block,
    and none between that block and the closing `"""`.

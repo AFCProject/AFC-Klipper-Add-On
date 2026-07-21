@@ -472,6 +472,18 @@ class TestSample:
         sensor._sample(100.0)
 
         sensor.printer.invoke_shutdown.assert_called_once()
+    
+    def test_temp_below_min_invokes_shutdown(self):
+        sensor = _make_sensor(init_sent=True)
+        sensor._read_temp = MagicMock(return_value=(-10.0, True))
+        sensor._read_humidity = MagicMock(return_value=(40.0, True))
+        sensor.min_temp = 0.0
+        sensor.max_temp = 100.0
+        sensor.printer.invoke_shutdown = MagicMock()
+
+        sensor._sample(100.0)
+
+        sensor.printer.invoke_shutdown.assert_called_once()
 
     def test_temp_fail_humi_ok_uses_last_good_temp_no_shutdown_check(self):
         sensor = _make_sensor(init_sent=True)

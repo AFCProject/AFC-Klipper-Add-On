@@ -394,6 +394,8 @@ class AFCLane:
     def material(self):
         """
         Returns lanes filament material type
+
+        :return str: Current filament material type for the lane
         """
         return self._material
 

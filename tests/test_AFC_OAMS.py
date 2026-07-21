@@ -256,7 +256,7 @@ class TestInit:
             mock_service_cls.for_printer.return_value = MagicMock()
             oams = AFC_OAMS(config)
         assert printer._gcode.register_mux_command.call_count == 11
-        assert oams._cached_gcode is printer._gcode
+        assert oams.gcode is printer._gcode
 
     def test_default_runtime_state(self):
         config, printer, afc = self._config()
@@ -650,25 +650,10 @@ class TestDetermineCurrentSpool:
 # ── register_commands ─────────────────────────────────────────────────────────
 
 class TestRegisterCommands:
-    def test_no_gcode_object_returns_without_registering(self):
-        oams = _make_oams()
-        oams.printer.lookup_object = MagicMock(return_value=None)
-        oams.register_commands("oams1")
-        assert oams._cached_gcode is None
-
-    def test_uses_already_cached_gcode_without_relookup(self):
-        oams = _make_oams()
-        cached_gcode = MagicMock()
-        oams._cached_gcode = cached_gcode
-        oams.printer.lookup_object = MagicMock()
-        oams.register_commands("oams1")
-        oams.printer.lookup_object.assert_not_called()
-        assert cached_gcode.register_mux_command.call_count == 11
-
-    def test_looks_up_gcode_and_registers_expected_commands(self):
+    def test_registers_expected_commands_on_the_gcode_object_set_at_init(self):
         oams = _make_oams()
         gcode = MagicMock()
-        oams.printer.lookup_object = MagicMock(return_value=gcode)
+        oams.gcode = gcode
         oams.register_commands("oams1")
         assert gcode.register_mux_command.call_count == 11
         registered_names = [c[0][0] for c in gcode.register_mux_command.call_args_list]
@@ -949,7 +934,7 @@ class TestUnloadSpoolWithRetry:
             side_effect=[(False, "busy"), (True, "unloaded")]
         )
         gcode = MagicMock()
-        oams._cached_gcode = gcode
+        oams.gcode = gcode
 
         success, message = oams.unload_spool_with_retry(max_retries=3)
 
@@ -992,7 +977,7 @@ class TestUnloadSpoolWithRetry:
         )
         gcode = MagicMock()
         gcode.run_script_from_command.side_effect = Exception("no extruder")
-        oams._cached_gcode = gcode
+        oams.gcode = gcode
 
         success, message = oams.unload_spool_with_retry(max_retries=3)
 
@@ -1058,24 +1043,6 @@ class TestUnloadSpoolWithRetry:
 
         assert success is False
         assert oams.unload_spool.call_count == 2
-
-    def test_retry_without_cached_gcode_looks_up_gcode_object(self):
-        oams = _make_oams()
-        oams.abort_current_action = MagicMock()
-        oams._cached_gcode = None
-        gcode = MagicMock()
-        oams.printer.lookup_object = MagicMock(return_value=gcode)
-        oams.unload_spool = MagicMock(
-            side_effect=[(False, "busy"), (True, "unloaded")]
-        )
-
-        success, message = oams.unload_spool_with_retry(max_retries=3)
-
-        assert success is True
-        oams.printer.lookup_object.assert_called_once_with("gcode")
-        assert oams._cached_gcode is gcode
-        gcode.run_script_from_command.assert_any_call("M83")
-
 
 # ── load_spool_cancel ─────────────────────────────────────────────────────────
 
@@ -1189,20 +1156,12 @@ class TestPidAutotuneCommand:
     def test_success_runs_heat_and_extrude(self):
         oams = _make_oams()
         gcode = MagicMock()
-        oams._cached_gcode = gcode
+        oams.gcode = gcode
         gcmd = _make_gcmd({"TARGET_FLOW": 5.0, "TARGET_TEMP": 210.0})
         oams.cmd_OAMS_PID_AUTOTUNE(gcmd)
         calls = [c[0][0] for c in gcode.run_script_from_command.call_args_list]
         assert any("M104 S210" in c for c in calls)
         assert any(c.startswith("G1 E") for c in calls)
-
-    def test_no_gcode_object_available_raises(self):
-        oams = _make_oams()
-        oams._cached_gcode = None
-        oams.printer.lookup_object = MagicMock(return_value=None)
-        gcmd = _make_gcmd({"TARGET_FLOW": 5.0, "TARGET_TEMP": 210.0})
-        with pytest.raises(Exception):
-            oams.cmd_OAMS_PID_AUTOTUNE(gcmd)
 
 
 # ── cmd_OAMS_CALIBRATE_HUB_HES / cmd_OAMS_CALIBRATE_PTFE_LENGTH ─────────────
@@ -1828,6 +1787,71 @@ class TestFollowerCommand:
         oams.cmd_OAMS_FOLLOWER(gcmd)
         oams.set_oams_follower.assert_called_once_with(2, 1)
         gcmd.respond_info.assert_not_called()
+
+
+class TestStopOamsFollowerCommand:
+    def test_disables_follower_via_oams_follower_command(self):
+        oams = _make_oams(oams_idx=1)
+        gcode = MagicMock()
+        oams.gcode = gcode
+        gcmd = _make_gcmd()
+
+        oams.cmd_AFC_STOP_OAMS_FOLLOWER(gcmd)
+
+        gcode.run_script_from_command.assert_called_once_with(
+            "OAMS_FOLLOWER OAMS=1 ENABLE=0 DIRECTION=1")
+
+    def test_uses_this_units_oams_idx(self):
+        oams = _make_oams(oams_idx=2)
+        gcode = MagicMock()
+        oams.gcode = gcode
+        gcmd = _make_gcmd()
+
+        oams.cmd_AFC_STOP_OAMS_FOLLOWER(gcmd)
+
+        sent = gcode.run_script_from_command.call_args[0][0]
+        assert "OAMS=2" in sent
+        assert "OAMS=1" not in sent
+
+
+class TestStartOamsFollowerCommand:
+    def test_enables_follower_forward_via_oams_follower_command(self):
+        oams = _make_oams(oams_idx=1)
+        gcode = MagicMock()
+        oams.gcode = gcode
+        gcmd = _make_gcmd()
+
+        oams.cmd_AFC_START_OAMS_FOLLOWER(gcmd)
+
+        gcode.run_script_from_command.assert_called_once_with(
+            "OAMS_FOLLOWER OAMS=1 ENABLE=1 DIRECTION=1")
+
+    def test_uses_this_units_oams_idx(self):
+        oams = _make_oams(oams_idx=2)
+        gcode = MagicMock()
+        oams.gcode = gcode
+        gcmd = _make_gcmd()
+
+        oams.cmd_AFC_START_OAMS_FOLLOWER(gcmd)
+
+        sent = gcode.run_script_from_command.call_args[0][0]
+        assert "OAMS=2" in sent
+        assert "OAMS=1" not in sent
+
+
+class TestRegisterCommandsIncludesFollowerMacros:
+    def test_registers_stop_and_start_follower_macros(self):
+        oams = _make_oams(oams_idx=1)
+        oams.gcode = MagicMock()
+
+        oams.register_commands("oams1")
+
+        registered_names = [
+            c.args[1] if len(c.args) > 1 else None
+            for c in oams.afc.function.register_mux_command.call_args_list
+        ]
+        assert "AFC_STOP_OAMS_FOLLOWER" in registered_names
+        assert "AFC_START_OAMS_FOLLOWER" in registered_names
 
 
 # ── _oams_cmd_stats / _oams_cmd_current_status / get_current ────────────────
