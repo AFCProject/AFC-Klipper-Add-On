@@ -5,8 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-07-20]
+### Added
+- Added `AFC_START_OAMS_FOLLOWER` and `AFC_STOP_OAMS_FOLLOWER` macros to manually control an
+  OpenAMS unit's follower motor.
+
+### Updated
+- Updated OpenAMS hardware support (`AFC_OAMS` / `AFC_OpenAMS`), including hub/FPS sensor
+  handling, follower control, and retry-based load/unload.
+
+### Fixed
+- Fixed an issue where switching the active lane during an FPS reload could crash instead of
+  updating the tool state correctly.
+
 ## [2026-07-19]
-## Added
+### Added
 - Ability to use Snapmaker U1 side feeders to load filament to toolhead through AFC
 
 ## [2026-07-18]
