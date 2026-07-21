@@ -299,6 +299,8 @@ install_afc() {
             # EMU's MCU board_pins config already defines a dedicated alias
             # for this sensor per lane.
             query_fps_pin "FPS_PSF" "$buffer_unit_name" "${buffer_unit_name}_lane1:TN"
+          elif [ "$installation_type" == "OpenAMS" ]; then
+            query_fps_pin "FPS_PSF" "$buffer_unit_name" "fps:PA2"
           else
             query_fps_pin "FPS_PSF" "$buffer_unit_name"
           fi
