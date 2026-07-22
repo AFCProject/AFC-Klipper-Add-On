@@ -294,7 +294,9 @@ class TestInitDevice:
         with caplog.at_level(logging.INFO):
             sensor._init_device()
         assert sensor.init_sent is True
-        assert "temperature_oams oams1: manufacturer=0x0 device=0x0" in caplog.text
+        assert [r.getMessage() for r in caplog.records] == [
+            "temperature_oams oams1: manufacturer=0x0 device=0x0"
+        ]
 
     def test_sets_temp_resolution_bits(self):
         sensor = _make_sensor()
@@ -392,7 +394,9 @@ class TestReadTemp:
             celsius, ok = sensor._read_temp()
         assert ok is False
         assert celsius == 0.0
-        assert "temperature_oams oams1: temp read failed: i2c bus error" in caplog.text
+        assert [r.getMessage() for r in caplog.records] == [
+            "temperature_oams oams1: temp read failed: i2c bus error"
+        ]
 
     def test_writes_temp_register_first(self):
         sensor = _make_sensor()
@@ -420,7 +424,9 @@ class TestReadHumidity:
             percent, ok = sensor._read_humidity()
         assert ok is False
         assert percent == 0.0
-        assert "temperature_oams oams1: humidity read failed: i2c bus error" in caplog.text
+        assert [r.getMessage() for r in caplog.records] == [
+            "temperature_oams oams1: humidity read failed: i2c bus error"
+        ]
 
     def test_writes_humidity_register_first(self):
         sensor = _make_sensor()
@@ -523,7 +529,7 @@ class TestSample:
 
         result = sensor._sample(100.0)
 
-        assert sensor._consecutive_errors == 2
+        assert sensor._consecutive_errors == 1
         assert result == 105.0
         sensor._callback.assert_not_called()
 
@@ -538,14 +544,13 @@ class TestSample:
         with caplog.at_level(logging.WARNING):
             result = sensor._sample(100.0)
 
-        # 4 -> +1 (temp fail) -> +1 (both fail) = 6 >= 5
-        assert sensor._consecutive_errors == 6
+        # 4 -> +1 (temp fail, single increment) = 5 >= 5
+        assert sensor._consecutive_errors == 5
         assert result == 100.0 + 5 * 3
         sensor._callback.assert_not_called()
-        assert (
-            "temperature_oams oams1: 6 consecutive I2C errors, backing off"
-            in caplog.text
-        )
+        assert [r.getMessage() for r in caplog.records] == [
+            "temperature_oams oams1: 5 consecutive I2C errors, backing off"
+        ]
 
     def test_no_callback_registered_skips_callback_without_raising(self):
         """setup_callback() may not have been called yet (e.g. before the
@@ -563,6 +568,16 @@ class TestSample:
 
         assert sensor.temp == 50.0
         assert result == sensor.reactor.monotonic() + sensor.report_time
+
+    def test_both_fail_increments_consecutive_errors_by_one_not_two(self):
+        sensor = _make_sensor(init_sent=True)
+        sensor._consecutive_errors = 0
+        sensor._read_temp = MagicMock(return_value=(0.0, False))
+        sensor._read_humidity = MagicMock(return_value=(0.0, False))
+
+        sensor._sample(100.0)
+
+        assert sensor._consecutive_errors == 1
 
     def test_applies_temp_and_humidity_offsets(self):
         sensor = _make_sensor(init_sent=True)

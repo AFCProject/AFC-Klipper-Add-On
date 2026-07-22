@@ -78,14 +78,16 @@ class TemperatureOAMS:
                                             self.handle_connect)
         self.temp_resolution = config.getint('temp_resolution', 14, minval=11, maxval=14)
         if self.temp_resolution not in TEMP_RES:
-            raise ValueError("Invalid temperature resolution, valid: %s"
-                             % ", ".join(str(x) for x in TEMP_RES))
+            valid = ", ".join(str(x) for x in TEMP_RES)
+            error_msg = f"Invalid temperature resolution, valid: {valid}"
+            raise ValueError(error_msg)
         self.temp_resolution = TEMP_RES[self.temp_resolution]
 
         self.humidity_resolution = config.getint('humidity_resolution', 14, minval=8, maxval=14)
         if self.humidity_resolution not in HUMI_RES:
-            raise ValueError("Invalid humidity resolution, valid: %s"
-                             % ", ".join(str(x) for x in HUMI_RES))
+            valid = ", ".join(str(x) for x in HUMI_RES)
+            error_msg = f"Invalid humidity resolution, valid: {valid}"
+            raise ValueError(error_msg)
         self.humidity_resolution = HUMI_RES[self.humidity_resolution]
 
         self.temp_offset = config.getfloat('temp_offset', 0.0)
@@ -97,7 +99,7 @@ class TemperatureOAMS:
         self._consecutive_errors = 0
         self._max_consecutive_errors = 5
         self._last_good_temp = 0.0
-        self._callback: Optional[Callable] = None
+        self._callback: Optional[Callable[[float, float], None]] = None
 
     def handle_connect(self) -> None:
         """
@@ -116,7 +118,7 @@ class TemperatureOAMS:
         self.min_temp = min_temp
         self.max_temp = max_temp
 
-    def setup_callback(self, cb: Callable) -> None:
+    def setup_callback(self, cb: Callable[[float, float], None]) -> None:
         """
         Register the heaters callback used to report measured temperatures.
 
@@ -268,7 +270,6 @@ class TemperatureOAMS:
             self.humidity = humi_val + self.humidity_offset
 
         if not (temp_ok or humi_ok):
-            self._consecutive_errors += 1
             if self._consecutive_errors >= self._max_consecutive_errors:
                 logging.warning(
                     "temperature_oams %s: %d consecutive I2C errors, backing off",

@@ -39,8 +39,7 @@
    Sphinx-style convention in this shape: a short description, a blank line,
    then one `:param name:` per parameter (skip `self`) and a `:return type:`
    line if the method returns something meaningful (omit it otherwise).
-   No blank line between the description and the `:param`/`:return` block,
-   and none between that block and the closing `"""`.
+   No blank line between the `:param`/`:return` block and the closing `"""`.
 
    ```python
    def register_lane_macros(self, lane_obj: AFCLane):
@@ -55,7 +54,7 @@
    instead — description, then `Usage`/`Example` sections — see
    `cmd_AFC_QUIET_MODE` in `extras/AFC.py` for the pattern to match:
 
-   ~~~python
+   ````python
    def cmd_AFC_QUIET_MODE(self, gcmd):
        """
        Set lower speed on any filament moves.
@@ -72,7 +71,13 @@
        AFC_QUIET_MODE SPEED=75 ENABLE=1
        ```
        """
-   ~~~
+   ````
+
+   Test methods (`tests/test_*.py`) are exempt from this rule — a docstring
+   is fine if it adds real context, but it's optional, not required. Test
+   method names are already descriptive enough on their own
+   (`test_success_after_one_retry_uses_resolved_lane_name`), so don't add
+   one just to satisfy this rule.
 - **All new code needs unit tests** — any code added must come with unit
    tests that follow the Unit Test Rules below.
 

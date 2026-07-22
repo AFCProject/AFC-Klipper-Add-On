@@ -528,6 +528,8 @@ class TestHandleLoadRunout:
         lane.afc.TOOL_LOAD = MagicMock()
         lane.afc.error.AFC_error = MagicMock()
         lane.afc.save_vars = MagicMock()
+        lane._load_suppressed = False
+        lane._afc_staged_spool_id = None
         if load_debounce_button:
             lane.load_debounce_button = MagicMock()
         else:
@@ -627,12 +629,6 @@ class TestHandleLoadRunout:
     def test_load_suppressed_false_calls_insert_hook(self):
         lane = self._make()
         lane._load_suppressed = False
-        lane.handle_load_runout(100.0, True)
-        lane.unit_obj.on_filament_insert.assert_called_once_with(lane)
-
-    def test_no_load_suppressed_attribute_calls_insert_hook(self):
-        lane = self._make()
-        assert not hasattr(lane, "_load_suppressed")
         lane.handle_load_runout(100.0, True)
         lane.unit_obj.on_filament_insert.assert_called_once_with(lane)
 

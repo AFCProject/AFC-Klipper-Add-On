@@ -2893,7 +2893,7 @@ class TestToolLoadNeedPurge:
         )
 
         debug_msgs = [m for lvl, m in afc.logger.messages if lvl == "debug"]
-        assert any(f"Exception: Error Occurred" in m for m in debug_msgs)
+        assert any("Exception: Error Occurred" in m for m in debug_msgs)
 
 
 # ── do_tool_cut_tip_form ────────────────────────────────────────────────────────

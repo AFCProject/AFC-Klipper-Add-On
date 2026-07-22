@@ -1644,15 +1644,17 @@ class afcFunction:
 
         prompt.p_end()
 
-        # Stepperless units (ACE/ACE2/OpenAMS) can't be retracted by moving a lane
-        # stepper — the filament lives in the unit and only its serial protocol can
-        # pull it back. The move-to-hub loop below would spin without moving
-        # filament and always fail "failed to reset to hub". Delegate to the unit's
-        # own reset command (get_lane_reset_command) when present.
+        # Stepperless units can't be retracted by moving a stepper — the
+        # filament lives in the unit, and only its serial protocol can pull it
+        # back. The move-to-hub loop below would spin without moving filament
+        # and always fail "failed to reset to hub". Delegate to the unit's own
+        # reset command (get_lane_reset_command) when present.
         if hasattr(cur_lane.unit_obj, 'get_lane_reset_command'):
             reset_cmd = cur_lane.unit_obj.get_lane_reset_command(cur_lane, long_dis)
             if reset_cmd is not None:
                 self.afc.gcode.run_script_from_command(reset_cmd)
+            else:
+                self.logger.info(f"{lane} does not support distance-based reset for its unit type")
             return
 
         self.afc.gcode.respond_info('Resetting {} to hub'.format(lane))

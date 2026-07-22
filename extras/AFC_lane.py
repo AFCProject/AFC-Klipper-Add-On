@@ -135,6 +135,8 @@ class AFCLane:
         self.runout_lane        = None
         self.status             = AFCLaneState.NONE
         self.need_purge         = False
+        self._afc_staged_spool_id: Optional[int] = None
+        self._load_suppressed: bool = False
         # END TODO
 
         self.multi_hubs_found   = False
@@ -955,10 +957,9 @@ class AFCLane:
         :param speed_mode: Identifies which speed to use.
         :param assist_active: Determines to force assist or to dynamically determine.
         """
-        # Stepperless units (ACE/OpenAMS) have no drive stepper, so the stepper
-        # move below is a silent no-op for their lanes. Delegate to the unit's
-        # lane_move (serial/firmware-driven) when it provides one — this is what
-        # makes LANE_MOVE work for those lanes.
+        # Stepperless units have no drive stepper, so the move below would
+        # silently no-op. Delegate to the unit's firmware-driven lane_move
+        # instead when it provides one.
         unit_obj = getattr(self, 'unit_obj', None)
         if (unit_obj is not None
             and getattr(unit_obj, 'stepperless_drive', False)
@@ -1075,10 +1076,10 @@ class AFCLane:
         this by setting `capture_td1_when_loaded: True` and if hub is clear and toolhead is not loaded.
         """
         if self.td1_when_loaded:
-            # Stepperless units (ACE/OpenAMS) capture TD-1 via their own feed
-            # path (in prep_post_load), not the AFC stepper path below. Let the
-            # unit intercept: a non-None return means it handled it. Units without
-            # this hook (e.g. BoxTurtle) fall through unchanged.
+            # Stepperless units capture TD-1 through their own feed path
+            # (prep_post_load) rather than the stepper path below — let the
+            # unit intercept here; a non-None return means it handled it.
+            # Units without this hook (e.g. BoxTurtle) fall through unchanged.
             hook = getattr(self.unit_obj, 'prep_capture_td1', None)
             if hook is not None and hook(self) is not None:
                 return
@@ -1138,8 +1139,7 @@ class AFCLane:
                 # on_filament_insert (e.g. ACE, which clear_values()) can tell a
                 # fresh scan apart from a stale/remembered id and keep it.
                 try:
-                    self._afc_staged_spool_id = getattr(
-                        self.afc.spool, 'next_spool_id', None)
+                    self._afc_staged_spool_id = self.afc.spool.next_spool_id
                 except Exception:
                     self._afc_staged_spool_id = None
                 # TODO: maybe set_loaded can happen after the on_filament_insert call so next spool id
@@ -1147,7 +1147,7 @@ class AFCLane:
                 self.set_loaded()
                 # on_filament_insert only when this wasn't a suppressed
                 # (operation-driven) state change.
-                if not getattr(self, '_load_suppressed', False):
+                if not self._load_suppressed:
                     if hasattr(self.unit_obj, 'on_filament_insert'):
                         self.unit_obj.on_filament_insert(self)
                 self._load_suppressed = False
@@ -1799,11 +1799,11 @@ class AFCLane:
 
         :return tuple: (status, msg) where status is True if data was captured successfully
         """
-        # Stepperless units (ACE/OpenAMS) can't use the AFC stepper moves below.
-        # They capture TD-1 via their own feed path (load to the TD-1 device,
-        # read, then unload/retract back). Delegate when the unit provides
-        # capture_td1_data; a non-None (success, msg) return means it handled it.
-        # Units without this hook (e.g. BoxTurtle) fall through unchanged.
+        # Stepperless units can't use the stepper moves below — they feed to
+        # the TD-1 device, read, then retract via their own protocol instead.
+        # Delegate via capture_td1_data when present; a non-None (success, msg)
+        # return means it handled it. Units without this hook (e.g. BoxTurtle)
+        # fall through unchanged.
         hook = getattr(self.unit_obj, 'capture_td1_data', None)
         if hook is not None:
             result = hook(self)
