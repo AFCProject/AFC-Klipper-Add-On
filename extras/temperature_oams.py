@@ -279,9 +279,9 @@ class TemperatureOAMS:
 
         if self._consecutive_errors == 0:
             if self.temp < self.min_temp or self.temp > self.max_temp:
-                self.printer.invoke_shutdown(
-                    "temperature_oams %s: %.1f outside range %.1f:%.1f"
-                    % (self.name, self.temp, self.min_temp, self.max_temp))
+                shutdown_msg = (f"temperature_oams {self.name}: {self.temp:.1f} outside range "
+                                f"{self.min_temp:.1f}{self.max_temp:.1f}")
+                self.printer.invoke_shutdown(shutdown_msg)
 
         measured_time = self.reactor.monotonic()
         print_time = self.i2c.get_mcu().estimated_print_time(measured_time)

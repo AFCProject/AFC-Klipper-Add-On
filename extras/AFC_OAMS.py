@@ -961,12 +961,12 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         OAMS_CALIBRATE_HUB_HES OAMS=oams1 SPOOL=0
         ```
         """
-        self.action_status = OAMSStatus.CALIBRATING
         spool_idx = gcmd.get_int("SPOOL", None)
         if spool_idx is None:
             raise gcmd.error("SPOOL index is required")
         if spool_idx < 0 or spool_idx > 3:
             raise gcmd.error("Invalid SPOOL index")
+        self.action_status = OAMSStatus.CALIBRATING
 
         self.oams_calibrate_hub_hes_cmd.send([spool_idx])
         while self.action_status is not None:

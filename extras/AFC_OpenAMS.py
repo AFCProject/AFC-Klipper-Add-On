@@ -542,7 +542,10 @@ class AMSHardwareService:
         event_spool_index = normalized_index if normalized_index is not None else old_snapshot.get("spool_index")
         old_lane_state = old_snapshot.get("lane_state")
         new_lane_state = bool(lane_state)
-        if emit_spool_event and old_lane_state is not None and old_lane_state != new_lane_state and event_spool_index is not None:
+        if (emit_spool_event
+            and old_lane_state is not None
+            and old_lane_state != new_lane_state
+            and event_spool_index is not None):
             event_type = "spool_loaded" if new_lane_state else "spool_unloaded"
             self.event_bus.publish(event_type, unit_name=unit_name,
                                   lane_name=lane_name, spool_index=event_spool_index,
