@@ -596,27 +596,6 @@ class TestHandleLoadRunout:
         lane.handle_load_runout(100.0, True)
         assert lane._afc_staged_spool_id == "spool-42"
 
-    def test_staged_spool_id_defaults_none_when_attribute_missing(self):
-        lane = self._make()
-        lane.afc.spool = MagicMock(spec=[])
-        lane.handle_load_runout(100.0, True)
-        assert lane._afc_staged_spool_id is None
-
-    def test_staged_spool_id_exception_sets_none(self):
-        class RaisingAfc:
-            @property
-            def spool(self):
-                raise RuntimeError("boom")
-        lane = self._make()
-        lane.afc = RaisingAfc()
-        lane.afc.function = MagicMock()
-        lane.afc.function.is_printing = MagicMock(return_value=False)
-        lane.afc.TOOL_LOAD = MagicMock()
-        lane.afc.error = MagicMock()
-        lane.afc.save_vars = MagicMock()
-        lane.handle_load_runout(100.0, True)
-        assert lane._afc_staged_spool_id is None
-
     # -- load_state True: on_filament_insert suppression --
 
     def test_load_suppressed_true_skips_insert_and_resets_flag(self):

@@ -837,6 +837,16 @@ class TestAMSHardwareService:
         result = service._polling_callback(0.0)
         assert result == MockReactor.NEVER
 
+    def test_polling_callback_disabled_lazily_caches_reactor(self):
+        service, printer = self._service()
+        service._polling_enabled = False
+        assert service._reactor is None  # not yet cached
+
+        result = service._polling_callback(0.0)
+
+        assert service._reactor is printer._reactor
+        assert result == MockReactor.NEVER
+
     def test_polling_callback_publishes_f1s_and_hub_changes(self):
         service, printer = self._service()
         service._polling_enabled = True
@@ -4987,6 +4997,12 @@ class TestCancelAndCleanupTd1:
 
 
 class TestGetTd1Snapshot:
+    def test_no_moonraker_returns_none(self):
+        ams, afc, printer, reactor = _make_ams()
+        afc.moonraker = None
+        lane = _make_lane("lane1", td1_device_id="td1_a")
+        assert ams._get_td1_snapshot(lane) is None
+
     def test_no_moonraker_data_returns_none(self):
         ams, afc, printer, reactor = _make_ams()
         afc.moonraker.get_td1_data = MagicMock(return_value=None)
@@ -6594,6 +6610,28 @@ class TestCaptureTd1WithOams:
         assert (
             "error", "TD-1 capture failed for lane1: moonraker down"
         ) in ams.logger.messages
+
+    def test_td1_detected_but_moonraker_is_none(self):
+        oams = MagicMock()
+        oams.hub_hes_value = [1, 0, 0, 0]
+        oams.encoder_clicks = 1000
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        self._clock(reactor, step=1.0)
+        ams._get_td1_snapshot = MagicMock(
+            side_effect=[None, ("2024-01-01T00:00:00Z", 1.75, "#fff")])
+        afc.moonraker = None
+        ams._cancel_and_mark_loaded = MagicMock()
+        ams._unload_after_td1 = MagicMock()
+        lane = self._lane()
+
+        messages_before = list(ams.logger.messages)
+        success, msg = self._capture(ams, lane)
+
+        assert success is False
+        assert "not captured" in msg
+        assert ams.logger.messages[len(messages_before):] == [
+            ("error", "TD-1 capture failed for lane1: moonraker not connected"),
+        ]
 
     def test_cancel_and_mark_loaded_failure_is_swallowed(self):
         oams = MagicMock()
