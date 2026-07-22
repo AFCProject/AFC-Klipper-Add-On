@@ -27,8 +27,12 @@ link_extensions() {
   local message
 
   if [ -d "${klipper_dir}/klippy/extras" ]; then
-    for extension in "${afc_path}"/extras/AFC*.py; do
-      ln -sf "${afc_path}/extras/$(basename "${extension}")" "${klipper_dir}/klippy/extras/$(basename "${extension}")"
+    for extension in "${afc_path}"/extras/*.py; do
+      case $extension in
+        # Excluding __init__.py from being linked into klipper folder
+        *__init__*) continue;;
+        *) ln -sf "${afc_path}/extras/$(basename "${extension}")" "${klipper_dir}/klippy/extras/$(basename "${extension}")";;
+      esac
     done
   else
     export message="AFC Klipper extensions not installed; Klipper extras directory not found."
