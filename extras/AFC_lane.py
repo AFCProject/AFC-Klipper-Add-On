@@ -1138,10 +1138,8 @@ class AFCLane:
                 # before set_loaded() consumes it via _set_values, so a unit's
                 # on_filament_insert (e.g. ACE, which clear_values()) can tell a
                 # fresh scan apart from a stale/remembered id and keep it.
-                try:
-                    self._afc_staged_spool_id = self.afc.spool.next_spool_id
-                except Exception:
-                    self._afc_staged_spool_id = None
+                self._afc_staged_spool_id = self.afc.spool.next_spool_id
+
                 # TODO: maybe set_loaded can happen after the on_filament_insert call so next spool id
                 # does not have to be stored into _afc_staged_spool_id. need to understand ACE logic better once impementing ACE
                 self.set_loaded()

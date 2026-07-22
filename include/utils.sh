@@ -225,7 +225,7 @@ exclude_from_klipper_git() {
   find "$EXTRAS_DIR" -type f -name "*.py" | while read -r file; do
     case $file in
       # Exclude adding __init__.py file to klippers exclude file
-      *__init__*) continue;;
+      *__init__.py) continue;;
       *)
         # Adjust the file path to the required format
         local relative_path="klippy/extras/$(basename "$file")"

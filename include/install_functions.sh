@@ -30,7 +30,7 @@ link_extensions() {
     for extension in "${afc_path}"/extras/*.py; do
       case $extension in
         # Excluding __init__.py from being linked into klipper folder
-        *__init__*) continue;;
+        *__init__.py) continue;;
         *) ln -sf "${afc_path}/extras/$(basename "${extension}")" "${klipper_dir}/klippy/extras/$(basename "${extension}")";;
       esac
     done
@@ -46,7 +46,11 @@ unlink_extensions() {
   #   - AFC_PATH: The path to the AFC Klipper Add-On repository.
   if [ -d "${klipper_dir}/klippy/extras" ]; then
     for extension in "${afc_path}"/extras/*.py; do
-      rm -f "${klipper_dir}/klippy/extras/$(basename "${extension}")"
+      case $extension in
+        # Excluding __init__.py files from being removed as this will make klipper dirty
+        *__init__.py) continue;;
+        *) rm -f "${klipper_dir}/klippy/extras/$(basename "${extension}")";;
+      esac
     done
   else
     print_msg ERROR "AFC Klipper extensions not uninstalled; Klipper extras directory not found."
