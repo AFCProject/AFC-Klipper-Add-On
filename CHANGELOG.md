@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-07-22]
 ### Added
-- Ability to set hysteresis for FPS/PSF buffer's so that stepper rotation distance is not updates every 0.25s. Hystersis is defaulted to adjust rotation distance if ADC value is +/- 0.03% of current value.
+- Configurable hysteresis for FPS/PSF buffers prevents rotation-distance updates every 0.25s when the computed multiplier changes by 0.3% or less from the last applied multiplier (default: 0.003).
 
 ## [2026-07-20]
 ### Added

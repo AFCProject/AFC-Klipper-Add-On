@@ -160,7 +160,6 @@ def _make_fps_buffer(name="FPS_buffer1", **overrides):
     buf._last_logged_integral = 0.0
     buf.integral_extrusion_threshold = 1.0
     buf._integral_last_extruder_pos = None
-    buf._last_correction_direction = NEUTRAL_STATE_NAME
 
     buf.adv_filament_switch_name = f"{name}_expanded"
     buf.fila_adv = MagicMock()
@@ -2459,7 +2458,6 @@ class TestCorrectionEvent:
         assert buf.last_state == TRAILING_STATE_NAME
         assert buf.advance_state is True
         assert buf.trailing_state is False
-        assert buf._last_correction_direction == TRAILING_STATE_NAME
         afc.function.afc_led.assert_called_once_with(buf.led_trailing, buf.led_index)
 
     def test_reading_inside_deadband_is_neutral(self):
@@ -2470,12 +2468,10 @@ class TestCorrectionEvent:
         buf.led = True
         buf.advance_state = True  # seed True so both resets to False are proven
         buf.trailing_state = True
-        buf._last_correction_direction = "something_else"
         buf._correction_event(100.0)
         assert buf.last_state == NEUTRAL_STATE_NAME
         assert buf.advance_state is False
         assert buf.trailing_state is False
-        assert buf._last_correction_direction == NEUTRAL_STATE_NAME
         afc.function.afc_led.assert_called_once_with(buf.led_neutral, buf.led_index)
 
     def test_led_disabled_skips_afc_led_call(self):
@@ -2484,14 +2480,6 @@ class TestCorrectionEvent:
         buf.smoothed_fps = 0.5
         buf._correction_event(100.0)
         afc.function.afc_led.assert_not_called()
-
-    def test_last_correction_direction_tracks_target(self):
-        buf, afc, reactor, printer, lane = self._ready()
-        buf.set_point = 0.5
-        buf.deadband = 0.3
-        buf.smoothed_fps = 0.2
-        buf._correction_event(100.0)
-        assert buf._last_correction_direction == ADVANCING_STATE_NAME
 
     def test_already_advancing_does_not_force_log_event_via_state(self):
         buf, afc, reactor, printer, lane = self._ready()
@@ -2638,7 +2626,6 @@ class TestCorrectionEventHysteresis:
 
         lane.update_rotation_distance.assert_not_called()
         assert buf.last_state == ADVANCING_STATE_NAME
-        assert buf._last_correction_direction == ADVANCING_STATE_NAME
 
 
 class TestCorrectionEventIntegral:
@@ -2987,7 +2974,6 @@ class TestAFCFPSBufferInit:
         assert buf._last_logged_integral == 0.0
         assert buf.integral_extrusion_threshold == 0.02
         assert buf._integral_last_extruder_pos is None
-        assert buf._last_correction_direction == NEUTRAL_STATE_NAME
         assert buf.min_event_systime == buf.reactor.NEVER
         from extras.AFC_utils import VirtualFilamentSensor
         assert isinstance(buf.fila_adv, VirtualFilamentSensor)
@@ -3134,14 +3120,6 @@ class TestFPSEnableBuffer:
         buf.enable_buffer(lane)
         assert buf._latch_enabled is False
         assert buf._advance_latched is False
-
-    def test_resets_last_correction_direction(self):
-        buf, afc, reactor, printer = _make_fps_buffer()
-        lane = _make_lane(buf)
-        buf._lane_has_rotation_control = MagicMock(return_value=False)
-        buf._last_correction_direction = ADVANCING_STATE_NAME
-        buf.enable_buffer(lane)
-        assert buf._last_correction_direction == NEUTRAL_STATE_NAME
 
     def test_led_enabled_sets_neutral_led(self):
         buf, afc, reactor, printer = _make_fps_buffer()
