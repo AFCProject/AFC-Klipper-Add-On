@@ -16,7 +16,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch, call
 import pytest
 
-from extras.AFC_functions import afcFunction, afcDeltaTime
+from extras.AFC_functions import afcFunction, afcDeltaTime, round_floats
 from extras.AFC_respond import AFCprompt
 
 from tests.test_AFC import _make_afc
@@ -44,6 +44,78 @@ def _make_func():
     func.pause = False
     func.mcu = MagicMock()
     return func
+
+
+# ── round_floats ─────────────────────────────────────────────────────────────
+
+class TestRoundFloats:
+    def test_rounds_single_float(self):
+        assert round_floats(2.882800219999981234) == 2.8828
+
+    def test_leaves_int_unchanged(self):
+        assert round_floats(5) == 5
+
+    def test_rounds_list_of_floats(self):
+        result = round_floats([165.1740931234, 256.3006781234, 3.0715305953986847])
+        assert result == [165.174093, 256.300678, 3.071531]
+
+    def test_rounds_tuple_of_floats(self):
+        result = round_floats((165.1740931234, 256.3006781234))
+        assert result == [165.174093, 256.300678]
+
+    def test_custom_digit_count(self):
+        assert round_floats(1.23456789, digits=2) == 1.23
+
+    def test_non_numeric_passthrough(self):
+        assert round_floats(True) is True
+        assert round_floats("abc") == "abc"
+        assert round_floats(None) is None
+
+
+# ── log_toolhead_pos ──────────────────────────────────────────────────────────
+
+class TestLogToolheadPos:
+    def _wire_positions(self, func):
+        func.afc.toolhead.get_position.return_value = [
+            165.174093123, 256.300678987, 3.0715305953986847, 2882.80021999998,
+        ]
+        func.afc.gcode_move.base_position = [-0.075907456, 0.072678123, 0.0, 2847.634679999981]
+        func.afc.gcode_move.last_position = [165.174093123, 256.300678987, 2.94, 2882.80021999998]
+        func.afc.gcode_move.speed = 350.0
+        func.afc.gcode_move.speed_factor = 0.016666666666666666
+        func.afc.gcode_move.extrude_factor = 1.0
+        func.afc.gcode_move.absolute_coord = True
+        func.afc.gcode_move.absolute_extrude = False
+
+    def test_logs_expected_message_with_move_pre(self):
+        func = _make_func()
+        self._wire_positions(func)
+
+        func.log_toolhead_pos("Before toolswap: ")
+
+        expected = (
+            "Before toolswap: Position: [165.174093, 256.300679, 3.071531, 2882.80022] "
+            "base_position: [-0.075907, 0.072678, 0.0, 2847.63468] "
+            "last_position: [165.174093, 256.300679, 2.94, 2882.80022] "
+            "speed: 350.0 speed_factor: 0.016667 extrude_factor: 1.0 "
+            "absolute_coord: True absolute_extrude: False\n"
+        )
+        assert func.logger.messages == [("debug", expected)]
+
+    def test_logs_expected_message_with_default_move_pre(self):
+        func = _make_func()
+        self._wire_positions(func)
+
+        func.log_toolhead_pos()
+
+        expected = (
+            "Position: [165.174093, 256.300679, 3.071531, 2882.80022] "
+            "base_position: [-0.075907, 0.072678, 0.0, 2847.63468] "
+            "last_position: [165.174093, 256.300679, 2.94, 2882.80022] "
+            "speed: 350.0 speed_factor: 0.016667 extrude_factor: 1.0 "
+            "absolute_coord: True absolute_extrude: False\n"
+        )
+        assert func.logger.messages == [("debug", expected)]
 
 
 # ── HexConvert ────────────────────────────────────────────────────────────────

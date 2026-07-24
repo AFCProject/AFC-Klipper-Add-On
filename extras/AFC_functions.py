@@ -21,7 +21,7 @@ from configfile import error
 from datetime import datetime
 from pathlib import Path
 
-from typing import TYPE_CHECKING, Union, Optional
+from typing import TYPE_CHECKING, Union, Optional, Any
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -43,6 +43,25 @@ except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.form
 
 try: from extras.AFC_unit import CALI_WARN
 except: raise error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
+
+
+def round_floats(value: Any, digits: int = 6) -> Any:
+    """
+    Recursively rounds floats to the given number of digits, used to keep
+    debug logging of toolhead/gcode_move position data readable.
+
+    :param value: Float, or an iterable of floats, to round
+    :param digits: Number of decimal digits to round to
+    :return Any: Rounded float, list of rounded values, or the original
+                value unchanged if it isn't a float or list/tuple
+    """
+    if isinstance(value, float):
+        return round(value, digits)
+    if isinstance(value, (list, tuple)):
+        # Always returned as a list since toolhead.get_position() returns a namedtuple,
+        # whose constructor takes fixed positional args rather than an iterable.
+        return [round_floats(v, digits) for v in value]
+    return value
 
 
 def load_config(config):
@@ -596,20 +615,20 @@ class afcFunction:
             current_lane.unit_obj.select_lane(current_lane)
             current_lane.set_print_current() # Set current back to print current after lane move
 
-    def log_toolhead_pos(self, move_pre=""):
+    def log_toolhead_pos(self, move_pre: str = "") -> None:
         """
         Helper function for printing position data to log
 
         :param move_pre: String that get appended before the position data
         """
-        msg = "{}Position: {}".format(move_pre, self.afc.toolhead.get_position())
-        msg += " base_position: {}".format(self.afc.gcode_move.base_position)
-        msg += " last_position: {}".format(self.afc.gcode_move.last_position)
-        msg += " speed: {}".format(self.afc.gcode_move.speed)
-        msg += " speed_factor: {}".format(self.afc.gcode_move.speed_factor)
-        msg += " extrude_factor: {}".format(self.afc.gcode_move.extrude_factor)
-        msg += " absolute_coord: {}".format(self.afc.gcode_move.absolute_coord)
-        msg += " absolute_extrude: {}\n".format(self.afc.gcode_move.absolute_extrude)
+        msg = f"{move_pre}Position: {round_floats(self.afc.toolhead.get_position())}"
+        msg += f" base_position: {round_floats(self.afc.gcode_move.base_position)}"
+        msg += f" last_position: {round_floats(self.afc.gcode_move.last_position)}"
+        msg += f" speed: {round_floats(self.afc.gcode_move.speed)}"
+        msg += f" speed_factor: {round_floats(self.afc.gcode_move.speed_factor)}"
+        msg += f" extrude_factor: {round_floats(self.afc.gcode_move.extrude_factor)}"
+        msg += f" absolute_coord: {self.afc.gcode_move.absolute_coord}"
+        msg += f" absolute_extrude: {self.afc.gcode_move.absolute_extrude}\n"
         self.logger.debug(msg, only_debug=True)
 
     def check_absolute_mode( self, func_name:str="" ):
