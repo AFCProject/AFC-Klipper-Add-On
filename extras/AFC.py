@@ -715,18 +715,20 @@ class afc:
                 # cur_lane.map is expected to be the tool number as "T<n>" (e.g. "T3"),
                 # used here as the index into print_tool_temperatures from the sliced
                 # file's metadata. Custom user-assigned maps may not follow this format.
-                idx = int(cur_lane.map.lstrip("T"))
+                idx = int(str(cur_lane.map).lstrip("T"))
+                if idx < 0: raise ValueError("Negative tool index")
                 target_temp = self.print_tool_temperatures[idx]
-                self.logger.info(f"Checking Temperature for {cur_lane.map}")
-            except (ValueError, IndexError):
+            except (ValueError, IndexError, TypeError, AttributeError) as e:
+                # Logging lane.name/e rather than cur_lane.map here: if the error came from
+                # resolving cur_lane.map itself, referencing it again would raise the same error.
                 self.logger.info(
-                    f"Could not resolve print_tool_temperatures index for map {cur_lane.map}"
+                    f"Could not resolve print_tool_temperatures index for lane {cur_lane.name}: {e}"
                 )
                 # Returning instead of trying to lookup from default material
                 return
 
             if target_temp is None:
-                self.logger.info(f"No print_tool_temperatures entry for map {cur_lane.map}")
+                self.logger.info(f"No print_tool_temperatures entry for lane {cur_lane.name}")
                 # Returning instead of trying to lookup from default material,
                 # don't want to modify extruder temperature to temperatures that could be wrong
                 # during prints

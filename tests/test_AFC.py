@@ -583,7 +583,71 @@ class TestCheckExtruderTemp:
         obj._get_default_material_temps.assert_not_called()
         assert result is None
         infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
-        assert any("T5" in m for m in infos)
+        # Message logs lane.name + the caught exception, not cur_lane.map directly
+        # (see test_lane_map_attribute_error_returns_without_setting_temp for why).
+        assert any(lane.name in m and "index out of range" in m for m in infos)
+
+    def test_negative_lane_map_index_returns_without_setting_temp(self):
+        """lane.map that parses to a negative index (e.g. "T-1") is explicitly
+        rejected rather than silently wrapping around to the last entry in
+        print_tool_temperatures via Python's negative-index semantics."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [230, 999]
+        lane.map = "T-1"
+        result = obj._check_extruder_temp(lane)
+        pheaters.set_temperature.assert_not_called()
+        obj._wait_for_temp_within_tolerance.assert_not_called()
+        obj._get_default_material_temps.assert_not_called()
+        assert result is None
+        infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any(lane.name in m and "Negative tool index" in m for m in infos)
+
+    def test_non_subscriptable_print_tool_temperatures_returns_without_setting_temp(self):
+        """A TypeError raised by indexing print_tool_temperatures (e.g. it holds
+        a non-subscriptable type) is caught and returns without touching the
+        heater rather than propagating."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = {230}  # set: truthy but not subscriptable
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        pheaters.set_temperature.assert_not_called()
+        obj._wait_for_temp_within_tolerance.assert_not_called()
+        obj._get_default_material_temps.assert_not_called()
+        assert result is None
+        infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any(lane.name in m and "not subscriptable" in m for m in infos)
+
+    def test_lane_map_attribute_error_returns_without_setting_temp(self):
+        """An AttributeError raised while resolving lane.map (e.g. a custom
+        object whose __str__ blows up) is caught and returns without touching
+        the heater rather than propagating. The except handler must log via
+        lane.name/the caught exception rather than cur_lane.map -- referencing
+        cur_lane.map again here would re-raise the same AttributeError and
+        escape the try/except entirely."""
+
+        class _RaisesAttributeError:
+            def __str__(self):
+                raise AttributeError("boom")
+
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [230]
+        lane.map = _RaisesAttributeError()
+        result = obj._check_extruder_temp(lane)
+        pheaters.set_temperature.assert_not_called()
+        obj._wait_for_temp_within_tolerance.assert_not_called()
+        obj._get_default_material_temps.assert_not_called()
+        assert result is None
+        infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any(lane.name in m and "boom" in m for m in infos)
 
     def test_none_value_in_print_tool_temperatures_returns_without_setting_temp(self):
         """A None entry in print_tool_temperatures (e.g. slicer had no data for
@@ -602,7 +666,7 @@ class TestCheckExtruderTemp:
         obj._wait_for_temp_within_tolerance.assert_not_called()
         assert result is None
         infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
-        assert any("T0" in m for m in infos)
+        assert any(lane.name in m for m in infos)
 
 
 # ── _cooldown_last_extruder ───────────────────────────────────────────────────

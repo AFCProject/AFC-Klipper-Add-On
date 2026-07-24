@@ -718,7 +718,7 @@ class AFC_PrintFileMetaData:
         self._filename = value
         if (self._moonraker
             and value):
-            self._metadata = self._moonraker.get_file_metadata(self._filename)
+            self._metadata = self._moonraker.get_file_metadata(self._filename) or {}
 
     @property
     def tool_change_count(self) -> int:

@@ -663,6 +663,30 @@ class TestAFCPrintFileMetaDataFilename:
         assert meta.tool_change_count == 9
         assert moonraker.get_file_metadata.call_count == 2
 
+    def test_none_metadata_response_normalized_to_empty_dict(self):
+        """moonraker.get_file_metadata() can return None (e.g. a failed query);
+        the cached metadata must still behave as an empty dict rather than
+        None so downstream property access doesn't operate on None."""
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = None
+        meta.filename = "test.gcode"
+        assert meta.tool_change_count == 0
+        assert meta.tool_temperatures == []
+
+    def test_recovers_after_failed_metadata_query_followed_by_success(self):
+        """A failed query (None) for one filename must not leave stale/bad
+        state that breaks a subsequent successful query for another filename."""
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.side_effect = [
+            None, {"filament_change_count": 7, "filament_temps": [220]},
+        ]
+        meta.filename = "first.gcode"
+        assert meta.tool_change_count == 0
+        assert meta.tool_temperatures == []
+        meta.filename = "second.gcode"
+        assert meta.tool_change_count == 7
+        assert meta.tool_temperatures == [220]
+
 
 class TestAFCPrintFileMetaDataToolChangeCount:
     def test_tool_change_count_from_metadata(self):
@@ -713,6 +737,18 @@ class TestAFCPrintFileMetaDataToolTemperatures:
         meta, moonraker = _make_print_file_metadata()
         moonraker.get_file_metadata.return_value = None
         meta.filename = "test.gcode"
+        assert meta.tool_temperatures == []
+
+class TestAFCPrintFileMetaDataReset:
+    def test_reset_clears_filename_and_metadata(self):
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = {
+            "filament_change_count": 4, "filament_temps": [200, 210],
+        }
+        meta.filename = "test.gcode"
+        meta.reset()
+        assert meta.filename == ""
+        assert meta.tool_change_count == 0
         assert meta.tool_temperatures == []
 
 
