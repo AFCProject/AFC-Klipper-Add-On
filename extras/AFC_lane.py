@@ -125,7 +125,8 @@ class AFCLane:
         self.spool_id           = None
         self.color: str         = ""
         self.multi_color: list  = []
-        self.spool_vendor       = ""
+        self.spool_vendor: str  = ""
+        self.filament_name: str = ""
         self.weight: float      = 0.
         self.auto_switch_triggered = False
         self._material: str     = None
@@ -2207,7 +2208,9 @@ class AFCLane:
         response["spool_id"]= int(self.spool_id) if self.spool_id else None
         response["color"]=self.color
         if not save_to_file:
+            response["filament_name"] = self.filament_name
             response["multi_color_hexes"] = self.multi_color
+            response["initial_weight"] = self.espooler.espooler_values.full_weight
 
         response["weight"]=self.weight
         response["extruder_temp"] = self.extruder_temp

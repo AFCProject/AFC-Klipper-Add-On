@@ -415,6 +415,7 @@ class AFCSpool:
         cur_lane.bed_temp = None
         cur_lane.clear_lane_data()
         cur_lane.spool_vendor = ""
+        cur_lane.filament_name = ""
 
     def set_spoolID(self, cur_lane: AFCLane, SpoolID: str, save_vars=True):
         if self.afc.spoolman is not None:
@@ -432,7 +433,9 @@ class AFCSpool:
                     cur_lane.filament_diameter  = self._get_filament_values(result['filament'], 'diameter')
                     cur_lane.empty_spool_weight = self._get_filament_values(result, 'spool_weight', default=190)
                     cur_lane.weight             = self._get_filament_values(result, 'remaining_weight')
-                    cur_lane.espooler.espooler_values.full_weight = self._get_filament_values(result, 'initial_weight', default=1000)
+                    full_weight                 = self._get_filament_values(result, 'initial_weight', default=1000)
+                    cur_lane.espooler.espooler_values.full_weight = full_weight
+                    cur_lane.filament_name      = self._get_filament_values(result['filament'], 'name')
 
                     vendor_result  = result["filament"].get("vendor", None)
                     cur_lane.spool_vendor       = ""
