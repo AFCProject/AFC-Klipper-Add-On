@@ -137,6 +137,9 @@ def _make_afc():
     obj.afcDeltaTime = MagicMock()
     obj.toolhead = MagicMock()
     obj.error = MagicMock()
+    obj.print_tool_temperatures = []
+    obj.print_data_metadata = None
+    obj.disable_print_temp_check = False
     return obj
 
 
@@ -267,11 +270,13 @@ def _make_afc_for_check_extruder_temp(
     target_material_temp,
     lower_extruder_temp_on_change=True,
     using_min_value=False,
+    disable_print_temp_check=False,
 ):
     from tests.test_AFC_lane import _make_afc_lane
     """Build an afc instance wired up for _check_extruder_temp tests."""
     obj = _make_afc()
     obj.lower_extruder_temp_on_change = lower_extruder_temp_on_change
+    obj.disable_print_temp_check = disable_print_temp_check
     obj._wait_for_temp_within_tolerance = MagicMock()
 
     heater = MagicMock()
@@ -393,10 +398,13 @@ class TestCheckExtruderTemp:
 
     # ── Early-return guard ────────────────────────────────────────────────────
 
-    def test_no_change_when_printing(self):
-        """can_extrude=True + is_printing=True → early return, no temp change."""
+    def test_no_change_when_printing_and_disable_print_temp_check_set(self):
+        """can_extrude=True + is_printing=True + disable_print_temp_check=True and
+        no per-tool data → early return, no temp change (legacy skip-during-print
+        behavior, restored via the disable flag)."""
         obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
-            heater_target_temp=150, actual_temp=148, target_material_temp=210
+            heater_target_temp=150, actual_temp=148, target_material_temp=210,
+            disable_print_temp_check=True,
         )
         heater.can_extrude = True
         obj.function.is_printing.return_value = True
@@ -405,6 +413,196 @@ class TestCheckExtruderTemp:
         obj._wait_for_temp_within_tolerance.assert_not_called()
         assert result is None
     # TODO: add passing in a no_wait variable
+
+    # ── print_tool_temperatures (per-tool temps from print metadata) ─────────
+
+    def test_no_early_return_when_printing_and_print_tool_temperatures_set(self):
+        """can_extrude=True + is_printing=True but print_tool_temperatures is set →
+        early-return guard is bypassed and the per-tool target temp is used."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        heater.can_extrude = True
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [230]
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        pheaters.set_temperature.assert_called_once_with(heater, 230.0)
+        obj._wait_for_temp_within_tolerance.assert_called_once_with(obj.heater, 230,
+                                                                    obj.temp_wait_tolerance*2)
+        assert result is True
+
+    def test_print_tool_temperatures_uses_lane_map_index(self):
+        """Target temp is looked up in print_tool_temperatures using the lane's
+        map index (e.g. "T1" → index 1), not _get_default_material_temps."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=999
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [180, 220, 260]
+        lane.map = "T1"
+        result = obj._check_extruder_temp(lane)
+        obj._get_default_material_temps.assert_not_called()
+        pheaters.set_temperature.assert_called_once_with(heater, 220.0)
+        assert result is True
+
+    def test_print_tool_temperatures_not_using_min_value_so_lower_applies(self):
+        """using_min_value is always False for print_tool_temperatures, so a
+        heater set above target+tolerance is lowered even though it wouldn't
+        be for a min_extrude_temp fallback."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=250, actual_temp=248, target_material_temp=210,
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [210]
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        pheaters.set_temperature.assert_called_once_with(heater, 210.0)
+        obj._wait_for_temp_within_tolerance.assert_not_called()
+        assert result is False
+
+    def test_falls_back_to_default_material_temps_when_not_printing(self):
+        """print_tool_temperatures set but not printing → still uses
+        _get_default_material_temps, not the per-tool list."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = False
+        obj.print_tool_temperatures = [999]
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        obj._get_default_material_temps.assert_called_once_with(lane)
+        pheaters.set_temperature.assert_called_once_with(heater, 210.0)
+        assert result is True
+
+    def test_falls_back_to_default_material_temps_when_print_tool_temperatures_empty(self):
+        """Covers the `print_tool_temperatures` half of the printing-branch condition
+        being falsy on its own (can_extrude=False so the early-return guard never
+        applies here regardless of disable_print_temp_check)."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = []
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        obj._get_default_material_temps.assert_called_once_with(lane)
+        pheaters.set_temperature.assert_called_once_with(heater, 210.0)
+        assert result is True
+
+    # ── disable_print_temp_check ──────────────────────────────────────────────
+    # disable_print_temp_check only affects the early-return guard: it's one of
+    # four conditions (can_extrude, is_printing, not print_tool_temperatures,
+    # disable_print_temp_check) that must ALL be true for the guard to fire.
+    # It plays no part in the separate per-tool-lookup branch below the guard.
+
+    def test_disable_print_temp_check_true_triggers_early_return_guard(self):
+        """Covers the `disable_print_temp_check` condition of the early-return
+        guard being true, with can_extrude/is_printing True and
+        print_tool_temperatures empty (the other three conditions also true)."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210,
+            disable_print_temp_check=True,
+        )
+        heater.can_extrude = True
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = []
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        obj._get_default_material_temps.assert_not_called()
+        pheaters.set_temperature.assert_not_called()
+        assert result is None
+
+    def test_disable_print_temp_check_false_does_not_trigger_early_return_guard(self):
+        """disable_print_temp_check=False (the default) never lets the early-return
+        guard fire; with no per-tool data it instead falls through to the
+        default-material-temp branch. Proven independently of the True case above."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210,
+            disable_print_temp_check=False,
+        )
+        heater.can_extrude = True
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = []
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        obj._get_default_material_temps.assert_called_once_with(lane)
+        pheaters.set_temperature.assert_called_once_with(heater, 210.0)
+        assert result is True
+
+    def test_disable_print_temp_check_true_does_not_affect_per_tool_lookup(self):
+        """disable_print_temp_check has no bearing on the per-tool-lookup branch
+        once print_tool_temperatures is non-empty during a print. can_extrude is
+        set True so every other guard condition is satisfied too, proving it's
+        specifically the non-empty print_tool_temperatures that bypasses the
+        guard here rather than can_extrude already being false."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=999,
+            disable_print_temp_check=True,
+        )
+        heater.can_extrude = True
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [230]
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        obj._get_default_material_temps.assert_not_called()
+        pheaters.set_temperature.assert_called_once_with(heater, 230.0)
+        assert result is True
+
+    # ── lane.map parsing failures ─────────────────────────────────────────────
+
+    def test_non_numeric_lane_map_returns_without_setting_temp(self):
+        """lane.map that doesn't parse to an int after stripping "T" (ValueError)
+        logs and returns without touching the heater."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [230]
+        lane.map = "custom_lane"
+        result = obj._check_extruder_temp(lane)
+        pheaters.set_temperature.assert_not_called()
+        obj._wait_for_temp_within_tolerance.assert_not_called()
+        obj._get_default_material_temps.assert_not_called()
+        assert result is None
+        infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any("custom_lane" in m for m in infos)
+
+    def test_lane_map_index_out_of_range_returns_without_setting_temp(self):
+        """lane.map index beyond print_tool_temperatures' length (IndexError)
+        logs and returns without touching the heater."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [230]
+        lane.map = "T5"
+        result = obj._check_extruder_temp(lane)
+        pheaters.set_temperature.assert_not_called()
+        obj._wait_for_temp_within_tolerance.assert_not_called()
+        obj._get_default_material_temps.assert_not_called()
+        assert result is None
+        infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any("T5" in m for m in infos)
+
+    def test_none_value_in_print_tool_temperatures_returns_without_setting_temp(self):
+        """A None entry in print_tool_temperatures (e.g. slicer had no data for
+        that tool) still resolves via the index lookup, but the None result is
+        not used and does NOT fall back to _get_default_material_temps while
+        printing -- it returns without touching the heater instead."""
+        obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
+            heater_target_temp=150, actual_temp=148, target_material_temp=210
+        )
+        obj.function.is_printing.return_value = True
+        obj.print_tool_temperatures = [None, 220]
+        lane.map = "T0"
+        result = obj._check_extruder_temp(lane)
+        obj._get_default_material_temps.assert_not_called()
+        pheaters.set_temperature.assert_not_called()
+        obj._wait_for_temp_within_tolerance.assert_not_called()
+        assert result is None
+        infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
+        assert any("T0" in m for m in infos)
 
 
 # ── _cooldown_last_extruder ───────────────────────────────────────────────────
@@ -2364,6 +2562,303 @@ class TestGetDefaultMaterialTemps:
             assert using_min is False
 
 
+# save_pos
+
+def _make_afc_for_save_pos():
+    """Build an afc instance wired up for save_pos tests."""
+    obj = _make_afc()
+    obj.gcode_move = MagicMock()
+    obj.gcode_move.base_position = [-0.075907456, 0.072678123, 0.0, 2847.634679999981]
+    obj.gcode_move.last_position = [165.174093123, 256.300678987, 2.94, 2882.80021999998]
+    obj.gcode_move.homing_position = [0.0, 0.0, 0.0, 0.0]
+    obj.gcode_move.speed = 350.0
+    obj.gcode_move.speed_factor = 0.016666666666666666
+    obj.gcode_move.absolute_coord = True
+    obj.gcode_move.absolute_extrude = False
+    obj.gcode_move.extrude_factor = 1.0
+    obj.toolhead.get_position.return_value = [
+        165.174093123, 256.300678987, 3.0715305953986847, 2882.80021999998,
+    ]
+    return obj
+
+
+class TestSavePos:
+    def test_saves_position_with_full_precision_when_not_in_toolchange_error_or_paused(self):
+        """Happy path: not in a toolchange, no error, not paused, position not already
+        saved -> attributes are stored at full precision, position_saved flips True."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        assert obj.position_saved is True
+        assert obj.last_toolhead_position == [
+            165.174093123, 256.300678987, 3.0715305953986847, 2882.80021999998,
+        ]
+        assert obj.base_position == [-0.075907456, 0.072678123, 0.0, 2847.634679999981]
+        assert obj.last_gcode_position == [165.174093123, 256.300678987, 2.94, 2882.80021999998]
+        assert obj.homing_position == [0.0, 0.0, 0.0, 0.0]
+        assert obj.speed == 350.0
+        assert obj.speed_factor == 0.016666666666666666
+        assert obj.absolute_coord is True
+        assert obj.absolute_extrude is False
+        assert obj.extrude_factor == 1.0
+
+    def test_logged_message_has_rounded_values_not_full_precision(self):
+        """The debug log message rounds the position data for readability, while the
+        stored attributes (checked above) keep full precision."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        expected = (
+            "Saving position [165.174093, 256.300679, 3.071531, 2882.80022]"
+            " Base position: [-0.075907, 0.072678, 0.0, 2847.63468]"
+            " last_gcode_position: [165.174093, 256.300679, 2.94, 2882.80022]"
+            " homing_position: [0.0, 0.0, 0.0, 0.0]"
+            " speed: 350.0"
+            " speed_factor: 0.016667"
+            " absolute_coord: True"
+            " absolute_extrude: False"
+            " extrude_factor: 1.0\n"
+        )
+        assert obj.logger.messages == [("debug", expected)]
+
+    def test_does_not_save_when_error_state_true(self):
+        """Covers the `error_state` half of the not-error/not-paused/not-saved
+        condition being falsy on its own, with the other two still passing."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = True
+        obj.function.is_paused.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        assert obj.position_saved is False
+        assert not hasattr(obj, "last_toolhead_position")
+        obj.function.log_toolhead_pos.assert_called_once()
+
+    def test_does_not_save_when_paused(self):
+        """Covers the `is_paused()` half of the condition being falsy on its own,
+        with error_state and position_saved still passing."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = True
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        assert obj.position_saved is False
+        assert not hasattr(obj, "last_toolhead_position")
+        obj.function.log_toolhead_pos.assert_called_once()
+
+    def test_does_not_save_when_position_already_saved(self):
+        """Covers the `position_saved` half of the condition being falsy on its
+        own, with error_state and is_paused() still passing."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.position_saved = True
+
+        obj.save_pos()
+
+        assert obj.position_saved is True
+        assert not hasattr(obj, "last_toolhead_position")
+        obj.function.log_toolhead_pos.assert_called_once()
+
+    def test_logs_not_saving_message_when_error_paused_or_already_saved(self):
+        """Verifies the exact log_toolhead_pos() call made on the not-saving branch."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = True
+        obj.function.is_paused.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        expected = (
+            f"Not Saving, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused()}, "
+            f"Position_saved {obj.position_saved}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+
+    def test_does_not_save_when_in_toolchange(self):
+        """When in_toolchange is True, the outer branch is taken regardless of
+        error_state/is_paused/position_saved."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = True
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        assert obj.position_saved is False
+        assert not hasattr(obj, "last_toolhead_position")
+        obj.function.log_toolhead_pos.assert_called_once()
+
+    def test_logs_not_saving_in_toolchange_message(self):
+        """Verifies the exact log_toolhead_pos() call made on the in_toolchange branch."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = True
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        expected = (
+            f"Not Saving In a toolchange, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused()}, "
+            f"Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+
+
+# restore_pos
+
+def _make_afc_for_restore_pos():
+    """Build an afc instance wired up for restore_pos tests, with the "saved"
+    position attributes (as save_pos would have populated them) at full precision."""
+    obj = _make_afc()
+    obj.gcode_move = MagicMock()
+    obj.gcode_move.last_position = [10.0, 20.0, 5.0, 100.0]
+    obj.gcode_move.base_position = [0.0, 0.0, 0.0, 0.0]
+    obj.resume_speed = 0
+    obj.resume_z_speed = 0
+    obj.z_hop = 0.4
+    obj.last_toolhead_position = [
+        165.174093123, 256.300678987, 3.0715305953986847, 2882.80021999998,
+    ]
+    obj.base_position = [-0.075907456, 0.072678123, 0.0, 2847.634679999981]
+    obj.last_gcode_position = [165.174093123, 256.300678987, 2.94, 2882.80021999998]
+    obj.homing_position = [0.0, 0.0, 0.0, 0.0]
+    obj.speed = 350.0
+    obj.speed_factor = 0.016666666666666666
+    obj.absolute_coord = True
+    obj.absolute_extrude = False
+    obj.extrude_factor = 1.0
+    obj.position_saved = True
+    obj.current_state = State.IDLE
+    obj.move_z_pos = MagicMock(return_value=3.34)
+    return obj
+
+
+class TestRestorePos:
+    def test_logged_message_has_rounded_values_not_full_precision(self):
+        """The debug log message rounds the position data for readability, while the
+        gcode_move state restored below (checked separately) keeps full precision."""
+        obj = _make_afc_for_restore_pos()
+
+        obj.restore_pos(move_z_first=False)
+
+        expected = (
+            "Restoring Position [165.174093, 256.300679, 3.071531, 2882.80022]"
+            " Base position: [-0.075907, 0.072678, 0.0, 2847.63468]"
+            " last_gcode_position: [165.174093, 256.300679, 2.94, 2882.80022]"
+            " homing_position: [0.0, 0.0, 0.0, 0.0]"
+            " speed: 350.0"
+            " speed_factor: 0.016667"
+            " absolute_coord: True"
+            " absolute_extrude: False"
+            " extrude_factor: 1.0\n"
+        )
+        debug_msgs = [m for lvl, m in obj.logger.messages if lvl == "debug"]
+        assert debug_msgs == [expected]
+
+    def test_restores_gcode_state_at_full_precision(self):
+        """Verifies gcode_move fields are restored from the saved attributes
+        unrounded, proving the rounding is scoped to the log message only."""
+        obj = _make_afc_for_restore_pos()
+
+        obj.restore_pos(move_z_first=False)
+
+        assert obj.gcode_move.base_position[:3] == [-0.075907456, 0.072678123, 0.0]
+        assert obj.gcode_move.homing_position == [0.0, 0.0, 0.0, 0.0]
+        assert obj.gcode_move.absolute_coord is True
+        assert obj.gcode_move.absolute_extrude is False
+        assert obj.gcode_move.extrude_factor == 1.0
+        assert obj.gcode_move.speed == 350.0
+        assert obj.gcode_move.speed_factor == 0.016666666666666666
+
+    def test_restores_relative_e_position_and_xyz(self):
+        """Covers the e_diff/base_position[3] bookkeeping and final xyz restore,
+        computed independently of restore_pos's own formula."""
+        obj = _make_afc_for_restore_pos()
+
+        obj.restore_pos(move_z_first=False)
+
+        # e_diff = new gcode last_position[3] (100.0, untouched by xy-only restore)
+        # minus saved last_gcode_position[3] (2882.80021999998)
+        assert obj.gcode_move.base_position[3] == pytest.approx(64.83446000000095)
+        assert obj.gcode_move.last_position[:3] == [165.174093123, 256.300678987, 2.94]
+
+    def test_move_z_first_true_calls_move_z_pos(self):
+        """Covers the move_z_first=True branch: z is moved via move_z_pos before xy."""
+        obj = _make_afc_for_restore_pos()
+
+        obj.restore_pos(move_z_first=True)
+
+        obj.move_z_pos.assert_called_once_with(
+            obj.last_gcode_position[2] + obj.z_hop, "restore_pos"
+        )
+        assert obj.gcode_move.last_position[2] == 2.94
+
+    def test_move_z_first_false_skips_move_z_pos(self):
+        """Covers the move_z_first=False branch: move_z_pos is never called."""
+        obj = _make_afc_for_restore_pos()
+
+        obj.restore_pos(move_z_first=False)
+
+        obj.move_z_pos.assert_not_called()
+
+    def test_current_state_and_position_saved_reset_on_completion(self):
+        obj = _make_afc_for_restore_pos()
+        obj.current_state = State.RESTORING_POS
+        obj.position_saved = True
+
+        obj.restore_pos(move_z_first=False)
+
+        assert obj.current_state == State.IDLE
+        assert obj.position_saved is False
+
+    def test_logs_resume_checkpoints_via_log_toolhead_pos(self):
+        """restore_pos logs three checkpoints via function.log_toolhead_pos as it
+        progresses: initial pos, after xy move, and after final z move."""
+        obj = _make_afc_for_restore_pos()
+        # Captured before the call since restore_pos resets position_saved at the end,
+        # but the final log message is built with the value as it was at log time.
+        error_state_before = obj.error_state
+        is_paused_before = obj.function.is_paused()
+        position_saved_before = obj.position_saved
+        in_toolchange_before = obj.in_toolchange
+
+        obj.restore_pos(move_z_first=False)
+
+        calls = obj.function.log_toolhead_pos.call_args_list
+        assert calls[0].args[0] == "Resume initial pos: "
+        assert calls[1].args[0] == "Resume prev xy: "
+        expected_final = (
+            f"Resume final z, Error State: {error_state_before}, "
+            f"Is Paused {is_paused_before}, "
+            f"Position_saved {position_saved_before}, "
+            f"in toolchange: {in_toolchange_before}, POS: "
+        )
+        assert calls[2].args[0] == expected_final
+
+
 # in_print_reactor_timer: moonraker None guard
 
 class TestInPrintReactorTimer:
@@ -2388,24 +2883,43 @@ class TestInPrintReactorTimer:
         assert result == obj.reactor.NEVER
 
     def test_calls_moonraker_when_in_print_and_moonraker_set(self):
-        """Happy path: moonraker is queried when both in_print and moonraker are set."""
+        """Happy path: print_data_metadata is queried when both in_print and moonraker are set."""
         obj = self._make()
         obj.moonraker = MagicMock()
-        obj.moonraker.get_file_filament_change_count.return_value = 7
+        obj.print_data_metadata = MagicMock()
+        obj.print_data_metadata.tool_change_count = 7
+        obj.print_data_metadata.tool_temperatures = [210]
         obj.function.in_print.return_value = (True, "test.gcode")
         obj.function.get_current_lane_obj.return_value = None
         obj.in_print_reactor_timer(0.0)
-        obj.moonraker.get_file_filament_change_count.assert_called_once_with("test.gcode")
+        assert obj.print_data_metadata.filename == "test.gcode"
         assert obj.number_of_toolchanges == 7
+        assert obj.print_tool_temperatures == [210]
         assert obj.current_toolchange == -1
 
     def test_does_not_call_moonraker_when_not_in_print(self):
-        """When not in a print, moonraker should not be queried."""
+        """When not in a print, print_data_metadata should not be queried."""
         obj = self._make()
         obj.moonraker = MagicMock()
+        obj.print_data_metadata = MagicMock()
         obj.function.in_print.return_value = (False, None)
         obj.in_print_reactor_timer(0.0)
-        obj.moonraker.get_file_filament_change_count.assert_not_called()
+        assert not obj.print_data_metadata.method_calls
+        assert obj.number_of_toolchanges == 0
+
+    def test_skips_metadata_lookup_when_print_data_metadata_is_none(self):
+        """Covers the `self.print_data_metadata` half of
+        `if self.moonraker is not None and self.print_data_metadata` being
+        falsy while `self.moonraker` alone is truthy."""
+        obj = self._make()
+        obj.moonraker = MagicMock()
+        obj.print_data_metadata = None
+        obj.function.in_print.return_value = (True, "test.gcode")
+        obj.function.get_current_lane_obj.return_value = None
+        result = obj.in_print_reactor_timer(0.0)
+        assert obj.number_of_toolchanges == 0
+        assert obj.current_toolchange == -1
+        assert result == obj.reactor.NEVER
 
 
 # cmd_LANE_MOVE

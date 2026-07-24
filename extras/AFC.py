@@ -35,10 +35,10 @@ except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.fo
 try: from extras.AFC_logger import AFC_logger
 except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
 
-try: from extras.AFC_functions import afcDeltaTime
+try: from extras.AFC_functions import afcDeltaTime, round_floats
 except: raise error(ERROR_STR.format(import_lib="AFC_functions", trace=traceback.format_exc()))
 
-try: from extras.AFC_utils import add_filament_switch, AFC_moonraker
+try: from extras.AFC_utils import add_filament_switch, AFC_moonraker, AFC_PrintFileMetaData
 except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.format_exc()))
 
 try: from extras.AFC_stats import AFCStats
@@ -94,6 +94,7 @@ class afc:
         self.position_saved     = False
         self.spoolman           = None
         self.moonraker: Optional[AFC_moonraker] = None
+        self.print_data_metadata : Optional[AFC_PrintFileMetaData] = None
         self.td1_defined        = False
         self._td1_present       = False
         self._last_td1_query:float    = 0
@@ -118,6 +119,7 @@ class afc:
         self.monitoring = False
         self.number_of_toolchanges  = 0
         self.current_toolchange     = 0
+        self.print_tool_temperatures: list[int] = []
 
         # tool position when tool change was requested
         self.change_tool_pos = None
@@ -154,6 +156,7 @@ class afc:
 
         self.disable_weight_check   = config.getboolean("disable_weight_check", False) # Set to True to disable weight check when loading filament into lane/toolhead
         self.disable_ooze_check     = config.getboolean("disable_ooze_check", False) # Disable ooze check for lanes being on the same extruder in M104/M109 commands
+        self.disable_print_temp_check = config.getboolean("disable_print_temp_check", False) # Disables print temperature check when swapping lanes while printing
 
         # Auto spool switch settings
         self.auto_spool_switch: bool              = config.getboolean("auto_spool_switch", False)                    # Trigger spool switch based on remaining filament weight
@@ -400,6 +403,8 @@ class afc:
                     self.toolhead.dwell(1)
             self.td1_defined, self._td1_present, self.lane_data_enabled = self.moonraker.check_for_td1()
             self.afc_stats = AFCStats(self.moonraker, self.logger, len(self.tools) > 1)
+            self.print_data_metadata = AFC_PrintFileMetaData(moonraker=self.moonraker,
+                                                             logger=self.logger)
 
             self.printer.send_event("afc:moonraker_connect")
         except Exception as e:
@@ -603,13 +608,16 @@ class afc:
         self.gcode.run_script_from_command("CLEAR_PAUSE")
         self.number_of_toolchanges = 0
         self.current_toolchange    = -1
+        self.print_tool_temperatures = []
+        if self.print_data_metadata:
+            self.print_data_metadata.reset()
         self.save_vars()
 
     def in_print_reactor_timer(self, eventtime):
         """
         Print timer callback to check if printer is currently in a print. If printer is in a print,
         current filename is looked up and metadata is pulled from moonraker to get total filament change
-        count. Once this is done timer callback is stopped and unregistered.
+        count and per-tool temperatures. Once this is done timer callback is stopped and unregistered.
         """
         # Remove timer from reactor
         self.reactor.unregister_timer(self.in_print_timer)
@@ -618,9 +626,11 @@ class afc:
         self.logger.debug("In print: {}, Filename: {}".format(in_print, print_filename))
         if in_print:
             self.number_of_toolchanges = 0
-            if self.moonraker is not None:
-                # Gather file filament change count from moonraker
-                self.number_of_toolchanges  = self.moonraker.get_file_filament_change_count(print_filename)
+            if (self.moonraker is not None
+                and self.print_data_metadata):
+                self.print_data_metadata.filename = print_filename
+                self.number_of_toolchanges = self.print_data_metadata.tool_change_count
+                self.print_tool_temperatures = self.print_data_metadata.tool_temperatures
             self.current_toolchange     = -1 # Reset
             self.logger.info("Total number of toolchanges set to {}".format(self.number_of_toolchanges))
 
@@ -673,7 +683,10 @@ class afc:
 
     def _check_extruder_temp(self, cur_lane: AFCLane, no_wait: bool=False):
         """
-        Helper function that check to see if extruder needs to be heated, and wait for hotend to get to temp if needed
+        Helper function that check to see if extruder needs to be heated, and wait for hotend
+        to get to temp if needed. During a print with per-tool temperatures available from the
+        sliced file's metadata, target temp is looked up from `print_tool_temperatures` instead
+        of the lane's configured/default material temp.
         """
 
         # Prepare extruder and heater.
@@ -683,10 +696,42 @@ class afc:
         pheaters = self.printer.lookup_object('heaters')
         wait = False
 
-        # If extruder can extrude and printing, return and do not update temperature. Don't want to modify extruder temperature during prints
-        if self.heater.can_extrude and self.function.is_printing():
+        # If extruder can extrude and printing, return and do not update temperature.
+        # Don't want to modify extruder temperature during prints, only want to modify/verify if
+        # print_tool_temperatures have valid temperatures as its safe to set hotends to a value
+        # based off extruder mapping since this is what the slicer will do anyways.
+        if (self.heater.can_extrude
+            and self.function.is_printing()
+            and not self.print_tool_temperatures
+            and self.disable_print_temp_check):
             return
-        target_temp, using_min_value = self._get_default_material_temps(cur_lane)
+
+        if (self.function.is_printing()
+            and self.print_tool_temperatures):
+            using_min_value = False
+            target_temp = None
+            try:
+                # cur_lane.map is expected to be the tool number as "T<n>" (e.g. "T3"),
+                # used here as the index into print_tool_temperatures from the sliced
+                # file's metadata. Custom user-assigned maps may not follow this format.
+                idx = int(cur_lane.map.lstrip("T"))
+                target_temp = self.print_tool_temperatures[idx]
+                self.logger.info(f"Checking Temperature for {cur_lane.map}")
+            except (ValueError, IndexError):
+                self.logger.info(
+                    f"Could not resolve print_tool_temperatures index for map {cur_lane.map}"
+                )
+                # Returning instead of trying to lookup from default material
+                return
+
+            if target_temp is None:
+                self.logger.info(f"No print_tool_temperatures entry for map {cur_lane.map}")
+                # Returning instead of trying to lookup from default material,
+                # don't want to modify extruder temperature to temperatures that could be wrong
+                # during prints
+                return
+        else:
+            target_temp, using_min_value = self._get_default_material_temps(cur_lane)
 
         current_temp = self.heater.get_temp(self.reactor.monotonic())
 
@@ -1044,7 +1089,8 @@ class afc:
 
         :param e_amount: Amount to move extruder either positive(extruder) or negative(retract)
         :param speed: Speed to perform move at
-        :param log_string: Additional string or name to log to logger when recording toolhead position in log
+        :param log_string: Additional string or name to log to logger when recording toolhead
+            position in log
         :param wait_tool: Set to True to wait on toolhead moves
         """
         newpos = self.gcode_move.last_position
@@ -1056,10 +1102,13 @@ class afc:
 
     def save_pos(self):
         """
-        Only save previous location on the first toolchange call to keep an error state from overwriting the location
+        Only save previous location on the first toolchange call to keep an error state from
+        overwriting the location
         """
         if not self.in_toolchange:
-            if not self.error_state and not self.function.is_paused() and not self.position_saved:
+            if (not self.error_state 
+                and not self.function.is_paused()
+                and not self.position_saved):
                 self.position_saved         = True
                 self.last_toolhead_position = self.toolhead.get_position()
                 self.base_position          = list(self.gcode_move.base_position)
@@ -1070,21 +1119,29 @@ class afc:
                 self.absolute_coord         = self.gcode_move.absolute_coord
                 self.absolute_extrude       = self.gcode_move.absolute_extrude
                 self.extrude_factor         = self.gcode_move.extrude_factor
-                msg = "Saving position {}".format(self.last_toolhead_position)
-                msg += " Base position: {}".format(self.base_position)
-                msg += " last_gcode_position: {}".format(self.last_gcode_position)
-                msg += " homing_position: {}".format(self.homing_position)
-                msg += " speed: {}".format(self.speed)
-                msg += " speed_factor: {}".format(self.speed_factor)
-                msg += " absolute_coord: {}".format(self.absolute_coord)
-                msg += " absolute_extrude: {}".format(self.absolute_extrude)
-                msg += " extrude_factor: {}\n".format(self.extrude_factor)
+                # Only rounded for the log message below, stored position values keep full precision
+                msg = f"Saving position {round_floats(self.last_toolhead_position)}"
+                msg += f" Base position: {round_floats(self.base_position)}"
+                msg += f" last_gcode_position: {round_floats(self.last_gcode_position)}"
+                msg += f" homing_position: {round_floats(self.homing_position)}"
+                msg += f" speed: {round_floats(self.speed)}"
+                msg += f" speed_factor: {round_floats(self.speed_factor)}"
+                msg += f" absolute_coord: {self.absolute_coord}"
+                msg += f" absolute_extrude: {self.absolute_extrude}"
+                msg += f" extrude_factor: {round_floats(self.extrude_factor)}\n"
                 self.logger.debug(msg)
             else:
-                self.function.log_toolhead_pos("Not Saving, Error State: {}, Is Paused {}, Position_saved {}, POS: ".format(self.error_state, self.function.is_paused(), self.position_saved))
+                self.function.log_toolhead_pos(
+                    f"Not Saving, Error State: {self.error_state}, "
+                    f"Is Paused {self.function.is_paused()}, "
+                    f"Position_saved {self.position_saved}, POS: "
+                )
         else:
-            self.function.log_toolhead_pos("Not Saving In a toolchange, Error State: {}, Is Paused {}, Position_saved {}, in toolchange: {}, POS: ".format(
-                self.error_state, self.function.is_paused(), self.position_saved, self.in_toolchange ))
+            self.function.log_toolhead_pos(
+                f"Not Saving In a toolchange, Error State: {self.error_state}, "
+                f"Is Paused {self.function.is_paused()}, Position_saved {self.position_saved}, "
+                f"in toolchange: {self.in_toolchange}, POS: "
+            )
 
     def restore_pos(self, move_z_first=True):
         """
@@ -1093,15 +1150,16 @@ class afc:
 
         :param move_z_first: Enable to move z before moving x,y
         """
-        msg = "Restoring Position {}".format(self.last_toolhead_position)
-        msg += " Base position: {}".format(self.base_position)
-        msg += " last_gcode_position: {}".format(self.last_gcode_position)
-        msg += " homing_position: {}".format(self.homing_position)
-        msg += " speed: {}".format(self.speed)
-        msg += " speed_factor: {}".format(self.speed_factor)
-        msg += " absolute_coord: {}".format(self.absolute_coord)
-        msg += " absolute_extrude: {}".format(self.absolute_extrude)
-        msg += " extrude_factor: {}\n".format(self.extrude_factor)
+        # Only rounded for the log message below, restore logic below uses full precision
+        msg = f"Restoring Position {round_floats(self.last_toolhead_position)}"
+        msg += f" Base position: {round_floats(self.base_position)}"
+        msg += f" last_gcode_position: {round_floats(self.last_gcode_position)}"
+        msg += f" homing_position: {round_floats(self.homing_position)}"
+        msg += f" speed: {round_floats(self.speed)}"
+        msg += f" speed_factor: {round_floats(self.speed_factor)}"
+        msg += f" absolute_coord: {self.absolute_coord}"
+        msg += f" absolute_extrude: {self.absolute_extrude}"
+        msg += f" extrude_factor: {round_floats(self.extrude_factor)}\n"
         self.logger.debug(msg)
         self.function.log_toolhead_pos("Resume initial pos: ")
 
@@ -1134,8 +1192,12 @@ class afc:
         self.gcode_move.last_position[:3] = self.last_gcode_position[:3]
 
         # Return to previous xyz
-        self.gcode_move.move_with_transform(self.gcode_move.last_position, self._get_resume_speedz() )
-        self.function.log_toolhead_pos("Resume final z, Error State: {}, Is Paused {}, Position_saved {}, in toolchange: {}, POS: ".format(self.error_state, self.function.is_paused(), self.position_saved, self.in_toolchange))
+        self.gcode_move.move_with_transform(self.gcode_move.last_position,
+                                            self._get_resume_speedz() )
+        self.function.log_toolhead_pos(
+            f"Resume final z, Error State: {self.error_state}, Is Paused {self.function.is_paused()}, "
+            f"Position_saved {self.position_saved}, in toolchange: {self.in_toolchange}, POS: "
+        )
 
         self.current_state = State.IDLE
         self.position_saved = False
