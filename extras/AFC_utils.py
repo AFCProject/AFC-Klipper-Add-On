@@ -26,7 +26,7 @@ from urllib.error import (
     HTTPError
 )
 
-from typing import TYPE_CHECKING, Optional, Callable
+from typing import TYPE_CHECKING, Optional, Callable, List
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
@@ -735,9 +735,9 @@ class AFC_PrintFileMetaData:
         return change_count
 
     @property
-    def tool_temperatures(self) -> list[int]:
+    def tool_temperatures(self) -> List[int]:
         """
-        :return list[int]: Per-tool temperatures from cached metadata, empty list if not found
+        :return List[int]: Per-tool temperatures from cached metadata, empty list if not found
         """
         temperature_list = []
         if self._metadata:

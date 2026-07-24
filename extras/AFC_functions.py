@@ -21,7 +21,7 @@ from configfile import error
 from datetime import datetime
 from pathlib import Path
 
-from typing import TYPE_CHECKING, Union, Optional, Any
+from typing import TYPE_CHECKING, Union, Optional, Any, List
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -464,7 +464,7 @@ class afcFunction:
             error_string = "Error: Cannot find [{}] in config, make sure led_index in config is correct".format(afc_object)
         return error_string, led
 
-    def _get_led_indexes(self, index_values: str) -> list[int]:
+    def _get_led_indexes(self, index_values: str) -> List[int]:
         """
         Helper function for creating a list for index values that have dashes and commas
         so the led's can be set correctly.

@@ -718,13 +718,13 @@ class afcAMS(afcUnit):
         self._engagement_length = config.getfloat("engagement_length", 20.0, minval=1.0)
         self._engagement_speed = config.getfloat("engagement_speed", 300.0, minval=10.0)
         self._defer_engagement = config.getboolean("defer_engagement", False)
-        self._engagement_params: dict[str, tuple[float, float]] = {}
+        self._engagement_params: Dict[str, tuple[float, float]] = {}
 
         # Runtime state
         self.oams: AFC_OAMS = None  # type: ignore[assignment]  # resolved in handle_ready()
         self._follower: Optional[FollowerController] = None
         self._monitor: Optional[OAMSMonitor] = None
-        self._spool_map: dict[str, int] = {}
+        self._spool_map: Dict[str, int] = {}
 
         self.gcode = self.printer.lookup_object('gcode')
         self.gcode.register_mux_command(
@@ -760,7 +760,7 @@ class afcAMS(afcUnit):
         self._operation_active = False
         self._prev_states_stale = False
         self._hub_load_suppressed: set[str] = set()
-        self._pending_spool_loaded_timers: dict[str, Any] = {}
+        self._pending_spool_loaded_timers: Dict[str, Any] = {}
         self._td1_last_capture_time = None
 
         # Register temperature_oams sensor factory during config parsing

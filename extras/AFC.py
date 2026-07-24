@@ -12,7 +12,7 @@ from functools import cached_property
 from configfile import error
 from klippy import Printer
 
-from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple
+from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -119,7 +119,7 @@ class afc:
         self.monitoring = False
         self.number_of_toolchanges  = 0
         self.current_toolchange     = 0
-        self.print_tool_temperatures: list[int] = []
+        self.print_tool_temperatures: List[int] = []
 
         # tool position when tool change was requested
         self.change_tool_pos = None
