@@ -696,7 +696,7 @@ class afc:
         pheaters = self.printer.lookup_object('heaters')
         wait = False
 
-        # If extruder can extrude, printing, tool temp is not set or check is disabled, 
+        # If extruder can extrude, printing, tool temp is not set or check is disabled,
         #   return and do not update temperature.
         # Don't want to modify extruder temperature during prints, only want to modify/verify if
         # print_tool_temperatures have valid temperatures as its safe to set hotends to a value
@@ -1107,7 +1107,7 @@ class afc:
         overwriting the location
         """
         if not self.in_toolchange:
-            if (not self.error_state 
+            if (not self.error_state
                 and not self.function.is_paused()
                 and not self.position_saved):
                 self.position_saved         = True
