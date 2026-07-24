@@ -388,6 +388,7 @@ class AFC_moonraker:
         self.last_stats_time= None
         self._lane_data     = False
         self.logger.debug(f"Moonraker url: {self.host}")
+        self.FILENAME_PATH: str = "server/files/metadata?filename="
 
     def _get_results(self, url_string, print_error=True):
         """
@@ -455,22 +456,15 @@ class AFC_moonraker:
             self.logger.debug("Spoolman server is not defined")
             return None
 
-    def get_file_filament_change_count(self, filename:str ):
+    def get_file_metadata(self, filename: str) -> dict:
         """
-        Queries moonraker for files metadata and returns filament change count
+        Queries moonraker for a print file's metadata.
 
         :param filename: Filename to query moonraker and pull metadata
-        :return: Returns number of filament change counts if `filament_change_count` is in metadata.
-                 Returns zero if not found in metadata.
+        :return dict: Metadata dictionary returned by moonraker, None if the query fails
         """
-        change_count = 0
-        resp = self._get_results(urljoin(self.host,
-                                    'server/files/metadata?filename={}'.format(quote(filename))))
-        if resp is not None and 'filament_change_count' in resp:
-            change_count =  resp['filament_change_count']
-        else:
-            self.logger.debug(f"Filament change count metadata not found for file:{filename}")
-        return change_count
+        resp: dict = self._get_results(urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}"))
+        return resp
 
     def get_afc_stats(self) -> Optional[dict]:
         """
@@ -690,3 +684,73 @@ class AFC_moonraker:
             self.logger.debug(f"{e}")
             error = True
         return error
+
+class AFC_PrintFileMetaData:
+    """
+    Wraps moonraker's file metadata lookup for the file currently being printed,
+    caching the result so tool change count/temperatures can be read repeatedly
+    without re-querying moonraker.
+    """
+    def __init__(self, moonraker: AFC_moonraker, logger: AFC_logger):
+        """
+        :param moonraker: Moonraker object to query file metadata from
+        :param logger: Logger object to print debug/info messages to
+        """
+        self._moonraker = moonraker
+        self.logger = logger
+        self._filename: str = ""
+        self._metadata: dict = {}
+
+    @property
+    def filename(self) -> str:
+        """
+        :return str: Filename that metadata is currently cached for
+        """
+        return self._filename
+    @filename.setter
+    def filename(self, value: str) -> None:
+        """
+        Sets current filename and queries moonraker for its metadata, caching
+        the result for the `tool_change_count`/`tool_temperatures` properties.
+
+        :param value: Filename to query moonraker and pull metadata for
+        """
+        self._filename = value
+        if (self._moonraker
+            and value):
+            self._metadata = self._moonraker.get_file_metadata(self._filename)
+
+    @property
+    def tool_change_count(self) -> int:
+        """
+        :return int: Number of filament change counts if `filament_change_count` is in
+                     cached metadata, zero if not found
+        """
+        change_count = 0
+        if (self._metadata
+            and "filament_change_count" in self._metadata):
+            change_count = self._metadata.get("filament_change_count", 0)
+        else:
+            self.logger.debug(f"Filament change count metadata not found for file:{self._filename}")
+        return change_count
+
+    @property
+    def tool_temperatures(self) -> list[int]:
+        """
+        :return list[int]: Per-tool temperatures from cached metadata, empty list if not found
+        """
+        temperature_list = []
+        if self._metadata:
+            temperature_list = self._metadata.get("filament_temps", [])
+            if not temperature_list:
+                # Try and get variable thats used for snapmaker U1
+                temperature_list = self._metadata.get("nozzle_temp", [])
+        return temperature_list
+
+    def reset(self) -> None:
+        """
+        Clears cached filename and metadata, used when a print ends/is reset so
+        stale tool change/temperature data isn't reused for the next print.
+        """
+        self._filename = ""
+        self._metadata = {}

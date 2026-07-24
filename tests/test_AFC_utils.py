@@ -19,7 +19,7 @@ import pytest
 # conftest installs Klipper mocks; extras is on sys.path via REPO_ROOT
 from extras.AFC_utils import (
     check_and_return, section_in_config, DebounceButton, AFC_moonraker,
-    VirtualRunoutHelper, VirtualFilamentSensor,
+    VirtualRunoutHelper, VirtualFilamentSensor, AFC_PrintFileMetaData,
 )
 
 
@@ -367,16 +367,6 @@ class TestAFCMoonraker:
         result = mr.get_spoolman_server()
         assert result == "http://spoolman:7912"
 
-    def test_get_file_filament_change_count_default_zero(self):
-        mr = self._make_moonraker()
-        mr._get_results = MagicMock(return_value=None)
-        assert mr.get_file_filament_change_count("test.gcode") == 0
-
-    def test_get_file_filament_change_count_from_metadata(self):
-        mr = self._make_moonraker()
-        mr._get_results = MagicMock(return_value={"filament_change_count": 5})
-        assert mr.get_file_filament_change_count("test.gcode") == 5
-
     def test_get_afc_stats_returns_none_on_empty_db(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value=None)
@@ -616,6 +606,115 @@ class TestAFCMoonraker:
         assert error is True
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) >= 1
+
+# ── AFC_PrintFileMetaData ───────────────────────────────────────────────────
+
+def _make_print_file_metadata(moonraker=None):
+    from tests.conftest import MockLogger
+    if moonraker is None:
+        moonraker = MagicMock()
+    logger = MockLogger()
+    return AFC_PrintFileMetaData(moonraker, logger), moonraker
+
+
+class TestAFCPrintFileMetaDataInit:
+    def test_init_defaults(self):
+        meta, _ = _make_print_file_metadata()
+        assert meta.filename == ""
+        assert meta.tool_change_count == 0
+        assert meta.tool_temperatures == []
+
+
+class TestAFCPrintFileMetaDataFilename:
+    def test_setting_filename_queries_moonraker_metadata(self):
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = {"filament_change_count": 3}
+        meta.filename = "test.gcode"
+        moonraker.get_file_metadata.assert_called_once_with("test.gcode")
+        assert meta.filename == "test.gcode"
+
+    def test_setting_empty_filename_does_not_query_moonraker(self):
+        """Covers the `value` half of `if self._moonraker and value` being falsy
+        while `self._moonraker` alone is truthy."""
+        meta, moonraker = _make_print_file_metadata()
+        meta.filename = ""
+        moonraker.get_file_metadata.assert_not_called()
+        assert meta.tool_change_count == 0
+
+    def test_setting_filename_with_no_moonraker_does_not_raise(self):
+        """Covers the `self._moonraker` half of `if self._moonraker and value`
+        being falsy while `value` alone is truthy."""
+        from tests.conftest import MockLogger
+        meta = AFC_PrintFileMetaData(None, MockLogger())
+        meta.filename = "test.gcode"
+        assert meta.filename == "test.gcode"
+        assert meta.tool_change_count == 0
+        assert meta.tool_temperatures == []
+
+    def test_updating_filename_refreshes_metadata(self):
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.side_effect = [
+            {"filament_change_count": 2},
+            {"filament_change_count": 9},
+        ]
+        meta.filename = "first.gcode"
+        assert meta.tool_change_count == 2
+        meta.filename = "second.gcode"
+        assert meta.tool_change_count == 9
+        assert moonraker.get_file_metadata.call_count == 2
+
+
+class TestAFCPrintFileMetaDataToolChangeCount:
+    def test_tool_change_count_from_metadata(self):
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = {"filament_change_count": 5}
+        meta.filename = "test.gcode"
+        assert meta.tool_change_count == 5
+
+    def test_tool_change_count_default_zero_when_missing(self):
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = {}
+        meta.filename = "test.gcode"
+        assert meta.tool_change_count == 0
+
+    def test_tool_change_count_default_zero_when_metadata_empty_dict(self):
+        """Covers the falsy-`self._metadata` half of
+        `if self._metadata and "filament_change_count" in self._metadata`."""
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = None
+        meta.filename = "test.gcode"
+        assert meta.tool_change_count == 0
+        debug_msgs = [m for lvl, m in meta.logger.messages if lvl == "debug"]
+        assert any("test.gcode" in m for m in debug_msgs)
+
+
+class TestAFCPrintFileMetaDataToolTemperatures:
+    def test_tool_temperatures_from_filament_temps(self):
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = {"filament_temps": [200, 210, 220]}
+        meta.filename = "test.gcode"
+        assert meta.tool_temperatures == [200, 210, 220]
+
+    def test_tool_temperatures_falls_back_to_nozzle_temp(self):
+        """Snapmaker U1 files use `nozzle_temp` instead of `filament_temps`."""
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = {"nozzle_temp": [215]}
+        meta.filename = "test.gcode"
+        assert meta.tool_temperatures == [215]
+
+    def test_tool_temperatures_empty_when_neither_key_present(self):
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = {}
+        meta.filename = "test.gcode"
+        assert meta.tool_temperatures == []
+
+    def test_tool_temperatures_empty_when_metadata_none(self):
+        """Covers the falsy-`self._metadata` branch of `if self._metadata`."""
+        meta, moonraker = _make_print_file_metadata()
+        moonraker.get_file_metadata.return_value = None
+        meta.filename = "test.gcode"
+        assert meta.tool_temperatures == []
+
 
 # ── VirtualRunoutHelper ─────────────────────────────────────────────────────
 class TestVirtualRunoutHelper:
