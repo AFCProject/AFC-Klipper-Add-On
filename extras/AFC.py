@@ -696,7 +696,8 @@ class afc:
         pheaters = self.printer.lookup_object('heaters')
         wait = False
 
-        # If extruder can extrude and printing, return and do not update temperature.
+        # If extruder can extrude, printing, tool temp is not set or check is disabled, 
+        #   return and do not update temperature.
         # Don't want to modify extruder temperature during prints, only want to modify/verify if
         # print_tool_temperatures have valid temperatures as its safe to set hotends to a value
         # based off extruder mapping since this is what the slicer will do anyways.
