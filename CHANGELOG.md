@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-07-24]
+### Added
+- Now checks and sets extruder temperature during prints using per-tool temperatures from
+  the sliced file's metadata (does not fall back to the lane's default material temp while
+  printing if no per-tool temperature is available).
+- Added `disable_print_temp_check` config option to restore the previous skip-during-print behavior.
+
 ## [2026-07-22]
 ### Added
 - Configurable hysteresis for FPS/PSF buffers prevents rotation-distance updates every 0.25s when the computed multiplier changes by 0.003 or less (absolute) from the last applied multiplier (default: 0.003).
