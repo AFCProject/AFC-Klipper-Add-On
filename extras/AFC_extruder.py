@@ -41,7 +41,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_lane import AFCLane, AFCU1Lane
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
-try: from extras.AFC import AFCLaneState
+try: from extras.AFC import AFCLaneState, State
 except: raise error(ERROR_STR.format(import_lib="AFC", trace=traceback.format_exc()))
 
 try: from extras.AFC_stats import AFCStats_var
@@ -246,6 +246,8 @@ class AFCExtruder:
         self.check_transmit_status_fn   = None
         self.status_led_count:int       = 0
         self._captured_toolhead_temp: Optional[dict] = None
+        self.next_pickup: bool          = False
+        self.status: State              = State.IDLE
 
         # U1 only related variables
         self.filament_sensor_name: str  = config.get('u1_filament_sensor_name', None)
@@ -1075,6 +1077,10 @@ class AFCExtruder:
         self.response['tool_end_status'] = bool(self.tool_end_state)
         self.response['lanes'] = [lane.name for lane in self.lanes.values()]
         self.response['on_shuttle'] = self.on_shuttle()
+        self.response['is_standalone'] = self.is_standalone()
+        self.response['next_pickup'] = self.next_pickup
+        self.response['status'] = self.status
+
         return self.response
 
 def load_config_prefix(config):

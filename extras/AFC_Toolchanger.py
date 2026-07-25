@@ -143,10 +143,12 @@ class AfcToolchanger(afcUnit):
                     break
 
         if tool:
+            tool.status = State.TOOL_PICKUP
             if hasattr(tool, 'tc_lane') and tool.tc_lane is not None:
                 self.tool_swap(tool.tc_lane)
             else:
                 self.logger.error(f"Tool '{tool_key}' does not have a valid 'tc_lane' attribute.")
+            tool.status = State.IDLE
         else:
             self.logger.error(f"Key:{tool_key} invalid for TOOL")
 
@@ -168,6 +170,9 @@ class AfcToolchanger(afcUnit):
         #TODO: Update description text once moved away from KTC
         self._increase_unselect()
         current_extruder = self.afc.function.get_current_extruder_obj()
+        self.afc.current_state = State.TOOL_DOCK
+        if current_extruder:
+            current_extruder.status = State.TOOL_DOCK
         if (current_extruder
             and current_extruder.custom_unselect):
             self.logger.info(f"Running custom unselect: {current_extruder.custom_unselect}")
@@ -187,6 +192,10 @@ class AfcToolchanger(afcUnit):
                 lane_obj.extruder_obj.set_status_led(lane_obj.led_tool_unloaded)
 
         self.afc.spool.set_active_spool('')
+        self.afc.current_state = State.IDLE
+        if current_extruder:
+            current_extruder.status = State.IDLE
+
 
     def tool_swap(self, lane: AFCLane, set_start_time=True):
         """
@@ -204,7 +213,13 @@ class AfcToolchanger(afcUnit):
         if set_start_time:
             self.afc.afcDeltaTime.set_start_time()
 
+        current_extruder = self.function.get_current_extruder_obj()
+        if current_extruder:
+            current_extruder.status = State.TOOL_DOCK
+
         self.afc.current_state = State.TOOL_SWAP
+        lane.extruder_obj.status = State.TOOL_PICKUP
+        lane.extruder_obj.next_pickup = True
         self._increase_unselect()
         self.afc.function.log_toolhead_pos("Before toolswap: ")
         # Save the current position before switching tools and subtract offsets
@@ -220,6 +235,10 @@ class AfcToolchanger(afcUnit):
             self.afc.gcode.run_script_from_command(f"{lane.extruder_obj.custom_tool_swap}")
         else:
             self.afc.gcode.run_script_from_command('SELECT_TOOL T={}'.format(tool_index))
+        lane.extruder_obj.next_pickup = False
+
+        if current_extruder:
+            current_extruder.status = State.IDLE
 
         # Switching toolhead extruders, this is mainly for setups with multiple extruders
         lane.activate_toolhead_extruder()
@@ -231,7 +250,7 @@ class AfcToolchanger(afcUnit):
         self.afc.afcDeltaTime.log_with_time("Tool swap done", debug=False)
         if self.afc.afc_stats.average_tool_swap_time:
             self.afc.afc_stats.average_tool_swap_time.average_time(self.afc.afcDeltaTime.delta_time)
-        self.afc.current_state = State.IDLE
+        lane.extruder_obj.status = self.afc.current_state = State.IDLE
         # Update the base position and homing position after the tool swap.
         self.afc.base_position   = list(self.afc.gcode_move.base_position)
         self.afc.homing_position = list(self.afc.gcode_move.homing_position)

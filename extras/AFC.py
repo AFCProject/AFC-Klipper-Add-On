@@ -8,6 +8,7 @@ import json
 import re
 import traceback
 import inspect
+from enum import Enum
 from functools import cached_property
 from configfile import error
 from klippy import Printer
@@ -47,16 +48,23 @@ except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.for
 AFC_VERSION="1.1.36"
 
 # Class for holding different states so its clear what all valid states are
-class State:
+class State(str, Enum):
     INIT            = "Initialized"
     IDLE            = "Idle"
     ERROR           = "Error"
     LOADING         = "Loading"
     UNLOADING       = "Unloading"
-    TOOL_SWAP       = "Tool swap"
+    TOOL_SWAP       = "ToolSwap"
+    TOOL_DOCK       = "ToolDock"
+    TOOL_PICKUP     = "ToolPickup"
     EJECTING_LANE   = "Ejecting"
     MOVING_LANE     = "Moving"
     RESTORING_POS   = "Restoring"
+
+    def __str__(self) -> str:
+        # Without this, str(State.IDLE)/f"{State.IDLE}" return "State.IDLE" instead of
+        # "Idle" (a quirk of str+Enum mixins prior to Python 3.11's StrEnum).
+        return str.__str__(self)
 
 def load_config(config):
     return afc(config)
