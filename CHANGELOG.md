@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-07-24]
 ### Added
+- Adding additional states and status so that fluidd/mainsail UIs can be updated to show what tools are being dropped off/picked up when swapping toolheads for toolchangers.
+- Added filament_name and initial_weight status for lanes.
 - Now checks and sets extruder temperature during prints using per-tool temperatures from
   the sliced file's metadata (does not fall back to the lane's default material temp while
   printing if no per-tool temperature is available).
