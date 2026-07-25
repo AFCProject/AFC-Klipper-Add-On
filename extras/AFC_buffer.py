@@ -914,7 +914,8 @@ class AFCFPSBuffer(AFCBuffer):
 
         # Hysteresis on the applied multiplier: a correction is only sent to the stepper
         # (update_rotation_distance) when it differs from the last *applied* multiplier by more
-        # than this fraction (e.g. 0.003 = 0.3%).
+        # than this absolute amount (e.g. 0.003 means a multiplier of 1.050 -> 1.052 is
+        # suppressed, but 1.050 -> 1.054 is not).
         self.multiplier_hysteresis: float = config.getfloat('multiplier_hysteresis', 0.003,
                                                             minval=0.0, maxval=1.0)
 
@@ -1218,9 +1219,7 @@ class AFCFPSBuffer(AFCBuffer):
             if integral != self._last_logged_integral:
                 log_event = True
         else:
-            rel_change = (abs(multiplier - last_applied) / last_applied
-                         if last_applied else 1.0)
-            if rel_change > self.multiplier_hysteresis:
+            if abs(multiplier - last_applied) > self.multiplier_hysteresis:
                 self.set_multiplier(multiplier)
                 log_event = True
 
@@ -1253,11 +1252,8 @@ class AFCFPSBuffer(AFCBuffer):
         if (log_event
             and self.debug):
             self.logger.debug(
-                "FPS_buffer {}: fps={:.3f} smoothed={:.3f} integral={:+.4f} "
-                "multiplier={:.4f} state={}".format(
-                    self.name, self.fps_value, self.smoothed_fps, integral,
-                    multiplier, self.last_state
-                )
+                f"FPS_buffer {self.name}: fps={self.fps_value:.3f} smoothed={self.smoothed_fps:.3f} "
+                f"integral={integral:+.4f} multiplier={multiplier:.4f} state={self.last_state}"
             )
             self._last_logged_integral = integral
 
