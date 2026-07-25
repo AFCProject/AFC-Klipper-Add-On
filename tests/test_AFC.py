@@ -57,16 +57,32 @@ class TestStateConstants:
 
     def test_restoring_pos_value(self):
         assert State.RESTORING_POS == "Restoring"
+    
+    def test_tool_swap_value(self):
+        assert State.TOOL_SWAP == "ToolSwap"
+
+    def test_tool_dock_value(self):
+        assert State.TOOL_DOCK == "ToolDock"
+
+    def test_tool_pickup_value(self):
+        assert State.TOOL_PICKUP == "ToolPickup"
 
     def test_all_constants_are_strings(self):
-        attrs = [a for a in dir(State) if not a.startswith("_")]
-        for attr in attrs:
-            assert isinstance(getattr(State, attr), str)
+        # Iterate actual enum members rather than dir(State), which also picks up
+        # inherited str methods (capitalize, format, ...) now that State is a str/Enum mixin.
+        for member in State:
+            assert isinstance(member.value, str)
 
     def test_all_constants_unique(self):
-        attrs = [a for a in dir(State) if not a.startswith("_")]
-        values = [getattr(State, a) for a in attrs]
+        values = [member.value for member in State]
         assert len(values) == len(set(values))
+
+    def test_str_returns_plain_value_not_enum_repr(self):
+        """str()/f-string formatting must return the plain value (e.g. "Idle"),
+        not the default Enum repr ("State.IDLE"), since callers log/serialize
+        State values as plain strings."""
+        assert str(State.IDLE) == "Idle"
+        assert f"{State.TOOL_DOCK}" == "ToolDock"
 
 
 # ── AFC_VERSION ───────────────────────────────────────────────────────────────

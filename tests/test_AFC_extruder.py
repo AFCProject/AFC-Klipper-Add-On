@@ -17,6 +17,7 @@ import sys
 import types
 
 from extras.AFC_extruder import AFCExtruderStats, AFCExtruder
+from extras.AFC import State
 from tests.test_AFC_lane import _make_afc_lane, AFCLaneState
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -250,6 +251,8 @@ def _make_afc_extruder(name="extruder"):
     ext.park_detector_obj = None
     ext.tc_name = None
     ext.no_lanes = False
+    ext.next_pickup = False
+    ext.status = State.IDLE
     
     # Toolchanger stuff
     ext.tool_obj = None
@@ -754,6 +757,32 @@ class TestGetStatus:
         ext.lanes = {"lane1": lane}
         result = ext.get_status()
         assert "lane1" in result["lanes"]
+
+    def test_contains_next_pickup(self):
+        ext = _make_afc_extruder()
+        ext.next_pickup = True
+        result = ext.get_status()
+        assert result["next_pickup"] is True
+
+    def test_contains_status(self):
+        ext = _make_afc_extruder()
+        ext.status = State.TOOL_PICKUP
+        result = ext.get_status()
+        assert result["status"] == State.TOOL_PICKUP
+
+    def test_contains_is_standalone_true(self):
+        ext = _make_afc_extruder()
+        ext.no_lanes = True
+        result = ext.get_status()
+        assert result["is_standalone"] is True
+
+    def test_contains_is_standalone_false(self):
+        """Covers the other half of is_standalone(), proven independently of
+        the True case above."""
+        ext = _make_afc_extruder()
+        ext.no_lanes = False
+        result = ext.get_status()
+        assert result["is_standalone"] is False
 
 # ── on_shuttle ────────────────────────────────────────────────────────────────
 # Sentinel value that mirrors the real DETECT_PRESENT constant
