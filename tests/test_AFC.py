@@ -491,10 +491,12 @@ class TestCheckExtruderTemp:
         assert result is True
 
     # ── disable_print_temp_check ──────────────────────────────────────────────
-    # disable_print_temp_check only affects the early-return guard: it's one of
-    # four conditions (can_extrude, is_printing, not print_tool_temperatures,
-    # disable_print_temp_check) that must ALL be true for the guard to fire.
-    # It plays no part in the separate per-tool-lookup branch below the guard.
+    # The early-return guard fires whenever can_extrude AND is_printing are both
+    # true AND EITHER disable_print_temp_check is set OR print_tool_temperatures
+    # is invalid/empty -- the two are independent triggers, not a combined
+    # requirement. disable_print_temp_check=True always wins, even with valid
+    # per-tool data; conversely, invalid per-tool data always returns early,
+    # even with disable_print_temp_check=False.
 
     def test_disable_print_temp_check_true_triggers_early_return_guard(self):
         """Covers the `disable_print_temp_check` condition of the early-return
@@ -513,10 +515,10 @@ class TestCheckExtruderTemp:
         pheaters.set_temperature.assert_not_called()
         assert result is None
 
-    def test_disable_print_temp_check_false_does_not_trigger_early_return_guard(self):
-        """disable_print_temp_check=False (the default) never lets the early-return
-        guard fire; with no per-tool data it instead falls through to the
-        default-material-temp branch. Proven independently of the True case above."""
+    def test_disable_print_temp_check_false_with_invalid_tool_temp_still_triggers_guard(self):
+        """disable_print_temp_check=False does NOT suppress the guard on its own:
+        while printing with invalid/empty print_tool_temperatures, the guard
+        still fires regardless of the disable flag's value."""
         obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
             heater_target_temp=150, actual_temp=148, target_material_temp=210,
             disable_print_temp_check=False,
@@ -526,16 +528,14 @@ class TestCheckExtruderTemp:
         obj.print_tool_temperatures = []
         lane.map = "T0"
         result = obj._check_extruder_temp(lane)
-        obj._get_default_material_temps.assert_called_once_with(lane)
-        pheaters.set_temperature.assert_called_once_with(heater, 210.0)
-        assert result is True
+        obj._get_default_material_temps.assert_not_called()
+        pheaters.set_temperature.assert_not_called()
+        assert result is None
 
-    def test_disable_print_temp_check_true_does_not_affect_per_tool_lookup(self):
-        """disable_print_temp_check has no bearing on the per-tool-lookup branch
-        once print_tool_temperatures is non-empty during a print. can_extrude is
-        set True so every other guard condition is satisfied too, proving it's
-        specifically the non-empty print_tool_temperatures that bypasses the
-        guard here rather than can_extrude already being false."""
+    def test_disable_print_temp_check_true_triggers_guard_even_with_valid_tool_temp(self):
+        """disable_print_temp_check=True always triggers the early-return guard
+        while printing, even when print_tool_temperatures holds a valid entry
+        for the lane -- it is not limited to the invalid/empty-data case."""
         obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
             heater_target_temp=150, actual_temp=148, target_material_temp=999,
             disable_print_temp_check=True,
@@ -546,8 +546,8 @@ class TestCheckExtruderTemp:
         lane.map = "T0"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_not_called()
-        pheaters.set_temperature.assert_called_once_with(heater, 230.0)
-        assert result is True
+        pheaters.set_temperature.assert_not_called()
+        assert result is None
 
     # ── lane.map parsing failures ─────────────────────────────────────────────
 

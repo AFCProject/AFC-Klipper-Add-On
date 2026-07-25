@@ -703,8 +703,7 @@ class afc:
         # based off extruder mapping since this is what the slicer will do anyways.
         if (self.heater.can_extrude
             and self.function.is_printing()
-            and not self.print_tool_temperatures
-            and self.disable_print_temp_check):
+            and (self.disable_print_temp_check or not self.print_tool_temperatures)):
             return
 
         if (self.function.is_printing()
