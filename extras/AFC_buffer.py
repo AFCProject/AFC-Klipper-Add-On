@@ -1253,7 +1253,7 @@ class AFCFPSBuffer(AFCBuffer):
             and self.debug):
             self.logger.debug(
                 f"FPS_buffer {self.name}: fps={self.fps_value:.3f} smoothed={self.smoothed_fps:.3f} "
-                f"integral={integral:+.4f} multiplier={multiplier:.4f} state={self.last_state}"
+                f"integral={integral:+.4f} multiplier={self._last_multiplier:.4f} state={self.last_state}"
             )
             self._last_logged_integral = integral
 

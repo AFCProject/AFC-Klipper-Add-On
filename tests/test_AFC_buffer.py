@@ -2537,7 +2537,7 @@ class TestCorrectionEventHysteresis:
         buf.multiplier_high = 1.2
         buf._last_multiplier = 1.05
 
-        buf.smoothed_fps = 0.394  # multiplier ~1.053 -> delta ~0.003, not over the 0.003 default
+        buf.smoothed_fps = 0.396  # multiplier ~1.052 -> delta ~0.002, clearly under the 0.003 default
         buf._correction_event(100.0)
 
         lane.update_rotation_distance.assert_not_called()
@@ -2610,24 +2610,25 @@ class TestCorrectionEventHysteresis:
         lane.update_rotation_distance.assert_called_once()
 
     def test_hysteresis_is_absolute_not_relative(self):
-        """A large-magnitude last-applied multiplier must not shrink the
-        effective gate the way a relative/percentage comparison would --
-        the same absolute delta is gated identically regardless of baseline."""
+        """A delta that is small *relative* to a large last-applied baseline
+        must still clear the gate, since it's compared against
+        multiplier_hysteresis as an absolute amount. Chosen so a
+        relative-scaled gate (delta/last_applied > threshold) would
+        disagree: delta=0.05 against last_multiplier=10.0 is only a 0.5%
+        relative change (would be suppressed by a 2% relative gate), but
+        0.05 > 0.02 absolute, so it must be applied."""
         buf, afc, reactor, printer, lane = self._ready()
         buf.multiplier_hysteresis = 0.02  # absolute delta
         buf.set_point = 0.5
         buf.trailing_min_multiplier = 1.0
         buf.low_point = 0.1
-        buf.multiplier_high = 1.2
-        # Seed a baseline far from 1.0. Under the old relative comparison this
-        # would make small absolute deltas look proportionally tiny and get
-        # filtered; the absolute comparison must gate purely on magnitude.
-        buf._last_multiplier = 0.05
+        buf.multiplier_high = 10.05
+        buf._last_multiplier = 10.0
 
-        buf.smoothed_fps = 0.394  # multiplier ~1.053 -> delta ~1.003, clearly over 0.02
+        buf.smoothed_fps = 0.05  # saturates the P-term -> multiplier == multiplier_high == 10.05
         buf._correction_event(100.0)
 
-        lane.update_rotation_distance.assert_called_once_with(pytest.approx(1.053))
+        lane.update_rotation_distance.assert_called_once_with(pytest.approx(10.05))
 
     def test_state_and_led_still_update_when_stepper_call_is_gated(self):
         """State/LED tracking must reflect the freshly computed target
@@ -2768,6 +2769,28 @@ class TestCorrectionEventLogging:
         buf.smoothed_fps = 0.2  # produces a multiplier well past 1.001
         buf._correction_event(100.0)
         buf.logger.debug.assert_called_once()
+
+    def test_log_reports_applied_multiplier_not_gated_target(self):
+        """When hysteresis suppresses set_multiplier() but a state
+        transition still sets log_event=True, the debug line must report
+        the multiplier actually applied to the stepper (_last_multiplier),
+        not the freshly computed target that was gated out -- otherwise
+        diagnostics show a value that was never sent to the stepper."""
+        buf, afc, reactor, printer, lane = self._ready()
+        buf.debug = True
+        buf.multiplier_hysteresis = 0.1  # coarse enough to gate the ~0.06 delta below
+        buf._last_multiplier = 1.0
+        buf.last_state = NEUTRAL_STATE_NAME  # differs from the Advancing result -> log_event
+
+        buf.smoothed_fps = 0.34  # target=Advancing, computed multiplier ~1.06 (gated, unapplied)
+        buf._correction_event(100.0)
+
+        lane.update_rotation_distance.assert_not_called()  # gate held -- multiplier not applied
+        assert buf._last_multiplier == pytest.approx(1.0)  # unchanged by the gate
+        buf.logger.debug.assert_called_once_with(
+            "FPS_buffer FPS_buffer1: fps=0.000 smoothed=0.340 integral=+0.0000 "
+            "multiplier=1.0000 state=Advancing"
+        )
 
     def test_hysteresis_disabled_still_suppresses_log_for_sub_threshold_delta(self):
         """With multiplier_hysteresis explicitly disabled, set_multiplier()
