@@ -435,7 +435,7 @@ class AFCSpool:
                     cur_lane.weight             = self._get_filament_values(result, 'remaining_weight')
                     full_weight                 = self._get_filament_values(result, 'initial_weight', default=1000)
                     cur_lane.espooler.espooler_values.full_weight = full_weight
-                    cur_lane.filament_name      = self._get_filament_values(result['filament'], 'name')
+                    cur_lane.filament_name      = self._get_filament_values(result['filament'], 'name', default="")
 
                     vendor_result  = result["filament"].get("vendor", None)
                     cur_lane.spool_vendor       = ""
