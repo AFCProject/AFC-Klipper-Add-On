@@ -90,7 +90,7 @@ append_buffer_config() {
   build_buffer_config "$1" "$2" "$3" "$4" || return 1
   header=$(echo "$buffer_config" | head -n 1)
 
-  if grep -qF "$header" "$target_file"; then
+  if grep -qxF "$header" "$target_file"; then
     replace_buffer_section "$target_file" "$header" "$buffer_config"
   else
     ensure_trailing_newline "$target_file"

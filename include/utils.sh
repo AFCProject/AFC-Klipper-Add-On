@@ -71,7 +71,11 @@ safe_copy() {
   local choice
   print_msg WARNING "Destination already exists: ${effective_dst}"
   while true; do
-    read -p "  (o)verwrite / (s)kip / (b)ackup and copy? [o/s/b]: " choice
+    if ! read -p "  (o)verwrite / (s)kip / (b)ackup and copy? [o/s/b]: " choice; then
+      print_msg INFO "No interactive input available; skipping: ${effective_dst}"
+      safe_copy_result="skipped"
+      return 0
+    fi
     choice="${choice,,}"
     case "$choice" in
       o)
