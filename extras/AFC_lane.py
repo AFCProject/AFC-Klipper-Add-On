@@ -1203,6 +1203,7 @@ class AFCLane:
 
         if (self.printer.state_message == 'Printer is ready' and
             True == self._afc_prep_done and
+            self.hub is not None and
             "direct_load" in self.hub and
             not self.afc.auto_home and
             not self.afc.function.is_homed()):
