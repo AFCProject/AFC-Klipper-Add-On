@@ -2762,3 +2762,89 @@ class TestAFCU1LaneEventBeforeReady:
         lane.printer.send_event("filament_feed:port", 0, False)
         assert lane.prep_state is False
         assert lane._load_state is False
+
+# ── prep_callback: hub=None guard ─────────────────────────────────────────────
+#
+# prep_callback checks `"direct_load" in self.hub` to decide whether to
+# enforce the "home before direct-load" gate.  When self.hub is None (lane
+# has no hub configured), the old code raised TypeError on the membership
+# test.  The fix adds an explicit `self.hub is not None` guard.
+
+class TestPrepCallbackHubNone:
+    """Verify that prep_callback does not crash when self.hub is None.
+
+    The bug: ``"direct_load" in self.hub`` raises TypeError when hub is None.
+    The fix: an explicit ``self.hub is not None`` guard short-circuits the
+    membership test.  These tests confirm the guard works and that the
+    existing direct_load / homed logic is unaffected.
+    """
+
+    def _make(self):
+        import threading
+        lane = _make_afc_lane()
+        lane.printer = MagicMock()
+        lane.printer.state_message = "Printer is ready"
+        lane._afc_prep_done = True
+        lane.prep_active = False
+        lane.last_prep_time = 0.0
+        lane.hub = None
+        lane.mutex = threading.Lock()
+        lane.status = "None"
+        lane.td1_device_id = None
+        lane.prep_debounce_button = MagicMock()
+        lane.unit_obj = MagicMock()
+        lane.unit_obj.type = "HTLF"
+        lane.afc.auto_home = False
+        lane.afc.function.is_homed = MagicMock(return_value=False)
+        lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane.afc.error.AFC_error = MagicMock()
+        lane.afc.save_vars = MagicMock()
+        lane.afc.TOOL_LOAD = MagicMock()
+        lane.afc.spool = MagicMock()
+        lane.do_enable = MagicMock()
+        lane.set_loaded = MagicMock()
+        lane._post_prep_user_macro = MagicMock()
+        lane._prep_capture_td1 = MagicMock()
+        return lane
+
+    def test_hub_none_does_not_raise(self):
+        """When hub is None, prep_callback must not raise TypeError."""
+        lane = self._make()
+        # Should complete without raising — the None guard skips the
+        # "direct_load" membership test.
+        try:
+            lane.prep_callback(1.0, True)
+        except TypeError:
+            self.fail("prep_callback raised TypeError when hub is None")
+
+    def test_hub_none_skips_direct_load_error(self):
+        """When hub is None, the 'home before direct-load' error must not fire."""
+        lane = self._make()
+        lane.prep_callback(1.0, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_direct_load_not_homed_still_errors(self):
+        """When hub IS 'direct_load' and printer is not homed, error fires."""
+        lane = self._make()
+        lane.hub = "direct_load"
+        result = lane.prep_callback(1.0, True)
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Please home printer before directly loading to toolhead", False
+        )
+        assert result is False
+
+    def test_direct_load_homed_proceeds(self):
+        """When hub is 'direct_load' and printer IS homed, no error."""
+        lane = self._make()
+        lane.hub = "direct_load"
+        lane.afc.function.is_homed = MagicMock(return_value=True)
+        lane.prep_callback(1.0, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_prep_active_skips_reentry(self):
+        """When prep_active is already True, callback returns immediately."""
+        lane = self._make()
+        lane.prep_active = True
+        lane.prep_callback(1.0, True)
+        # hub check should never be reached
+        lane.afc.error.AFC_error.assert_not_called()
