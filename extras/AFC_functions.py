@@ -1660,6 +1660,7 @@ class afcFunction:
         if (tool_load := self.get_current_lane_obj()) is not None:
             prompt.p_end()
             self.afc.error.AFC_error("Toolhead is loaded with '{}', unload or check sensor before resetting lane".format(tool_load.name), pause=False)
+            return
 
         prompt.p_end()
 

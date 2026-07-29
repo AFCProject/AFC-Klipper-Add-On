@@ -185,3 +185,56 @@ class Test_MoveLane:
             result = unit._move_lane(lane, delay=1, enable_movement=True)
         assert result is False
         pause_mock.assert_called()
+
+
+class TestCalibrateBowdenNegativeDistance:
+    """Regression coverage for AFCProject/AFC-Klipper-Add-On#800: a negative
+    bowden_dist was written into live lane/hub state before the < 0 check
+    ran, so an invalid calibration still corrupted cur_lane.dist_hub /
+    cur_lane.hub_obj.afc_bowden_length even though it returned an error."""
+
+    def _make_lane_for_calibration(self, dist_hub=900, short_move_dis=10):
+        from extras.AFC_lane import AFCMoveWarning
+
+        lane = MagicMock()
+        lane.name = "lane1"
+        lane.fullname = "AFC_stepper lane1"
+        lane.dist_hub = dist_hub
+        lane.short_move_dis = short_move_dis
+        lane.short_moves_speed = 50
+        lane.short_moves_accel = 100
+        lane.is_direct_hub.return_value = True
+        lane.is_direct_dist.return_value = True
+        lane.extruder_obj.tool_start = "toolhead"
+        # Sensor reads "not yet at toolhead" once, then "arrived" — exits
+        # the homing loop after a single short move.
+        lane.get_toolhead_pre_sensor_state.side_effect = [False, True]
+        lane.move_to.return_value = (True, 1, AFCMoveWarning.NONE)
+        lane.unit_obj.move_to_load.return_value = (True, 0, None)
+        return lane
+
+    def test_negative_bowden_dist_does_not_mutate_dist_hub(self):
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = self._make_lane_for_calibration(dist_hub=900, short_move_dis=10)
+
+        # First call is the initial "retract to extruder" position (used
+        # only for bookkeeping); second call is the post-homing retract
+        # that yields the final bow_pos=3, which is less than
+        # short_move_dis=10 and drives bowden_dist negative.
+        unit.calc_position = MagicMock(side_effect=[
+            (0, "retract to extruder", True),
+            (3, "retract from toolhead sensor", True),
+        ])
+
+        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        assert success is False
+        assert bowden_dist < 0
+        unit.afc.error.AFC_error.assert_called_once()
+        # The whole point of the fix: dist_hub must be left untouched.
+        assert lane.dist_hub == 900
+        unit.afc.function.ConfigRewrite.assert_not_called()

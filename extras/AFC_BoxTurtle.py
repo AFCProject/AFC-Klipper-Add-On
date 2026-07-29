@@ -277,6 +277,12 @@ class afcBoxTurtle(afcUnit):
                 else:
                     bowden_dist = round(bow_pos - cur_lane.short_move_dis, 2)
 
+            if bowden_dist < 0:
+                self.afc.error.AFC_error(
+                    "'{}' is not a valid length. Please check your setup and re-run calibration.".format(bowden_dist),
+                    pause=False)
+                return False, "Invalid bowden length", bowden_dist
+
             unload_cal_msg = ''
             cal_msg = f'\n {variable_name}: New: {bowden_dist} Old: {bowden_length}'
             if not is_direct_dist:
@@ -285,11 +291,6 @@ class afcBoxTurtle(afcUnit):
             else:
                 cur_lane.dist_hub = bowden_dist
 
-            if bowden_dist < 0:
-                self.afc.error.AFC_error(
-                    "'{}' is not a valid length. Please check your setup and re-run calibration.".format(bowden_dist),
-                    pause=False)
-                return False, "Invalid bowden length", bowden_dist
             self.afc.function.ConfigRewrite(fullname, variable_name, bowden_dist, cal_msg)
             if not is_direct_dist:
                 self.afc.function.ConfigRewrite(fullname, "afc_unload_bowden_length", cur_lane.hub_obj.afc_unload_bowden_length, unload_cal_msg)

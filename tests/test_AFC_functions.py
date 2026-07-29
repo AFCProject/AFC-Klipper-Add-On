@@ -1309,4 +1309,83 @@ class TestCmdAfcLaneResetUnitDelegation:
         self._run(func, gcmd)
 
         assert not hasattr(lane.unit_obj, "get_lane_reset_command")
+
+
+class TestCmdAfcLaneResetToolheadLoadedGuard:
+    """Regression coverage for AFCProject/AFC-Klipper-Add-On#803: the
+    toolhead-loaded guard logged an error but had no `return`, so the
+    reset retract ran anyway."""
+
+    def _make(self, distance=50):
+        func = _make_func()
+        afc, lane = self._make_afc_lane()
+        func.afc = afc
+        gcmd = MagicMock()
+        gcmd.get.side_effect = lambda key, default=None: {
+            "LANE": lane.name,
+            "DISTANCE": distance,
+        }.get(key, default)
+        return func, lane, gcmd
+
+    def _make_afc_lane(self):
+        afc = _make_afc()
+        afc.error = MagicMock()
+        lane = _make_afc_lane()
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.state = True
+        lane.short_move_dis = 10
+        # Only expose move_to_hub, so a call to the unconditional-retract
+        # path would fail loudly rather than silently succeeding through
+        # a stray MagicMock attribute.
+        lane.unit_obj = MagicMock(spec=["move_to_hub"])
+        afc.lanes[lane.name] = lane
+        return afc, lane
+
+    def _run(self, func, gcmd):
+        with patch("extras.AFC_functions.AFCprompt") as mocked_afc_prompt:
+            func.cmd_AFC_LANE_RESET(gcmd)
+        return mocked_afc_prompt
+
+    def test_toolhead_loaded_aborts_before_retract(self):
+        func, lane, gcmd = self._make()
+        tool_lane = MagicMock()
+        tool_lane.name = "lane2"
+        func.get_current_lane_obj = MagicMock(return_value=tool_lane)
+
+        mocked_afc_prompt = self._run(func, gcmd)
+
+        func.afc.error.AFC_error.assert_called_once_with(
+            "Toolhead is loaded with 'lane2', unload or check sensor before resetting lane",
+            pause=False,
+        )
+        mocked_afc_prompt.return_value.p_end.assert_called_once()
+        lane.unit_obj.move_to_hub.assert_not_called()
+        func.afc.gcode.run_script_from_command.assert_not_called()
+        func.afc.gcode.respond_info.assert_not_called()
+
+    def test_toolhead_clear_proceeds_to_retract(self):
+        # A tiny stand-in for the hub: reports the hub as blocked on the
+        # first read (so the earlier "hub already clear" guard is passed),
+        # then reports it clear on every read after (so the move-to-hub
+        # retract while-loop exits immediately).
+        class FakeHub:
+            def __init__(self):
+                self.reads = 0
+                self.hub_clear_move_dis = 65.0
+
+            @property
+            def state(self):
+                self.reads += 1
+                return self.reads <= 1
+
+        func, lane, gcmd = self._make()
+        func.get_current_lane_obj = MagicMock(return_value=None)
+        func.afc.homing_enabled = True
+        lane.hub_obj = FakeHub()
+        lane.move = MagicMock()
+
+        self._run(func, gcmd)
+
+        func.afc.error.AFC_error.assert_not_called()
+        lane.unit_obj.move_to_hub.assert_called_once()
         func.afc.gcode.respond_info.assert_any_call("Resetting lane1 to hub")
