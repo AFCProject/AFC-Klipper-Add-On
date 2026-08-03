@@ -144,34 +144,6 @@ class TestAfcErrorHandleConnect:
         assert "_AFC_RENAMED_RESUME_" in err.AFC_RENAME_RESUME_NAME
 
 
-# ── _caller_name ──────────────────────────────────────────────────────────────
-
-class TestCallerName:
-    def test_returns_immediate_caller_function_name(self):
-        err, afc = _make_afc_error()
-        result = err._caller_name()
-        assert result == "test_returns_immediate_caller_function_name"
-
-    def test_returns_unknown_when_currentframe_is_none(self):
-        """inspect.currentframe() returns None on interpreters without frame
-        support; the fallback ternary must catch that instead of crashing
-        on frame.f_back."""
-        err, afc = _make_afc_error()
-        with patch("extras.AFC_error.inspect.currentframe", return_value=None):
-            result = err._caller_name()
-        assert result == "unknown"
-
-    def test_returns_unknown_when_no_caller_frame(self):
-        """A frame with no caller (f_back is None) must also fall back to
-        "unknown" instead of crashing on None.f_code."""
-        err, afc = _make_afc_error()
-        fake_frame = MagicMock()
-        fake_frame.f_back = None
-        with patch("extras.AFC_error.inspect.currentframe", return_value=fake_frame):
-            result = err._caller_name()
-        assert result == "unknown"
-
-
 # ── set_error_state ───────────────────────────────────────────────────────────
 
 class TestSetErrorState:
@@ -358,6 +330,45 @@ class TestHandleLaneFailure:
         assert "lane2" in called_msg
         assert "overheated" in called_msg
 
+    def test_calls_afc_error_with_real_caller_function_name(self):
+        """Frame inspection resolves stack_name to the name of the function
+        that called handle_lane_failure."""
+        err, afc = _make_afc_error()
+        err.AFC_error = MagicMock()
+        cur_lane = MagicMock()
+        cur_lane.name = "lane2"
+        cur_lane.led_index = "2"
+        err.handle_lane_failure(cur_lane, "overheated", pause=False)
+        assert err.AFC_error.call_args.kwargs["stack_name"] == \
+            "test_calls_afc_error_with_real_caller_function_name"
+
+    def test_stack_name_falls_back_to_empty_when_currentframe_is_none(self):
+        """inspect.currentframe() returning None (interpreters without frame
+        support) must fall back to an empty stack_name, not crash on
+        frame.f_back."""
+        err, afc = _make_afc_error()
+        err.AFC_error = MagicMock()
+        cur_lane = MagicMock()
+        cur_lane.name = "lane2"
+        cur_lane.led_index = "2"
+        with patch("extras.AFC_error.inspect.currentframe", return_value=None):
+            err.handle_lane_failure(cur_lane, "overheated", pause=False)
+        assert err.AFC_error.call_args.kwargs["stack_name"] == ""
+
+    def test_stack_name_falls_back_to_empty_when_no_caller_frame(self):
+        """A frame with no caller (f_back is None) must also fall back to an
+        empty stack_name, not crash on None.f_code."""
+        err, afc = _make_afc_error()
+        err.AFC_error = MagicMock()
+        cur_lane = MagicMock()
+        cur_lane.name = "lane2"
+        cur_lane.led_index = "2"
+        fake_frame = MagicMock()
+        fake_frame.f_back = None
+        with patch("extras.AFC_error.inspect.currentframe", return_value=fake_frame):
+            err.handle_lane_failure(cur_lane, "overheated", pause=False)
+        assert err.AFC_error.call_args.kwargs["stack_name"] == ""
+
 
 # ── AFC_error (the method) ────────────────────────────────────────────────────
 
@@ -376,6 +387,41 @@ class TestAFCErrorMethod:
         err.logger = MagicMock()
         err.AFC_error("Uh oh", pause=False, stack_name="custom_caller")
         err.logger.error.assert_called_once_with(message="Uh oh", stack_name="custom_caller")
+
+    def test_no_stack_name_uses_real_caller_function_name(self):
+        """stack_name=None triggers frame inspection, resolving to the name
+        of the function that called AFC_error."""
+        err, afc = _make_afc_error()
+        err.pause_print = MagicMock()
+        err.logger = MagicMock()
+        err.AFC_error("Uh oh", pause=False)
+        err.logger.error.assert_called_once_with(
+            message="Uh oh",
+            stack_name="test_no_stack_name_uses_real_caller_function_name",
+        )
+
+    def test_no_stack_name_falls_back_to_empty_when_currentframe_is_none(self):
+        """inspect.currentframe() returning None (interpreters without frame
+        support) must fall back to an empty stack_name, not crash on
+        frame.f_back."""
+        err, afc = _make_afc_error()
+        err.pause_print = MagicMock()
+        err.logger = MagicMock()
+        with patch("extras.AFC_error.inspect.currentframe", return_value=None):
+            err.AFC_error("Uh oh", pause=False)
+        err.logger.error.assert_called_once_with(message="Uh oh", stack_name="")
+
+    def test_no_stack_name_falls_back_to_empty_when_no_caller_frame(self):
+        """A frame with no caller (f_back is None) must also fall back to an
+        empty stack_name, not crash on None.f_code."""
+        err, afc = _make_afc_error()
+        err.pause_print = MagicMock()
+        err.logger = MagicMock()
+        fake_frame = MagicMock()
+        fake_frame.f_back = None
+        with patch("extras.AFC_error.inspect.currentframe", return_value=fake_frame):
+            err.AFC_error("Uh oh", pause=False)
+        err.logger.error.assert_called_once_with(message="Uh oh", stack_name="")
 
     def test_pause_true_calls_pause_print(self):
         err, afc = _make_afc_error()
@@ -460,7 +506,9 @@ class TestFix:
         err.ToolHeadFix.assert_not_called()
 
     def test_fix_none_problem_calls_pause_user_intervention_with_unknown_message(self):
-        """problem is None -> PauseUserIntervention('Paused for unknown error')."""
+        """problem is None -> PauseUserIntervention('Paused for unknown error')
+        exactly once; the elif chain must not also fall into the else branch
+        and call PauseUserIntervention(None) a second time."""
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
         lane = MagicMock()
@@ -468,7 +516,6 @@ class TestFix:
         err.fix(None, lane)
         assert err.PauseUserIntervention.call_args_list == [
             call('Paused for unknown error'),
-            call(None),
         ]
 
     def test_fix_returns_error_handled_from_toolhead_fix(self):

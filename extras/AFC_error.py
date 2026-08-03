@@ -63,16 +63,6 @@ class afcError:
         self.afc.gcode.register_command('RESET_FAILURE', self.cmd_RESET_FAILURE, desc=self.cmd_RESET_FAILURE_help)
         self.afc.gcode.register_command('AFC_RESUME', self.cmd_AFC_RESUME, desc=self.cmd_AFC_RESUME_help)
 
-    def _caller_name(self) -> str:
-        """
-        Helper method to look up the name of the function that called the caller of this method.
-
-        :return type: name of the immediate caller, or "unknown" if it can't be determined
-        """
-        frame=inspect.currentframe()
-        caller_frame = frame.f_back if frame else None
-        return caller_frame.f_code.co_name if caller_frame else "unknown"
-
     def fix(self, problem: Optional[str], lane: Optional[str|AFCLane]) -> bool:
         """
         Attempt to resolve a reported lane/toolhead problem automatically,
@@ -90,7 +80,7 @@ class afcError:
 
         if problem is None:
             self.PauseUserIntervention('Paused for unknown error')
-        if (problem=='toolhead'
+        elif(problem=='toolhead'
             and lane is not None):
             error_handled = self.ToolHeadFix(lane)
         else:
@@ -216,7 +206,9 @@ class afcError:
         # Print to logger since respond_raw does not write to logger
         logging.warning(msg)
         if stack_name is None:
-            stack_name = self._caller_name()
+            frame=inspect.currentframe()
+            caller_frame = frame.f_back if frame else None
+            stack_name = caller_frame.f_code.co_name if caller_frame else ""
         # Handle AFC errors
         self.logger.error(message=msg, stack_name=stack_name)
         if pause: self.pause_print()
@@ -369,8 +361,11 @@ class afcError:
         cur_lane.do_enable(False)
         cur_lane.status = AFCLaneState.ERROR
         msg = f"{cur_lane.name} {message}"
+        frame=inspect.currentframe()
+        caller_frame = frame.f_back if frame else None
+        stack_name = caller_frame.f_code.co_name if caller_frame else ""
 
-        self.AFC_error(msg, pause, stack_name=self._caller_name())
+        self.AFC_error(msg, pause, stack_name=stack_name)
         self.afc.function.afc_led(self.afc.led_fault, cur_lane.led_index)
 
 def load_config(config: ConfigWrapper) -> afcError:
