@@ -144,9 +144,9 @@ class AFCLane:
         self.drive_stepper: AFCExtruderStepper = None
         unit: str               = config.get('unit')                                    # Unit name(AFC_BoxTurtle/NightOwl/etc) that belongs to this stepper.
         # Overrides buffers set at the unit level
-        self.hub: str           = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
+        self.hub: Optional[str] = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
         # Overrides buffers set at the unit and extruder level
-        self.buffer_name: str   = config.get("buffer", None)                            # Buffer name(AFC_buffer) that belongs to this stepper, overrides buffer that is set in extruder(AFC_extruder) or unit(AFC_BoxTurtle/NightOwl/etc) sections.
+        self.buffer_name: Optional[str] = config.get("buffer", None)                            # Buffer name(AFC_buffer) that belongs to this stepper, overrides buffer that is set in extruder(AFC_extruder) or unit(AFC_BoxTurtle/NightOwl/etc) sections.
         self.unit               = unit.split(':')[0]
         try:
             self.index              = int(unit.split(':')[1])
@@ -1201,11 +1201,12 @@ class AFCLane:
         if self.prep_active:
             return
 
-        if (self.printer.state_message == 'Printer is ready' and
-            True == self._afc_prep_done and
-            "direct_load" in self.hub and
-            not self.afc.auto_home and
-            not self.afc.function.is_homed()):
+        if (self.printer.state_message == 'Printer is ready'
+            and True == self._afc_prep_done
+            and self.hub is not None
+            and "direct_load" in self.hub
+            and not self.afc.auto_home
+            and not self.afc.function.is_homed()):
             self.afc.error.AFC_error("Please home printer before directly loading to toolhead", False)
             return False
 
@@ -1216,9 +1217,12 @@ class AFCLane:
             # Hacky way for do{}while(0) loop, DO NOT return from this for loop, use break instead so that self.prep_state variable gets sets correctly
             #  before exiting function
             with self.mutex:
-                if self.printer.state_message == 'Printer is ready' and self._afc_prep_done and self.status != AFCLaneState.TOOL_UNLOADING:
+                if (self.printer.state_message == 'Printer is ready'
+                    and self._afc_prep_done
+                    and self.status != AFCLaneState.TOOL_UNLOADING):
                     # Only try to load when load state trigger is false
-                    if self.prep_state and not self.raw_load_state:
+                    if (self.prep_state
+                        and not self.raw_load_state):
                         self.logger.debug(f"Prep: callback triggered {self.name}")
                         # Checking to make sure last time prep switch was activated was less than 1 second, returning to keep is printing message from spamming
                         # the console since it takes klipper some time to transition to idle when idle_resume=printing
@@ -1239,7 +1243,8 @@ class AFCLane:
 
                         # Verify that load state is still true as this would still trigger if prep sensor was triggered and then filament was removed
                         #   This is only really a issue when using direct_load and still using load sensor
-                        if self.hub == 'direct_load' and self.prep_state:
+                        if (self.hub == 'direct_load'
+                            and self.prep_state):
                             self.logger.debug(f"Prep: direct load logic-{self.name}-{self.hub}")
                             self.afc.TOOL_LOAD(self)
                             self.afc.spool._set_values(self)
@@ -1259,7 +1264,7 @@ class AFCLane:
                             if self.td1_device_id:
                                 self._prep_capture_td1()
 
-                    elif (self.prep_state == True
+                    elif(self.prep_state == True
                         and self.raw_load_state == True
                         and not self.afc.function.is_printing()):
                         message = 'Cannot load {} load sensor is triggered.'.format(self.name)

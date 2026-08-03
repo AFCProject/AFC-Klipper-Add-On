@@ -2772,3 +2772,409 @@ class TestAFCU1LaneEventBeforeReady:
         lane.printer.send_event("filament_feed:port", 0, False)
         assert lane.prep_state is False
         assert lane._load_state is False
+
+
+# ── prep_callback ──────────────────────────────────────────────────────────
+
+def _make_lane_for_prep_callback(fullname="AFC_stepper lane1"):
+    """Build an AFCLane wired for prep_callback tests.
+
+    Defaults every guard to its "satisfied" state (printer ready, prep done,
+    status not TOOL_UNLOADING, hub not direct_load, homed, not printing) and
+    prep_state/raw_load_state to False, so calling prep_callback with these
+    defaults is a harmless no-op unless a test flips a specific condition.
+    """
+    lane = _make_afc_lane(fullname)
+    lane.printer = MagicMock()
+    lane.printer.state_message = 'Printer is ready'
+    lane.mutex = MagicMock()
+    lane._afc_prep_done = True
+    lane.status = AFCLaneState.LOADED  # anything but TOOL_UNLOADING
+    lane.prep_active = False
+    lane.last_prep_time = 0
+    lane._load_state = False
+    lane.hub = "PB1"
+    lane.td1_device_id = None
+    lane.afc.auto_home = True
+    lane.afc.function.is_homed = MagicMock(return_value=True)
+    lane.afc.function.is_printing = MagicMock(return_value=False)
+    lane.afc.TOOL_LOAD = MagicMock()
+    lane.afc.spool._set_values = MagicMock()
+    lane.afc.error.AFC_error = MagicMock()
+    lane.afc.save_vars = MagicMock()
+    lane.unit_obj.type = "BoxTurtle"
+    lane.unit_obj.prep_load = MagicMock()
+    lane.unit_obj.prep_post_load = MagicMock()
+    lane.set_loaded = MagicMock()
+    lane.do_enable = MagicMock()
+    lane._post_prep_user_macro = MagicMock()
+    lane._prep_capture_td1 = MagicMock()
+    return lane
+
+
+def _make_lane_ready_to_load(fullname="AFC_stepper lane1"):
+    """Same as _make_lane_for_prep_callback, but pre-armed so calling
+    prep_callback(eventtime=10, state=True) takes the load branch: prep_state
+    True, raw_load_state False, delta_time >= 1.0, not printing."""
+    lane = _make_lane_for_prep_callback(fullname)
+    lane.last_prep_time = 0
+    return lane
+
+
+class TestPrepCallback:
+    """Tests for AFCLane.prep_callback."""
+
+    # ── prep_active re-entrancy guard ────────────────────────────────────
+
+    def test_prep_active_returns_early_without_processing(self):
+        lane = _make_lane_for_prep_callback()
+        lane.prep_active = True
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_not_called()
+        lane.afc.save_vars.assert_not_called()
+
+    def test_prep_active_early_return_still_sets_prep_state(self):
+        """prep_state/last_prep_time are set before the prep_active check, so
+        they update even when the rest of the method is skipped."""
+        lane = _make_lane_for_prep_callback()
+        lane.prep_active = True
+        lane.last_prep_time = 5
+        lane.prep_callback(10, True)
+        assert lane.prep_state is True
+        assert lane.last_prep_time == 10
+
+    def test_prep_active_early_return_leaves_prep_active_true(self):
+        lane = _make_lane_for_prep_callback()
+        lane.prep_active = True
+        lane.prep_callback(10, True)
+        assert lane.prep_active is True
+
+    # ── "home printer before direct load" guard (5-way AND) ─────────────
+    # Baseline where all 5 conditions are satisfied; each independence test
+    # flips exactly one condition back to its "safe" value.
+
+    def _make_lane_at_home_guard_boundary(self):
+        lane = _make_lane_for_prep_callback()
+        lane.printer.state_message = 'Printer is ready'
+        lane._afc_prep_done = True
+        lane.hub = "direct_load"
+        lane.afc.auto_home = False
+        lane.afc.function.is_homed.return_value = False
+        return lane
+
+    def test_home_guard_fires_when_all_conditions_met(self):
+        lane = self._make_lane_at_home_guard_boundary()
+        result = lane.prep_callback(10, True)
+        assert result is False
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Please home printer before directly loading to toolhead", False
+        )
+
+    def test_home_guard_skipped_when_hub_is_none(self):
+        """hub is None must not crash on "direct_load" in self.hub, and must
+        skip the guard the same as any other unmatched hub value."""
+        lane = self._make_lane_at_home_guard_boundary()
+        lane.hub = None
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_home_guard_fire_skips_rest_of_method(self):
+        lane = self._make_lane_at_home_guard_boundary()
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_not_called()
+        lane.afc.save_vars.assert_not_called()
+
+    def test_home_guard_skipped_when_printer_not_ready(self):
+        lane = self._make_lane_at_home_guard_boundary()
+        lane.printer.state_message = 'not ready'
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_home_guard_skipped_when_prep_not_done(self):
+        lane = self._make_lane_at_home_guard_boundary()
+        lane._afc_prep_done = False
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_home_guard_skipped_when_hub_not_direct_load(self):
+        lane = self._make_lane_at_home_guard_boundary()
+        lane.hub = "PB1"
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_home_guard_skipped_when_auto_home_enabled(self):
+        lane = self._make_lane_at_home_guard_boundary()
+        lane.afc.auto_home = True
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_home_guard_skipped_when_already_homed(self):
+        lane = self._make_lane_at_home_guard_boundary()
+        lane.afc.function.is_homed.return_value = True
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    # ── outer processing guard (3-way AND): printer ready, prep done, ───
+    # ── status != TOOL_UNLOADING ─────────────────────────────────────────
+
+    def test_outer_guard_skipped_when_printer_not_ready(self):
+        lane = _make_lane_ready_to_load()
+        lane.printer.state_message = 'not ready'
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_not_called()
+
+    def test_outer_guard_skipped_when_prep_not_done(self):
+        lane = _make_lane_ready_to_load()
+        lane._afc_prep_done = False
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_not_called()
+
+    def test_outer_guard_skipped_when_status_tool_unloading(self):
+        lane = _make_lane_ready_to_load()
+        lane.status = AFCLaneState.TOOL_UNLOADING
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_not_called()
+
+    # ── load-branch entry (2-way AND): prep_state, not raw_load_state ───
+
+    def test_load_branch_skipped_when_prep_state_false(self):
+        lane = _make_lane_ready_to_load()
+        lane.prep_callback(10, False)
+        lane.unit_obj.prep_load.assert_not_called()
+
+    def test_load_branch_skipped_when_raw_load_state_true(self):
+        lane = _make_lane_ready_to_load()
+        lane._load_state = True
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_not_called()
+
+    # ── debounce: delta_time < 1.0 ───────────────────────────────────────
+
+    def test_debounce_breaks_before_is_printing_check(self):
+        lane = _make_lane_ready_to_load()
+        lane.last_prep_time = 9.5
+        lane.prep_callback(10, True)
+        lane.afc.function.is_printing.assert_not_called()
+        lane.unit_obj.prep_load.assert_not_called()
+
+    def test_debounce_break_still_resets_prep_active_and_saves_vars(self):
+        """break (not return) still falls through to the trailing
+        prep_active reset and save_vars call."""
+        lane = _make_lane_ready_to_load()
+        lane.last_prep_time = 9.5
+        lane.prep_callback(10, True)
+        assert lane.prep_active is False
+        lane.afc.save_vars.assert_called_once()
+
+    def test_no_debounce_when_delta_time_is_one_or_more(self):
+        lane = _make_lane_ready_to_load()
+        lane.last_prep_time = 0
+        lane.prep_callback(10, True)
+        lane.afc.function.is_printing.assert_called_once_with(check_movement=True)
+
+    # ── is_printing(check_movement=True) abort ───────────────────────────
+
+    def test_is_printing_while_moving_aborts_load(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.function.is_printing.return_value = True
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Cannot load lane1 spool while printer is actively moving or homing", False
+        )
+        lane.unit_obj.prep_load.assert_not_called()
+
+    def test_is_printing_while_moving_sets_prep_active_false(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.function.is_printing.return_value = True
+        lane.prep_callback(10, True)
+        assert lane.prep_active is False
+
+    def test_is_printing_while_moving_does_not_call_save_vars(self):
+        """This path returns (not breaks), so it must skip the trailing
+        save_vars() call unlike the debounce break path."""
+        lane = _make_lane_ready_to_load()
+        lane.afc.function.is_printing.return_value = True
+        lane.prep_callback(10, True)
+        lane.afc.save_vars.assert_not_called()
+
+    # ── successful prep_load call ─────────────────────────────────────────
+
+    def test_successful_load_calls_prep_load(self):
+        lane = _make_lane_ready_to_load()
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_called_once_with(lane)
+
+    def test_successful_load_resets_status_to_none(self):
+        lane = _make_lane_ready_to_load()
+        lane.status = AFCLaneState.LOADED
+        lane.prep_callback(10, True)
+        assert lane.status == AFCLaneState.NONE
+
+    def test_successful_load_logs_debug_messages(self):
+        lane = _make_lane_ready_to_load()
+        lane.prep_callback(10, True)
+        assert lane.logger.messages == [
+            ("debug", "Prep: callback triggered lane1"),
+            ("debug", "Prep: Load Done-lane1"),
+        ]
+
+    # ── direct_load hub vs normal hub (prep_state is guaranteed True here ─
+    # ── by the enclosing load-branch guard, so only hub is independently ──
+    # ── testable for this nested condition) ────────────────────────────
+
+    def test_direct_load_hub_calls_tool_load(self):
+        lane = _make_lane_ready_to_load()
+        lane.hub = "direct_load"
+        lane.prep_callback(10, True)
+        lane.afc.TOOL_LOAD.assert_called_once_with(lane)
+        lane.afc.spool._set_values.assert_called_once_with(lane)
+
+    def test_direct_load_hub_breaks_before_prep_post_load(self):
+        lane = _make_lane_ready_to_load()
+        lane.hub = "direct_load"
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_post_load.assert_not_called()
+        lane.do_enable.assert_not_called()
+
+    def test_direct_load_hub_logs_debug_messages(self):
+        lane = _make_lane_ready_to_load()
+        lane.hub = "direct_load"
+        lane.prep_callback(10, True)
+        assert lane.logger.messages == [
+            ("debug", "Prep: callback triggered lane1"),
+            ("debug", "Prep: Load Done-lane1"),
+            ("debug", "Prep: direct load logic-lane1-direct_load"),
+            ("debug", "Prep: direct load logic done-lane1-direct_load"),
+        ]
+
+    def test_non_direct_load_hub_calls_prep_post_load_and_do_enable(self):
+        lane = _make_lane_ready_to_load()
+        lane.hub = "PB1"
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_post_load.assert_called_once_with(lane)
+        lane.do_enable.assert_called_once_with(False)
+        lane.afc.TOOL_LOAD.assert_not_called()
+
+    # ── load_state and prep_state -> set_loaded (prep_state guaranteed ───
+    # ── True here too; only load_state is independently testable) ────────
+
+    def test_load_state_true_after_prep_load_calls_set_loaded(self):
+        """Simulates prep_load() physically loading filament and the load
+        sensor triggering as a result."""
+        lane = _make_lane_ready_to_load()
+        lane.hub = "PB1"
+        lane.unit_obj.prep_load.side_effect = lambda _lane: setattr(_lane, "_load_state", True)
+        lane.prep_callback(10, True)
+        lane.set_loaded.assert_called_once()
+        lane._post_prep_user_macro.assert_called_once()
+
+    def test_load_state_false_after_prep_load_skips_set_loaded(self):
+        lane = _make_lane_ready_to_load()
+        lane.hub = "PB1"
+        lane.prep_callback(10, True)
+        lane.set_loaded.assert_not_called()
+        lane._post_prep_user_macro.assert_not_called()
+
+    # ── td1_device_id capture ─────────────────────────────────────────────
+
+    def test_td1_device_id_set_captures_td1_data(self):
+        lane = _make_lane_ready_to_load()
+        lane.hub = "PB1"
+        lane.td1_device_id = "td1-abc"
+        lane.unit_obj.prep_load.side_effect = lambda _lane: setattr(_lane, "_load_state", True)
+        lane.prep_callback(10, True)
+        lane._prep_capture_td1.assert_called_once()
+
+    def test_td1_device_id_none_skips_td1_capture(self):
+        lane = _make_lane_ready_to_load()
+        lane.hub = "PB1"
+        lane.td1_device_id = None
+        lane.unit_obj.prep_load.side_effect = lambda _lane: setattr(_lane, "_load_state", True)
+        lane.prep_callback(10, True)
+        lane._prep_capture_td1.assert_not_called()
+
+    # ── elif: sensor stuck triggered (3-way AND). Reaching this elif with ─
+    # ── any chance of firing structurally requires prep_state==True and ──
+    # ── raw_load_state==True together (otherwise the if branch above ─────
+    # ── fires instead, or prep_state==False short-circuits both) ─────────
+
+    def test_sensor_stuck_message_fires_when_all_conditions_met(self):
+        lane = _make_lane_ready_to_load()
+        lane._load_state = True
+        lane.afc.function.is_printing.return_value = False
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Cannot load lane1 load sensor is triggered."
+            "\n    Make sure filament is not stuck in load sensor or check to make sure "
+            "load sensor is not stuck triggered."
+            "\n    Once cleared try loading again",
+            pause=False,
+        )
+
+    def test_sensor_stuck_message_skipped_when_printing(self):
+        lane = _make_lane_ready_to_load()
+        lane._load_state = True
+        lane.afc.function.is_printing.return_value = True
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_neither_branch_fires_when_prep_state_false(self):
+        lane = _make_lane_ready_to_load()
+        lane._load_state = True
+        lane.prep_callback(10, False)
+        lane.unit_obj.prep_load.assert_not_called()
+        lane.afc.error.AFC_error.assert_not_called()
+
+    def test_sensor_stuck_message_includes_vivid_recovery_hint(self):
+        lane = _make_lane_ready_to_load()
+        lane._load_state = True
+        lane.afc.function.is_printing.return_value = False
+        lane.unit_obj.type = "ViViD"
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Cannot load lane1 load sensor is triggered."
+            "\n    Make sure filament is not stuck in load sensor or check to make sure "
+            "load sensor is not stuck triggered."
+            "\n    If filament is not stuck in sensor run AFC_RECOVER_LANE LANE=lane1 "
+            "to reset internal AFC state."
+            "\n    Once cleared try loading again",
+            pause=False,
+        )
+
+    def test_sensor_stuck_message_excludes_vivid_hint_for_other_units(self):
+        lane = _make_lane_ready_to_load()
+        lane._load_state = True
+        lane.afc.function.is_printing.return_value = False
+        lane.unit_obj.type = "BoxTurtle"
+        lane.prep_callback(10, True)
+        called_msg = lane.afc.error.AFC_error.call_args[0][0]
+        assert "AFC_RECOVER_LANE" not in called_msg
+
+    # ── trailing prep_active reset / save_vars ────────────────────────────
+
+    def test_prep_active_is_true_during_processing_then_reset(self):
+        """prep_active must be True while the with-block is doing work
+        (observed via a side effect mid-call), then reset to False before
+        prep_callback returns."""
+        lane = _make_lane_ready_to_load()
+        observed = []
+        def _record(_lane):
+            observed.append(lane.prep_active)
+        lane.unit_obj.prep_load.side_effect = _record
+        lane.prep_callback(10, True)
+        assert observed == [True]
+        assert lane.prep_active is False
+
+    def test_normal_completion_saves_vars(self):
+        lane = _make_lane_ready_to_load()
+        lane.prep_callback(10, True)
+        lane.afc.save_vars.assert_called_once()
+
+    def test_outer_guard_false_still_resets_prep_active_and_saves_vars(self):
+        """Even when the outer processing guard never enters the with-block,
+        the trailing reset/save still runs (it's outside the for/with)."""
+        lane = _make_lane_ready_to_load()
+        lane.printer.state_message = 'not ready'
+        lane.prep_callback(10, True)
+        assert lane.prep_active is False
+        lane.afc.save_vars.assert_called_once()
