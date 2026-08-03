@@ -11,9 +11,11 @@ import inspect
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    from configfile import ConfigWrapper
+    from gcode import GCodeCommand
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
 
@@ -26,23 +28,23 @@ except: raise error(ERROR_STR.format(import_lib="AFC", trace=traceback.format_ex
 try: from extras.AFC_lane import AFCLaneState, MoveDirection, SpeedMode
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
-def load_config(config):
+def load_config(config: ConfigWrapper) -> afcError:
     return afcError(config)
 
 class afcError:
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper) -> None:
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
-        self.errorLog= {}
+        self.errorLog: dict[str, Any] = {}
         self.pause= False
 
-    def handle_connect(self):
+    def handle_connect(self) -> None:
         """
         Handle the connection event.
         This function is called when the printer connects. It looks up AFC info
         and assigns it to the instance variable `self.AFC`.
         """
-        self.afc            = self.printer.lookup_object('AFC')
+        self.afc: afc        = self.printer.lookup_object('AFC')
         self.pause_resume   = self.printer.lookup_object("pause_resume")
         self.logger         = self.afc.logger
         self.error_timeout  = self.afc.error_timeout
@@ -58,9 +60,14 @@ class afcError:
         self.afc.gcode.register_command('RESET_FAILURE', self.cmd_RESET_FAILURE, desc=self.cmd_RESET_FAILURE_help)
         self.afc.gcode.register_command('AFC_RESUME', self.cmd_AFC_RESUME, desc=self.cmd_AFC_RESUME_help)
 
-    def fix(self, problem: Optional[str], lane: Optional[str|AFCLane]):
+    def _caller_name(self) -> str:
+        frame=inspect.currentframe()
+        caller_frame = frame.f_back if frame else None
+        return caller_frame.f_code.co_name if caller_frame else "unknown"
+
+    def fix(self, problem: Optional[str], lane: Optional[str|AFCLane]) -> bool:
         self.pause= True
-        self.afc: afc = self.printer.lookup_object('AFC')
+        self.afc = self.printer.lookup_object('AFC')
         error_handled = False
         if isinstance(lane, str):
             lane = self.afc.lanes.get(lane, None)
@@ -78,7 +85,7 @@ class afcError:
 
         return error_handled
 
-    def ToolHeadFix(self, cur_lane: AFCLane):
+    def ToolHeadFix(self, cur_lane: AFCLane) -> bool:
         if cur_lane.get_toolhead_pre_sensor_state():   #toolhead has filament
             if cur_lane.extruder_obj.lane_loaded == cur_lane.name:   #var has right lane loaded
                 if not cur_lane.raw_load_state: #Lane has filament
@@ -97,7 +104,9 @@ class afcError:
                 if self.afc.homing_enabled:
                     num_tries = 0
                     while (cur_lane.raw_load_state):
-                        total_move_dist = cur_lane.dist_hub + cur_lane.hub_obj.afc_bowden_length + 500
+                        total_move_dist = cur_lane.dist_hub + 500
+                        if cur_lane.hub_obj is not None:
+                            total_move_dist += cur_lane.hub_obj.afc_bowden_length
                         cur_lane.unit_obj.move_to_load(cur_lane, total_move_dist,
                                                        MoveDirection.NEG, True,
                                                        SpeedMode.SHORT)
@@ -133,8 +142,9 @@ class afcError:
                 self.pause = False
                 self.logger.info(f"Done resetting {cur_lane.name}")
                 return True
+        return False
 
-    def PauseUserIntervention(self,message):
+    def PauseUserIntervention(self, message: Optional[str]) -> None:
         #pause for user intervention
         self.logger.error(message)
         if self.afc.function.is_homed() and not self.afc.function.is_paused():
@@ -142,7 +152,7 @@ class afcError:
             if self.pause:
                 self.pause_print()
 
-    def pause_print(self):
+    def pause_print(self) -> None:
         """
         pause_print function verifies that the printer is homed and not currently paused before calling
         the base pause command
@@ -153,7 +163,7 @@ class afcError:
         self.logger.debug("After User Pause")
         self.afc.function.log_toolhead_pos()
 
-    def set_error_state(self, state=False):
+    def set_error_state(self, state: bool=False) -> None:
         logging.warning("AFC debug: setting error state {}".format(state))
         # Only save position on first error state call
         if state and not self.afc.error_state:
@@ -161,18 +171,18 @@ class afcError:
         self.afc.error_state = state
         self.afc.current_state = State.ERROR if state else State.IDLE
 
-    def AFC_error(self, msg, pause=True, stack_name=None):
+    def AFC_error(self, msg: str, pause: bool=True, stack_name: Optional[str]=None) -> None:
         # Print to logger since respond_raw does not write to logger
         logging.warning(msg)
         if stack_name is None:
-            stack_name = inspect.currentframe().f_back.f_code.co_name
+            stack_name = self._caller_name()
         # Handle AFC errors
         self.logger.error(message=msg,
                           stack_name=stack_name )
         if pause: self.pause_print()
 
     cmd_RESET_FAILURE_help = "CLEAR STATUS ERROR"
-    def cmd_RESET_FAILURE(self, gcmd):
+    def cmd_RESET_FAILURE(self, gcmd: GCodeCommand) -> None:
         """
         This function clears the error state of the AFC system by setting the error state to False.
 
@@ -186,7 +196,7 @@ class afcError:
         """
         self.reset_failure()
 
-    def reset_failure(self):
+    def reset_failure(self) -> None:
         """
         Common function to reset error_state, pause, and position_saved variables
         """
@@ -197,7 +207,7 @@ class afcError:
         self.afc.in_toolchange  = False
 
     cmd_AFC_RESUME_help = "Clear error state and restores position before resuming the print"
-    def cmd_AFC_RESUME(self, gcmd):
+    def cmd_AFC_RESUME(self, gcmd: GCodeCommand) -> None:
         """
         During the PREP phase of startup, the user's RESUME macro is renamed and replaced with AFC_RESUME.
         This function clears the error state of the AFC system, sets the in_toolchange flag to False,
@@ -248,7 +258,7 @@ class afcError:
             self.afc.error_state, self.afc.function.is_paused(), self.afc.position_saved, self.afc.in_toolchange ))
 
     cmd_AFC_PAUSE_help = "Pauses print, raises z by z-hop amount, and then calls users pause macro"
-    def cmd_AFC_PAUSE(self, gcmd):
+    def cmd_AFC_PAUSE(self, gcmd: GCodeCommand) -> None:
         """
         During the PREP phase of startup, the user's PAUSE macro is renamed and replaced with AFC_PAUSE.
         This function pauses the print, raises the Z axis by the z-hop amount, and then calls the user's pause macro.
@@ -295,10 +305,11 @@ class afcError:
 
 
     handle_lane_failure_help = "Get load errors, stop stepper and respond error"
-    def handle_lane_failure(self, cur_lane, message, pause=True):
+    def handle_lane_failure(self, cur_lane: AFCLane, message: str, pause: bool=True) -> None:
         # Disable the stepper for this lane
         cur_lane.do_enable(False)
         cur_lane.status = AFCLaneState.ERROR
         msg = "{} {}".format(cur_lane.name, message)
-        self.AFC_error(msg, pause, stack_name=inspect.currentframe().f_back.f_code.co_name)
+
+        self.AFC_error(msg, pause, stack_name=self._caller_name())
         self.afc.function.afc_led(self.afc.led_fault, cur_lane.led_index)

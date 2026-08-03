@@ -144,6 +144,34 @@ class TestAfcErrorHandleConnect:
         assert "_AFC_RENAMED_RESUME_" in err.AFC_RENAME_RESUME_NAME
 
 
+# ── _caller_name ──────────────────────────────────────────────────────────────
+
+class TestCallerName:
+    def test_returns_immediate_caller_function_name(self):
+        err, afc = _make_afc_error()
+        result = err._caller_name()
+        assert result == "test_returns_immediate_caller_function_name"
+
+    def test_returns_unknown_when_currentframe_is_none(self):
+        """inspect.currentframe() returns None on interpreters without frame
+        support; the fallback ternary must catch that instead of crashing
+        on frame.f_back."""
+        err, afc = _make_afc_error()
+        with patch("extras.AFC_error.inspect.currentframe", return_value=None):
+            result = err._caller_name()
+        assert result == "unknown"
+
+    def test_returns_unknown_when_no_caller_frame(self):
+        """A frame with no caller (f_back is None) must also fall back to
+        "unknown" instead of crashing on None.f_code."""
+        err, afc = _make_afc_error()
+        fake_frame = MagicMock()
+        fake_frame.f_back = None
+        with patch("extras.AFC_error.inspect.currentframe", return_value=fake_frame):
+            result = err._caller_name()
+        assert result == "unknown"
+
+
 # ── set_error_state ───────────────────────────────────────────────────────────
 
 class TestSetErrorState:
@@ -611,6 +639,48 @@ class TestToolHeadFix:
             ("info", "Done resetting lane1"),
         ]
 
+    def test_toolhead_empty_homing_no_hub_obj_excludes_bowden_length(self):
+        """When hub_obj is None during the homing retract loop, the move
+        distance must fall back to dist_hub + 500 without touching
+        hub_obj.afc_bowden_length (which would crash on None)."""
+        from unittest.mock import PropertyMock
+        from tests.test_AFC_lane import _make_afc_lane
+        err, afc = _make_afc_error()
+        err.PauseUserIntervention = MagicMock()
+        afc.homing_enabled = True
+        lane = _make_afc_lane()
+        lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
+        lane.hub_obj = None
+        # Sequence: outer if check(True→enter), while check(True→loop), while check(False→exit)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [True, True, False]
+            result = err.ToolHeadFix(lane)
+        assert result is True
+        lane.unit_obj.move_to_load.assert_called_once()
+        total_move_dist = lane.unit_obj.move_to_load.call_args[0][1]
+        assert total_move_dist == 1400
+
+    def test_toolhead_empty_homing_with_hub_obj_includes_bowden_length(self):
+        """When hub_obj is set, the move distance must include
+        hub_obj.afc_bowden_length on top of dist_hub + 500."""
+        from unittest.mock import PropertyMock
+        from tests.test_AFC_lane import _make_afc_lane
+        err, afc = _make_afc_error()
+        err.PauseUserIntervention = MagicMock()
+        afc.homing_enabled = True
+        lane = _make_afc_lane()
+        lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.afc_bowden_length = 1300
+        # Sequence: outer if check(True→enter), while check(True→loop), while check(False→exit)
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [True, True, False]
+            result = err.ToolHeadFix(lane)
+        assert result is True
+        lane.unit_obj.move_to_load.assert_called_once()
+        total_move_dist = lane.unit_obj.move_to_load.call_args[0][1]
+        assert total_move_dist == 2700
+
     def test_toolhead_empty_with_lane_filament_returns_false_timed_out_homing(self):
         """Homing retract never sees raw_load_state clear -> 5 tries exhausted,
         pauses and returns False."""
@@ -677,7 +747,7 @@ class TestToolHeadFix:
     def test_toolhead_empty_already_at_lane_extruder_takes_no_action(self):
         """When raw_load_state is already False, neither retract nor reload
         is needed -> no PauseUserIntervention call, no move, and the method
-        returns None (falls off the end of the outer if)."""
+        returns False (falls off the end of the outer if)."""
         from unittest.mock import PropertyMock
         from tests.test_AFC_lane import _make_afc_lane
         err, afc = _make_afc_error()
@@ -688,7 +758,7 @@ class TestToolHeadFix:
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.return_value = False
             result = err.ToolHeadFix(lane)
-        assert result is None
+        assert result is False
         err.PauseUserIntervention.assert_not_called()
         lane.move.assert_not_called()
         assert err.logger.messages == []
@@ -708,7 +778,7 @@ class TestToolHeadFix:
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.return_value = True
             result = err.ToolHeadFix(lane)
-        assert result is None
+        assert result is False
         err.PauseUserIntervention.assert_not_called()
         lane.move.assert_not_called()
         assert err.logger.messages == []
@@ -729,7 +799,7 @@ class TestToolHeadFix:
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.return_value = True
             result = err.ToolHeadFix(lane)
-        assert result is None
+        assert result is False
         err.PauseUserIntervention.assert_not_called()
         lane.move.assert_not_called()
         assert err.logger.messages == []
