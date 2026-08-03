@@ -11,11 +11,11 @@ import inspect
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    from extras.AFC import afc
     from extras.AFC_lane import AFCLane
-    from extras.AFC_stepper import AFCExtruderStepper
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -58,25 +58,27 @@ class afcError:
         self.afc.gcode.register_command('RESET_FAILURE', self.cmd_RESET_FAILURE, desc=self.cmd_RESET_FAILURE_help)
         self.afc.gcode.register_command('AFC_RESUME', self.cmd_AFC_RESUME, desc=self.cmd_AFC_RESUME_help)
 
-    def fix(self, problem, LANE):
+    def fix(self, problem: Optional[str], lane: Optional[str|AFCLane]):
         self.pause= True
-        self.afc = self.printer.lookup_object('AFC')
+        self.afc: afc = self.printer.lookup_object('AFC')
         error_handled = False
-        if isinstance(LANE, str):
-            LANE = self.afc.lanes.get(LANE, None)
+        if isinstance(lane, str):
+            lane = self.afc.lanes.get(lane, None)
 
         if problem is None:
             self.PauseUserIntervention('Paused for unknown error')
-        if problem=='toolhead':
-            error_handled = self.ToolHeadFix(LANE)
+        if (problem=='toolhead'
+            and lane is not None):
+            error_handled = self.ToolHeadFix(lane)
         else:
             self.PauseUserIntervention(problem)
-        if not error_handled:
-            LANE.unit_obj.lane_fault(LANE)
+        if (not error_handled
+            and lane is not None):
+            lane.unit_obj.lane_fault(lane)
 
         return error_handled
 
-    def ToolHeadFix(self, cur_lane: AFCLane|AFCExtruderStepper):
+    def ToolHeadFix(self, cur_lane: AFCLane):
         if cur_lane.get_toolhead_pre_sensor_state():   #toolhead has filament
             if cur_lane.extruder_obj.lane_loaded == cur_lane.name:   #var has right lane loaded
                 if not cur_lane.raw_load_state: #Lane has filament

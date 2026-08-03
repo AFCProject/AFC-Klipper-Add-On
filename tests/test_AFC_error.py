@@ -420,12 +420,16 @@ class TestFix:
         afc.function.afc_led.assert_called_with(lane.led_fault, lane.led_index)
 
     def test_fix_other_problem_calls_pause_user_intervention(self):
+        """A real lane object alone isn't enough to reach ToolHeadFix -
+        problem must also equal 'toolhead'."""
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
+        err.ToolHeadFix = MagicMock()
         lane = MagicMock()
         lane.led_index = "2"
         err.fix("jam", lane)
         err.PauseUserIntervention.assert_called_with("jam")
+        err.ToolHeadFix.assert_not_called()
 
     def test_fix_none_problem_calls_pause_user_intervention_with_unknown_message(self):
         """problem is None -> PauseUserIntervention('Paused for unknown error')."""
@@ -469,6 +473,21 @@ class TestFix:
         err.fix("toolhead", "lane1")
         err.ToolHeadFix.assert_called_once_with(lane)
         afc.function.afc_led.assert_called_with(lane.led_fault, lane.led_index)
+
+    def test_fix_unmatched_lane_name_string_does_not_crash(self):
+        """A string LANE that doesn't match any key in afc.lanes resolves to
+        None via dict.get()'s fallback default. fix() must treat that as a
+        graceful no-match: skip ToolHeadFix (no lane to hand it), fall into
+        the PauseUserIntervention(problem) branch instead, skip lane_fault
+        (nothing to fault), and return False without raising."""
+        err, afc = _make_afc_error()
+        err.PauseUserIntervention = MagicMock()
+        err.ToolHeadFix = MagicMock(return_value=False)
+        afc.lanes = {}  # "missing_lane" is not a registered lane
+        result = err.fix("toolhead", "missing_lane")
+        assert result is False
+        err.ToolHeadFix.assert_not_called()
+        err.PauseUserIntervention.assert_called_once_with("toolhead")
 
 
 # ── ToolHeadFix ───────────────────────────────────────────────────────────────
