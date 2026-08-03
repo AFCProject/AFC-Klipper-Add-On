@@ -44,7 +44,7 @@ class afcError:
         This function is called when the printer connects. It looks up AFC info
         and assigns it to the instance variable `self.AFC`.
         """
-        self.afc: afc        = self.printer.lookup_object('AFC')
+        self.afc: afc       = self.printer.lookup_object('AFC')
         self.pause_resume   = self.printer.lookup_object("pause_resume")
         self.logger         = self.afc.logger
         self.error_timeout  = self.afc.error_timeout
