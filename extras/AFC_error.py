@@ -73,10 +73,15 @@ class afcError:
         :return type: True if the problem was resolved automatically, False otherwise
         """
         self.pause= True
-        self.afc = self.printer.lookup_object('AFC')
         error_handled = False
+        lane_name = lane if isinstance(lane, str) else None
         if isinstance(lane, str):
             lane = self.afc.lanes.get(lane, None)
+            if lane is None:
+                self.PauseUserIntervention(
+                    f"Unknown lane '{lane_name}' reported for problem: {problem}"
+                )
+                return error_handled
 
         if problem is None:
             self.PauseUserIntervention('Paused for unknown error')

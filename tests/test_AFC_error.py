@@ -562,7 +562,10 @@ class TestFix:
         result = err.fix("toolhead", "missing_lane")
         assert result is False
         err.ToolHeadFix.assert_not_called()
-        err.PauseUserIntervention.assert_called_once_with("toolhead")
+        err.PauseUserIntervention.assert_called_once_with(
+            "Unknown lane 'missing_lane' reported for problem: toolhead"
+        )
+        afc.function.afc_led.assert_not_called()
 
 
 # ── ToolHeadFix ───────────────────────────────────────────────────────────────
@@ -705,7 +708,7 @@ class TestToolHeadFix:
         assert result is True
         lane.unit_obj.move_to_load.assert_called_once()
         total_move_dist = lane.unit_obj.move_to_load.call_args[0][1]
-        assert total_move_dist == 1400
+        assert total_move_dist == lane.dist_hub + 500
 
     def test_toolhead_empty_homing_with_hub_obj_includes_bowden_length(self):
         """When hub_obj is set, the move distance must include
