@@ -1,0 +1,26 @@
+name: PR Target Branch
+
+# main only accepts merges from DEV (release cuts); everything else
+# (feature branches, fixes, etc.) must target DEV instead. This check fails
+# any PR into main whose head branch isn't DEV, so it can be added as a
+# required status check in main's branch protection rules to block merging.
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-dev-first:
+    runs-on: ubuntu-latest
+    if: github.head_ref != 'DEV'
+
+    steps:
+      - name: Fail check
+        run: |
+          echo "::error::This PR targets main from '${{ github.head_ref }}', but main only accepts release merges from DEV. Please retarget this PR: open the PR on GitHub, click 'Edit' next to the title, and change the base branch from main to DEV."
+          exit 1
