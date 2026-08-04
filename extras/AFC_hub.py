@@ -49,7 +49,7 @@ class afc_hub:
         self.lanes: Dict[str, AFCLane] = {}
         self._state: bool = False
 
-        self.switch_pin: str = config.get('switch_pin', None)
+        self.switch_pin: Optional[str] = config.get('switch_pin', None)
         # HUB Cut variables
         # Next two variables are used in AFC
         self.hub_clear_move_dis     = config.getfloat("hub_clear_move_dis", 65)     # How far to move filament so that it's not block the hub exit
@@ -77,7 +77,8 @@ class afc_hub:
         self.enable_runout          = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
         self.use_dist_hub           = config.getboolean("use_dist_hub", False)      # Value to indicate that lanes dist_hub variable should be used instead of afc_bowden_length value. Set true when setting hub up as a virtual hub
 
-        if self.switch_pin.lower() != "virtual":
+        if (self.switch_pin
+            and self.switch_pin.lower() != "virtual"):
             buttons = self.printer.load_object(config, "buttons")
             self.fila, self.debounce_button = add_filament_switch(f"{self.name}_Hub", self.switch_pin,
                                                                   self.printer, self.enable_sensors_in_gui,
@@ -104,7 +105,7 @@ class afc_hub:
 
         :return boolean: Returns True when switch_pin variable equals virtual
         """
-        return self.switch_pin.lower() == "virtual"
+        return self.switch_pin.lower() == "virtual" if self.switch_pin else False
 
     def handle_runout(self, eventtime: float) -> None:
         """

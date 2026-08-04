@@ -46,7 +46,7 @@ def _make_hub(switch_pin="PA0", name="test_hub", extra_values=None):
         hub = afc_hub(config)
     printer.send_event("klippy:connect")
 
-    if switch_pin.lower() != "virtual":
+    if switch_pin and switch_pin.lower() != "virtual":
         # add_filament_switch is mocked above (it does real pin/hardware
         # setup), so the fila/runout_helper it would normally wire up need
         # their own defaults set by hand for handle_runout's tests.
@@ -81,6 +81,13 @@ class TestIsVirtualPin:
 
     def test_false_for_a_physical_pin_name(self):
         hub = _make_hub(switch_pin="PA0")
+        assert hub.is_virtual_pin() is False
+
+    def test_false_when_switch_pin_is_none(self):
+        """switch_pin is Optional[str] (unset when the config option is
+        missing); the ternary's else branch must return False rather than
+        crash on None.lower()."""
+        hub = _make_hub(switch_pin=None)
         assert hub.is_virtual_pin() is False
 
 
@@ -337,6 +344,25 @@ class TestAFCHubInit:
         with patch("extras.AFC_hub.add_filament_switch") as mock_afs:
             hub = afc_hub(config)
         mock_afs.assert_not_called()
+
+    def test_no_switch_pin_configured_does_not_crash_or_call_add_filament_switch(self):
+        """switch_pin defaults to None when the config option is missing
+        entirely (config.get('switch_pin', None)). __init__ must not crash
+        on None.lower() and must skip add_filament_switch, the same as it
+        does for an explicit "virtual" pin -- proving the `self.switch_pin`
+        truthiness check matters independently of the "virtual" comparison,
+        since None never equals "virtual" either."""
+        from tests.conftest import MockConfig, MockPrinter, MockAFC
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(
+            name="AFC_hub test_hub", printer=printer,
+            values={}  # switch_pin not configured -> defaults to None
+        )
+        with patch("extras.AFC_hub.add_filament_switch") as mock_afs:
+            hub = afc_hub(config)
+        mock_afs.assert_not_called()
+        assert hub.switch_pin is None
 
     def test_virtual_hub_init_registers_hub_in_afc(self):
         from tests.conftest import MockConfig, MockPrinter, MockAFC
