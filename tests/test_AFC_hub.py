@@ -11,65 +11,47 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import sys
+import importlib.util
+import configparser
+from unittest.mock import MagicMock, patch, call
 import pytest
 
-from extras.AFC_hub import afc_hub
+from extras.AFC_hub import afc_hub, load_config_prefix
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_hub(switch_pin="PA0", name="test_hub", extra_values=None):
-    """Build an afc_hub instance by bypassing __init__ and setting attrs."""
-    hub = afc_hub.__new__(afc_hub)
+    """Build an afc_hub instance through its real __init__ and handle_connect
+    (fired via the klippy:connect event), mocking only the Klipper
+    collaborators (config/printer/AFC) and add_filament_switch, which does
+    real pin/hardware registration unrelated to afc_hub's own logic.
 
-    from tests.conftest import MockAFC, MockPrinter, MockReactor, MockLogger
+    All of __init__'s config-driven numeric/boolean attributes (bowden
+    lengths, servo angles, cut settings, etc.) fall through to their real
+    source-code defaults automatically, since MockConfig returns the
+    caller's own default whenever a value isn't present in `values` --
+    matching what this helper used to hardcode by hand.
+    """
+    from tests.conftest import MockAFC, MockPrinter, MockConfig
 
     afc = MockAFC()
-    reactor = MockReactor()
     printer = MockPrinter(afc=afc)
-    printer._reactor = reactor
+    config = MockConfig(name=f"AFC_hub {name}", printer=printer,
+                        values={"switch_pin": switch_pin})
 
-    hub.printer = printer
-    hub.afc = afc
-    hub.reactor = reactor
-    hub.gcode = afc.gcode
+    with patch("extras.AFC_hub.add_filament_switch") as mock_afs:
+        mock_afs.return_value = (MagicMock(), MagicMock())
+        hub = afc_hub(config)
+    printer.send_event("klippy:connect")
 
-    hub.fullname = f"AFC_hub {name}"
-    hub.name = name
-    hub.unit = None
-    hub.lanes = {}
-    hub._state = False
-    hub.switch_pin = switch_pin
-
-    # Default config values
-    hub.hub_clear_move_dis = 65.0
-    hub.afc_bowden_length = 900.0
-    hub.td1_bowden_length = 850.0
-    hub.afc_unload_bowden_length = 900.0
-    hub.assisted_retract = False
-    hub.move_dis = 75.0
-    hub.cut = False
-    hub.cut_cmd = None
-    hub.cut_servo_name = "cut"
-    hub.cut_dist = 50.0
-    hub.cut_clear = 120.0
-    hub.cut_min_length = 200.0
-    hub.cut_servo_pass_angle = 0.0
-    hub.cut_servo_clip_angle = 160.0
-    hub.cut_servo_prep_angle = 75.0
-    hub.cut_confirm = False
-    hub.config_bowden_length = hub.afc_bowden_length
-    hub.config_unload_bowden_length = hub.afc_unload_bowden_length
-    hub.enable_sensors_in_gui = False
-    hub.debounce_delay = 0.1
-    hub.enable_runout = False
-
-    # Filament sensor mock (used in handle_runout)
-    hub.fila = MagicMock()
-    hub.fila.runout_helper.min_event_systime = 0.0
-    hub.fila.runout_helper.event_delay = 0.5
-    hub.debounce_button = MagicMock()
+    if switch_pin.lower() != "virtual":
+        # add_filament_switch is mocked above (it does real pin/hardware
+        # setup), so the fila/runout_helper it would normally wire up need
+        # their own defaults set by hand for handle_runout's tests.
+        hub.fila.runout_helper.min_event_systime = 0.0
+        hub.fila.runout_helper.event_delay = 0.5
 
     if extra_values:
         for k, v in extra_values.items():
@@ -84,6 +66,22 @@ class TestAFCHubStr:
     def test_str_returns_name(self):
         hub = _make_hub(name="hub1")
         assert str(hub) == "hub1"
+
+
+# ── is_virtual_pin ────────────────────────────────────────────────────────────
+
+class TestIsVirtualPin:
+    def test_true_when_switch_pin_is_virtual(self):
+        hub = _make_hub(switch_pin="virtual")
+        assert hub.is_virtual_pin() is True
+
+    def test_true_is_case_insensitive(self):
+        hub = _make_hub(switch_pin="VIRTUAL")
+        assert hub.is_virtual_pin() is True
+
+    def test_false_for_a_physical_pin_name(self):
+        hub = _make_hub(switch_pin="PA0")
+        assert hub.is_virtual_pin() is False
 
 
 # ── switch_pin_callback ───────────────────────────────────────────────────────
@@ -229,13 +227,14 @@ class TestHandleRunout:
         lane.handle_hub_runout.assert_not_called()
 
     def test_runout_updates_min_event_systime(self):
+        # MockReactor's default monotonic() is 100.0; _make_hub sets
+        # event_delay to 0.5, so the expected result is 100.5 -- computed
+        # by hand here rather than re-deriving the source's own formula.
         hub = _make_hub()
         hub.lanes = {}
         hub.afc.current = None
-        initial_time = hub.fila.runout_helper.min_event_systime
         hub.handle_runout(150.0)
-        # min_event_systime should be updated to monotonic + event_delay
-        assert hub.fila.runout_helper.min_event_systime != initial_time
+        assert hub.fila.runout_helper.min_event_systime == 100.5
 
 
 # ── handle_connect ────────────────────────────────────────────────────────────
@@ -393,7 +392,7 @@ class TestAFCHubInit:
 # ── hub_cut ───────────────────────────────────────────────────────────────────
 
 class TestHubCut:
-    def test_hub_cut_no_confirm_runs_servo_commands(self):
+    def test_hub_cut_no_confirm_runs_exactly_three_servo_commands(self):
         from unittest.mock import PropertyMock
         hub = _make_hub(switch_pin="PA0")
         hub.cut_confirm = False
@@ -403,9 +402,11 @@ class TestHubCut:
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
             hub.hub_cut(cur_lane)
-        # Should call run_script_from_command for prep, clip, and pass angles
-        calls = hub.gcode.run_script_from_command.call_args_list
-        assert len(calls) >= 3  # prep + clip + pass
+        # cut_confirm=False must skip the extra prep/clip pair, leaving
+        # exactly prep + clip + pass -- not just "at least" 3, since a bug
+        # that accidentally also ran the confirm branch would still pass a
+        # >= 3 check.
+        assert hub.gcode.run_script_from_command.call_count == 3
 
     def test_hub_cut_no_confirm_calls_correct_servo_angles(self):
         from unittest.mock import PropertyMock
@@ -415,12 +416,16 @@ class TestHubCut:
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
             hub.hub_cut(cur_lane)
-        calls = [c[0][0] for c in hub.gcode.run_script_from_command.call_args_list]
-        assert any(str(hub.cut_servo_prep_angle) in c for c in calls)
-        assert any(str(hub.cut_servo_clip_angle) in c for c in calls)
-        assert any(str(hub.cut_servo_pass_angle) in c for c in calls)
+        # cut_servo_name="cut", prep=75.0, clip=160.0, pass=0.0 (from
+        # _make_hub's defaults) computed by hand, not via the source's own
+        # format-string construction.
+        assert hub.gcode.run_script_from_command.call_args_list == [
+            call("SET_SERVO SERVO=cut ANGLE=75.0"),
+            call("SET_SERVO SERVO=cut ANGLE=160.0"),
+            call("SET_SERVO SERVO=cut ANGLE=0.0"),
+        ]
 
-    def test_hub_cut_with_confirm_runs_extra_servo_commands(self):
+    def test_hub_cut_with_confirm_runs_exactly_five_servo_commands(self):
         from unittest.mock import PropertyMock
         hub = _make_hub(switch_pin="PA0")
         hub.cut_confirm = True
@@ -428,9 +433,15 @@ class TestHubCut:
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
             hub.hub_cut(cur_lane)
-        # With confirm: prep + clip + prep + clip + pass = 5 calls
-        calls = hub.gcode.run_script_from_command.call_args_list
-        assert len(calls) >= 5
+        # cut_confirm=True adds an extra prep+clip pair before the final
+        # pass angle: prep, clip, prep, clip, pass.
+        assert hub.gcode.run_script_from_command.call_args_list == [
+            call("SET_SERVO SERVO=cut ANGLE=75.0"),
+            call("SET_SERVO SERVO=cut ANGLE=160.0"),
+            call("SET_SERVO SERVO=cut ANGLE=75.0"),
+            call("SET_SERVO SERVO=cut ANGLE=160.0"),
+            call("SET_SERVO SERVO=cut ANGLE=0.0"),
+        ]
 
     def test_hub_cut_retracts_filament_after_cut(self):
         from unittest.mock import PropertyMock
@@ -440,7 +451,142 @@ class TestHubCut:
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
             hub.hub_cut(cur_lane)
-        # Last move should be negative (retract by cut_clear)
-        all_move_calls = cur_lane.move.call_args_list
-        last_call_dist = all_move_calls[-1][0][0]
-        assert last_call_dist < 0  # negative = retract
+        # Final move must retract by exactly cut_clear (120.0 from
+        # _make_hub's defaults), not merely "some negative distance".
+        last_call = cur_lane.move.call_args_list[-1]
+        assert last_call[0][0] == -120.0
+
+
+# ── load_config_prefix ──────────────────────────────────────────────────────
+
+class TestLoadConfigPrefix:
+    def test_returns_afc_hub_instance(self):
+        from tests.conftest import MockAFC, MockPrinter, MockConfig
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(name="AFC_hub test_hub", printer=printer,
+                             values={"switch_pin": "virtual"})
+        result = load_config_prefix(config)
+        assert isinstance(result, afc_hub)
+
+    def test_registers_self_in_afc_hubs(self):
+        from tests.conftest import MockAFC, MockPrinter, MockConfig
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(name="AFC_hub test_hub", printer=printer,
+                             values={"switch_pin": "virtual"})
+        result = load_config_prefix(config)
+        assert afc.hubs["test_hub"] is result
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Module-level import guards
+# ═════════════════════════════════════════════════════════════════════════
+
+def _exec_afc_hub_with_blocked_dependency(blocked_module_name):
+    """Execute a throw-away copy of extras/AFC_hub.py's module-level code
+    with `blocked_module_name` forced to fail import, to exercise the file's
+    top-level ``try: from X import Y / except: raise config_error(...)``
+    guards.
+
+    This never touches the real, already-imported ``extras.AFC_hub`` module
+    that the rest of this test suite depends on: the copy is loaded under a
+    throwaway module name and discarded afterward, whether or not it raises.
+    Blocking an import via ``sys.modules[name] = None`` is a standard Python
+    mechanism -- it makes any ``import``/``from ... import`` of that name
+    raise ImportError immediately, without touching the module itself.
+
+    Cleanup restores the *exact same* pre-existing module object in
+    sys.modules (not just removes the block) -- simply deleting the entry
+    would let it get re-imported fresh the next time anything touches it,
+    producing new, distinct class objects that no longer match what other
+    test files already imported and bound references to.
+    """
+    import extras.AFC_hub as real_module
+    fresh_name = "extras.AFC_hub_import_guard_probe"
+    original_blocked_module = sys.modules.get(blocked_module_name)
+    sys.modules[blocked_module_name] = None
+    try:
+        spec = importlib.util.spec_from_file_location(fresh_name, real_module.__file__)
+        fresh = importlib.util.module_from_spec(spec)
+        sys.modules[fresh_name] = fresh
+        try:
+            spec.loader.exec_module(fresh)
+        finally:
+            sys.modules.pop(fresh_name, None)
+    finally:
+        if original_blocked_module is not None:
+            sys.modules[blocked_module_name] = original_blocked_module
+        else:
+            sys.modules.pop(blocked_module_name, None)
+
+
+def _exec_afc_hub_with_missing_attr(real_module_name, missing_attr_name):
+    """Execute a throw-away copy of extras/AFC_hub.py's module-level code
+    with a single attribute (`missing_attr_name`) hidden from
+    `real_module_name`, to exercise a guard whose `except:` can't be reached
+    by blocking the whole dependency module.
+
+    AFC_hub.py has two separate guards that both import from
+    extras.AFC_utils (ERROR_STR, then add_filament_switch); blocking that
+    module outright (via `sys.modules[name] = None`, as
+    `_exec_afc_hub_with_blocked_dependency` does) always trips the first of
+    the two guards before execution ever reaches the second, since both
+    imports run top-to-bottom against the same blocked module. This swaps in
+    a proxy that forwards every attribute lookup to the real module except
+    the one being hidden, which raises AttributeError -- exactly what
+    `from module import name` converts into ImportError when the name is
+    genuinely missing from an otherwise-importable module.
+    """
+    import extras.AFC_hub as real_module
+    real_dep_module = sys.modules[real_module_name]
+
+    class _ProxyModule:
+        def __getattr__(self, attr_name):
+            if attr_name == missing_attr_name:
+                raise AttributeError(attr_name)
+            return getattr(real_dep_module, attr_name)
+
+    fresh_name = "extras.AFC_hub_import_guard_probe"
+    sys.modules[real_module_name] = _ProxyModule()
+    try:
+        spec = importlib.util.spec_from_file_location(fresh_name, real_module.__file__)
+        fresh = importlib.util.module_from_spec(spec)
+        sys.modules[fresh_name] = fresh
+        try:
+            spec.loader.exec_module(fresh)
+        finally:
+            sys.modules.pop(fresh_name, None)
+    finally:
+        sys.modules[real_module_name] = real_dep_module
+
+
+class TestModuleImportGuards:
+    """Covers the three module-level `try/except: raise config_error(...)`
+    guards in AFC_hub.py, one per dependency import."""
+
+    def test_afc_utils_error_str_import_failure_raises_configparser_error(self):
+        """The very first guard imports ERROR_STR itself from AFC_utils, so
+        it can't use ERROR_STR.format(...) in its own except clause."""
+        with pytest.raises(configparser.Error) as exc_info:
+            _exec_afc_hub_with_blocked_dependency("extras.AFC_utils")
+        assert str(exc_info.value).startswith(
+            "Error when trying to import AFC_utils.ERROR_STR"
+        )
+
+    def test_afc_utils_add_filament_switch_import_failure_raises_configparser_error(self):
+        """The second guard imports add_filament_switch from the same
+        AFC_utils module as the first guard's ERROR_STR, so it needs a
+        specific missing attribute rather than the whole module blocked."""
+        with pytest.raises(configparser.Error) as exc_info:
+            _exec_afc_hub_with_missing_attr("extras.AFC_utils", "add_filament_switch")
+        assert str(exc_info.value).startswith(
+            "Error trying to import AFC_utils, please rerun install-afc.sh"
+        )
+
+    def test_afc_unit_import_failure_raises_configparser_error(self):
+        with pytest.raises(configparser.Error) as exc_info:
+            _exec_afc_hub_with_blocked_dependency("extras.AFC_unit")
+        assert str(exc_info.value).startswith(
+            "Error trying to import AFC_unit, please rerun install-afc.sh"
+        )

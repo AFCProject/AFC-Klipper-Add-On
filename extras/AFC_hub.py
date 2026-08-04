@@ -8,7 +8,7 @@ from __future__ import annotations
 import traceback
 
 from configparser import Error as config_error
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise config_error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -20,24 +20,36 @@ try: from extras.AFC_unit import SENSORLESS_UNITS
 except: raise config_error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
+    from configfile import ConfigWrapper
+    from klippy import Printer
+    from extras.AFC import afc
     from extras.AFC_lane import AFCLane
+    from extras.AFC_unit import afcUnit
 
 class afc_hub:
-    def __init__(self, config):
-        self.printer    = config.get_printer()
+    def __init__(self, config: ConfigWrapper) -> None:
+        """
+        Parse hub configuration and register for klippy:connect/klippy:ready.
+        Registers a filament switch sensor for physical hubs; virtual hubs
+        skip that and instead derive their state from their lanes' load
+        sensors (see the state property).
+
+        :param config: Klipper config wrapper for the AFC_hub section
+        """
+        self.printer: Printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
-        self.afc        = self.printer.load_object(config, 'AFC')
+        self.afc: afc   = self.printer.load_object(config, 'AFC')
         self.reactor    = self.printer.get_reactor()
 
-        self.fullname   = config.get_name()
-        self.name       = self.fullname.split()[-1]
+        self.fullname: str = config.get_name()
+        self.name: str     = self.fullname.split()[-1]
 
-        self.unit = None
+        self.unit: Optional[afcUnit] = None
         self.lanes: Dict[str, AFCLane] = {}
         self._state: bool = False
 
-        self.switch_pin = config.get('switch_pin', None)
+        self.switch_pin: str = config.get('switch_pin', None)
         # HUB Cut variables
         # Next two variables are used in AFC
         self.hub_clear_move_dis     = config.getfloat("hub_clear_move_dis", 65)     # How far to move filament so that it's not block the hub exit
@@ -76,10 +88,15 @@ class afc_hub:
         # Adding self to AFC hubs
         self.afc.hubs[self.name]=self
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """
+        String representation of the hub, used e.g. in error messages.
+
+        :return type: hub name
+        """
         return self.name
 
-    def is_virtual_pin(self):
+    def is_virtual_pin(self) -> bool:
         """
         Helper method that returns true when switch_pin variable is set to "virtual", meaning
         that all load switches in a unit is the hub switch. So if one load switch it triggered
@@ -89,7 +106,7 @@ class afc_hub:
         """
         return self.switch_pin.lower() == "virtual"
 
-    def handle_runout(self, eventtime):
+    def handle_runout(self, eventtime: float) -> None:
         """
         Callback function for hub runout, this is different than `switch_pin_callback` function as this function
         can be delayed and is called from filament_switch_sensor class when it detects a runout event.
@@ -107,7 +124,7 @@ class afc_hub:
             lane.handle_hub_runout(sensor=self.name)
         self.fila.runout_helper.min_event_systime = self.reactor.monotonic() + self.fila.runout_helper.event_delay
 
-    def handle_connect(self):
+    def handle_connect(self) -> None:
         """
         Handle the connection event.
         This function is called when the printer connects. It looks up AFC info
@@ -118,7 +135,7 @@ class afc_hub:
 
         self.printer.send_event("afc_hub:register_macros", self)
 
-    def handle_ready(self):
+    def handle_ready(self) -> None:
         """
         Handle the klippy:ready event. Verifies that lanes using a virtual hub sensor have a
         load sensor configured, raising a config error if any sensorless lanes are missing one.
@@ -138,7 +155,7 @@ class afc_hub:
                 raise config_error(msg)
 
     @property
-    def state(self):
+    def state(self) -> bool:
         """
         Returns current state of switch. If using virtual sensor returns True if any lanes load
         sensor is triggered.
@@ -148,10 +165,28 @@ class afc_hub:
             state = any(lane.raw_load_state for lane in self.lanes.values())
         return state
 
-    def switch_pin_callback(self, eventtime, state):
-        self._state = state
+    def switch_pin_callback(self, eventtime: float, state: int) -> None:
+        """
+        Callback for the hub's physical switch pin/button, registered via
+        buttons.register_buttons. Updates the raw sensor state; virtual hubs
+        never register this callback since they have no pin of their own.
 
-    def hub_cut(self, cur_lane):
+        :param eventtime: reactor time the sensor state changed
+        :param state: 1 if the hub switch is now triggered, 0 otherwise
+        """
+        self._state = bool(state)
+
+    def hub_cut(self, cur_lane: AFCLane) -> None:
+        """
+        Run the hub's filament-cutting sequence: feed the lane until the hub
+        sensor triggers, jog back and forth to find the trigger point
+        precisely, feed cut_dist past it, then cycle the cutting servo
+        through its prep/clip angles (and a second confirm pass if
+        cut_confirm is set) before returning to the pass-through angle and
+        retracting the lane by cut_clear.
+
+        :param cur_lane: lane object being fed into the hub for the cut
+        """
         servo_string = 'SET_SERVO SERVO={servo} ANGLE={{angle}}'.format(servo=self.cut_servo_name)
 
         # Prep the servo for cutting.
@@ -190,8 +225,15 @@ class afc_hub:
         # Retract lane by `hub_cut_clear`.
         cur_lane.move(-self.cut_clear, cur_lane.short_moves_speed, cur_lane.short_moves_accel, self.assisted_retract)
 
-    def get_status(self, eventtime=None):
-        self.response = {}
+    def get_status(self, eventtime: Optional[float]=None) -> Dict[str, Any]:
+        """
+        Build the status dict reported for this hub over Klipper's webhooks
+        API.
+
+        :param eventtime: reactor time of the status request, unused
+        :return type: hub state and its cut/bowden-length settings
+        """
+        self.response: Dict[str, Any] = {}
         self.response['state'] = bool(self.state)
         self.response['cut'] = self.cut
         self.response['cut_cmd'] = self.cut_cmd
@@ -206,5 +248,11 @@ class afc_hub:
 
         return self.response
 
-def load_config_prefix(config):
+def load_config_prefix(config: ConfigWrapper) -> afc_hub:
+    """
+    Klipper config entry point for AFC_hub <name> sections.
+
+    :param config: Klipper config wrapper for the AFC_hub <name> section
+    :return type: afc_hub instance to register with the printer
+    """
     return afc_hub(config)
