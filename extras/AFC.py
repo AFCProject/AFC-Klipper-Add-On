@@ -812,6 +812,21 @@ class afc:
         except Exception:
             self.logger.debug("Unable to restore extruder temperature", exc_info=True)
 
+    def _set_knomi_status(self, variable: str, value: bool) -> None:
+        """
+        Best-effort update of the (optional) _KNOMI_STATUS gcode_macro used to drive
+        BTT KNOMI display animations during tool-change actions (e.g. pushing new
+        filament into the toolhead, retracting it back out). No-ops silently if the
+        user hasn't configured a _KNOMI_STATUS macro, since this is purely cosmetic
+        and must never affect the actual load/unload sequence.
+
+        :param variable: Name of the _KNOMI_STATUS variable to update
+        :param value: True/False to set the variable to
+        """
+        if 'gcode_macro _KNOMI_STATUS' in self.printer.objects:
+            self.gcode.run_script_from_command(
+                f"SET_GCODE_VARIABLE MACRO=_KNOMI_STATUS VARIABLE={variable} VALUE={value}")
+
     def _set_quiet_mode(self, val):
         """
         Helper function to set quiet mode to on or off
@@ -1530,7 +1545,11 @@ class afc:
                 temp_state = self.capture_toolhead_temp()
                 try:
                     # Run the load sequence, which may include custom gcode commands.
-                    success = self.load_sequence(cur_lane, cur_hub, cur_extruder)
+                    self._set_knomi_status('pushing', True)
+                    try:
+                        success = self.load_sequence(cur_lane, cur_hub, cur_extruder)
+                    finally:
+                        self._set_knomi_status('pushing', False)
                     if not success:
                         return success
 
@@ -1956,7 +1975,11 @@ class afc:
             temp_state = self.capture_toolhead_temp()
             try:
                 # Run the unload sequence, which may include custom gcode commands.
-                success = self.unload_sequence(cur_lane, cur_hub, cur_extruder)
+                self._set_knomi_status('retraction', True)
+                try:
+                    success = self.unload_sequence(cur_lane, cur_hub, cur_extruder)
+                finally:
+                    self._set_knomi_status('retraction', False)
                 if not success:
                     return success
             finally:
