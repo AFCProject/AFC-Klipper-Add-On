@@ -312,7 +312,7 @@ class AFCLane:
 
         self.connect_done = False
         self.prep_active = False
-        self.last_prep_time = 0
+        self.last_prep_time: float = 0.
 
         self.show_macros = self.afc.show_macros
         self.function = self.printer.load_object(config, 'AFC_functions')
@@ -1191,8 +1191,23 @@ class AFCLane:
 
         self.afc.save_vars()
 
-    def prep_callback(self, eventtime, state):
-        self.prep_state = state
+    def prep_callback(self, eventtime: float, state: int) -> None:
+        """
+        Callback for the lane's prep (filament presence) sensor/button.
+        Decides whether to kick off a load sequence, guarded against
+        re-entrancy (prep_active) and rapid retriggering (delta_time
+        debounce).
+
+        Loads only when the prep sensor is triggered and the load sensor is
+        not (filament present but not yet at the extruder); if both are
+        triggered at once, the lane is stuck and an error is reported
+        instead. Lanes on a direct_load hub skip prep_post_load and go
+        straight to a toolhead load.
+
+        :param eventtime: reactor time the sensor state changed
+        :param state: 1 if the prep sensor is now triggered (filament present), 0 otherwise
+        """
+        self.prep_state = bool(state)
 
         delta_time = eventtime - self.last_prep_time
         self.last_prep_time = eventtime
@@ -1208,7 +1223,7 @@ class AFCLane:
             and not self.afc.auto_home
             and not self.afc.function.is_homed()):
             self.afc.error.AFC_error("Please home printer before directly loading to toolhead", False)
-            return False
+            return
 
         self.prep_active = True
 

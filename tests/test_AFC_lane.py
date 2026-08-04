@@ -2865,7 +2865,7 @@ class TestPrepCallback:
     def test_home_guard_fires_when_all_conditions_met(self):
         lane = self._make_lane_at_home_guard_boundary()
         result = lane.prep_callback(10, True)
-        assert result is False
+        assert result is None
         lane.afc.error.AFC_error.assert_called_once_with(
             "Please home printer before directly loading to toolhead", False
         )
@@ -3054,6 +3054,17 @@ class TestPrepCallback:
         lane.unit_obj.prep_post_load.assert_called_once_with(lane)
         lane.do_enable.assert_called_once_with(False)
         lane.afc.TOOL_LOAD.assert_not_called()
+
+    def test_hub_is_none_does_not_crash_and_skips_tool_load(self):
+        """hub is None must not raise on self.hub == 'direct_load', and must
+        fall through to the normal prep_post_load path exactly like any
+        other non-direct_load hub value."""
+        lane = _make_lane_ready_to_load()
+        lane.hub = None
+        lane.prep_callback(10, True)
+        lane.afc.TOOL_LOAD.assert_not_called()
+        lane.unit_obj.prep_post_load.assert_called_once_with(lane)
+        lane.do_enable.assert_called_once_with(False)
 
     # ── load_state and prep_state -> set_loaded (prep_state guaranteed ───
     # ── True here too; only load_state is independently testable) ────────
