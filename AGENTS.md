@@ -128,9 +128,7 @@
 - **No `__new__` bypass for construction** — build test objects through the
    real `__init__` (mocking dependencies like config/printer/reactor as
    needed), rather than using `SomeClass.__new__(SomeClass)` and hand-setting
-   attributes to skip constructor logic entirely. This applies to new tests
-   even in a file where older tests already use `__new__` — don't migrate
-   the untouched older tests to match unless asked.
+   attributes to skip constructor logic entirely.
 - **Assertions must actually distinguish the branch under test** — an
    assertion has to be something that would be *false* if the code had
    taken the other branch, not just something that happens to be true
