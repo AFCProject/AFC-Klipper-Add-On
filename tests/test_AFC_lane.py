@@ -2848,6 +2848,14 @@ class TestPrepCallback:
         lane.prep_active = True
         lane.prep_callback(10, True)
         assert lane.prep_active is True
+    
+    def test_integer_state_is_normalized_to_bool(self):
+        lane = _make_lane_for_prep_callback()
+        lane.prep_active = True
+        lane.prep_callback(10, 1)
+        assert lane.prep_state is True
+        lane.prep_callback(11, 0)
+        assert lane.prep_state is False
 
     # ── "home printer before direct load" guard (5-way AND) ─────────────
     # Baseline where all 5 conditions are satisfied; each independence test
