@@ -8,9 +8,13 @@ Covers:
 
 from __future__ import annotations
 
+import sys
+import importlib.util
+import configparser
 from unittest.mock import MagicMock, patch
 import pytest
 
+from extras.AFC import afc
 from extras.AFC_stats import AFCStats_var, AFCStats
 
 
@@ -36,9 +40,13 @@ class TestAFCStatsVarInit:
         assert var.value == 0
 
     def test_init_data_missing_parent_defaults_to_zero(self):
+        mr = make_moonraker()
         data = {"other_parent": {"cut_total": 5}}
-        var = make_var("extruder", "cut_total", data=data)
+        var = make_var("extruder", "cut_total", data=data, moonraker=mr)
         assert var.value == 0
+        assert mr.logger.messages == [
+            ("debug", "No data in database for extruder.cut_total:True"),
+        ]
 
     def test_init_data_with_matching_parent_single_level(self):
         data = {"extruder": {"cut_total": 42}}
@@ -74,6 +82,29 @@ class TestAFCStatsVarInit:
         var = AFCStats_var("old_parent", "count", data, mr, new_parent_name="new_parent")
         assert var.parent_name == "new_parent"
         mr.update_afc_stats.assert_called()
+
+    def test_init_new_parent_already_has_data_loads_from_new_parent(self):
+        """When new_parent_name's own key already exists in data (the stat
+        was already migrated in an earlier run), the value must load from
+        the new parent's key -- checked first, before old_parent is even
+        looked at, and old_parent isn't present here at all."""
+        mr = make_moonraker()
+        data = {"new_parent": {"count": 8}}
+        var = AFCStats_var("old_parent", "count", data, mr, new_parent_name="new_parent")
+        assert var.value == 8
+
+    def test_init_new_parent_rename_skipped_when_old_parent_key_absent(self):
+        """The old-parent migration step (update_database + remove_database_
+        entry) requires BOTH data is not None AND the old parent's key
+        being present in data -- proven independently of
+        test_init_new_parent_renames_and_deletes_old, which has both true.
+        Here data is not None but old_parent's key isn't in it (only
+        new_parent's is), so the migration step must be skipped."""
+        mr = make_moonraker()
+        mr.remove_database_entry = MagicMock()
+        data = {"new_parent": {"count": 8}}
+        AFCStats_var("old_parent", "count", data, mr, new_parent_name="new_parent")
+        mr.remove_database_entry.assert_not_called()
 
     def test_str_representation(self):
         var = make_var("extruder", "cut_total", data={"extruder": {"cut_total": 10}})
@@ -215,8 +246,10 @@ class TestGetValueEdgeCases:
         mr.update_afc_stats = MagicMock()
         data = {"a": {"b": {"c": 5}}}
         var = make_var("a.b.c", "value", data=data, moonraker=mr)
-        # Value should be 0 (error path)
         assert var.value == 0
+        assert mr.logger.messages == [
+            ("error", "Cannot have more than two parent names for stats"),
+        ]
 
     def test_two_level_parent_missing_second_level_returns_zero(self):
         """Two-level parent with missing second key returns 0."""
@@ -224,6 +257,9 @@ class TestGetValueEdgeCases:
         data = {"extruder": {}}  # second level key "cut" missing
         var = make_var("extruder.cut", "cut_total", data=data, moonraker=mr)
         assert var.value == 0
+        assert mr.logger.messages == [
+            ("debug", "No data in database for extruder.cut.cut_total:True"),
+        ]
 
     def test_new_parent_with_no_data_does_not_remove(self):
         """When data=None, the old-parent delete step is skipped."""
@@ -279,17 +315,45 @@ class TestAFCStatsInit:
 
     def test_multiple_tools_logs_debug(self):
         _, _, logger = _make_afc_stats(multiple_tools=True)
-        debug_msgs = [m for lvl, m in logger.messages if lvl == "debug"]
-        assert any("multiple" in m.lower() for m in debug_msgs)
+        assert logger.messages == [("debug", "Multiple tools detected for stats")]
 
     def test_new_average_calc_set_to_one_when_no_existing_data(self):
         stats, _, _ = _make_afc_stats()
+        assert stats.new_average_calc.value == 1
+
+    def test_new_average_calc_set_to_one_when_values_present_but_no_average_time_key(self):
+        """new_average_calc defaulting to 1 requires `values is not None and
+        "average_time" in values` to be False -- proven independently of
+        the "no existing data at all" case (values is None there) by
+        supplying non-empty stats data that simply lacks an "average_time"
+        key."""
+        stats, _, _ = _make_afc_stats(stats_data={"error_stats": {"last_load_error": "N/A"}})
         assert stats.new_average_calc.value == 1
 
     def test_new_average_calc_set_to_zero_when_average_time_in_db(self):
         # When "average_time" key exists in stats data, new_average_calc stays 0
         stats, mr, _ = _make_afc_stats(stats_data={"average_time": {"new_average_calc": 0}})
         assert stats.new_average_calc.value == 0
+
+    def test_new_average_calc_not_reset_when_already_nonzero(self):
+        """When new_average_calc already resolved to a non-zero value from
+        the DB (already migrated in an earlier run), __init__ must not
+        overwrite it or push another update to the database for it."""
+        stats, mr, _ = _make_afc_stats(stats_data={"average_time": {"new_average_calc": 1}})
+        assert stats.new_average_calc.value == 1
+        matching_calls = [
+            c for c in mr.update_afc_stats.call_args_list
+            if c.args[0] == "average_time.new_average_calc"
+        ]
+        assert matching_calls == []
+
+    def test_last_load_error_not_overwritten_when_already_set(self):
+        """When error_stats.last_load_error already has a real value in the
+        DB, __init__ must not overwrite it with the "N/A" placeholder."""
+        stats, mr, _ = _make_afc_stats(
+            stats_data={"error_stats": {"last_load_error": "2024-01-01 10:00"}}
+        )
+        assert stats.tc_last_load_error.value == "2024-01-01 10:00"
 
 
 class TestAFCStatsIncreaseTcWoError:
@@ -351,6 +415,7 @@ class TestAFCStatsPrintStats:
         afc_obj = MagicMock()
         afc_obj.lanes = {}
         afc_obj.tools = {}
+        afc_obj.units = {}
         return afc_obj
 
     def test_print_stats_calls_logger_raw(self):
@@ -358,7 +423,9 @@ class TestAFCStatsPrintStats:
         afc_obj = self._make_mock_afc()
         stats.print_stats(afc_obj)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
-        assert len(raw_msgs) >= 1
+        # logger.raw(print_str) is called exactly once, unconditionally, at
+        # the very end of print_stats.
+        assert len(raw_msgs) == 1
 
     def test_print_stats_contains_overall_header(self):
         stats, _, logger = _make_afc_stats()
@@ -373,7 +440,9 @@ class TestAFCStatsPrintStats:
         afc_obj = self._make_mock_afc()
         stats.print_stats(afc_obj, short=True)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
-        assert len(raw_msgs) >= 1
+        # logger.raw(print_str) is called exactly once, unconditionally, at
+        # the very end of print_stats.
+        assert len(raw_msgs) == 1
 
     def test_print_stats_with_extruder(self):
         stats, _, logger = _make_afc_stats()
@@ -394,6 +463,8 @@ class TestAFCStatsPrintStats:
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
         output = "".join(raw_msgs)
         assert "extruder" in output
+        # short=False -> extruder_lbl is just the name, no " Toolchanges" suffix
+        assert "extruder Toolchanges" not in output
 
     def test_print_stats_with_multiple_tools_and_extruder(self):
         stats, _, logger = _make_afc_stats(multiple_tools=True)
@@ -430,7 +501,8 @@ class TestAFCStatsPrintStats:
         return ext
 
     def test_print_stats_short_mode_with_multiple_tools_and_extruder(self):
-        """Covers short=True + multiple_tools branches (lines 337, 340, 343-344)."""
+        """short=True combined with multiple_tools exercises the tool
+        selected/unselected rows and the short-mode cut-string append."""
         stats, _, logger = _make_afc_stats(multiple_tools=True)
         afc_obj = self._make_mock_afc()
         afc_obj.tools = {"extruder": self._make_ext_mock()}
@@ -438,9 +510,12 @@ class TestAFCStatsPrintStats:
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
         output = "".join(raw_msgs)
         assert "Overall Stats" in output
+        # short=True -> extruder_lbl gets a " Toolchanges" suffix
+        assert "extruder Toolchanges" in output
 
     def test_print_stats_long_format_with_lane(self):
-        """Covers the lane loop body and end_string() call (lines 270-271, 282, 379-381, 392-399)."""
+        """A single short lane string (<=60 chars) accumulates into temp_str
+        and flushes via end_string() at the end of the lane loop."""
         stats, _, logger = _make_afc_stats()
         afc_obj = self._make_mock_afc()
         lane = MagicMock()
@@ -450,10 +525,13 @@ class TestAFCStatsPrintStats:
         afc_obj.lanes = {"lane1": lane}
         stats.print_stats(afc_obj, short=False)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
-        assert len(raw_msgs) >= 1
+        # logger.raw(print_str) is called exactly once, unconditionally, at
+        # the very end of print_stats.
+        assert len(raw_msgs) == 1
 
     def test_print_stats_long_format_with_lane_espooler_stats(self):
-        """Covers espooler non-empty long-format branch (line 385)."""
+        """Non-empty espooler stats in long (non-short) format are appended
+        inline with a leading two-space indent, not boxed like short mode."""
         stats, _, logger = _make_afc_stats()
         afc_obj = self._make_mock_afc()
         lane = MagicMock()
@@ -467,7 +545,8 @@ class TestAFCStatsPrintStats:
         assert "lane1" in output
 
     def test_print_stats_short_format_with_lane_and_espooler(self):
-        """Covers short=True lane formatting (lines 382, 383-384)."""
+        """short=True boxes the lane string and, when espooler stats are
+        non-empty, boxes and appends those on their own line too."""
         stats, _, logger = _make_afc_stats()
         afc_obj = self._make_mock_afc()
         lane = MagicMock()
@@ -477,10 +556,13 @@ class TestAFCStatsPrintStats:
         afc_obj.lanes = {"lane1": lane}
         stats.print_stats(afc_obj, short=True)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
-        assert len(raw_msgs) >= 1
+        # logger.raw(print_str) is called exactly once, unconditionally, at
+        # the very end of print_stats.
+        assert len(raw_msgs) == 1
 
     def test_print_stats_long_string_lane_uses_direct_print(self):
-        """Covers lines 395-397: lane string > 60 chars goes directly to print_str."""
+        """A lane string longer than 60 chars bypasses the temp_str
+        accumulator and goes directly into print_str on its own line."""
         stats, _, logger = _make_afc_stats()
         afc_obj = self._make_mock_afc()
         lane = MagicMock()
@@ -491,4 +573,127 @@ class TestAFCStatsPrintStats:
         afc_obj.lanes = {"lane1": lane}
         stats.print_stats(afc_obj, short=False)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
-        assert len(raw_msgs) >= 1
+        # logger.raw(print_str) is called exactly once, unconditionally, at
+        # the very end of print_stats.
+        assert len(raw_msgs) == 1
+
+    @staticmethod
+    def _make_lane(name):
+        lane = MagicMock()
+        lane.name = name
+        lane.espooler.get_spooler_stats.return_value = ""
+        lane.lane_load_count.value = 1
+        return lane
+    
+    @staticmethod
+    def _make_unit(name):
+        unit = MagicMock()
+        unit.name = name
+        unit.lanes = {}
+        return unit
+
+    def test_print_stats_short_format_lanes_print_in_insertion_order(self):
+        """afc_obj.lanes is a plain dict; print_stats must iterate it in
+        insertion order (dict iteration order in Python 3.7+), not re-sort
+        lane names alphabetically -- lanes inserted out of numeric order
+        must come out in that same out-of-order sequence."""
+        stats, _, logger = _make_afc_stats()
+        afc_obj = self._make_mock_afc()
+        # Inserted out of numeric order on purpose.
+        afc_obj.lanes = {
+            "lane3": self._make_lane("lane3"),
+            "lane4": self._make_lane("lane4"),
+            "lane1": self._make_lane("lane1"),
+            "lane2": self._make_lane("lane2"),
+        }
+        # Simulating where units and unit lanes will be in order and AFC lanes will not be in order
+        afc_obj.units = {
+            "Turtle_1": self._make_unit("Turtle_1"),
+            "Turtle_2": self._make_unit("Turtle_2"),
+        }
+        afc_obj.units["Turtle_1"].lanes = {
+            "lane1" : afc_obj.lanes["lane1"],
+            "lane2" : afc_obj.lanes["lane2"]
+        }
+        afc_obj.units["Turtle_2"].lanes = {
+            "lane3" : afc_obj.lanes["lane3"],
+            "lane4" : afc_obj.lanes["lane4"]
+        }
+        stats.print_stats(afc_obj, short=True)
+        raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
+        output = "".join(raw_msgs)
+
+        positions = [output.index(name) for name in ("lane3", "lane4", "lane1", "lane2")]
+        assert positions == sorted(positions)
+
+    def test_print_stats_long_format_lanes_print_in_insertion_order(self):
+        """Same as the short-format case, but through the long-format
+        temp_str accumulator/end_string() path instead of a direct join, to
+        prove that accumulation logic doesn't reorder lanes either."""
+        stats, _, logger = _make_afc_stats()
+        afc_obj = self._make_mock_afc()
+        afc_obj.lanes = {
+            "lane3": self._make_lane("lane3"),
+            "lane4": self._make_lane("lane4"),
+            "lane1": self._make_lane("lane1"),
+            "lane2": self._make_lane("lane2"),
+        }
+        stats.print_stats(afc_obj, short=False)
+        raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
+        output = "".join(raw_msgs)
+
+        positions = [output.index(name) for name in ("lane3", "lane4", "lane1", "lane2")]
+        assert positions == sorted(positions)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Module-level import guard
+# ═════════════════════════════════════════════════════════════════════════
+
+def _exec_afc_stats_with_blocked_dependency(blocked_module_name):
+    """Execute a throw-away copy of extras/AFC_stats.py's module-level code
+    with `blocked_module_name` forced to fail import, to exercise the file's
+    top-level ``try: from X import Y / except: raise error(...)`` guard.
+
+    This never touches the real, already-imported ``extras.AFC_stats``
+    module that the rest of this test suite depends on: the copy is loaded
+    under a throwaway module name and discarded afterward, whether or not it
+    raises. Blocking an import via ``sys.modules[name] = None`` is a standard
+    Python mechanism -- it makes any ``import``/``from ... import`` of that
+    name raise ImportError immediately, without touching the module itself.
+
+    Cleanup restores the *exact same* pre-existing module object in
+    sys.modules (not just removes the block) -- simply deleting the entry
+    would let it get re-imported fresh the next time anything touches it,
+    producing new, distinct class objects that no longer match what other
+    test files already imported and bound references to.
+    """
+    import extras.AFC_stats as real_module
+    fresh_name = "extras.AFC_stats_import_guard_probe"
+    original_blocked_module = sys.modules.get(blocked_module_name)
+    sys.modules[blocked_module_name] = None
+    try:
+        spec = importlib.util.spec_from_file_location(fresh_name, real_module.__file__)
+        fresh = importlib.util.module_from_spec(spec)
+        sys.modules[fresh_name] = fresh
+        try:
+            spec.loader.exec_module(fresh)
+        finally:
+            sys.modules.pop(fresh_name, None)
+    finally:
+        if original_blocked_module is not None:
+            sys.modules[blocked_module_name] = original_blocked_module
+        else:
+            sys.modules.pop(blocked_module_name, None)
+
+
+class TestModuleImportGuard:
+    """Covers the single module-level `try/except: raise error(...)` guard
+    in AFC_stats.py, around its import of AFC_utils.check_and_return."""
+
+    def test_afc_utils_import_failure_raises_configparser_error(self):
+        with pytest.raises(configparser.Error) as exc_info:
+            _exec_afc_stats_with_blocked_dependency("extras.AFC_utils")
+        assert str(exc_info.value).startswith(
+            "Error when trying to import AFC_utils.check_and_return"
+        )
