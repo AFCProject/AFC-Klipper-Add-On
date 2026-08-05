@@ -3900,6 +3900,19 @@ class TestSetDisplayStatus:
 # exercise it through the actual TOOL_LOAD/TOOL_UNLOAD entry points, across
 # success, failure, and exception paths in the wrapped load_sequence/unload_sequence.
 
+def _recorder(events, label, return_value=None, exc=None):
+    """Returns a side_effect callable that appends `label` to the shared
+    `events` list, then returns return_value or raises exc - lets a test
+    assert the real operation actually ran *between* the display-status
+    True/False calls, not just that True preceded False."""
+    def _side_effect(*args, **kwargs):
+        events.append(label)
+        if exc is not None:
+            raise exc
+        return return_value
+    return _side_effect
+
+
 class TestToolLoadDisplayStatusLifecycle:
     def _make(self):
         afc = _make_afc()
@@ -3910,7 +3923,6 @@ class TestToolLoadDisplayStatusLifecycle:
         afc.do_poop_kick_wipe = MagicMock()
         afc.capture_toolhead_temp = MagicMock(return_value=100)
         afc.restore_toolhead_temp = MagicMock()
-        afc._set_display_status = MagicMock()
         afc.function.get_current_lane.return_value = None
         lane = _make_afc_lane()
         lane.extruder_obj.lane_loaded = lane.name
@@ -3923,35 +3935,39 @@ class TestToolLoadDisplayStatusLifecycle:
         lane._load_state = True
         lane.need_purge = False
         afc.lanes[lane.name] = lane
-        return afc, lane
+
+        events = []
+        afc._set_display_status = MagicMock(
+            side_effect=lambda var, val: events.append(('display', var, val)))
+        return afc, lane, events
 
     def test_pushing_true_then_false_around_successful_load(self):
-        afc, lane = self._make()
-        afc.load_sequence = MagicMock(return_value=True)
+        afc, lane, events = self._make()
+        afc.load_sequence = MagicMock(side_effect=_recorder(events, 'load_sequence', return_value=True))
 
         assert afc.TOOL_LOAD(lane)
 
-        assert afc._set_display_status.call_args_list == [
-            call('pushing', True), call('pushing', False)]
+        assert events == [
+            ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
 
     def test_pushing_false_still_called_when_load_fails(self):
-        afc, lane = self._make()
-        afc.load_sequence = MagicMock(return_value=False)
+        afc, lane, events = self._make()
+        afc.load_sequence = MagicMock(side_effect=_recorder(events, 'load_sequence', return_value=False))
 
         assert not afc.TOOL_LOAD(lane)
 
-        assert afc._set_display_status.call_args_list == [
-            call('pushing', True), call('pushing', False)]
+        assert events == [
+            ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
 
     def test_pushing_false_still_called_when_load_raises(self):
-        afc, lane = self._make()
-        afc.load_sequence = MagicMock(side_effect=Exception("boom"))
+        afc, lane, events = self._make()
+        afc.load_sequence = MagicMock(side_effect=_recorder(events, 'load_sequence', exc=Exception("boom")))
 
         with pytest.raises(Exception):
             afc.TOOL_LOAD(lane)
 
-        assert afc._set_display_status.call_args_list == [
-            call('pushing', True), call('pushing', False)]
+        assert events == [
+            ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
 
 
 class TestToolUnloadDisplayStatusLifecycle:
@@ -3962,7 +3978,6 @@ class TestToolUnloadDisplayStatusLifecycle:
         afc.afc_stats = MagicMock()
         afc.capture_toolhead_temp = MagicMock(return_value=100)
         afc.restore_toolhead_temp = MagicMock()
-        afc._set_display_status = MagicMock()
         afc.gcode_move = MagicMock()
         afc.gcode_move.last_position = [0.0, 0.0, 0.0, 0.0]
         afc.z_hop = 5
@@ -3971,35 +3986,39 @@ class TestToolUnloadDisplayStatusLifecycle:
         lane.hub = "PB1"
         afc.function.get_current_lane.return_value = lane.name
         afc.lanes[lane.name] = lane
-        return afc, lane
+
+        events = []
+        afc._set_display_status = MagicMock(
+            side_effect=lambda var, val: events.append(('display', var, val)))
+        return afc, lane, events
 
     def test_retraction_true_then_false_around_successful_unload(self):
-        afc, lane = self._make()
-        afc.unload_sequence = MagicMock(return_value=True)
+        afc, lane, events = self._make()
+        afc.unload_sequence = MagicMock(side_effect=_recorder(events, 'unload_sequence', return_value=True))
 
         assert afc.TOOL_UNLOAD(lane, force_unload=True)
 
-        assert afc._set_display_status.call_args_list == [
-            call('retraction', True), call('retraction', False)]
+        assert events == [
+            ('display', 'retraction', True), 'unload_sequence', ('display', 'retraction', False)]
 
     def test_retraction_false_still_called_when_unload_fails(self):
-        afc, lane = self._make()
-        afc.unload_sequence = MagicMock(return_value=False)
+        afc, lane, events = self._make()
+        afc.unload_sequence = MagicMock(side_effect=_recorder(events, 'unload_sequence', return_value=False))
 
         assert not afc.TOOL_UNLOAD(lane, force_unload=True)
 
-        assert afc._set_display_status.call_args_list == [
-            call('retraction', True), call('retraction', False)]
+        assert events == [
+            ('display', 'retraction', True), 'unload_sequence', ('display', 'retraction', False)]
 
     def test_retraction_false_still_called_when_unload_raises(self):
-        afc, lane = self._make()
-        afc.unload_sequence = MagicMock(side_effect=Exception("boom"))
+        afc, lane, events = self._make()
+        afc.unload_sequence = MagicMock(side_effect=_recorder(events, 'unload_sequence', exc=Exception("boom")))
 
         with pytest.raises(Exception):
             afc.TOOL_UNLOAD(lane, force_unload=True)
 
-        assert afc._set_display_status.call_args_list == [
-            call('retraction', True), call('retraction', False)]
+        assert events == [
+            ('display', 'retraction', True), 'unload_sequence', ('display', 'retraction', False)]
 
 
 class TestBypassUnloadDisplayStatus:
@@ -4007,30 +4026,37 @@ class TestBypassUnloadDisplayStatus:
     TOOL_UNLOAD's normal unload_sequence wrapping, so it needs its own
     retraction True/False pair around RENAMED_UNLOAD_FILAMENT."""
 
-    def test_retraction_true_then_false_around_bypass_unload(self):
+    def _make(self):
         afc = _make_afc()
         afc.RENAMED_UNLOAD_FILAMENT = "_AFC_RENAMED_UNLOAD_FILAMENT_"
         afc.get_bypass_state = MagicMock(return_value=True)
-        afc._set_display_status = MagicMock()
+
+        events = []
+        afc._set_display_status = MagicMock(
+            side_effect=lambda var, val: events.append(('display', var, val)))
+        return afc, events
+
+    def test_retraction_true_then_false_around_bypass_unload(self):
+        afc, events = self._make()
+        afc.gcode.run_script_from_command = MagicMock(
+            side_effect=_recorder(events, 'run_script_from_command'))
 
         result = afc._check_bypass(unload=True)
 
         assert result is True
-        assert afc._set_display_status.call_args_list == [
-            call('retraction', True), call('retraction', False)]
+        assert events == [
+            ('display', 'retraction', True), 'run_script_from_command', ('display', 'retraction', False)]
         afc.gcode.run_script_from_command.assert_called_once_with(afc.RENAMED_UNLOAD_FILAMENT)
 
     def test_retraction_false_still_called_when_bypass_unload_raises(self):
         # _check_bypass has an outer bare except that swallows exceptions and
         # returns False - the inner finally must still fire before that happens.
-        afc = _make_afc()
-        afc.RENAMED_UNLOAD_FILAMENT = "_AFC_RENAMED_UNLOAD_FILAMENT_"
-        afc.get_bypass_state = MagicMock(return_value=True)
-        afc._set_display_status = MagicMock()
-        afc.gcode.run_script_from_command.side_effect = Exception("boom")
+        afc, events = self._make()
+        afc.gcode.run_script_from_command = MagicMock(
+            side_effect=_recorder(events, 'run_script_from_command', exc=Exception("boom")))
 
         result = afc._check_bypass(unload=True)
 
         assert result is False
-        assert afc._set_display_status.call_args_list == [
-            call('retraction', True), call('retraction', False)]
+        assert events == [
+            ('display', 'retraction', True), 'run_script_from_command', ('display', 'retraction', False)]
