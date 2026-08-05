@@ -812,20 +812,22 @@ class afc:
         except Exception:
             self.logger.debug("Unable to restore extruder temperature", exc_info=True)
 
-    def _set_knomi_status(self, variable: str, value: bool) -> None:
+    def _set_display_status(self, variable: str, value: bool) -> None:
         """
-        Best-effort update of the (optional) _KNOMI_STATUS gcode_macro used to drive
-        BTT KNOMI display animations during tool-change actions (e.g. pushing new
-        filament into the toolhead, retracting it back out). No-ops silently if the
-        user hasn't configured a _KNOMI_STATUS macro, since this is purely cosmetic
-        and must never affect the actual load/unload sequence.
+        Best-effort notification of a display status change during tool-change
+        actions (e.g. pushing new filament into the toolhead, retracting it back
+        out). Calls the user-defined _AFC_DISPLAY_STATUS macro (if any) with the
+        changed variable/value as params, letting any display integration (KNOMI
+        or otherwise) decide what to do with it. No-ops silently if the user
+        hasn't defined that macro, since this is purely cosmetic and must never
+        affect the actual load/unload sequence.
 
-        :param variable: Name of the _KNOMI_STATUS variable to update
-        :param value: True/False to set the variable to
+        :param variable: Name of the status variable that changed
+        :param value: True/False the variable changed to
         """
-        if 'gcode_macro _KNOMI_STATUS' in self.printer.objects:
+        if 'gcode_macro _AFC_DISPLAY_STATUS' in self.printer.objects:
             self.gcode.run_script_from_command(
-                f"SET_GCODE_VARIABLE MACRO=_KNOMI_STATUS VARIABLE={variable} VALUE={value}")
+                f"_AFC_DISPLAY_STATUS VARIABLE={variable} VALUE={value}")
 
     def _set_quiet_mode(self, val):
         """
@@ -1545,11 +1547,11 @@ class afc:
                 temp_state = self.capture_toolhead_temp()
                 try:
                     # Run the load sequence, which may include custom gcode commands.
-                    self._set_knomi_status('pushing', True)
+                    self._set_display_status('pushing', True)
                     try:
                         success = self.load_sequence(cur_lane, cur_hub, cur_extruder)
                     finally:
-                        self._set_knomi_status('pushing', False)
+                        self._set_display_status('pushing', False)
                     if not success:
                         return success
 
@@ -1975,11 +1977,11 @@ class afc:
             temp_state = self.capture_toolhead_temp()
             try:
                 # Run the unload sequence, which may include custom gcode commands.
-                self._set_knomi_status('retraction', True)
+                self._set_display_status('retraction', True)
                 try:
                     success = self.unload_sequence(cur_lane, cur_hub, cur_extruder)
                 finally:
-                    self._set_knomi_status('retraction', False)
+                    self._set_display_status('retraction', False)
                 if not success:
                     return success
             finally:

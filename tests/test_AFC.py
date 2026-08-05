@@ -3857,28 +3857,28 @@ class TestUnloadSequenceCustomCmdPostUnloadMacro:
         assert afc.gcode.run_script_from_command.call_args_list == [call("MY_CUSTOM_UNLOAD")]
         lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True)
 
-# ── _set_knomi_status ────────────────────────────────────────────────────────
+# ── _set_display_status ──────────────────────────────────────────────────────
 
-class TestSetKnomiStatus:
-    def test_noop_when_knomi_not_configured(self):
+class TestSetDisplayStatus:
+    def test_noop_when_display_hook_not_configured(self):
         afc_obj = _make_afc()
-        afc_obj._set_knomi_status('pushing', True)
+        afc_obj._set_display_status('pushing', True)
         afc_obj.gcode.run_script_from_command.assert_not_called()
 
-    def test_sends_set_gcode_variable_when_configured(self):
+    def test_calls_display_status_macro_when_configured(self):
         afc_obj = _make_afc()
-        afc_obj.printer.objects['gcode_macro _KNOMI_STATUS'] = MagicMock()
+        afc_obj.printer.objects['gcode_macro _AFC_DISPLAY_STATUS'] = MagicMock()
 
-        afc_obj._set_knomi_status('pushing', True)
+        afc_obj._set_display_status('pushing', True)
 
         afc_obj.gcode.run_script_from_command.assert_called_once_with(
-            "SET_GCODE_VARIABLE MACRO=_KNOMI_STATUS VARIABLE=pushing VALUE=True")
+            "_AFC_DISPLAY_STATUS VARIABLE=pushing VALUE=True")
 
     def test_sends_false_value(self):
         afc_obj = _make_afc()
-        afc_obj.printer.objects['gcode_macro _KNOMI_STATUS'] = MagicMock()
+        afc_obj.printer.objects['gcode_macro _AFC_DISPLAY_STATUS'] = MagicMock()
 
-        afc_obj._set_knomi_status('retraction', False)
+        afc_obj._set_display_status('retraction', False)
 
         afc_obj.gcode.run_script_from_command.assert_called_once_with(
-            "SET_GCODE_VARIABLE MACRO=_KNOMI_STATUS VARIABLE=retraction VALUE=False")
+            "_AFC_DISPLAY_STATUS VARIABLE=retraction VALUE=False")
