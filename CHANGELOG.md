@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Added a `_AFC_DISPLAY_STATUS` hook, called around `TOOL_LOAD`/`TOOL_UNLOAD` with `pushing`/`retraction`
+  state changes. Lets any display integration (e.g. a KNOMI screen) show a live animation during those
+  actions instead of a generic "printing" icon, by defining a `_AFC_DISPLAY_STATUS` gcode_macro. No-ops
+  completely if that macro isn't defined.
+
 ## [2026-08-02]
 ### Updated
 - The `BT_LANE_EJECT`, `BT_LANE_MOVE`, and `BT_CHANGE_TOOL` macros will now accept either a lane defined as `lane1` or
