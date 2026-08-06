@@ -1064,6 +1064,8 @@ class AFCLane:
             self.afc.TOOL_UNLOAD(self)
             if not self.afc.error_state:
                 self.afc.LANE_UNLOAD(self)
+            else:
+                self.afc.afc_stats.increase_unload_error_count(self.afc)
         # Pause print
         self.status = AFCLaneState.NONE
         if self.auto_switch_triggered:
@@ -1165,7 +1167,8 @@ class AFCLane:
                     if self.afc.function.is_printing(check_movement=True):
                         self.afc.error.AFC_error("Cannot load spool to toolhead while printer is actively moving or homing", False)
                     else:
-                        self.afc.TOOL_LOAD(self)
+                        if not self.afc.TOOL_LOAD(self):
+                            self.afc.afc_stats.increase_load_error_count(self.afc)
 
                 self._post_prep_user_macro()
             else:
@@ -1264,7 +1267,8 @@ class AFCLane:
                         if (self.hub == 'direct_load'
                             and self.prep_state):
                             self.logger.debug(f"Prep: direct load logic-{self.name}-{self.hub}")
-                            self.afc.TOOL_LOAD(self)
+                            if not self.afc.TOOL_LOAD(self):
+                                self.afc.afc_stats.increase_load_error_count(self.afc)
                             self.afc.spool._set_values(self)
                             self.logger.debug(f"Prep: direct load logic done-{self.name}-{self.hub}")
                             break

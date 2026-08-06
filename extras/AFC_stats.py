@@ -275,19 +275,25 @@ class AFCStats:
         self.tc_without_error.reset_count()
         self.tc_last_load_error.set_current_time()
 
-    def increase_load_error_count(self) -> None:
+    def increase_load_error_count(self, afc: afc) -> None:
         """
         Helper function for increasing load error count and resetting number of toolchanges
         without errors.
         """
+        # Testing flag is set, return early
+        if afc.testing:
+            return
         self.reset_toolchange_wo_error()
         self.total_load_errors.increase_count()
 
-    def increase_unload_error_count(self) -> None:
+    def increase_unload_error_count(self, afc: afc) -> None:
         """
         Helper function for increasing unload error count and resetting number of toolchanges
         without errors.
         """
+        # Testing flag is set, return early
+        if afc.testing:
+            return
         self.reset_toolchange_wo_error()
         self.total_unload_errors.increase_count()
 

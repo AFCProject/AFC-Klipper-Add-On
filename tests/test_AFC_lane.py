@@ -658,9 +658,21 @@ class TestHandleLoadRunout:
         lane = self._make()
         lane.hub = "direct_load"
         lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane.afc.TOOL_LOAD.return_value = True
         lane.handle_load_runout(100.0, True)
         lane.afc.TOOL_LOAD.assert_called_once_with(lane)
         lane.afc.error.AFC_error.assert_not_called()
+        lane.afc.afc_stats.increase_load_error_count.assert_not_called()
+
+    def test_direct_load_tool_load_failure_increases_load_error_count(self):
+        """When TOOL_LOAD fails in the direct_load branch, the failure is
+        recorded via increase_load_error_count(self.afc)."""
+        lane = self._make()
+        lane.hub = "direct_load"
+        lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane.afc.TOOL_LOAD.return_value = False
+        lane.handle_load_runout(100.0, True)
+        lane.afc.afc_stats.increase_load_error_count.assert_called_once_with(lane.afc)
 
     def test_non_direct_load_hub_skips_tool_load_branch(self):
         lane = self._make()
@@ -1689,6 +1701,36 @@ class TestPerformPauseRunout:
         assert "Runout" in msg
         assert "Minimum weight" not in msg
         assert lane.name in msg
+
+    def test_unload_on_runout_false_skips_tool_unload_entirely(self):
+        """When unit_obj.unload_on_runout is False, the whole
+        TOOL_UNLOAD/LANE_UNLOAD/error-counting block is skipped."""
+        lane = _make_lane_for_pause_runout(unload_on_runout=False)
+        lane._perform_pause_runout()
+        lane.afc.TOOL_UNLOAD.assert_not_called()
+        lane.afc.LANE_UNLOAD.assert_not_called()
+        lane.afc.afc_stats.increase_unload_error_count.assert_not_called()
+
+    def test_unload_on_runout_true_and_no_error_ejects_lane(self):
+        """When unload_on_runout is True and TOOL_UNLOAD leaves error_state
+        False, the lane is ejected via LANE_UNLOAD and no error is counted."""
+        lane = _make_lane_for_pause_runout(unload_on_runout=True)
+        lane.afc.error_state = False
+        lane._perform_pause_runout()
+        lane.afc.TOOL_UNLOAD.assert_called_once_with(lane)
+        lane.afc.LANE_UNLOAD.assert_called_once_with(lane)
+        lane.afc.afc_stats.increase_unload_error_count.assert_not_called()
+
+    def test_unload_on_runout_true_and_error_state_increases_unload_error_count(self):
+        """When unload_on_runout is True and TOOL_UNLOAD leaves error_state
+        True, LANE_UNLOAD is skipped and the failure is recorded via
+        increase_unload_error_count(self.afc)."""
+        lane = _make_lane_for_pause_runout(unload_on_runout=True)
+        lane.afc.error_state = True
+        lane._perform_pause_runout()
+        lane.afc.TOOL_UNLOAD.assert_called_once_with(lane)
+        lane.afc.LANE_UNLOAD.assert_not_called()
+        lane.afc.afc_stats.increase_unload_error_count.assert_called_once_with(lane.afc)
 
 # ── cmd_SET_LANE_LOADED ───────────────────────────────────────────────────────
 #
@@ -3033,9 +3075,20 @@ class TestPrepCallback:
     def test_direct_load_hub_calls_tool_load(self):
         lane = _make_lane_ready_to_load()
         lane.hub = "direct_load"
+        lane.afc.TOOL_LOAD.return_value = True
         lane.prep_callback(10, True)
         lane.afc.TOOL_LOAD.assert_called_once_with(lane)
         lane.afc.spool._set_values.assert_called_once_with(lane)
+        lane.afc.afc_stats.increase_load_error_count.assert_not_called()
+
+    def test_direct_load_hub_tool_load_failure_increases_load_error_count(self):
+        """When TOOL_LOAD fails in the direct_load prep_callback branch, the
+        failure is recorded via increase_load_error_count(self.afc)."""
+        lane = _make_lane_ready_to_load()
+        lane.hub = "direct_load"
+        lane.afc.TOOL_LOAD.return_value = False
+        lane.prep_callback(10, True)
+        lane.afc.afc_stats.increase_load_error_count.assert_called_once_with(lane.afc)
 
     def test_direct_load_hub_breaks_before_prep_post_load(self):
         lane = _make_lane_ready_to_load()

@@ -411,18 +411,18 @@ class TestAFCStatsIncreaseLoadErrorCount:
     def test_increments_total_load_errors(self):
         stats, _, _ = _make_afc_stats()
         before = stats.total_load_errors.value
-        stats.increase_load_error_count()
+        stats.increase_load_error_count(MagicMock(testing=False))
         assert stats.total_load_errors.value == before + 1
 
     def test_resets_toolchange_wo_error_count(self):
         stats, _, _ = _make_afc_stats()
         stats.tc_without_error._value = 7
-        stats.increase_load_error_count()
+        stats.increase_load_error_count(MagicMock(testing=False))
         assert stats.tc_without_error.value == 0
 
     def test_sets_last_load_error_time(self):
         stats, _, _ = _make_afc_stats()
-        stats.increase_load_error_count()
+        stats.increase_load_error_count(MagicMock(testing=False))
         assert isinstance(stats.tc_last_load_error.value, str)
         assert len(stats.tc_last_load_error.value) > 3
 
@@ -433,26 +433,37 @@ class TestAFCStatsIncreaseLoadErrorCount:
         nearly identical."""
         stats, _, _ = _make_afc_stats()
         before = stats.total_unload_errors.value
-        stats.increase_load_error_count()
+        stats.increase_load_error_count(MagicMock(testing=False))
         assert stats.total_unload_errors.value == before
+
+    def test_skipped_when_afc_testing_true(self):
+        """When afc.testing is True, the function returns before touching
+        any counters -- neither total_load_errors nor the
+        reset_toolchange_wo_error side effects fire."""
+        stats, _, _ = _make_afc_stats()
+        stats.tc_without_error._value = 7
+        before_total = stats.total_load_errors.value
+        stats.increase_load_error_count(MagicMock(testing=True))
+        assert stats.total_load_errors.value == before_total
+        assert stats.tc_without_error.value == 7
 
 
 class TestAFCStatsIncreaseUnloadErrorCount:
     def test_increments_total_unload_errors(self):
         stats, _, _ = _make_afc_stats()
         before = stats.total_unload_errors.value
-        stats.increase_unload_error_count()
+        stats.increase_unload_error_count(MagicMock(testing=False))
         assert stats.total_unload_errors.value == before + 1
 
     def test_resets_toolchange_wo_error_count(self):
         stats, _, _ = _make_afc_stats()
         stats.tc_without_error._value = 7
-        stats.increase_unload_error_count()
+        stats.increase_unload_error_count(MagicMock(testing=False))
         assert stats.tc_without_error.value == 0
 
     def test_sets_last_load_error_time(self):
         stats, _, _ = _make_afc_stats()
-        stats.increase_unload_error_count()
+        stats.increase_unload_error_count(MagicMock(testing=False))
         assert isinstance(stats.tc_last_load_error.value, str)
         assert len(stats.tc_last_load_error.value) > 3
 
@@ -463,8 +474,19 @@ class TestAFCStatsIncreaseUnloadErrorCount:
         nearly identical."""
         stats, _, _ = _make_afc_stats()
         before = stats.total_load_errors.value
-        stats.increase_unload_error_count()
+        stats.increase_unload_error_count(MagicMock(testing=False))
         assert stats.total_load_errors.value == before
+
+    def test_skipped_when_afc_testing_true(self):
+        """When afc.testing is True, the function returns before touching
+        any counters -- neither total_unload_errors nor the
+        reset_toolchange_wo_error side effects fire."""
+        stats, _, _ = _make_afc_stats()
+        stats.tc_without_error._value = 7
+        before_total = stats.total_unload_errors.value
+        stats.increase_unload_error_count(MagicMock(testing=True))
+        assert stats.total_unload_errors.value == before_total
+        assert stats.tc_without_error.value == 7
 
 
 class TestAFCStatsResetAverageTimes:

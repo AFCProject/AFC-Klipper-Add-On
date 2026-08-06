@@ -1475,8 +1475,7 @@ class afc:
         if not self.TOOL_LOAD(cur_lane, purge_length):
             # Error happened, reset toolchanges without error count
             # and increase load error count
-            if not self.testing:
-                self.afc_stats.increase_load_error_count()
+            self.afc_stats.increase_load_error_count(self)
 
     def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: Optional[float]=None, set_start_time=False):
         """
@@ -1534,6 +1533,7 @@ class afc:
                 msg = ('Failed to unload currently loaded lane {} from extruder {} before loading new lane {}.'.format(
                     lane_name, cur_extruder_obj.name, cur_lane.name))
                 self.error.fix(msg, self.lanes[lane_name])
+                self.afc_stats.increase_unload_error_count(self)
                 return False
 
         if cur_lane.name != self.current:
@@ -1883,8 +1883,7 @@ class afc:
         if not self.TOOL_UNLOAD(cur_lane):
             # Error happened, reset toolchanges without error count
             # and increase unload error count
-            if not self.testing:
-                self.afc_stats.increase_unload_error_count()
+            self.afc_stats.increase_unload_error_count(self)
 
         # User manually unloaded spool from toolhead, remove spool from active status
         self.spool.set_active_spool(None)
@@ -2479,8 +2478,7 @@ class afc:
                             self.error.fix(msg, unload_lane)  #send to error handling
                             # Error happened, reset toolchanges without error count
                             # and increase unload error count
-                            if not self.testing:
-                                self.afc_stats.increase_unload_error_count()
+                            self.afc_stats.increase_unload_error_count(self)
                             return
 
                         if (force_unload
@@ -2532,8 +2530,7 @@ class afc:
                 else:
                     # Error happened, reset toolchanges without error count
                     # and increase load error count
-                    if not self.testing:
-                        self.afc_stats.increase_load_error_count()
+                    self.afc_stats.increase_load_error_count(self)
             else:
                 # Calling handle activate extruder just to make sure lanes are synced as tool
                 # could have been changed with KTC SELECT_TOOL and lane might not be synced

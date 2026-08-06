@@ -401,8 +401,10 @@ class MockAFC:
         self.error_timeout = 600
         self.td1_defined = False
         self.td1_present = False
+        self.testing = False
         self.moonraker = MockMoonraker()
         self.function = MagicMock()
+        self.afc_stats = MagicMock()
         self.error = MagicMock()
         self.spool = MagicMock()
         self.short_moves_speed = 50.0

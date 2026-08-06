@@ -1186,7 +1186,8 @@ class afcFunction:
 
                     self._safe_extrude(self.afc.test_extrude_amt)
                     self.logger.info("Unloading lane {}".format(lane))
-                    self.afc.TOOL_UNLOAD(lane_obj)
+                    if not self.afc.TOOL_UNLOAD(lane_obj):
+                        self.afc.afc_stats.increase_unload_error_count(self.afc)
 
                     if not self.afc.error_state:
                         self.afc.logger.info(
@@ -1218,7 +1219,8 @@ class afcFunction:
                         self.afc.logger.info(
                             "Finished testing with {} iterations for all loaded lanes".format(iterations)
                         )
-                        self.afc.TOOL_UNLOAD(lane_obj)
+                        if not self.afc.TOOL_UNLOAD(lane_obj):
+                            self.afc.afc_stats.increase_unload_error_count(self.afc)
         prompt.p_end()
 
     cmd_AFC_CALIBRATION_help = 'Open prompt to begin calibration by selecting Unit to calibrate'
