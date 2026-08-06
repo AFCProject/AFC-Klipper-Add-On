@@ -228,6 +228,10 @@ class AFCStats:
                                                self.moonraker, "error_stats")
         self.tc_last_load_error = AFCStats_var("toolchange_count", "last_load_error", values,
                                                self.moonraker, "error_stats")
+        self.total_load_errors = AFCStats_var("toolchange_count", "total_load_errors", values,
+                                              self.moonraker, "error_stats")
+        self.total_unload_errors = AFCStats_var("toolchange_count", "total_unload_errors", values,
+                                                self.moonraker, "error_stats")
 
         new_average_calc = 1
         if values is not None and "average_time" in values:
@@ -270,6 +274,22 @@ class AFCStats:
         """
         self.tc_without_error.reset_count()
         self.tc_last_load_error.set_current_time()
+
+    def increase_load_error_count(self) -> None:
+        """
+        Helper function for increasing load error count and resetting number of toolchanges
+        without errors.
+        """
+        self.reset_toolchange_wo_error()
+        self.total_load_errors.increase_count()
+
+    def increase_unload_error_count(self) -> None:
+        """
+        Helper function for increasing unload error count and resetting number of toolchanges
+        without errors.
+        """
+        self.reset_toolchange_wo_error()
+        self.total_unload_errors.increase_count()
 
     def reset_average_times(self) -> None:
         """
@@ -328,6 +348,9 @@ class AFCStats:
         overall_str += f"|{'Changes without error':{' '}>22} : {self.tc_without_error.value:{' '}<17}"
         overall_str += add_end()
         overall_str += f"|{'Last error date':{' '}>22} : {self.tc_last_load_error.value:{' '}<17}|\n"
+        overall_str += f"|{'Total Load Errors':{' '}>22} : {self.total_load_errors.value:{' '}<17}"
+        overall_str += add_end()
+        overall_str += f"|{'Total Unload Errors':{' '}>22} : {self.total_unload_errors.value:{' '}<17}|\n"
 
 
         print_str = ""
@@ -413,14 +436,15 @@ class AFCStats:
         print_str = overall_str + avg_str + print_str
 
         strings = []
-        for lane in afc_obj.lanes.values():
-            espooler_stats = lane.espooler.get_spooler_stats(short)
-            string = f"{lane.name:{' '}>{max(max_lane_name_size,7)}} : Lane change count: {lane.lane_load_count.value:{' '}>7}"
-            if short: string = f"|{string:{' '}^{MAX_SPAN}}|\n"
-            if len(espooler_stats) > 0:
-                if short: string += f"|{espooler_stats:{' '}^{MAX_WIDTH-2}}|\n"
-                else: string += f"  {espooler_stats}"
-            strings.append(string)
+        for unit in afc_obj.units.values():
+            for lane in unit.lanes.values():
+                espooler_stats = lane.espooler.get_spooler_stats(short)
+                string = f"{lane.name:{' '}>{max(max_lane_name_size,9)}} : Lane change count: {lane.lane_load_count.value:{' '}>7}"
+                if short: string = f"|{string:{' '}^{MAX_SPAN}}|\n"
+                if len(espooler_stats) > 0:
+                    if short: string += f"|{espooler_stats:{' '}^{MAX_WIDTH-3}}|\n"
+                    else: string += f" {espooler_stats}"
+                strings.append(string)
 
         if short:
             print_str += "".join(strings)
@@ -432,7 +456,7 @@ class AFCStats:
                 if len(s) > 60:
                     if len(temp_str) > 0: end_string()
 
-                    print_str += f"|{s}{'|':{' '}>4}\n"
+                    print_str += f"|{s:{' '}>{MAX_WIDTH-4}}  {'|'}\n"
                 else:
                     temp_str += f"|{s:{' '}^{SECTIONAL_LENGTH}}"
             if len(temp_str) > 0: end_string()

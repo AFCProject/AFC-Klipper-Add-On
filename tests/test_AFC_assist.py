@@ -1698,8 +1698,8 @@ class TestGetSpoolerStats:
 
         ret_str = "N20 active time:"
         ret_str += " fwd:"
-        ret_str = f"{ret_str:{' '}>31}{'12.00s':>8}   |\n"
-        ret_str += "|" + f"{'rwd:':{' '}>31}{'8.00s':>8}   "
+        ret_str = f"{ret_str:{' '}>32}{'12.00s':>8}  |\n"
+        ret_str += "|" + f"{'rwd:':{' '}>32}{'8.00s':>8}  "
         assert result == ret_str
 
 

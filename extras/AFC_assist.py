@@ -753,13 +753,13 @@ class Espooler:
         if self.afc_motor_fwd is not None:
             if short:
                 ret_str += " fwd:"
-                ret_str = f"{ret_str:{' '}>31}{self.stats.n20_runtime_fwd:>8}   |\n"
+                ret_str = f"{ret_str:{' '}>32}{self.stats.n20_runtime_fwd:>8}  |\n"
             else:
                 ret_str += f" fwd:{self.stats.n20_runtime_fwd:>8}"
 
         if self.afc_motor_rwd is not None:
             if short:
-                ret_str += "|" + f"{'rwd:':{' '}>31}{self.stats.n20_runtime_rwd:>8}   "
+                ret_str += "|" + f"{'rwd:':{' '}>32}{self.stats.n20_runtime_rwd:>8}  "
             else:
                 ret_str += f" rwd:{self.stats.n20_runtime_rwd:>8}"
 

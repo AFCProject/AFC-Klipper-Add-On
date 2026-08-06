@@ -355,6 +355,34 @@ class TestAFCStatsInit:
         )
         assert stats.tc_last_load_error.value == "2024-01-01 10:00"
 
+    def test_creates_total_load_errors_var(self):
+        stats, _, _ = _make_afc_stats()
+        assert hasattr(stats, "total_load_errors")
+
+    def test_creates_total_unload_errors_var(self):
+        stats, _, _ = _make_afc_stats()
+        assert hasattr(stats, "total_unload_errors")
+
+    def test_total_load_errors_defaults_to_zero(self):
+        stats, _, _ = _make_afc_stats()
+        assert stats.total_load_errors.value == 0
+
+    def test_total_unload_errors_defaults_to_zero(self):
+        stats, _, _ = _make_afc_stats()
+        assert stats.total_unload_errors.value == 0
+
+    def test_total_load_errors_loads_from_existing_data(self):
+        stats, _, _ = _make_afc_stats(
+            stats_data={"error_stats": {"total_load_errors": 5}}
+        )
+        assert stats.total_load_errors.value == 5
+
+    def test_total_unload_errors_loads_from_existing_data(self):
+        stats, _, _ = _make_afc_stats(
+            stats_data={"error_stats": {"total_unload_errors": 3}}
+        )
+        assert stats.total_unload_errors.value == 3
+
 
 class TestAFCStatsIncreaseTcWoError:
     def test_increase_toolchange_wo_error_calls_increase_count(self):
@@ -377,6 +405,66 @@ class TestAFCStatsResetTcWoError:
         # Should have a date string now
         assert isinstance(stats.tc_last_load_error.value, str)
         assert len(stats.tc_last_load_error.value) > 3
+
+
+class TestAFCStatsIncreaseLoadErrorCount:
+    def test_increments_total_load_errors(self):
+        stats, _, _ = _make_afc_stats()
+        before = stats.total_load_errors.value
+        stats.increase_load_error_count()
+        assert stats.total_load_errors.value == before + 1
+
+    def test_resets_toolchange_wo_error_count(self):
+        stats, _, _ = _make_afc_stats()
+        stats.tc_without_error._value = 7
+        stats.increase_load_error_count()
+        assert stats.tc_without_error.value == 0
+
+    def test_sets_last_load_error_time(self):
+        stats, _, _ = _make_afc_stats()
+        stats.increase_load_error_count()
+        assert isinstance(stats.tc_last_load_error.value, str)
+        assert len(stats.tc_last_load_error.value) > 3
+
+    def test_does_not_increment_total_unload_errors(self):
+        """Proves increase_load_error_count only touches the load counter,
+        not the unload one -- distinguishes it from
+        increase_unload_error_count, whose implementation is otherwise
+        nearly identical."""
+        stats, _, _ = _make_afc_stats()
+        before = stats.total_unload_errors.value
+        stats.increase_load_error_count()
+        assert stats.total_unload_errors.value == before
+
+
+class TestAFCStatsIncreaseUnloadErrorCount:
+    def test_increments_total_unload_errors(self):
+        stats, _, _ = _make_afc_stats()
+        before = stats.total_unload_errors.value
+        stats.increase_unload_error_count()
+        assert stats.total_unload_errors.value == before + 1
+
+    def test_resets_toolchange_wo_error_count(self):
+        stats, _, _ = _make_afc_stats()
+        stats.tc_without_error._value = 7
+        stats.increase_unload_error_count()
+        assert stats.tc_without_error.value == 0
+
+    def test_sets_last_load_error_time(self):
+        stats, _, _ = _make_afc_stats()
+        stats.increase_unload_error_count()
+        assert isinstance(stats.tc_last_load_error.value, str)
+        assert len(stats.tc_last_load_error.value) > 3
+
+    def test_does_not_increment_total_load_errors(self):
+        """Proves increase_unload_error_count only touches the unload
+        counter, not the load one -- distinguishes it from
+        increase_load_error_count, whose implementation is otherwise
+        nearly identical."""
+        stats, _, _ = _make_afc_stats()
+        before = stats.total_load_errors.value
+        stats.increase_unload_error_count()
+        assert stats.total_load_errors.value == before
 
 
 class TestAFCStatsResetAverageTimes:
@@ -434,6 +522,21 @@ class TestAFCStatsPrintStats:
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
         output = "".join(raw_msgs)
         assert "Overall Stats" in output
+
+    def test_print_stats_contains_total_load_and_unload_error_counts(self):
+        stats, _, logger = _make_afc_stats()
+        stats.total_load_errors._value = 4
+        stats.total_unload_errors._value = 2
+        afc_obj = self._make_mock_afc()
+        stats.print_stats(afc_obj)
+        raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
+        output = "".join(raw_msgs)
+        assert "Total Load Errors" in output
+        assert "Total Unload Errors" in output
+        # Confirm the actual counter values flow through into the output,
+        # not just the static labels.
+        assert f"{'Total Load Errors':{' '}>22} : {4:{' '}<17}" in output
+        assert f"{'Total Unload Errors':{' '}>22} : {2:{' '}<17}" in output
 
     def test_print_stats_short_mode_calls_logger_raw(self):
         stats, _, logger = _make_afc_stats()
@@ -522,7 +625,10 @@ class TestAFCStatsPrintStats:
         lane.name = "lane1"
         lane.espooler.get_spooler_stats.return_value = ""  # empty espooler
         lane.lane_load_count.value = 3
+        unit = self._make_unit("Turtle_1")
+        unit.lanes = {"lane1": lane}
         afc_obj.lanes = {"lane1": lane}
+        afc_obj.units = {"Turtle_1": unit}
         stats.print_stats(afc_obj, short=False)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
         # logger.raw(print_str) is called exactly once, unconditionally, at
@@ -531,13 +637,17 @@ class TestAFCStatsPrintStats:
 
     def test_print_stats_long_format_with_lane_espooler_stats(self):
         """Non-empty espooler stats in long (non-short) format are appended
-        inline with a leading two-space indent, not boxed like short mode."""
+        inline with a leading four-space indent, not boxed like short mode."""
         stats, _, logger = _make_afc_stats()
         afc_obj = self._make_mock_afc()
+        unit = MagicMock()
+        unit.name = "Turtle_1"
         lane = MagicMock()
         lane.name = "lane1"
         lane.espooler.get_spooler_stats.return_value = "Spooler: 500g"  # non-empty
         lane.lane_load_count.value = 5
+        unit.lanes = {"lane1": lane}
+        afc_obj.units = {"Turtle_1": unit}
         afc_obj.lanes = {"lane1": lane}
         stats.print_stats(afc_obj, short=False)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
@@ -553,12 +663,17 @@ class TestAFCStatsPrintStats:
         lane.name = "lane1"
         lane.espooler.get_spooler_stats.return_value = "Spooler: 250g"  # non-empty
         lane.lane_load_count.value = 2
+        unit = self._make_unit("Turtle_1")
+        unit.lanes = {"lane1": lane}
         afc_obj.lanes = {"lane1": lane}
+        afc_obj.units = {"Turtle_1": unit}
         stats.print_stats(afc_obj, short=True)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
-        # logger.raw(print_str) is called exactly once, unconditionally, at
-        # the very end of print_stats.
-        assert len(raw_msgs) == 1
+        output = "".join(raw_msgs)
+        # short mode (MAX_WIDTH=44) boxes the non-empty espooler stats on
+        # their own line, centered within MAX_WIDTH-3=41 columns -- computed
+        # by hand rather than re-deriving the source's own format spec.
+        assert "|              Spooler: 250g              |\n" in output
 
     def test_print_stats_long_string_lane_uses_direct_print(self):
         """A lane string longer than 60 chars bypasses the temp_str
@@ -570,12 +685,24 @@ class TestAFCStatsPrintStats:
         # Long espooler stats (>21 chars) pushes string length over 60
         lane.espooler.get_spooler_stats.return_value = "x" * 25
         lane.lane_load_count.value = 1
+        unit = self._make_unit("Turtle_1")
+        unit.lanes = {"lane1": lane}
         afc_obj.lanes = {"lane1": lane}
+        afc_obj.units = {"Turtle_1": unit}
         stats.print_stats(afc_obj, short=False)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
-        # logger.raw(print_str) is called exactly once, unconditionally, at
-        # the very end of print_stats.
-        assert len(raw_msgs) == 1
+        output = "".join(raw_msgs)
+        # Computed by hand (not by re-deriving the source's own format
+        # spec): max_lane_name_size is max(len("lane1"), 9) = 9, so the
+        # name/count portion is "    lane1 : Lane change count:       1",
+        # plus the 25 "x"s appended with a 1-space indent, pushing the
+        # combined string over 60 chars and into the direct-print branch
+        # (right-justified within MAX_WIDTH-4=83, then "  |\n") instead of
+        # the temp_str accumulator.
+        assert (
+            "|                       lane1 : Lane change count:       1 "
+            + "x" * 25 + "  |\n"
+        ) in output
 
     @staticmethod
     def _make_lane(name):
@@ -623,7 +750,7 @@ class TestAFCStatsPrintStats:
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
         output = "".join(raw_msgs)
 
-        positions = [output.index(name) for name in ("lane3", "lane4", "lane1", "lane2")]
+        positions = [output.index(name) for name in ("lane1", "lane2", "lane3", "lane4")]
         assert positions == sorted(positions)
 
     def test_print_stats_long_format_lanes_print_in_insertion_order(self):
@@ -638,12 +765,115 @@ class TestAFCStatsPrintStats:
             "lane1": self._make_lane("lane1"),
             "lane2": self._make_lane("lane2"),
         }
+        # Simulating where units and unit lanes will be in order and AFC lanes will not be in order
+        afc_obj.units = {
+            "Turtle_1": self._make_unit("Turtle_1"),
+            "Turtle_2": self._make_unit("Turtle_2"),
+        }
+        afc_obj.units["Turtle_1"].lanes = {
+            "lane1" : afc_obj.lanes["lane1"],
+            "lane2" : afc_obj.lanes["lane2"]
+        }
+        afc_obj.units["Turtle_2"].lanes = {
+            "lane3" : afc_obj.lanes["lane3"],
+            "lane4" : afc_obj.lanes["lane4"]
+        }
         stats.print_stats(afc_obj, short=False)
         raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
         output = "".join(raw_msgs)
 
-        positions = [output.index(name) for name in ("lane3", "lane4", "lane1", "lane2")]
+        positions = [output.index(name) for name in ("lane1", "lane2", "lane3", "lane4")]
         assert positions == sorted(positions)
+
+    @staticmethod
+    def _spooler_stats_side_effect(fwd: str, rwd: str):
+        """Mirrors AFC_assist.Espooler.get_spooler_stats' actual formatting
+        exactly, including the fact that its short=True and short=False
+        outputs aren't just different widths of the same string -- short
+        mode returns a value with its own "|"/newline box formatting
+        already baked in (meant to be dropped straight into the short-mode
+        table), while long mode returns one flat line. A static
+        return_value can't represent that; print_stats calls
+        get_spooler_stats(short) with the real short flag, so the mock
+        needs a side_effect that branches on it the same way the source
+        does."""
+        def _side_effect(short):
+            ret_str = "N20 active time:"
+            ret_str += " fwd:"
+            if short:
+                ret_str = f"{ret_str:{' '}>32}{fwd:>8}  |\n"
+            else:
+                ret_str = "N20 active time:" + f" fwd:{fwd:>8}"
+            if short:
+                ret_str += "|" + f"{'rwd:':{' '}>32}{rwd:>8}  "
+            else:
+                ret_str += f" rwd:{rwd:>8}"
+            return ret_str
+        return _side_effect
+
+    def _make_preview_afc(self):
+        """Build a realistic-ish AFC mock: two units with two lanes each,
+        two extruders, some non-zero/non-default stat values so the printed
+        table actually has varied content to look at."""
+        afc_obj = self._make_mock_afc()
+
+        lane1 = self._make_lane("lane1")
+        lane1.lane_load_count.value = 42
+        lane1.espooler.get_spooler_stats.side_effect = self._spooler_stats_side_effect(
+            "1123.45s", "187.32s"
+        )
+        lane2 = self._make_lane("lane2")
+        lane2.lane_load_count.value = 17
+        lane2.espooler.get_spooler_stats.side_effect = self._spooler_stats_side_effect(
+            "123.45s", "87.32s"
+        )
+        lane3 = self._make_lane("lane3")
+        lane3.lane_load_count.value = 5
+        lane4 = self._make_lane("lane4")
+        lane4.lane_load_count.value = 130
+
+        unit1 = self._make_unit("Turtle_1")
+        unit1.lanes = {"lane1": lane1, "lane2": lane2}
+        unit2 = self._make_unit("Turtle_2")
+        unit2.lanes = {"lane3": lane3, "lane4": lane4}
+        afc_obj.units = {"Turtle_1": unit1, "Turtle_2": unit2}
+        afc_obj.lanes = {"lane1": lane1, "lane2": lane2, "lane3": lane3, "lane4": lane4}
+
+        extruder = self._make_ext_mock("extruder")
+        extruder.estats.tc_total.value = 214
+        extruder.estats.tc_tool_unload.value = 108
+        extruder.estats.tc_tool_load.value = 106
+        extruder.estats.cut_total.value = 89
+        extruder.estats.cut_total_since_changed.value = 12
+        extruder.estats.cut_threshold_for_warning = 50
+        extruder.estats.last_blade_changed.value = "2025-11-02 08:15"
+        extruder.estats.tool_selected.value = 60
+        extruder.estats.tool_unselected.value = 58
+        afc_obj.tools = {"extruder": extruder}
+
+        return afc_obj
+
+    def test_print_stats_visual_preview(self, capsys):
+        """Not a correctness check (the other tests in this class cover
+        that) -- prints what print_stats actually renders so you can eyeball
+        the formatting without needing a printer running. Run with:
+
+            pytest tests/test_AFC_stats.py -k print_stats_visual_preview -s
+
+        (the -s is required, otherwise pytest swallows the printed output).
+        """
+        stats, _, logger = _make_afc_stats(multiple_tools=True)
+        stats.tc_without_error._value = 358
+        stats.tc_last_load_error._value = "2025-10-15 14:32"
+
+        with capsys.disabled():
+            for label, short in (("LONG FORMAT (short=False)", False),
+                                  ("SHORT FORMAT (short=True)", True)):
+                afc_obj = self._make_preview_afc()
+                stats.print_stats(afc_obj, short=short)
+                raw_msgs = [m for lvl, m in logger.messages if lvl == "raw"]
+                print(f"\n{'=' * 20} {label} {'=' * 20}")
+                print(raw_msgs[-1])
 
 
 # ═════════════════════════════════════════════════════════════════════════
