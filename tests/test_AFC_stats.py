@@ -875,12 +875,15 @@ class TestAFCStatsPrintStats:
 
         return afc_obj
 
+    @pytest.mark.manual
     def test_print_stats_visual_preview(self, capsys):
         """Not a correctness check (the other tests in this class cover
         that) -- prints what print_stats actually renders so you can eyeball
-        the formatting without needing a printer running. Run with:
+        the formatting without needing a printer running. Marked "manual" so
+        it's excluded from the normal test run (see addopts in pyproject.toml);
+        run explicitly with:
 
-            pytest tests/test_AFC_stats.py -k print_stats_visual_preview -s
+            pytest tests/test_AFC_stats.py -k print_stats_visual_preview -s -m manual
 
         (the -s is required, otherwise pytest swallows the printed output).
         """

@@ -3,7 +3,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-q"
+addopts = "-q -m \"not manual\""
+markers = [
+    "manual: not run as part of the normal suite; run explicitly with -m manual",
+]
 
 [tool.ruff]
 force-exclude = true  # respect exclude list even when files are passed explicitly (e.g. changed-files in CI)

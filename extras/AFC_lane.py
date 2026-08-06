@@ -1061,8 +1061,8 @@ class AFCLane:
             self.afc.error.pause_resume.send_pause_command()
             self.afc.save_pos()
             # self.gcode.run_script_from_command('PAUSE')
-            self.afc.TOOL_UNLOAD(self)
-            if not self.afc.error_state:
+            unloaded = self.afc.TOOL_UNLOAD(self)
+            if unloaded and not self.afc.error_state:
                 self.afc.LANE_UNLOAD(self)
             else:
                 self.afc.afc_stats.increase_unload_error_count(self.afc)
