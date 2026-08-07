@@ -278,7 +278,9 @@ class AFCStats:
     def increase_load_error_count(self, afc: afc) -> None:
         """
         Helper function for increasing load error count and resetting number of toolchanges
-        without errors.
+        without errors. Error only increases and data gets reset if AFC testing variable is not True.
+
+        :param afc: AFC object that holds testing variable
         """
         # Testing flag is set, return early
         if afc.testing:
@@ -289,7 +291,9 @@ class AFCStats:
     def increase_unload_error_count(self, afc: afc) -> None:
         """
         Helper function for increasing unload error count and resetting number of toolchanges
-        without errors.
+        without errors. Error only increases and data gets reset if AFC testing variable is not True.
+
+        :param afc: AFC object that holds testing variable
         """
         # Testing flag is set, return early
         if afc.testing:
@@ -441,15 +445,24 @@ class AFCStats:
 
         print_str = overall_str + avg_str + print_str
 
+        # Fixed centering offset for the name/count portion, baked on up front
+        # so "lane :" always lines up whether the row is paired or long
+        name_count_width = max(max_lane_name_size, 9) + len(" : Lane change count: ") + 7
+        long_format_pad = " " * ((SECTIONAL_LENGTH - name_count_width) // 2)
+
         strings = []
         for unit in afc_obj.units.values():
             for lane in unit.lanes.values():
                 espooler_stats = lane.espooler.get_spooler_stats(short)
                 string = f"{lane.name:{' '}>{max(max_lane_name_size,9)}} : Lane change count: {lane.lane_load_count.value:{' '}>7}"
-                if short: string = f"|{string:{' '}^{MAX_SPAN}}|\n"
-                if len(espooler_stats) > 0:
-                    if short: string += f"|{espooler_stats:{' '}^{MAX_WIDTH-3}}|\n"
-                    else: string += f" {espooler_stats}"
+                if short:
+                    string = f"|{string:{' '}^{MAX_SPAN}}|\n"
+                    if len(espooler_stats) > 0:
+                        string += f"|{espooler_stats:{' '}^{MAX_WIDTH-3}}|\n"
+                else:
+                    string = long_format_pad + string
+                    if len(espooler_stats) > 0:
+                        string += f" {espooler_stats}"
                 strings.append(string)
 
         if short:
@@ -462,9 +475,9 @@ class AFCStats:
                 if len(s) > 60:
                     if len(temp_str) > 0: end_string()
 
-                    print_str += f"|{s:{' '}>{MAX_WIDTH-4}}  {'|'}\n"
+                    print_str += f"|{s:{' '}<{MAX_WIDTH-4}}  {'|'}\n"
                 else:
-                    temp_str += f"|{s:{' '}^{SECTIONAL_LENGTH}}"
+                    temp_str += f"|{s:{' '}<{SECTIONAL_LENGTH}}"
             if len(temp_str) > 0: end_string()
 
         print_str += f"{'':{'-'}<{MAX_WIDTH}}\n"

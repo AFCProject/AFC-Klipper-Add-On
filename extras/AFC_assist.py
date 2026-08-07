@@ -753,14 +753,25 @@ class Espooler:
         if self.afc_motor_fwd is not None:
             if short:
                 ret_str += " fwd:"
-                ret_str = f"{ret_str:{' '}>32}{self.stats.n20_runtime_fwd:>8}  |\n"
+                ret_str = f"{ret_str:{' '}>32}{self.stats.n20_runtime_fwd:>8}  "
+                if self.afc_motor_rwd is not None:
+                    ret_str += "|\n"
             else:
                 ret_str += f" fwd:{self.stats.n20_runtime_fwd:>8}"
 
         if self.afc_motor_rwd is not None:
             if short:
-                ret_str += "|" + f"{'rwd:':{' '}>32}{self.stats.n20_runtime_rwd:>8}  "
+                if self.afc_motor_fwd is None:
+                    ret_str += " rwd:"
+                    ret_str = f"{ret_str:{' '}>32}{self.stats.n20_runtime_rwd:>8}  "
+                else:
+                    ret_str += "|" + f"{'rwd:':{' '}>32}{self.stats.n20_runtime_rwd:>8}  "
             else:
+                if self.afc_motor_fwd is None:
+                    # Pad out the " fwd:########" slot that's skipped here so
+                    # "rwd:" lands in the same column it would if fwd were
+                    # also present.
+                    ret_str += f"{'':{' '}>13}"
                 ret_str += f" rwd:{self.stats.n20_runtime_rwd:>8}"
 
         return ret_str

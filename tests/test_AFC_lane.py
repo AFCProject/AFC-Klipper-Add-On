@@ -1716,6 +1716,7 @@ class TestPerformPauseRunout:
         False, the lane is ejected via LANE_UNLOAD and no error is counted."""
         lane = _make_lane_for_pause_runout(unload_on_runout=True)
         lane.afc.error_state = False
+        lane.afc.TOOL_UNLOAD.return_value = True
         lane._perform_pause_runout()
         lane.afc.TOOL_UNLOAD.assert_called_once_with(lane)
         lane.afc.LANE_UNLOAD.assert_called_once_with(lane)
@@ -1727,6 +1728,7 @@ class TestPerformPauseRunout:
         increase_unload_error_count(self.afc)."""
         lane = _make_lane_for_pause_runout(unload_on_runout=True)
         lane.afc.error_state = True
+        lane.afc.TOOL_UNLOAD.return_value = False
         lane._perform_pause_runout()
         lane.afc.TOOL_UNLOAD.assert_called_once_with(lane)
         lane.afc.LANE_UNLOAD.assert_not_called()

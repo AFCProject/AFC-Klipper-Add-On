@@ -1670,13 +1670,34 @@ class TestGetSpoolerStats:
         assert result == f"N20 active time: fwd:{'12.00s':>8}"
 
     def test_rwd_only_long_format(self):
+        """With no fwd, the skipped " fwd:########" slot (13 chars) is
+        padded with spaces so "rwd:" still lands in the same column it
+        would if fwd were present -- computed independently rather than
+        mirroring the source's own format spec."""
         espooler = _make_real_espooler(has_fwd=False, has_rwd=True)
         _connect_stats(espooler)
         espooler.stats._n20_runtime_rwd.value = 8.0
 
         result = espooler.get_spooler_stats(short=False)
 
-        assert result == f"N20 active time: rwd:{'8.00s':>8}"
+        assert result == f"N20 active time:{'':>13} rwd:{'8.00s':>8}"
+
+    def test_rwd_column_aligns_whether_or_not_fwd_is_present(self):
+        """"rwd:" must start at the same character index in both the
+        both-motors and rwd-only long-format outputs."""
+        both = _make_real_espooler(has_fwd=True, has_rwd=True)
+        _connect_stats(both)
+        both.stats._n20_runtime_fwd.value = 12.0
+        both.stats._n20_runtime_rwd.value = 8.0
+
+        rwd_only = _make_real_espooler(has_fwd=False, has_rwd=True)
+        _connect_stats(rwd_only)
+        rwd_only.stats._n20_runtime_rwd.value = 8.0
+
+        both_result = both.get_spooler_stats(short=False)
+        rwd_only_result = rwd_only.get_spooler_stats(short=False)
+
+        assert both_result.index("rwd:") == rwd_only_result.index("rwd:")
 
     def test_both_motors_long_format(self):
         espooler = _make_real_espooler(has_fwd=True, has_rwd=True)
@@ -1701,6 +1722,39 @@ class TestGetSpoolerStats:
         ret_str = f"{ret_str:{' '}>32}{'12.00s':>8}  |\n"
         ret_str += "|" + f"{'rwd:':{' '}>32}{'8.00s':>8}  "
         assert result == ret_str
+
+    def test_fwd_only_short_format(self):
+        """With only fwd configured, short format has no rwd row appended
+        (no trailing "|\\n"), and the fwd row aligns the same way it does
+        when rwd is also present."""
+        espooler = _make_real_espooler(has_fwd=True, has_rwd=False)
+        _connect_stats(espooler)
+        espooler.stats._n20_runtime_fwd.value = 12.0
+
+        result = espooler.get_spooler_stats(short=True)
+
+        # Computed independently rather than mirroring the source's own
+        # format spec: "N20 active time: fwd:" is 21 chars, right-justified
+        # to 32 -- 11 leading spaces -- then the value padded to 8 and a
+        # 2-space trailer, with no closing "|\n" since there's no rwd row.
+        assert result == "           N20 active time: fwd:  12.00s  "
+
+    def test_rwd_only_short_format(self):
+        """With only rwd configured (no fwd), the rwd row must still align
+        under the exact same column "fwd:" would occupy if it were the one
+        present -- built as its own "N20 active time: rwd:" prefix
+        right-justified to the same width, not glued onto a bare "N20
+        active time:" prefix with no line break."""
+        espooler = _make_real_espooler(has_fwd=False, has_rwd=True)
+        _connect_stats(espooler)
+        espooler.stats._n20_runtime_rwd.value = 8.0
+
+        result = espooler.get_spooler_stats(short=True)
+
+        # Computed independently: "N20 active time: rwd:" is 21 chars,
+        # right-justified to 32 -- 11 leading spaces -- then the value
+        # padded to 8 and a 2-space trailer.
+        assert result == "           N20 active time: rwd:   8.00s  "
 
 
 # ── Espooler gcode macros ────────────────────────────────────────────────────

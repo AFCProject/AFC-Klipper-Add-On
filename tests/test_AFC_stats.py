@@ -717,13 +717,16 @@ class TestAFCStatsPrintStats:
         # Computed by hand (not by re-deriving the source's own format
         # spec): max_lane_name_size is max(len("lane1"), 9) = 9, so the
         # name/count portion is "    lane1 : Lane change count:       1",
-        # plus the 25 "x"s appended with a 1-space indent, pushing the
-        # combined string over 60 chars and into the direct-print branch
-        # (right-justified within MAX_WIDTH-4=83, then "  |\n") instead of
-        # the temp_str accumulator.
+        # plus a fixed 2-space centering offset ((42 - 38) // 2) baked on
+        # front so this label starts at the same column a short (no-
+        # espooler) lane's would -- giving 6 leading spaces total -- then
+        # the 25 "x"s appended with a 1-space indent, pushing the combined
+        # string over 60 chars and into the direct-print branch (left-
+        # justified within MAX_WIDTH-4=83, then "  |\n") instead of the
+        # temp_str accumulator.
         assert (
-            "|                       lane1 : Lane change count:       1 "
-            + "x" * 25 + "  |\n"
+            "|      lane1 : Lane change count:       1 "
+            + "x" * 25 + " " * 17 + "  |\n"
         ) in output
 
     @staticmethod
@@ -808,29 +811,21 @@ class TestAFCStatsPrintStats:
         assert positions == sorted(positions)
 
     @staticmethod
-    def _spooler_stats_side_effect(fwd: str, rwd: str):
-        """Mirrors AFC_assist.Espooler.get_spooler_stats' actual formatting
-        exactly, including the fact that its short=True and short=False
-        outputs aren't just different widths of the same string -- short
-        mode returns a value with its own "|"/newline box formatting
-        already baked in (meant to be dropped straight into the short-mode
-        table), while long mode returns one flat line. A static
-        return_value can't represent that; print_stats calls
-        get_spooler_stats(short) with the real short flag, so the mock
-        needs a side_effect that branches on it the same way the source
-        does."""
+    def _spooler_stats_side_effect(fwd: str|None, rwd: str|None):
+        """Calls the real, unmodified Espooler.get_spooler_stats (unbound,
+        against a minimal `self` stand-in) instead of reimplementing its
+        formatting, so this can't drift out of sync with the source again.
+        fwd/rwd may each be None, mirroring a lane with only one motor pin
+        defined."""
+        from extras.AFC_assist import Espooler
+        fake_self = MagicMock()
+        fake_self.afc_motor_fwd = MagicMock() if fwd is not None else None
+        fake_self.afc_motor_rwd = MagicMock() if rwd is not None else None
+        fake_self.stats.n20_runtime_fwd = fwd
+        fake_self.stats.n20_runtime_rwd = rwd
+
         def _side_effect(short):
-            ret_str = "N20 active time:"
-            ret_str += " fwd:"
-            if short:
-                ret_str = f"{ret_str:{' '}>32}{fwd:>8}  |\n"
-            else:
-                ret_str = "N20 active time:" + f" fwd:{fwd:>8}"
-            if short:
-                ret_str += "|" + f"{'rwd:':{' '}>32}{rwd:>8}  "
-            else:
-                ret_str += f" rwd:{rwd:>8}"
-            return ret_str
+            return Espooler.get_spooler_stats(fake_self, short)
         return _side_effect
 
     def _make_preview_afc(self):
@@ -853,13 +848,24 @@ class TestAFCStatsPrintStats:
         lane3.lane_load_count.value = 5
         lane4 = self._make_lane("lane4")
         lane4.lane_load_count.value = 130
+        lane5 = self._make_lane("lane5")
+        lane5.lane_load_count.value = 130
+        lane5.espooler.get_spooler_stats.side_effect = self._spooler_stats_side_effect(
+            None, "187.32s"
+        )
+        lane6 = self._make_lane("lane6")
+        lane6.lane_load_count.value = 130
+        lane6.espooler.get_spooler_stats.side_effect = self._spooler_stats_side_effect(
+            "1123.45s", None
+        )
 
         unit1 = self._make_unit("Turtle_1")
-        unit1.lanes = {"lane1": lane1, "lane2": lane2}
+        unit1.lanes = {"lane1": lane1, "lane2": lane2, "lane3": lane3}
         unit2 = self._make_unit("Turtle_2")
-        unit2.lanes = {"lane3": lane3, "lane4": lane4}
+        unit2.lanes = {"lane4": lane4, "lane5": lane5, "lane6": lane6}
         afc_obj.units = {"Turtle_1": unit1, "Turtle_2": unit2}
-        afc_obj.lanes = {"lane1": lane1, "lane2": lane2, "lane3": lane3, "lane4": lane4}
+        afc_obj.lanes = {"lane1": lane1, "lane2": lane2, "lane3": lane3, "lane4": lane4,
+                        "lane5": lane5, "lane6": lane6}
 
         extruder = self._make_ext_mock("extruder")
         extruder.estats.tc_total.value = 214
