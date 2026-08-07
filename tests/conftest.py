@@ -31,8 +31,13 @@ def _make_configfile_mock():
     """Mock for Klipper's configfile module (not the PyPI configfile package)."""
     mod = types.ModuleType("configfile")
 
-    class KlipperError(Exception):
-        """Klipper-style configuration error."""
+    # Real Klipper's ConfigWrapper.error IS configparser.Error (klippy/
+    # configfile.py: "class ConfigWrapper: error = configparser.Error") --
+    # reuse the same class here rather than a separate fake Exception type,
+    # so code that raises configparser.Error directly (as extras modules
+    # commonly do) and code that raises via configfile.error/config.error(...)
+    # are the same, catchable exception type in tests either way.
+    KlipperError = configparser.Error
 
     class ConfigWrapper:
         def __init__(self, printer=None, fileconfig=None, access_tracking=None, section=""):
@@ -534,6 +539,18 @@ class MockPrinter:
         return self.start_args
 
 
+class _MockConfigSentinel:
+    """Distinguishes "caller passed no default" from "caller explicitly
+    passed default=None" -- mirrors configfile.sentinel in real Klipper.
+    Needed because get(option, None) is a legitimate, common call (an
+    explicit optional value) that must NOT raise, while get(option) with no
+    default at all means the option is required and missing config must
+    raise, exactly like real Klipper does."""
+
+
+_MOCK_CONFIG_SENTINEL = _MockConfigSentinel()
+
+
 class MockConfig:
     """Mock for Klipper's ConfigWrapper, used to construct extras objects."""
 
@@ -551,21 +568,33 @@ class MockConfig:
     def get_name(self):
         return self._name
 
-    def get(self, option, default=None):
-        try:
-            val = self.fileconfig.get(self.section, option)
-        except:
-            val = self._values.get(option, default)
-        return val
+    def _require(self, option, default):
+        """Raises like real Klipper's ConfigWrapper when `option` isn't set
+        anywhere and the caller didn't pass a default; otherwise returns the
+        resolved value (config value if present, else the given default)."""
+        if option in self._values:
+            return self._values[option]
+        if default is _MOCK_CONFIG_SENTINEL:
+            from configfile import error as KlipperError
+            error_str = f"Option '{option}' in section '{self.section}' must be specified"
+            raise KlipperError(error_str)
+        return default
 
-    def getfloat(self, option, default=0.0, **kwargs):
-        val = self._values.get(option, default)
+    def get(self, option, default=_MOCK_CONFIG_SENTINEL):
+        try:
+            return self.fileconfig.get(self.section, option)
+        except Exception:
+            pass
+        return self._require(option, default)
+
+    def getfloat(self, option, default=_MOCK_CONFIG_SENTINEL, **kwargs):
+        val = self._require(option, default)
         if val is None:
             return None
         return float(val)
 
-    def getboolean(self, option, default=False, **kwargs):
-        val = self._values.get(option, default)
+    def getboolean(self, option, default=_MOCK_CONFIG_SENTINEL, **kwargs):
+        val = self._require(option, default)
         if val is None:
             return None
         if isinstance(val, bool):
@@ -574,19 +603,18 @@ class MockConfig:
             return val.lower() in ("true", "1", "yes")
         return bool(val)
 
-    def getint(self, option, default=0, **kwargs):
-        val = self._values.get(option, default)
-        if val is not None:
-            return int(val)
-        else:
-            return val
+    def getint(self, option, default=_MOCK_CONFIG_SENTINEL, **kwargs):
+        val = self._require(option, default)
+        if val is None:
+            return None
+        return int(val)
 
-    def getlist(self, option, default=None, **kwargs):
-        val = self._values.get(option, default)
+    def getlist(self, option, default=_MOCK_CONFIG_SENTINEL, **kwargs):
+        val = self._require(option, default)
         return val if val is not None else []
 
-    def getlists(self, option, default=None, **kwargs):
-        val = self._values.get(option, default)
+    def getlists(self, option, default=_MOCK_CONFIG_SENTINEL, **kwargs):
+        val = self._require(option, default)
         return val if val is not None else ()
 
     def error(self, msg):

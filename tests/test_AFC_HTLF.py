@@ -198,22 +198,36 @@ class TestHTLFInit:
             options=AFC_HTLF.cmd_AFC_HOME_UNIT_options,
         )
 
-    # -- home_pin is None: endstop/filament-switch setup fully skipped --
+    # -- required config options have no fallback default --
 
-    def test_home_pin_none_leaves_home_endstop_none(self):
-        unit = _make_htlf(values={"home_pin": None})
-        assert unit.home_endstop is None
-        assert unit.home_endstop_name is None
+    @pytest.mark.parametrize("missing_option", [
+        "drive_stepper", "selector_stepper", "cam_angle", "home_pin",
+    ])
+    def test_required_option_missing_from_config_raises(self, missing_option):
+        """drive_stepper, selector_stepper, cam_angle and home_pin are all
+        read via config.get(...)/getint(...) with no default -- real
+        Klipper's ConfigWrapper raises immediately when an option like that
+        isn't in the user's config, rather than silently falling back to
+        None/0. Each is tested with the other three left valid, isolating
+        that this specific option is the one enforced as required."""
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
 
-    def test_home_pin_none_does_not_set_home_sensor(self):
-        unit = _make_htlf(values={"home_pin": None})
-        assert not hasattr(unit, "home_sensor")
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        values = {
+            "drive_stepper": "drive", "selector_stepper": "selector",
+            "cam_angle": 60, "home_pin": "PA1",
+        }
+        del values[missing_option]
+        config = MockConfig(name="AFC_HTLF HTLF_1", printer=printer, values=values)
 
-    def test_home_pin_none_does_not_add_stepper_to_endstop(self):
-        unit = _make_htlf(values={"home_pin": None})
-        unit.selector_stepper_obj.add_stepper.assert_not_called()
+        with pytest.raises(configparser.Error) as exc_info:
+            AFC_HTLF(config)
+        assert str(exc_info.value) == (
+            f"Option '{missing_option}' in section 'Test' must be specified"
+        )
 
-    # -- home_pin is set: endstop/filament-switch setup runs --
+    # -- home_pin-dependent endstop/filament-switch setup --
 
     def test_home_pin_set_creates_home_sensor(self):
         # enable_sensors_in_gui=True avoids add_filament_switch's
@@ -261,6 +275,17 @@ class TestHTLFInit:
         assert unit.selector_stepper_obj._endstops[unit.home_endstop_name] == \
             (unit.home_endstop, unit.home_endstop_name)
 
+    def test_falsy_home_endstop_skips_adding_stepper(self):
+        """If ppins.setup_pin(...) itself returns a falsy value, self.home_
+        endstop stays falsy and the add_stepper/_endstops wiring is skipped
+        entirely -- defensive code for a setup_pin failure, independent of
+        home_pin's own required-ness."""
+        config, printer, afc = _make_htlf_config(values={"home_pin": "PA1"})
+        printer.lookup_object("pins").setup_pin = MagicMock(return_value=None)
+        unit = AFC_HTLF(config)
+        assert unit.home_endstop is None
+        unit.selector_stepper_obj.add_stepper.assert_not_called()
+
     # -- endstop registration failure --
 
     def test_endstop_registration_failure_raises_config_error(self):
@@ -294,6 +319,16 @@ class TestHomeCallback:
         for state in [True, False, True]:
             unit.home_callback(eventtime=0.0, state=state)
             assert unit.home_state is state
+
+    def test_home_callback_coerces_raw_int_state_to_bool(self):
+        """Klipper's buttons.register_buttons callback contract passes raw
+        int (0/1), not bool -- matches AFC_hub.switch_pin_callback and
+        AFCLane.prep_callback, which both need the same bool() coercion."""
+        unit = _make_htlf()
+        unit.home_callback(eventtime=0.0, state=1)
+        assert unit.home_state is True
+        unit.home_callback(eventtime=0.0, state=0)
+        assert unit.home_state is False
 
 
 # ── handle_connect ────────────────────────────────────────────────────────────

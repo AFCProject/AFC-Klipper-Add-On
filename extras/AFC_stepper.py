@@ -692,7 +692,7 @@ class AFCExtruderStepper(AFCLane):
         self.logger.debug(f"{self.name} adding endstop {key}:{name}:{pin}") # TODO:remove once fully tested on toolchanger
         self._endstops[key] = (mcu_endstop, name)
 
-    def do_homing_move(self, movepos: int, speed: int, accel: int, endstop_spec:str,
+    def do_homing_move(self, movepos: float, speed: float, accel: float, endstop_spec:str,
                        triggered=True, check_trigger=True, assist_active=True) -> tuple[bool, float]:
         """
         Perform's a homing move using the specified endstop, speed/accel and distance.
