@@ -211,6 +211,46 @@ class TestCheckRunout:
         assert unit.check_runout("lane") is False
 
 
+# ── _selector_cal_dis_adjust ─────────────────────────────────────────────────
+
+class TestSelectorCalDisAdjust:
+    def test_moves_selector_when_configured(self):
+        unit = _make_unit()
+        unit.selector_stepper_obj = MagicMock()
+        lane = _make_lane("lane1")
+        lane.selector_cal_dis = 2.5
+        unit._selector_cal_dis_adjust(lane)
+        unit.selector_stepper_obj.move.assert_called_once_with(2.5, 50, 50, False)
+
+    def test_skipped_when_no_selector_stepper_obj(self):
+        """Proven independently of selector_cal_dis's own value: a valid,
+        non-zero selector_cal_dis alone isn't enough without a selector
+        stepper object."""
+        unit = _make_unit()
+        unit.selector_stepper_obj = None
+        lane = _make_lane("lane1")
+        lane.selector_cal_dis = 2.5
+        unit._selector_cal_dis_adjust(lane)
+        # No selector_stepper_obj to assert on; move never gets a chance to
+        # be called since the object itself is None here.
+
+    def test_skipped_when_selector_cal_dis_is_none(self):
+        unit = _make_unit()
+        unit.selector_stepper_obj = MagicMock()
+        lane = _make_lane("lane1")
+        lane.selector_cal_dis = None
+        unit._selector_cal_dis_adjust(lane)
+        unit.selector_stepper_obj.move.assert_not_called()
+
+    def test_skipped_when_selector_cal_dis_is_zero(self):
+        unit = _make_unit()
+        unit.selector_stepper_obj = MagicMock()
+        lane = _make_lane("lane1")
+        lane.selector_cal_dis = 0.0
+        unit._selector_cal_dis_adjust(lane)
+        unit.selector_stepper_obj.move.assert_not_called()
+
+
 # ── return_to_home ────────────────────────────────────────────────────────────
 
 class TestReturnToHome:

@@ -628,6 +628,20 @@ class afcUnit:
         """
         return True, 0.0
 
+    def _selector_cal_dis_adjust(self, lane: AFCLane) -> None:
+        """
+        Helper function for moving selector selector_cal_dis amount if specified in users config.
+        Moving selector_cal_dis is a fine adjustment that can help put more pressure on the filament
+        so that filament is not slipping in the gears when moving.
+
+        :param lane: Lane to check if selector_cal_dis is specified and move selector this amount
+        """
+        if (self.selector_stepper_obj
+            and lane.selector_cal_dis is not None
+            and lane.selector_cal_dis != 0.0):
+            self.selector_stepper_obj.move(lane.selector_cal_dis, lane.short_moves_speed,
+                                           lane.short_moves_accel, False)
+
     def return_to_home(self, prep=False):
         """
         Function to home unit if unit has homing sensor

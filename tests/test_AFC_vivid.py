@@ -374,6 +374,7 @@ class TestSelectLane:
 
     def test_calls_homing_when_not_selected(self):
         unit = _make_vivid()
+        unit._selector_cal_dis_adjust = MagicMock()
         lane = _make_lane("lane1", has_selector=True)
         lane.fila_selector.get_status.return_value = {"filament_detected": False}
         unit.printer._objects = {}  # no stepper_enable → enabled=False
@@ -383,9 +384,20 @@ class TestSelectLane:
         assert dist == 15.0
         unit.selector_stepper_obj.do_homing_move.assert_called_once()
 
+    def test_calls_selector_cal_dis_adjust_after_homing(self):
+        unit = _make_vivid()
+        unit._selector_cal_dis_adjust = MagicMock()
+        lane = _make_lane("lane1", has_selector=True)
+        lane.fila_selector.get_status.return_value = {"filament_detected": False}
+        unit.printer._objects = {}
+        unit.selector_stepper_obj.do_homing_move.return_value = (True, 15.0)
+        unit.select_lane(lane)
+        unit._selector_cal_dis_adjust.assert_called_once_with(lane)
+
     def test_calls_unselect_lane_when_disabled_but_selector_triggered(self):
         """When stepper not enabled but selector triggered, unselect_lane is called first."""
         unit = _make_vivid()
+        unit._selector_cal_dis_adjust = MagicMock()
         lane = _make_lane("lane1", has_selector=True)
         lane.fila_selector.get_status.return_value = {"filament_detected": True}
         # stepper disabled (no stepper_enable object)

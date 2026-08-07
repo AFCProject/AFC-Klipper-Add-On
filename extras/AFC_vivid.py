@@ -189,11 +189,8 @@ class AFC_vivid(afcBoxTurtle):
                     endstop_spec=lane.selector_endstop_name,
                     assist_active=False
                 )
-
-                if (lane.selector_cal_dis is not None
-                    and lane.selector_cal_dis != 0.0):
-                    self.selector_stepper_obj.move(lane.selector_cal_dis, lane.short_moves_speed,
-                                                   lane.short_moves_accel, False)
+                # Applying selector_cal_dis move if specified in users config
+                self._selector_cal_dis_adjust(lane)
 
                 self.logger.debug(f"{self.type}: Homing done, success:{homed}, distance:{distance}")
                 return homed, round(distance, 2)

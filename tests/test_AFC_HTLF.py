@@ -700,6 +700,7 @@ class TestSelectLane:
         unit.return_to_home = MagicMock(return_value=True)
         unit._homed_distance = 3.5
         unit.calculate_lobe_movement = MagicMock(return_value=12.0)
+        unit._selector_cal_dis_adjust = MagicMock()
         lane = MagicMock()
         lane.fullname = "AFC_HTLF lane2"
         lane.index = 2
@@ -708,6 +709,7 @@ class TestSelectLane:
         unit.selector_stepper_obj.move.assert_called_once_with(
             12.0, unit.selector_movement_speed, unit.selector_movement_accel, False
         )
+        unit._selector_cal_dis_adjust.assert_called_once_with(lane)
         assert unit.current_selected_lane is lane
         assert result == (True, 3.5)
 

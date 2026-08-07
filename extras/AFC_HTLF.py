@@ -258,6 +258,9 @@ class AFC_HTLF(afcBoxTurtle):
                                                    self.selector_movement_speed,
                                                    self.selector_movement_accel,
                                                    False)
+                    # Applying selector_cal_dis move if specified in users config
+                    self._selector_cal_dis_adjust(lane)
+
                     self.logger.debug("HTLF: Selecting {}".format(lane))
                     self.current_selected_lane = lane
                     return True, self._homed_distance
