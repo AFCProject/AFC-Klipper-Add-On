@@ -475,7 +475,11 @@ class MockPrinter:
         self._objects: dict = {}
         self.state_message = "Printer is ready"
         self.start_args: dict = {}
-        self.objects: dict = {}
+        # Real Klipper keeps a single objects dict backing both attribute
+        # names; alias them so writes through either name (lookup_object's
+        # cache vs. code that reaches into printer.objects directly, like
+        # AFC_utils.add_filament_switch) are visible from the other.
+        self.objects: dict = self._objects
         self._event_handlers: dict = {}
     
     def lookup_object(self, name, default=None):
@@ -505,9 +509,13 @@ class MockPrinter:
             self._objects[name] = val
         return val
 
-    def load_object(self, config, name):
+    _NO_DEFAULT = object()
+
+    def load_object(self, config, name, default=_NO_DEFAULT):
         result = self.lookup_object(name)
         if result is None:
+            if default is not self._NO_DEFAULT:
+                return default
             result = self._objects[name] = MagicMock()
 
         return result
