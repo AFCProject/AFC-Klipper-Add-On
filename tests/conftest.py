@@ -396,6 +396,7 @@ class MockAFC:
         self.enable_sensors_in_gui = False
         self.debounce_delay = 0.1
         self.enable_hub_runout = False
+        self.load_to_hub = True
         self.enable_tool_runout = True
         self.enable_runout_in_bypass = False
         self.show_macros = True

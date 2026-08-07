@@ -12,7 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 import pytest
 
 from extras.AFC_lane import (
@@ -255,6 +255,46 @@ class TestAFCLaneInit:
 
     def test_update_weight_delay_class_constant(self):
         assert AFCLane.UPDATE_WEIGHT_DELAY == 10.0
+
+
+# ── selector_cal_dis (real __init__ construction) ────────────────────────────
+# The rest of this file bypasses AFCLane.__init__ via __new__, but
+# selector_cal_dis's fix (always read, not just when a selector pin is
+# configured) only shows up in __init__ itself, so this drives a real
+# construction. add_filament_switch does real Klipper config-object wiring
+# that isn't worth reproducing under test, so it's patched out; the "unit"
+# config option has no default in AFCLane.__init__ and so must be supplied.
+
+def _make_real_afc_lane(name="lane1", values=None):
+    """Construct a real AFCLane via its actual __init__."""
+    from tests.conftest import MockAFC, MockConfig, MockPrinter
+
+    afc = MockAFC()
+    printer = MockPrinter(afc=afc)
+    all_values = {"unit": "Turtle_1:1"}
+    if values:
+        all_values.update(values)
+    config = MockConfig(name=f"AFC_stepper {name}", printer=printer, values=all_values)
+    with patch("extras.AFC_lane.add_filament_switch",
+               return_value=(MagicMock(), MagicMock())):
+        return AFCLane(config)
+
+
+class TestSelectorCalDis:
+    def test_defaults_to_zero_when_selector_not_configured(self):
+        lane = _make_real_afc_lane()
+        assert lane.selector_cal_dis == 0.0
+
+    def test_reads_from_config_when_selector_not_configured(self):
+        """This exact case (selector unset, selector_cal_distance set) used
+        to leave selector_cal_dis at None, since the read was nested inside
+        "if self.selector is not None"."""
+        lane = _make_real_afc_lane(values={"selector_cal_distance": 2.5})
+        assert lane.selector_cal_dis == 2.5
+
+    def test_reads_from_config_when_selector_also_configured(self):
+        lane = _make_real_afc_lane(values={"selector": "PA5", "selector_cal_distance": 1.5})
+        assert lane.selector_cal_dis == 1.5
 
 
 # ── _get_steppers: stepperless unit early return ─────────────────────────────
@@ -1265,6 +1305,16 @@ class TestSendLaneDataExtruderIndex:
         lane.send_lane_data()
         lane.afc.moonraker.send_lane_data.assert_not_called()
 
+    def test_no_send_when_moonraker_is_falsy(self):
+        """Proven independently of map: a valid map alone isn't enough
+        without a moonraker connection."""
+        lane = _make_lane_for_moonraker()
+        lane.afc.moonraker = None
+        lane.send_lane_data()
+        # afc.moonraker is None here, so there's nothing to assert the call
+        # against -- the AttributeError that not-called would otherwise
+        # crash into is exactly what the guard is meant to prevent.
+
 
 class TestClearLaneDataExtruderIndex:
     @pytest.mark.parametrize("extruder_name,expected_index", [
@@ -1298,6 +1348,13 @@ class TestClearLaneDataExtruderIndex:
         lane.map = None
         lane.clear_lane_data()
         lane.afc.moonraker.send_lane_data.assert_not_called()
+
+    def test_no_clear_when_moonraker_is_falsy(self):
+        lane = _make_lane_for_moonraker()
+        lane.afc.moonraker = None
+        lane.clear_lane_data()
+        # afc.moonraker is None here; not raising AttributeError proves the
+        # guard short-circuited before reaching moonraker.send_lane_data(...).
 
 
 # ── _is_normal_printing_state (continued) ─────────────────────────────────────

@@ -279,9 +279,8 @@ class AFCLane:
                                      self.load, AFCHomingPoints.LOAD)
 
         self._selector_state: Optional[bool] = None
-        self.selector_cal_dis: Optional[float] = None
+        self.selector_cal_dis: float = config.getfloat("selector_cal_distance", 0.0)
         if self.selector is not None:
-            self.selector_cal_dis = config.getfloat("selector_cal_distance", 0.0)
             show_sensor = True
             if not self.enable_sensors_in_gui or (self.sensor_to_show is not None and 'selector' not in self.sensor_to_show):
                 show_sensor = False
@@ -1761,7 +1760,9 @@ class AFCLane:
         """
         Sends lane data to moonrakers `machine/set_lane_data` endpoint
         """
-        if self.map is not None and "T" in self.map:
+        if (self.afc.moonraker
+            and self.map is not None
+            and "T" in self.map):
             scan_time = self.td1_data['scan_time'] if 'scan_time' in self.td1_data else ""
             td        = self.td1_data['td']        if 'td'        in self.td1_data else ""
 
@@ -1787,7 +1788,9 @@ class AFCLane:
         """
         Clears lane data that is currently stored at moonrakers `machine/set_lane_data` endpoint
         """
-        if self.map is not None and "T" in self.map:
+        if (self.afc.moonraker
+            and self.map is not None
+            and "T" in self.map):
             lane_data = {
                 "namespace": "lane_data",
                 "key": self.name,
