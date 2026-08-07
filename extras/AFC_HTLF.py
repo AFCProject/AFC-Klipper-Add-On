@@ -42,9 +42,9 @@ class AFC_HTLF(afcBoxTurtle):
 
     def __init__(self, config: ConfigWrapper) -> None:
         """
-        Parse HTLF configuration, register the home-sensor endstop/filament
-        switch (if a home_pin is configured), and register the
-        AFC_HOME_UNIT gcode command.
+        Parse HTLF configuration, register the home-sensor endstop and
+        filament switch, and register the AFC_HOME_UNIT gcode command.
+        home_pin is a required config option.
 
         :param config: Klipper config wrapper for the AFC_HTLF section
         """

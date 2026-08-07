@@ -284,7 +284,7 @@ class TestHTLFInit:
         printer.lookup_object("pins").setup_pin = MagicMock(return_value=None)
         unit = AFC_HTLF(config)
         assert unit.home_endstop is None
-        unit.selector_stepper_obj.add_stepper.assert_not_called()
+        assert unit.selector_stepper_obj._endstops == {}
 
     # -- endstop registration failure --
 

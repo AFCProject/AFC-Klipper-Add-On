@@ -1,7 +1,7 @@
 # AFC lane-specific commands integration test
 #
 # Verifies GCode commands that require at least one AFC lane to be configured.
-# Uses a minimal BoxTurtle unit (unit_1) with one lane (lane1) and one hub
+# Uses a minimal HTLF unit (unit_1) with one lane (lane1) and one hub
 # (hub_1), all wired to simulated STM32H723 pins (PC0–PC5).
 #
 # Prerequisites:
