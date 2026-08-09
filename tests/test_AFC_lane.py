@@ -837,6 +837,148 @@ class TestHandleLoadRunout:
         lane.afc.save_vars.assert_called_once_with()
 
 
+# ── handle_prep_runout — TTC (Timer Too Close) cross-lane guard ────────────────
+#
+# handle_prep_runout() reacts to the PREP switch returning to rest. Its
+# set_unloaded() call changes lane state and updates the LED, which can collide
+# with real-time step scheduling if a PREP cycle (this lane's own, or another
+# lane's) is still actively driving a stepper — tripping Klipper's trsync
+# watchdog and shutting the hub MCU down with "Timer too close". The guard
+# below is scoped to that one branch only; the mid-print runout/pause branch
+# must never be delayed by it (that's a safety-relevant path).
+
+class TestHandlePrepRunout:
+    def _make(self, prep_debounce_button=True):
+        lane = _make_afc_lane()
+        lane.printer = MagicMock()
+        lane.printer.state_message = "Printer is ready"
+        lane._afc_prep_done = True
+        lane.status = "None"
+        lane.name = "lane1"
+        lane.afc.current = "lane2"  # not this lane, so the mid-print branch's name check fails
+        lane.afc.function.is_printing = MagicMock(return_value=False)
+        lane._load_state = False
+        lane.runout_lane = None
+        lane.set_unloaded = MagicMock()
+        lane._perform_infinite_runout = MagicMock()
+        lane._perform_pause_runout = MagicMock()
+        lane.afc.save_vars = MagicMock()
+        # Real ints/floats, not the MagicMock defaults — the guard does numeric
+        # comparisons (>, -, <) against these.
+        lane.afc.prep_active_count = 0
+        lane.afc.last_prep_activity_time = 0.0
+        lane.fila_prep = MagicMock()
+        lane.fila_prep.runout_helper.sensor_enabled = True
+        if prep_debounce_button:
+            lane.prep_debounce_button = MagicMock()
+        else:
+            if hasattr(lane, "prep_debounce_button"):
+                del lane.prep_debounce_button
+        return lane
+
+    # -- debounce button forwarding (mirrors TestHandleLoadRunout) --
+
+    def test_button_present_try_path_uses_keyword_form(self):
+        lane = self._make()
+        lane.handle_prep_runout(100.0, True)
+        lane.prep_debounce_button._old_note_filament_present.assert_called_once_with(
+            is_filament_present=True
+        )
+
+    def test_button_present_except_path_uses_positional_form(self):
+        lane = self._make()
+        lane.prep_debounce_button._old_note_filament_present.side_effect = [
+            TypeError("old style"), None
+        ]
+        lane.handle_prep_runout(100.0, True)
+        assert lane.prep_debounce_button._old_note_filament_present.call_args_list == [
+            call(is_filament_present=True),
+            call(100.0, True),
+        ]
+
+    def test_button_absent_skips_forwarding_entirely(self):
+        lane = self._make(prep_debounce_button=False)
+        # Should not raise despite there being no prep_debounce_button attribute.
+        lane.handle_prep_runout(100.0, False)
+        assert not hasattr(lane, "prep_debounce_button")
+
+    # -- TTC guard: prep_active_count signal --
+
+    def test_guard_blocks_set_unloaded_when_prep_active_count_positive(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 1
+        lane.afc.last_prep_activity_time = -100.0  # far in the past on its own
+        lane.handle_prep_runout(100.0, False)
+        lane.set_unloaded.assert_not_called()
+
+    def test_guard_allows_set_unloaded_when_count_zero_and_outside_window(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 0
+        lane.afc.last_prep_activity_time = 0.0  # eventtime=100.0 -> delta=100s
+        lane.handle_prep_runout(100.0, False)
+        lane.set_unloaded.assert_called_once_with()
+
+    # -- TTC guard: last_prep_activity_time window signal --
+
+    def test_guard_blocks_set_unloaded_within_time_window(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 0
+        lane.afc.last_prep_activity_time = 99.5  # delta=0.5s < 2.0s window
+        lane.handle_prep_runout(100.0, False)
+        lane.set_unloaded.assert_not_called()
+
+    def test_guard_allows_set_unloaded_at_window_boundary(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 0
+        lane.afc.last_prep_activity_time = 98.0  # delta=2.0s, not < 2.0
+        lane.handle_prep_runout(100.0, False)
+        lane.set_unloaded.assert_called_once_with()
+
+    def test_guard_blocks_save_vars_too(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 1
+        lane.handle_prep_runout(100.0, False)
+        lane.afc.save_vars.assert_not_called()
+
+    # -- TTC guard must never gate the mid-print runout/pause branch --
+
+    def test_mid_print_pause_runout_never_gated_by_ttc_guard(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 5       # deliberately "active", would normally gate
+        lane.afc.last_prep_activity_time = 99.99  # deliberately inside the window too
+        lane.afc.current = "lane1"
+        lane.afc.function.is_printing = MagicMock(return_value=True)
+        lane._load_state = True
+        lane.runout_lane = None
+        lane.handle_prep_runout(100.0, False)
+        lane._perform_pause_runout.assert_called_once_with()
+        lane.set_unloaded.assert_not_called()  # took the printing branch, not the unload one
+
+    def test_mid_print_infinite_runout_never_gated_by_ttc_guard(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 5
+        lane.afc.last_prep_activity_time = 99.99
+        lane.afc.current = "lane1"
+        lane.afc.function.is_printing = MagicMock(return_value=True)
+        lane._load_state = True
+        lane.runout_lane = "lane3"
+        lane.handle_prep_runout(100.0, False)
+        lane._perform_infinite_runout.assert_called_once_with()
+
+    # -- outer gate / save_vars sanity (mirrors TestHandleLoadRunout) --
+
+    def test_outer_gate_wrong_state_message_blocks_processing(self):
+        lane = self._make()
+        lane.printer.state_message = "Starting"
+        lane.handle_prep_runout(100.0, False)
+        lane.set_unloaded.assert_not_called()
+
+    def test_save_vars_called_after_normal_processing(self):
+        lane = self._make()
+        lane.handle_prep_runout(100.0, False)
+        lane.afc.save_vars.assert_called_once_with()
+
+
 # ── __str__ ───────────────────────────────────────────────────────────────────
 
 class TestAFCLaneStr:
