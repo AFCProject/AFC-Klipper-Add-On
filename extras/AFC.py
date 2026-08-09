@@ -108,6 +108,13 @@ class afc:
         self._last_td1_query:float    = 0
         self.lane_data_enabled  = False
         self.prep_done          = False         # Variable used to hold of save_vars function from saving too early and overriding save before prep can be ran
+        # --- TTC (Timer Too Close) fix: cross-lane PREP runout guard ------------------------
+        # See handle_prep_runout() in AFC_lane.py for the full explanation. These two fields
+        # let that function detect PREP activity on ANY lane (not just its own) before acting
+        # on a runout edge, closing a race that could shut down the hub MCU with "Timer too
+        # close" (fixed 2026-08-08).
+        self.prep_active_count       = 0    # How many lanes currently have an active PREP cycle
+        self.last_prep_activity_time = 0.0  # eventtime of the last PREP edge seen on any lane
         self.in_print_timer     = None
         self.activate_cb_done = True
         self.db_backup          = False
