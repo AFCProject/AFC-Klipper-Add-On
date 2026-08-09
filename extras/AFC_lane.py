@@ -95,6 +95,7 @@ class AFCMoveWarning(Enum):
 
 class AFCLane:
     UPDATE_WEIGHT_DELAY = 10.0
+    PREP_GUARD_WINDOW = 2.0  # seconds
     def __init__(self, config: ConfigWrapper) -> None:
         self._config            = config
         self.printer            = config.get_printer()
@@ -1214,9 +1215,7 @@ class AFCLane:
         :param state: 1 if the prep sensor is now triggered (filament present), 0 otherwise
         """
         self.prep_state = bool(state)
-        # TTC fix: record this edge (any lane, press or release) as early as possible, so a
-        # near-simultaneous edge on another lane sees it via handle_prep_runout's time-window
-        # check below. See handle_prep_runout() for the full explanation.
+        # Record every PREP edge (any lane) for handle_prep_runout's guard
         self.afc.last_prep_activity_time = eventtime
 
         delta_time = eventtime - self.last_prep_time
@@ -1235,15 +1234,11 @@ class AFCLane:
             return
 
         self.prep_active = True
-        self.afc.prep_active_count += 1   # TTC fix: mirror into the shared cross-lane counter
+        self.afc.prep_active_count += 1   # mirrors self.prep_active into the shared counter
 
-        # TTC fix: the increment above must always be undone, even if something in this block
-        # raises (prep_load()/prep_post_load()/TOOL_LOAD()/etc. are all reachable here and none
-        # of them are guaranteed not to throw). Without this, an unhandled exception would leave
-        # prep_active_count stuck positive forever, permanently blocking handle_prep_runout's
-        # non-printing set_unloaded() path for every lane, not just this one. save_vars() stays
-        # outside the try/finally on purpose: it must still run only on normal completion
-        # (fall-through/break), not on the early-return abort below or on a raised exception.
+        # try/finally so the counters above always get released, even on an unhandled
+        # exception from prep_load()/prep_post_load()/TOOL_LOAD(); save_vars() stays outside
+        # on purpose, it must still only run on normal completion.
         try:
             # Checking to make sure printer is ready and making sure PREP has been called before trying to load anything
             for i in range(1):
@@ -1309,7 +1304,7 @@ class AFCLane:
                             self.afc.error.AFC_error(message, pause=False)
         finally:
             self.prep_active = False
-            self.afc.prep_active_count -= 1   # TTC fix: mirror every exit (normal, early return, or exception)
+            self.afc.prep_active_count -= 1
         self.afc.save_vars()
 
     def handle_prep_runout(self, eventtime, prep_state):
@@ -1323,9 +1318,8 @@ class AFCLane:
 
         :param eventtime: Event time from the button press
         """
-        # Call filament sensor callback so that state is registered. Mirrors the same
-        # getattr-guarded pattern handle_load_runout uses just above — a bare try/except here
-        # only covers a call-signature mismatch, not the attribute being fully absent.
+        # Call filament sensor callback so that state is registered. Mirrors the
+        # getattr-guarded pattern handle_load_runout uses just above.
         button = getattr(self, "prep_debounce_button", None)
         if button:
             try:
@@ -1341,9 +1335,7 @@ class AFCLane:
                 and self.afc.function.is_printing()
                 and self.raw_load_state
                 and self.status != AFCLaneState.EJECTING):
-                # Mid-print runout/pause path — always reacts immediately, on purpose. This is
-                # a safety-relevant path and must never be delayed by the TTC guard below,
-                # which only applies to the non-printing unload branch further down.
+                # Mid-print runout/pause: always reacts immediately, unlike the guard below.
                 # Don't run if user disabled sensor in gui
                 if not self.fila_prep.runout_helper.sensor_enabled:
                     self.logger.warning("Prep runout has been detected, but pause and runout detection has been disabled")
@@ -1353,37 +1345,35 @@ class AFCLane:
                 else:
                     self._perform_pause_runout()
             elif not prep_state:
-                # --- TTC (Timer Too Close) fix ----------------------------------------------
-                # set_unloaded() below changes lane state and updates the LED (afc_led()). If
-                # this fires while a PREP cycle is still actively driving a stepper — this
-                # lane's own (do_homing_move()/drip_move(), see AFC_stepper.py) or ANOTHER
-                # lane's — that can collide with real-time step scheduling for that motor on
-                # the hub MCU (e.g. Turtle_1) and trip Klipper's trsync watchdog, shutting the
-                # MCU down with "Timer too close". Scoped to just this branch (filament
-                # removed outside of a print) — the mid-print runout/pause branch above is
-                # never gated, so a genuine runout during a print is never delayed by this.
-                #
-                # Two complementary, cross-lane signals guard against it:
-                #  - prep_active_count: how many lanes have an active PREP cycle in flight
-                #    right now (covers overlapping/sustained activity across lanes).
-                #  - last_prep_activity_time: wall-clock time of the last PREP edge seen on
-                #    any lane (covers two edges landing close enough together that the
-                #    counter above hasn't been updated yet by the other lane — a plain
-                #    counter check can't see that).
-                #
-                # This isolates the runout event rather than fully resolving it: an edge
-                # dropped by this guard is not re-evaluated once the guard window closes.
-                # Confirmed by live reproduction testing (2026-08-08) to eliminate the
-                # fast/reliable TTC crash from normal PREP use; a much rarer failure remains
-                # only under sustained artificial host I/O stress combined with deliberately
-                # adversarial rapid multi-lane cycling, and was not reproducible in normal use.
-                PREP_GUARD_WINDOW = 2.0  # seconds
+                # Defer instead of acting while another lane's PREP cycle may still be
+                # driving a stepper, see _recheck_prep_runout().
                 if (self.afc.prep_active_count > 0
-                    or (eventtime - self.afc.last_prep_activity_time) < PREP_GUARD_WINDOW):
+                    or (eventtime - self.afc.last_prep_activity_time) < self.PREP_GUARD_WINDOW):
+                    self.reactor.register_callback(
+                        self._recheck_prep_runout,
+                        self.reactor.monotonic() + self.PREP_GUARD_WINDOW,
+                    )
                     return
                 # Filament is unloaded
                 self.set_unloaded()
 
+        self.afc.save_vars()
+
+    def _recheck_prep_runout(self, eventtime):
+        """
+        Re-evaluate a PREP release that handle_prep_runout() deferred. Defers
+        again if still blocked or the lane got filament back in the meantime.
+        """
+        if self.prep_state:
+            return
+        if (self.afc.prep_active_count > 0
+            or (eventtime - self.afc.last_prep_activity_time) < self.PREP_GUARD_WINDOW):
+            self.reactor.register_callback(
+                self._recheck_prep_runout,
+                self.reactor.monotonic() + self.PREP_GUARD_WINDOW,
+            )
+            return
+        self.set_unloaded()
         self.afc.save_vars()
 
     def _post_prep_user_macro(self):

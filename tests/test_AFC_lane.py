@@ -849,12 +849,14 @@ class TestHandleLoadRunout:
 
 class TestHandlePrepRunout:
     def _make(self, prep_debounce_button=True):
+        from tests.conftest import MockReactor
         lane = _make_afc_lane()
         lane.printer = MagicMock()
         lane.printer.state_message = "Printer is ready"
         lane._afc_prep_done = True
         lane.status = "None"
         lane.name = "lane1"
+        lane.prep_state = False
         lane.afc.current = "lane2"  # not this lane, so the mid-print branch's name check fails
         lane.afc.function.is_printing = MagicMock(return_value=False)
         lane._load_state = False
@@ -869,6 +871,10 @@ class TestHandlePrepRunout:
         lane.afc.last_prep_activity_time = 0.0
         lane.fila_prep = MagicMock()
         lane.fila_prep.runout_helper.sensor_enabled = True
+        # Deferred-recheck fix (Jimmy's review on PR #827): a blocked edge now schedules
+        # a reactor callback instead of just returning, so tests need a reactor stand-in.
+        lane.reactor = MockReactor()
+        lane.reactor.register_callback = MagicMock()
         if prep_debounce_button:
             lane.prep_debounce_button = MagicMock()
         else:
@@ -911,12 +917,30 @@ class TestHandlePrepRunout:
         lane.handle_prep_runout(100.0, False)
         lane.set_unloaded.assert_not_called()
 
+    def test_guard_blocks_schedules_a_recheck_instead_of_dropping(self):
+        """The deferred-recheck fix (Jimmy's review on PR #827): a blocked
+        edge must not just vanish -- it has to be scheduled for a later
+        re-evaluation, or a lane's runout can get permanently stuck stale."""
+        lane = self._make()
+        lane.afc.prep_active_count = 1
+        lane.handle_prep_runout(100.0, False)
+        lane.reactor.register_callback.assert_called_once_with(
+            lane._recheck_prep_runout, 100.0 + lane.PREP_GUARD_WINDOW
+        )
+
     def test_guard_allows_set_unloaded_when_count_zero_and_outside_window(self):
         lane = self._make()
         lane.afc.prep_active_count = 0
         lane.afc.last_prep_activity_time = 0.0  # eventtime=100.0 -> delta=100s
         lane.handle_prep_runout(100.0, False)
         lane.set_unloaded.assert_called_once_with()
+
+    def test_guard_allows_does_not_schedule_a_recheck(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 0
+        lane.afc.last_prep_activity_time = 0.0
+        lane.handle_prep_runout(100.0, False)
+        lane.reactor.register_callback.assert_not_called()
 
     # -- TTC guard: last_prep_activity_time window signal --
 
@@ -953,6 +977,7 @@ class TestHandlePrepRunout:
         lane.handle_prep_runout(100.0, False)
         lane._perform_pause_runout.assert_called_once_with()
         lane.set_unloaded.assert_not_called()  # took the printing branch, not the unload one
+        lane.reactor.register_callback.assert_not_called()  # never reaches the deferred-recheck logic
 
     def test_mid_print_infinite_runout_never_gated_by_ttc_guard(self):
         lane = self._make()
@@ -964,6 +989,62 @@ class TestHandlePrepRunout:
         lane.runout_lane = "lane3"
         lane.handle_prep_runout(100.0, False)
         lane._perform_infinite_runout.assert_called_once_with()
+
+    # -- deferred recheck (Jimmy's review on PR #827: an edge silently dropped by
+    # the guard could leave a lane's internal status stale forever -- e.g. eject
+    # lane A without fully pulling the filament, insert into lane B, then finish
+    # removing A's filament; B's activity kept A's release gated and it never got
+    # reprocessed). _recheck_prep_runout() is the reactor callback scheduled above. --
+
+    def test_recheck_does_nothing_if_filament_was_reinserted(self):
+        lane = self._make()
+        lane.prep_state = True  # filament is back -- the original release is moot
+        lane._recheck_prep_runout(200.0)
+        lane.set_unloaded.assert_not_called()
+        lane.reactor.register_callback.assert_not_called()
+
+    def test_recheck_defers_again_if_still_blocked_by_count(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 1  # e.g. a different lane started a new cycle meanwhile
+        lane._recheck_prep_runout(200.0)
+        lane.set_unloaded.assert_not_called()
+        # Rescheduled relative to wall-clock now (reactor.monotonic(), fixed at 100.0 by
+        # MockReactor), not the eventtime argument -- matches the production code, which
+        # has no reason to anchor off a timestamp from a possibly-stale deferred call.
+        lane.reactor.register_callback.assert_called_once_with(
+            lane._recheck_prep_runout, 100.0 + lane.PREP_GUARD_WINDOW
+        )
+
+    def test_recheck_defers_again_if_still_inside_time_window(self):
+        lane = self._make()
+        lane.afc.last_prep_activity_time = 199.5  # delta=0.5s < window
+        lane._recheck_prep_runout(200.0)
+        lane.set_unloaded.assert_not_called()
+        lane.reactor.register_callback.assert_called_once()
+
+    def test_recheck_proceeds_once_clear(self):
+        lane = self._make()
+        lane.afc.prep_active_count = 0
+        lane.afc.last_prep_activity_time = 0.0
+        lane._recheck_prep_runout(200.0)
+        lane.set_unloaded.assert_called_once_with()
+        lane.afc.save_vars.assert_called_once_with()
+        lane.reactor.register_callback.assert_not_called()
+
+    def test_deferred_edge_actually_resolves_once_reactor_fires_the_recheck(self):
+        """End-to-end: the callback handle_prep_runout schedules is the same
+        one that eventually finishes the job -- not just each piece tested
+        in isolation against hand-picked constants."""
+        lane = self._make()
+        lane.afc.prep_active_count = 1
+        lane.handle_prep_runout(100.0, False)
+        lane.set_unloaded.assert_not_called()
+
+        recheck_callback, recheck_time = lane.reactor.register_callback.call_args[0]
+        lane.afc.prep_active_count = 0  # the other lane's cycle has since ended
+        recheck_callback(recheck_time)
+
+        lane.set_unloaded.assert_called_once_with()
 
     # -- outer gate / save_vars sanity (mirrors TestHandleLoadRunout) --
 
@@ -3520,12 +3601,14 @@ class TestPrepCallback:
         lane_a = _make_lane_ready_to_load(fullname="AFC_stepper lane1")
         lane_a.afc.prep_active_count = 0
 
+        from tests.conftest import MockReactor
         lane_b = _make_afc_lane("AFC_stepper lane2")
         lane_b.afc = lane_a.afc  # same shared afc object, real cross-lane setup
         lane_b.printer = lane_a.printer
         lane_b._afc_prep_done = True
         lane_b.status = "None"
         lane_b.name = "lane2"
+        lane_b.prep_state = False
         lane_b.afc.current = "lane1"  # not lane2, so mid-print branch's name check fails
         lane_b._load_state = False
         lane_b.runout_lane = None
@@ -3533,6 +3616,8 @@ class TestPrepCallback:
         lane_b.fila_prep = MagicMock()
         lane_b.fila_prep.runout_helper.sensor_enabled = True
         lane_b.prep_debounce_button = MagicMock()
+        lane_b.reactor = MockReactor()
+        lane_b.reactor.register_callback = MagicMock()
 
         blocked_result = []
         def _release_lane_b_mid_cycle(_lane):
@@ -3600,12 +3685,14 @@ class TestPrepCallback:
         with pytest.raises(RuntimeError):
             lane_a.prep_callback(10, True)
 
+        from tests.conftest import MockReactor
         lane_b = _make_afc_lane("AFC_stepper lane2")
         lane_b.afc = lane_a.afc
         lane_b.printer = lane_a.printer
         lane_b._afc_prep_done = True
         lane_b.status = "None"
         lane_b.name = "lane2"
+        lane_b.prep_state = False
         lane_b.afc.current = "lane1"
         lane_b._load_state = False
         lane_b.runout_lane = None
@@ -3613,6 +3700,8 @@ class TestPrepCallback:
         lane_b.fila_prep = MagicMock()
         lane_b.fila_prep.runout_helper.sensor_enabled = True
         lane_b.prep_debounce_button = MagicMock()
+        lane_b.reactor = MockReactor()
+        lane_b.reactor.register_callback = MagicMock()
         lane_b.afc.last_prep_activity_time = -100.0
 
         lane_b.handle_prep_runout(20.0, False)
