@@ -3549,3 +3549,71 @@ class TestPrepCallback:
         lane_b.afc.last_prep_activity_time = -100.0
         lane_b.handle_prep_runout(10.1, False)
         lane_b.set_unloaded.assert_called_once()
+
+    # ── TTC fix follow-up (CodeRabbit review on PR #827): exception-safe cleanup ──
+    # prep_active/prep_active_count are incremented before prep_load() runs and were
+    # only reset in the normal/early-return exit paths. If prep_load() (or anything
+    # else in the active-cycle block) raised, both would stay stuck permanently —
+    # for prep_active_count specifically, that means every lane's handle_prep_runout
+    # stays gated forever, not just this lane's own prep_callback re-entrancy guard.
+
+    def test_exception_in_prep_load_still_resets_prep_active_count(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.prep_active_count = 0
+        lane.unit_obj.prep_load.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            lane.prep_callback(10, True)
+        assert lane.afc.prep_active_count == 0
+
+    def test_exception_in_prep_load_still_resets_prep_active(self):
+        lane = _make_lane_ready_to_load()
+        lane.unit_obj.prep_load.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            lane.prep_callback(10, True)
+        assert lane.prep_active is False
+
+    def test_exception_in_prep_load_still_propagates(self):
+        """The fix guarantees cleanup, not error suppression — the original
+        exception must still reach the caller unchanged."""
+        lane = _make_lane_ready_to_load()
+        lane.unit_obj.prep_load.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"):
+            lane.prep_callback(10, True)
+
+    def test_exception_in_prep_load_skips_save_vars(self):
+        """Matches the existing is_printing-abort behavior: a path that
+        never reaches normal completion must not call save_vars() either."""
+        lane = _make_lane_ready_to_load()
+        lane.unit_obj.prep_load.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            lane.prep_callback(10, True)
+        lane.afc.save_vars.assert_not_called()
+
+    def test_exception_in_prep_load_does_not_block_other_lanes_afterward(self):
+        """The concrete regression this whole fix is about: before it, a
+        raised exception left prep_active_count stuck positive, so a
+        completely unrelated lane's genuine PREP release would stay gated
+        forever. This proves that no longer happens."""
+        lane_a = _make_lane_ready_to_load(fullname="AFC_stepper lane1")
+        lane_a.afc.prep_active_count = 0
+        lane_a.unit_obj.prep_load.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            lane_a.prep_callback(10, True)
+
+        lane_b = _make_afc_lane("AFC_stepper lane2")
+        lane_b.afc = lane_a.afc
+        lane_b.printer = lane_a.printer
+        lane_b._afc_prep_done = True
+        lane_b.status = "None"
+        lane_b.name = "lane2"
+        lane_b.afc.current = "lane1"
+        lane_b._load_state = False
+        lane_b.runout_lane = None
+        lane_b.set_unloaded = MagicMock()
+        lane_b.fila_prep = MagicMock()
+        lane_b.fila_prep.runout_helper.sensor_enabled = True
+        lane_b.prep_debounce_button = MagicMock()
+        lane_b.afc.last_prep_activity_time = -100.0
+
+        lane_b.handle_prep_runout(20.0, False)
+        lane_b.set_unloaded.assert_called_once()
