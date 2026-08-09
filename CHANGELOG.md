@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-08-09]
+### Fixed
+- Fixed a "Timer too close" MCU shutdown that could occur when the PREP sensor releases while a
+  load cycle is still in progress on the same or another lane (Fixing Issue #826).
+
 ## [2026-08-07]
 ### Added
 - Ability to adjust HTLF selector after lane selection by adding `selector_cal_distance` variable in each lane.
