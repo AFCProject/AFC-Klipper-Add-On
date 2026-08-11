@@ -316,6 +316,7 @@ class AFCLane:
 
         self.connect_done = False
         self.prep_active = False
+        self.prep_recheck_pending = False
         self.last_prep_time: float = 0.
 
         self.show_macros = self.afc.show_macros
@@ -1234,9 +1235,8 @@ class AFCLane:
             return
 
         self.prep_active = True
-        self.afc.prep_active_count += 1   # mirrors self.prep_active into the shared counter
 
-        # try/finally so the counters above always get released, even on an unhandled
+        # try/finally so prep_active always gets released, even on an unhandled
         # exception from prep_load()/prep_post_load()/TOOL_LOAD(); save_vars() stays outside
         # on purpose, it must still only run on normal completion.
         try:
@@ -1304,7 +1304,6 @@ class AFCLane:
                             self.afc.error.AFC_error(message, pause=False)
         finally:
             self.prep_active = False
-            self.afc.prep_active_count -= 1
         self.afc.save_vars()
 
     def handle_prep_runout(self, eventtime, prep_state):
@@ -1347,17 +1346,23 @@ class AFCLane:
             elif not prep_state:
                 # Defer instead of acting while another lane's PREP cycle may still be
                 # driving a stepper, see _recheck_prep_runout().
-                if (self.afc.prep_active_count > 0
+                if (self._any_lane_prep_active()
                     or (eventtime - self.afc.last_prep_activity_time) < self.PREP_GUARD_WINDOW):
-                    self.reactor.register_callback(
-                        self._recheck_prep_runout,
-                        self.reactor.monotonic() + self.PREP_GUARD_WINDOW,
-                    )
+                    if not self.prep_recheck_pending:
+                        self.prep_recheck_pending = True
+                        self.reactor.register_callback(
+                            self._recheck_prep_runout,
+                            self.reactor.monotonic() + self.PREP_GUARD_WINDOW,
+                        )
                     return
                 # Filament is unloaded
                 self.set_unloaded()
 
         self.afc.save_vars()
+
+    def _any_lane_prep_active(self) -> bool:
+        """True if any lane (this one or another) has a PREP cycle in flight right now."""
+        return any(lane.prep_active for lane in self.afc.lanes.values())
 
     def _recheck_prep_runout(self, eventtime):
         """
@@ -1365,14 +1370,16 @@ class AFCLane:
         again if still blocked or the lane got filament back in the meantime.
         """
         if self.prep_state:
+            self.prep_recheck_pending = False
             return
-        if (self.afc.prep_active_count > 0
+        if (self._any_lane_prep_active()
             or (eventtime - self.afc.last_prep_activity_time) < self.PREP_GUARD_WINDOW):
             self.reactor.register_callback(
                 self._recheck_prep_runout,
                 self.reactor.monotonic() + self.PREP_GUARD_WINDOW,
             )
             return
+        self.prep_recheck_pending = False
         self.set_unloaded()
         self.afc.save_vars()
 

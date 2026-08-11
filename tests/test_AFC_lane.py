@@ -857,6 +857,8 @@ class TestHandlePrepRunout:
         lane.status = "None"
         lane.name = "lane1"
         lane.prep_state = False
+        lane.prep_active = False
+        lane.prep_recheck_pending = False
         lane.afc.current = "lane2"  # not this lane, so the mid-print branch's name check fails
         lane.afc.function.is_printing = MagicMock(return_value=False)
         lane._load_state = False
@@ -865,9 +867,9 @@ class TestHandlePrepRunout:
         lane._perform_infinite_runout = MagicMock()
         lane._perform_pause_runout = MagicMock()
         lane.afc.save_vars = MagicMock()
-        # Real ints/floats, not the MagicMock defaults — the guard does numeric
-        # comparisons (>, -, <) against these.
-        lane.afc.prep_active_count = 0
+        # Real dict, not the MagicMock default — _any_lane_prep_active() iterates it.
+        # Starts with just this lane, itself not active.
+        lane.afc.lanes = {lane.name: lane}
         lane.afc.last_prep_activity_time = 0.0
         lane.fila_prep = MagicMock()
         lane.fila_prep.runout_helper.sensor_enabled = True
@@ -881,6 +883,26 @@ class TestHandlePrepRunout:
             if hasattr(lane, "prep_debounce_button"):
                 del lane.prep_debounce_button
         return lane
+
+    def _add_other_active_lane(self, lane):
+        """Add a second lane to lane.afc.lanes with prep_active=True."""
+        lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
+
+    # -- _any_lane_prep_active() in isolation --
+
+    def test_any_lane_prep_active_true_when_self_active(self):
+        lane = self._make()
+        lane.prep_active = True
+        assert lane._any_lane_prep_active() is True
+
+    def test_any_lane_prep_active_true_when_other_lane_active(self):
+        lane = self._make()
+        self._add_other_active_lane(lane)
+        assert lane._any_lane_prep_active() is True
+
+    def test_any_lane_prep_active_false_when_none_active(self):
+        lane = self._make()
+        assert lane._any_lane_prep_active() is False
 
     # -- debounce button forwarding (mirrors TestHandleLoadRunout) --
 
@@ -908,11 +930,11 @@ class TestHandlePrepRunout:
         lane.handle_prep_runout(100.0, False)
         assert not hasattr(lane, "prep_debounce_button")
 
-    # -- TTC guard: prep_active_count signal --
+    # -- TTC guard: any-lane-active signal --
 
-    def test_guard_blocks_set_unloaded_when_prep_active_count_positive(self):
+    def test_guard_blocks_set_unloaded_when_another_lane_active(self):
         lane = self._make()
-        lane.afc.prep_active_count = 1
+        self._add_other_active_lane(lane)
         lane.afc.last_prep_activity_time = -100.0  # far in the past on its own
         lane.handle_prep_runout(100.0, False)
         lane.set_unloaded.assert_not_called()
@@ -922,22 +944,20 @@ class TestHandlePrepRunout:
         edge must not just vanish -- it has to be scheduled for a later
         re-evaluation, or a lane's runout can get permanently stuck stale."""
         lane = self._make()
-        lane.afc.prep_active_count = 1
+        self._add_other_active_lane(lane)
         lane.handle_prep_runout(100.0, False)
         lane.reactor.register_callback.assert_called_once_with(
             lane._recheck_prep_runout, 100.0 + lane.PREP_GUARD_WINDOW
         )
 
-    def test_guard_allows_set_unloaded_when_count_zero_and_outside_window(self):
+    def test_guard_allows_set_unloaded_when_no_lane_active_and_outside_window(self):
         lane = self._make()
-        lane.afc.prep_active_count = 0
         lane.afc.last_prep_activity_time = 0.0  # eventtime=100.0 -> delta=100s
         lane.handle_prep_runout(100.0, False)
         lane.set_unloaded.assert_called_once_with()
 
     def test_guard_allows_does_not_schedule_a_recheck(self):
         lane = self._make()
-        lane.afc.prep_active_count = 0
         lane.afc.last_prep_activity_time = 0.0
         lane.handle_prep_runout(100.0, False)
         lane.reactor.register_callback.assert_not_called()
@@ -946,21 +966,19 @@ class TestHandlePrepRunout:
 
     def test_guard_blocks_set_unloaded_within_time_window(self):
         lane = self._make()
-        lane.afc.prep_active_count = 0
         lane.afc.last_prep_activity_time = 99.5  # delta=0.5s < 2.0s window
         lane.handle_prep_runout(100.0, False)
         lane.set_unloaded.assert_not_called()
 
     def test_guard_allows_set_unloaded_at_window_boundary(self):
         lane = self._make()
-        lane.afc.prep_active_count = 0
         lane.afc.last_prep_activity_time = 98.0  # delta=2.0s, not < 2.0
         lane.handle_prep_runout(100.0, False)
         lane.set_unloaded.assert_called_once_with()
 
     def test_guard_blocks_save_vars_too(self):
         lane = self._make()
-        lane.afc.prep_active_count = 1
+        self._add_other_active_lane(lane)
         lane.handle_prep_runout(100.0, False)
         lane.afc.save_vars.assert_not_called()
 
@@ -968,7 +986,7 @@ class TestHandlePrepRunout:
 
     def test_mid_print_pause_runout_never_gated_by_ttc_guard(self):
         lane = self._make()
-        lane.afc.prep_active_count = 5       # deliberately "active", would normally gate
+        self._add_other_active_lane(lane)  # deliberately active, would normally gate
         lane.afc.last_prep_activity_time = 99.99  # deliberately inside the window too
         lane.afc.current = "lane1"
         lane.afc.function.is_printing = MagicMock(return_value=True)
@@ -981,7 +999,7 @@ class TestHandlePrepRunout:
 
     def test_mid_print_infinite_runout_never_gated_by_ttc_guard(self):
         lane = self._make()
-        lane.afc.prep_active_count = 5
+        self._add_other_active_lane(lane)
         lane.afc.last_prep_activity_time = 99.99
         lane.afc.current = "lane1"
         lane.afc.function.is_printing = MagicMock(return_value=True)
@@ -1003,9 +1021,9 @@ class TestHandlePrepRunout:
         lane.set_unloaded.assert_not_called()
         lane.reactor.register_callback.assert_not_called()
 
-    def test_recheck_defers_again_if_still_blocked_by_count(self):
+    def test_recheck_defers_again_if_still_blocked_by_another_lane(self):
         lane = self._make()
-        lane.afc.prep_active_count = 1  # e.g. a different lane started a new cycle meanwhile
+        self._add_other_active_lane(lane)  # e.g. a different lane started a new cycle meanwhile
         lane._recheck_prep_runout(200.0)
         lane.set_unloaded.assert_not_called()
         # Rescheduled relative to wall-clock now (reactor.monotonic(), fixed at 100.0 by
@@ -1024,7 +1042,6 @@ class TestHandlePrepRunout:
 
     def test_recheck_proceeds_once_clear(self):
         lane = self._make()
-        lane.afc.prep_active_count = 0
         lane.afc.last_prep_activity_time = 0.0
         lane._recheck_prep_runout(200.0)
         lane.set_unloaded.assert_called_once_with()
@@ -1036,12 +1053,12 @@ class TestHandlePrepRunout:
         one that eventually finishes the job -- not just each piece tested
         in isolation against hand-picked constants."""
         lane = self._make()
-        lane.afc.prep_active_count = 1
+        self._add_other_active_lane(lane)
         lane.handle_prep_runout(100.0, False)
         lane.set_unloaded.assert_not_called()
 
         recheck_callback, recheck_time = lane.reactor.register_callback.call_args[0]
-        lane.afc.prep_active_count = 0  # the other lane's cycle has since ended
+        lane.afc.lanes["lane2"].prep_active = False  # the other lane's cycle has since ended
         recheck_callback(recheck_time)
 
         lane.set_unloaded.assert_called_once_with()
@@ -3533,73 +3550,21 @@ class TestPrepCallback:
         assert lane.prep_active is False
         lane.afc.save_vars.assert_called_once()
 
-    # ── TTC fix: prep_active_count mirroring (self.afc.prep_active_count) ──
-    # These mirror self.prep_active 1:1 at all 3 exit points, but on the
-    # shared afc object so handle_prep_runout can see cross-lane activity.
-    # Uses a real int (not the default MagicMock) since the guard does
-    # arithmetic (+=/-=) on it — a bare MagicMock would silently swallow
-    # that without ever failing, masking a missing mirror call.
-
-    def test_prep_active_count_is_incremented_during_processing_then_decremented(self):
-        """Same shape as test_prep_active_is_true_during_processing_then_reset
-        above, but for the shared cross-lane counter: observed via a side
-        effect mid-call, proving the increment happens before prep_load runs
-        and the decrement happens after, not just "eventually both occur"."""
-        lane = _make_lane_ready_to_load()
-        lane.afc.prep_active_count = 0
-        observed = []
-        def _record(_lane):
-            observed.append(lane.afc.prep_active_count)
-        lane.unit_obj.prep_load.side_effect = _record
-        lane.prep_callback(10, True)
-        assert observed == [1]
-        assert lane.afc.prep_active_count == 0
-
-    def test_is_printing_while_moving_decrements_prep_active_count(self):
-        """Mirrors test_is_printing_while_moving_sets_prep_active_false: the
-        early-return abort path must also undo the increment, or the
-        counter would leak upward every time a load is attempted while the
-        printer is moving."""
-        lane = _make_lane_ready_to_load()
-        lane.afc.prep_active_count = 0
-        lane.afc.function.is_printing.return_value = True
-        lane.prep_callback(10, True)
-        assert lane.afc.prep_active_count == 0
-
-    def test_debounce_break_does_not_touch_prep_active_count(self):
-        """The debounce break exits before prep_active_count is ever
-        incremented (that happens further down, past this early break), so
-        it must stay at its starting value, not go negative."""
-        lane = _make_lane_ready_to_load()
-        lane.afc.prep_active_count = 0
-        lane.last_prep_time = 9.5
-        lane.prep_callback(10, True)
-        assert lane.afc.prep_active_count == 0
-
-    def test_prep_active_count_survives_concurrent_lane(self):
-        """A second lane's cycle already in flight (count starts at 1, e.g.
-        another lane's prep_callback is mid-run) must not be clobbered by
-        this lane's own increment/decrement — the counter should return to
-        the other lane's level (1), not to 0, after this lane finishes."""
-        lane = _make_lane_ready_to_load()
-        lane.afc.prep_active_count = 1  # another lane already active
-        lane.prep_callback(10, True)
-        assert lane.afc.prep_active_count == 1
+    # ── TTC fix: cross-lane interaction via afc.lanes ──
 
     def test_prep_callback_and_handle_prep_runout_real_interaction(self):
         """End-to-end, no pre-set mock guard values: prove the two methods
-        actually cooperate through the same afc.prep_active_count object,
-        not just that each behaves correctly in isolation against a
-        hand-picked constant (as the TestHandlePrepRunout tests above do).
+        actually cooperate through the shared afc.lanes dict, not just that
+        each behaves correctly in isolation against a hand-picked constant
+        (as the TestHandlePrepRunout tests above do).
 
         Sequence: lane A's prep_callback is captured mid-cycle (via
         prep_load's side effect) with a second lane (B) releasing PREP at
         that exact moment — handle_prep_runout must be blocked. Once A's
-        prep_callback finishes and the counter is back to 0, the same
-        release event must now go through.
+        prep_callback finishes and self.prep_active is back to False, the
+        same release event must now go through.
         """
         lane_a = _make_lane_ready_to_load(fullname="AFC_stepper lane1")
-        lane_a.afc.prep_active_count = 0
 
         from tests.conftest import MockReactor
         lane_b = _make_afc_lane("AFC_stepper lane2")
@@ -3609,6 +3574,8 @@ class TestPrepCallback:
         lane_b.status = "None"
         lane_b.name = "lane2"
         lane_b.prep_state = False
+        lane_b.prep_active = False
+        lane_b.prep_recheck_pending = False
         lane_b.afc.current = "lane1"  # not lane2, so mid-print branch's name check fails
         lane_b._load_state = False
         lane_b.runout_lane = None
@@ -3618,6 +3585,7 @@ class TestPrepCallback:
         lane_b.prep_debounce_button = MagicMock()
         lane_b.reactor = MockReactor()
         lane_b.reactor.register_callback = MagicMock()
+        lane_a.afc.lanes = {lane_a.name: lane_a, lane_b.name: lane_b}
 
         blocked_result = []
         def _release_lane_b_mid_cycle(_lane):
@@ -3629,26 +3597,18 @@ class TestPrepCallback:
 
         # While lane A's cycle was in flight, lane B's release was blocked.
         assert blocked_result == [False]
-        # Lane A's cycle has since ended (counter back to 0) and enough
+        # Lane A's cycle has since ended (prep_active back to False) and enough
         # wall-clock time will have passed by a later, unrelated release.
         lane_b.afc.last_prep_activity_time = -100.0
         lane_b.handle_prep_runout(10.1, False)
         lane_b.set_unloaded.assert_called_once()
 
     # ── TTC fix follow-up (CodeRabbit review on PR #827): exception-safe cleanup ──
-    # prep_active/prep_active_count are incremented before prep_load() runs and were
-    # only reset in the normal/early-return exit paths. If prep_load() (or anything
-    # else in the active-cycle block) raised, both would stay stuck permanently —
-    # for prep_active_count specifically, that means every lane's handle_prep_runout
-    # stays gated forever, not just this lane's own prep_callback re-entrancy guard.
-
-    def test_exception_in_prep_load_still_resets_prep_active_count(self):
-        lane = _make_lane_ready_to_load()
-        lane.afc.prep_active_count = 0
-        lane.unit_obj.prep_load.side_effect = RuntimeError("boom")
-        with pytest.raises(RuntimeError):
-            lane.prep_callback(10, True)
-        assert lane.afc.prep_active_count == 0
+    # prep_active is set True before prep_load() runs and was only reset in the
+    # normal/early-return exit paths. If prep_load() (or anything else in the
+    # active-cycle block) raised, it would stay stuck True permanently — meaning
+    # every lane's handle_prep_runout stays gated forever (since it's aggregated
+    # across lanes), not just this lane's own prep_callback re-entrancy guard.
 
     def test_exception_in_prep_load_still_resets_prep_active(self):
         lane = _make_lane_ready_to_load()
@@ -3676,11 +3636,10 @@ class TestPrepCallback:
 
     def test_exception_in_prep_load_does_not_block_other_lanes_afterward(self):
         """The concrete regression this whole fix is about: before it, a
-        raised exception left prep_active_count stuck positive, so a
-        completely unrelated lane's genuine PREP release would stay gated
-        forever. This proves that no longer happens."""
+        raised exception left prep_active stuck True, so a completely
+        unrelated lane's genuine PREP release would stay gated forever.
+        This proves that no longer happens."""
         lane_a = _make_lane_ready_to_load(fullname="AFC_stepper lane1")
-        lane_a.afc.prep_active_count = 0
         lane_a.unit_obj.prep_load.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
             lane_a.prep_callback(10, True)
@@ -3693,6 +3652,8 @@ class TestPrepCallback:
         lane_b.status = "None"
         lane_b.name = "lane2"
         lane_b.prep_state = False
+        lane_b.prep_active = False
+        lane_b.prep_recheck_pending = False
         lane_b.afc.current = "lane1"
         lane_b._load_state = False
         lane_b.runout_lane = None
@@ -3703,6 +3664,7 @@ class TestPrepCallback:
         lane_b.reactor = MockReactor()
         lane_b.reactor.register_callback = MagicMock()
         lane_b.afc.last_prep_activity_time = -100.0
+        lane_a.afc.lanes = {lane_a.name: lane_a, lane_b.name: lane_b}
 
         lane_b.handle_prep_runout(20.0, False)
         lane_b.set_unloaded.assert_called_once()
