@@ -3133,6 +3133,9 @@ def _make_lane_for_prep_callback(fullname="AFC_stepper lane1"):
     lane.status = AFCLaneState.LOADED  # anything but TOOL_UNLOADING
     lane.prep_active = False
     lane.last_prep_time = 0
+    # Real dict, not the MagicMock default -- _any_lane_prep_active() iterates it.
+    # Starts with just this lane, itself not active.
+    lane.afc.lanes = {lane.name: lane}
     lane._load_state = False
     lane.hub = "PB1"
     lane.td1_device_id = None
@@ -3345,6 +3348,48 @@ class TestPrepCallback:
         lane.afc.function.is_printing.return_value = True
         lane.prep_callback(10, True)
         lane.afc.save_vars.assert_not_called()
+
+    # ── TTC guard: another lane already has a PREP cycle in flight ───────
+
+    def test_another_lane_active_blocks_prep_load(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_not_called()
+
+    def test_another_lane_active_still_resets_prep_active(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
+        lane.prep_callback(10, True)
+        assert lane.prep_active is False
+
+    def test_another_lane_active_does_not_call_save_vars(self):
+        """Same shape as the is_printing guard above: this path returns
+        (not breaks), so it must skip the trailing save_vars() call."""
+        lane = _make_lane_ready_to_load()
+        lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
+        lane.prep_callback(10, True)
+        lane.afc.save_vars.assert_not_called()
+
+    def test_another_lane_active_checked_after_is_printing(self):
+        """is_printing is still checked first; its own abort message must
+        fire instead of silently falling through to the new guard."""
+        lane = _make_lane_ready_to_load()
+        lane.afc.function.is_printing.return_value = True
+        lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Cannot load lane1 spool while printer is actively moving or homing", False
+        )
+
+    def test_only_this_lane_in_afc_lanes_does_not_block_prep_load(self):
+        """Baseline: with no other lane present, _any_lane_prep_active() must
+        not block the lane's own load -- guards against a helper regression
+        that would make every prep_callback test fail closed."""
+        lane = _make_lane_ready_to_load()
+        assert list(lane.afc.lanes.keys()) == ["lane1"]
+        lane.prep_callback(10, True)
+        lane.unit_obj.prep_load.assert_called_once_with(lane)
 
     # ── successful prep_load call ─────────────────────────────────────────
 

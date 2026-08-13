@@ -1262,6 +1262,10 @@ class AFCLane:
                                 self.afc.error.AFC_error(f"Cannot load {self.name} spool while printer is actively moving or homing", False)
                                 return
 
+                            # Check to see if another lane already has a PREP cycle in flight
+                            if any(lane.prep_active for lane in self.afc.lanes.values() if lane is not self):
+                                return
+
                             # Calling common load function
                             self.unit_obj.prep_load(self)
 
@@ -1361,13 +1365,19 @@ class AFCLane:
         self.afc.save_vars()
 
     def _any_lane_prep_active(self) -> bool:
-        """True if any lane (this one or another) has a PREP cycle in flight right now."""
+        """
+        Check whether any lane currently has a PREP cycle in flight.
+
+        :return: True if any lane (this one or another) is mid-cycle right now
+        """
         return any(lane.prep_active for lane in self.afc.lanes.values())
 
-    def _recheck_prep_runout(self, eventtime):
+    def _recheck_prep_runout(self, eventtime: float) -> None:
         """
         Re-evaluate a PREP release that handle_prep_runout() deferred. Defers
         again if still blocked or the lane got filament back in the meantime.
+
+        :param eventtime: reactor time this recheck fired
         """
         if self.prep_state:
             self.prep_recheck_pending = False
