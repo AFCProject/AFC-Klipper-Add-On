@@ -1365,6 +1365,15 @@ class afc:
         self.LANE_UNLOAD( cur_lane )
 
     def LANE_UNLOAD(self, cur_lane: AFCLane):
+        """
+        Ejects a lane's filament back out of the unit, when the lane is not in use.
+
+        Refusals are logged as warnings so they reach the message queue, and from there
+        AFC.message in get_status. Clients cannot see them otherwise: this method never
+        raises, so a refused eject and a completed one look identical from the outside.
+
+        :param cur_lane: AFCLane object for the lane to eject
+        """
         # TODO: update this to unload from toolhead and move all the way back to load
         # when homing is enabled
 
@@ -1398,7 +1407,13 @@ class afc:
             cur_lane.extruder_obj.load_unload_sequence(cur_lane.extruder_obj.tool_stn_unload*-1)
 
         elif cur_lane.name == cur_lane.extruder_obj.lane_loaded:
-            self.logger.info("LANE {} is loaded in toolhead, can't unload.".format(cur_lane.name))
+            self.logger.warning(f"LANE {cur_lane.name} is loaded in toolhead, can't unload. "
+                                "Run TOOL_UNLOAD first.")
+        else:
+            # Standalone extruder with nothing loaded: no arm above applies, so the lane
+            # is left untouched. Warn rather than return silently.
+            self.logger.warning(f"LANE {cur_lane.name} not ejected: standalone extruder "
+                                "reports no lane loaded.")
 
         self.current_state = State.IDLE
 

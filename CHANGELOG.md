@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-08-13]
+### Fixed
+- `LANE_UNLOAD` now reports its refusals as warnings instead of console-only messages, so they reach
+  the message queue and show up in Mainsail/Fluidd and other clients. Previously, ejecting a lane that
+  was loaded in the toolhead logged to the console only, and a standalone extruder with no lane loaded
+  logged nothing at all - in both cases the command returned normally, so a UI could not tell a refused
+  eject from a completed one.
+
 ## [2026-08-09]
 ### Fixed
 - Fixed a "Timer too close" MCU shutdown that could occur when the PREP sensor releases while a

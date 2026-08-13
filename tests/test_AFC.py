@@ -4212,3 +4212,146 @@ class TestBypassUnloadDisplayStatus:
         assert result is False
         assert events == [
             ('display', 'retraction', True), 'run_script_from_command', ('display', 'retraction', False)]
+
+
+# ── LANE_UNLOAD: eject paths and refusal reporting ────────────────────────────
+
+def _make_afc_for_lane_unload(lane_name="lane1", lane_loaded=None, standalone=False):
+    """
+    Build an afc plus a lane wired for LANE_UNLOAD.
+
+    :param lane_name: name of the lane being ejected
+    :param lane_loaded: value of extruder_obj.lane_loaded
+    :param standalone: return value of extruder_obj.is_standalone()
+    :return type: tuple of (afc, AFCLane)
+    """
+    obj = _make_afc()
+    obj.save_vars = MagicMock()
+    obj.spool = MagicMock()
+
+    cur_lane = _make_afc_lane(f"AFC_stepper {lane_name}")
+    cur_lane.extruder_obj.lane_loaded = lane_loaded
+    cur_lane.extruder_obj.is_standalone = MagicMock(return_value=standalone)
+    cur_lane.extruder_obj.tool_stn_unload = 25.0
+    cur_lane.status = AFCLaneState.LOADED
+    obj.lanes[lane_name] = cur_lane
+    return obj, cur_lane
+
+
+class TestLaneUnload:
+    # ── arm 1: lane is not in the toolhead and the extruder is not standalone ──
+
+    def test_ejects_when_lane_not_loaded_and_not_standalone(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.unit_obj.eject_lane.assert_called_once_with(cur_lane)
+        assert cur_lane.status == AFCLaneState.NONE
+        assert cur_lane.loaded_to_hub is False
+
+    def test_eject_clears_spool_and_returns_home(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
+        obj.LANE_UNLOAD(cur_lane)
+        obj.spool.set_spoolID.assert_called_once_with(cur_lane, None)
+        cur_lane.unit_obj.return_to_home.assert_called_once()
+        cur_lane.unit_obj.lane_not_ready.assert_called_once_with(cur_lane)
+
+    def test_eject_logs_completion_only(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
+        obj.LANE_UNLOAD(cur_lane)
+        assert obj.logger.messages == [("info", "LANE lane1 eject done")]
+
+    # ── arm 2: standalone extruder with a lane loaded ──────────────────────────
+
+    def test_standalone_with_lane_loaded_runs_unload_sequence(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=True)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.extruder_obj.load_unload_sequence.assert_called_once_with(-25.0)
+        assert cur_lane.status == AFCLaneState.EJECTING
+        cur_lane.unit_obj.eject_lane.assert_not_called()
+
+    def test_standalone_with_lane_loaded_logs_nothing(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=True)
+        obj.LANE_UNLOAD(cur_lane)
+        assert obj.logger.messages == []
+
+    # ── arm 3: the lane is the one loaded in the toolhead ──────────────────────
+
+    def test_lane_in_toolhead_refuses_and_warns(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane1", standalone=False)
+        obj.LANE_UNLOAD(cur_lane)
+        assert obj.logger.messages == [
+            ("warning", "LANE lane1 is loaded in toolhead, can't unload. Run TOOL_UNLOAD first.")]
+
+    def test_lane_in_toolhead_does_not_eject(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane1", standalone=False)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.unit_obj.eject_lane.assert_not_called()
+        cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
+        assert cur_lane.status == AFCLaneState.LOADED
+
+    # ── arm 4: standalone extruder with nothing loaded (previously silent) ─────
+
+    def test_standalone_without_lane_loaded_warns(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded=None, standalone=True)
+        obj.LANE_UNLOAD(cur_lane)
+        assert obj.logger.messages == [
+            ("warning", "LANE lane1 not ejected: standalone extruder reports no lane loaded.")]
+
+    def test_standalone_without_lane_loaded_does_not_eject(self):
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded=None, standalone=True)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.unit_obj.eject_lane.assert_not_called()
+        cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
+        assert cur_lane.status == AFCLaneState.LOADED
+
+    # ── first condition: each variable independently gates arm 1 ──────────────
+
+    def test_name_differs_alone_does_not_eject_when_standalone(self):
+        """name != lane_loaded is not enough: standalone must also be false."""
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=True)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.unit_obj.eject_lane.assert_not_called()
+
+    def test_not_standalone_alone_does_not_eject_when_name_matches(self):
+        """not standalone is not enough: the name must also differ from lane_loaded."""
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane1", standalone=False)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.unit_obj.eject_lane.assert_not_called()
+
+    # ── second condition: each variable independently gates arm 2 ─────────────
+
+    def test_standalone_alone_does_not_run_unload_sequence(self):
+        """is_standalone() is not enough: lane_loaded must also be truthy."""
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded=None, standalone=True)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
+
+    def test_lane_loaded_alone_does_not_run_unload_sequence(self):
+        """A truthy lane_loaded is not enough: the extruder must also be standalone."""
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
+        obj.LANE_UNLOAD(cur_lane)
+        cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
+
+    # ── state transitions ─────────────────────────────────────────────────────
+
+    @pytest.mark.parametrize("lane_loaded,standalone", [
+        ("lane2", False),   # arm 1
+        ("lane2", True),    # arm 2
+        ("lane1", False),   # arm 3
+        (None, True),       # arm 4
+    ])
+    def test_state_returns_to_idle_on_every_arm(self, lane_loaded, standalone):
+        obj, cur_lane = _make_afc_for_lane_unload(
+            lane_loaded=lane_loaded, standalone=standalone)
+        obj.current_state = State.INIT
+        obj.LANE_UNLOAD(cur_lane)
+        assert obj.current_state == State.IDLE
+
+    def test_state_is_ejecting_while_unit_eject_runs(self):
+        """current_state is EJECTING_LANE for the duration, not just at the end."""
+        obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
+        seen = []
+        cur_lane.unit_obj.eject_lane = MagicMock(
+            side_effect=lambda _lane: seen.append(obj.current_state))
+        obj.LANE_UNLOAD(cur_lane)
+        assert seen == [State.EJECTING_LANE]
