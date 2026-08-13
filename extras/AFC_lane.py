@@ -1258,12 +1258,9 @@ class AFCLane:
                                 break
 
                             # Check to see if the printer is printing or moving, as trying to load while printer is doing something will crash klipper
-                            if self.afc.function.is_printing(check_movement=True):
+                            if (self.afc.function.is_printing(check_movement=True)
+                                or any(lane.prep_active for lane in self.afc.lanes.values() if lane is not self)):
                                 self.afc.error.AFC_error(f"Cannot load {self.name} spool while printer is actively moving or homing", False)
-                                return
-
-                            # Check to see if another lane already has a PREP cycle in flight
-                            if any(lane.prep_active for lane in self.afc.lanes.values() if lane is not self):
                                 return
 
                             # Calling common load function

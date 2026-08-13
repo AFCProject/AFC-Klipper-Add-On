@@ -3371,9 +3371,20 @@ class TestPrepCallback:
         lane.prep_callback(10, True)
         lane.afc.save_vars.assert_not_called()
 
-    def test_another_lane_active_checked_after_is_printing(self):
-        """is_printing is still checked first; its own abort message must
-        fire instead of silently falling through to the new guard."""
+    def test_another_lane_active_shows_error_message(self):
+        """Per review feedback: this guard shares the same if statement (and
+        message) as the is_printing check above, instead of returning
+        silently -- the user must see why the load was refused."""
+        lane = _make_lane_ready_to_load()
+        lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
+        lane.prep_callback(10, True)
+        lane.afc.error.AFC_error.assert_called_once_with(
+            "Cannot load lane1 spool while printer is actively moving or homing", False
+        )
+
+    def test_another_lane_active_checked_together_with_is_printing(self):
+        """Both conditions share one if/or now; is_printing being True is
+        enough on its own, short-circuiting before the lanes check runs."""
         lane = _make_lane_ready_to_load()
         lane.afc.function.is_printing.return_value = True
         lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
