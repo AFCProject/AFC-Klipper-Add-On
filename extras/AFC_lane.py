@@ -1216,8 +1216,6 @@ class AFCLane:
         :param state: 1 if the prep sensor is now triggered (filament present), 0 otherwise
         """
         self.prep_state = bool(state)
-        # Record every PREP edge (any lane) for handle_prep_runout's guard
-        self.afc.last_prep_activity_time = eventtime
 
         delta_time = eventtime - self.last_prep_time
         self.last_prep_time = eventtime
@@ -1262,6 +1260,9 @@ class AFCLane:
                                 or any(lane.prep_active for lane in self.afc.lanes.values() if lane is not self)):
                                 self.afc.error.AFC_error(f"Cannot load {self.name} spool while printer is actively moving or homing", False)
                                 return
+
+                            # Record PREP activity (any lane) for handle_prep_runout's guard
+                            self.afc.last_prep_activity_time = eventtime
 
                             # Calling common load function
                             self.unit_obj.prep_load(self)

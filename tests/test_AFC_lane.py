@@ -3402,6 +3402,31 @@ class TestPrepCallback:
         lane.prep_callback(10, True)
         lane.unit_obj.prep_load.assert_called_once_with(lane)
 
+    # ── last_prep_activity_time: only set when a load actually starts ────
+    # Per review feedback (CodeRabbit + Jimmy): recording this on every edge,
+    # including releases, made handle_prep_runout's guard window always look
+    # "recently active" for a release triggering itself -- moved past all the
+    # guards above so only a load that's actually about to run counts.
+
+    def test_release_edge_does_not_update_last_prep_activity_time(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.last_prep_activity_time = -100.0
+        lane.prep_callback(10, False)
+        assert lane.afc.last_prep_activity_time == -100.0
+
+    def test_blocked_load_does_not_update_last_prep_activity_time(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.last_prep_activity_time = -100.0
+        lane.afc.function.is_printing.return_value = True
+        lane.prep_callback(10, True)
+        assert lane.afc.last_prep_activity_time == -100.0
+
+    def test_successful_load_updates_last_prep_activity_time(self):
+        lane = _make_lane_ready_to_load()
+        lane.afc.last_prep_activity_time = -100.0
+        lane.prep_callback(10, True)
+        assert lane.afc.last_prep_activity_time == 10
+
     # ── successful prep_load call ─────────────────────────────────────────
 
     def test_successful_load_calls_prep_load(self):
