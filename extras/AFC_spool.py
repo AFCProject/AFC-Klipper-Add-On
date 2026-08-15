@@ -11,7 +11,10 @@ import copy
 import traceback
 import re
 
-from extras.AFC_utils import natural_sort_key
+from configfile import error
+
+try: from extras.AFC_utils import natural_sort_key
+except: raise error("Error when trying to import AFC_utils.natural_sort_key\n{trace}".format(trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
