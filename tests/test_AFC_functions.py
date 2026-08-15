@@ -632,6 +632,272 @@ class TestGetExtruderPos_ReturnValue:
         assert isinstance(result, float)
 # ── end get_extruder_pos ──────────────────────────────────────────────────────
 
+# ── register_tool_macro ─────────────────────────────────────────────────────────
+
+def _wire_change_tool(func):
+    """Set the cmd_CHANGE_TOOL attributes register_tool_macro forwards along."""
+    func.afc.cmd_CHANGE_TOOL = MagicMock()
+    func.afc.cmd_CHANGE_TOOL_help = "help text"
+
+
+class TestRegisterToolMacro:
+    def test_no_rename_registers_command_directly(self):
+        func = _make_func()
+        _wire_change_tool(func)
+        func.afc.gcode.register_command = MagicMock()
+
+        func.register_tool_macro("lane1", "T0", "")
+
+        func.afc.gcode.register_command.assert_called_once_with(
+            "T0", func.afc.cmd_CHANGE_TOOL, desc=func.afc.cmd_CHANGE_TOOL_help
+        )
+
+    def test_rename_delegates_to_rename_method(self):
+        func = _make_func()
+        _wire_change_tool(func)
+        func._rename = MagicMock()
+
+        func.register_tool_macro("lane1", "T0", "_T0")
+
+        func._rename.assert_called_once_with(
+            "T0", "_T0", func.afc.cmd_CHANGE_TOOL, func.afc.cmd_CHANGE_TOOL_help
+        )
+        assert "T0" not in func.afc.gcode._commands
+
+    def test_exception_when_registering_directly_logs_error(self):
+        func = _make_func()
+        _wire_change_tool(func)
+        func.afc.gcode.register_command = MagicMock(side_effect=Exception("boom"))
+
+        func.register_tool_macro("lane1", "T0", "")
+
+        assert func.logger.messages == [
+            ("error", "Error trying to map lane lane1 to T0, please make sure there "
+                      "are no macros already setup for T0")
+        ]
+
+    def test_exception_when_renaming_logs_error(self):
+        func = _make_func()
+        _wire_change_tool(func)
+        func._rename = MagicMock(side_effect=Exception("boom"))
+
+        func.register_tool_macro("lane1", "T0", "_T0")
+
+        assert func.logger.messages == [
+            ("error", "Error trying to map lane lane1 to T0, please make sure there "
+                      "are no macros already setup for T0")
+        ]
+
+# ── end register_tool_macro ───────────────────────────────────────────────────
+
+# ── TcmdAssign ───────────────────────────────────────────────────────────────
+
+class TestTcmdAssign:
+    def test_use_rename_true_when_own_map_manually_assigned(self):
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = ["T0"]
+        cur_lane._map = ["T0"]
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.force_assign_map = False
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        func.register_tool_macro.assert_called_once_with("lane1", "T0", "_T0")
+
+    def test_use_rename_true_when_force_assign_map(self):
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = ["T3"]
+        cur_lane._map = []
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.force_assign_map = True
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        func.register_tool_macro.assert_called_once_with("lane1", "T3", "_T3")
+
+    def test_use_rename_true_when_map_manually_assigned_on_other_lane(self):
+        """cur_lane's own _map is empty, but the T(n) command it currently
+        holds was manually assigned to a different lane in the config."""
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = ["T5"]
+        cur_lane._map = []
+        other_lane = _make_afc_lane("AFC_stepper lane2")
+        other_lane.map = ["T1"]
+        other_lane._map = ["T5"]
+        func.afc.lanes = {"lane1": cur_lane, "lane2": other_lane}
+        func.afc.force_assign_map = False
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        func.register_tool_macro.assert_called_once_with("lane1", "T5", "_T5")
+
+    def test_use_rename_false_when_no_manual_mapping_anywhere(self):
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = ["T3"]
+        cur_lane._map = []
+        other_lane = _make_afc_lane("AFC_stepper lane2")
+        other_lane.map = ["T1"]
+        other_lane._map = []
+        func.afc.lanes = {"lane1": cur_lane, "lane2": other_lane}
+        func.afc.force_assign_map = False
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        func.register_tool_macro.assert_called_once_with("lane1", "T3", "")
+
+    def test_auto_assigns_first_available_command(self):
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = []
+        cur_lane._map = []
+        cur_lane.current_map = ""
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.tool_cmds = {}
+        func.afc.force_assign_map = False
+        func.afc.gcode.ready_gcode_handlers = {}
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert cur_lane.map == ["T0"]
+        assert cur_lane.current_map == "T0"
+
+    def test_auto_assign_skips_command_manually_assigned_to_another_lane(self):
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = []
+        cur_lane._map = []
+        other_lane = _make_afc_lane("AFC_stepper lane2")
+        other_lane.map = ["T0"]
+        other_lane._map = ["T0"]
+        func.afc.lanes = {"lane1": cur_lane, "lane2": other_lane}
+        func.afc.tool_cmds = {}
+        func.afc.force_assign_map = False
+        func.afc.gcode.ready_gcode_handlers = {}
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert cur_lane.map == ["T1"]
+
+    def test_auto_assign_skips_command_already_in_tool_cmds(self):
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = []
+        cur_lane._map = []
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.tool_cmds = {"T0": "lane2"}
+        func.afc.force_assign_map = False
+        func.afc.gcode.ready_gcode_handlers = {}
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert cur_lane.map == ["T1"]
+
+    def test_auto_assign_skips_command_with_existing_gcode_macro(self):
+        """When a candidate T(n) already has a registered gcode handler and
+        force_assign_map is off, TcmdAssign moves on without claiming it,
+        but still records it as the lane's current_map."""
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = []
+        cur_lane._map = []
+        cur_lane.current_map = ""
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.tool_cmds = {}
+        func.afc.force_assign_map = False
+        func.afc.gcode.ready_gcode_handlers = {"T0": MagicMock()}
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert cur_lane.map == ["T1"]
+        assert cur_lane.current_map == "T0"
+
+    def test_auto_assign_force_assign_map_ignores_existing_gcode_macro(self):
+        """force_assign_map short-circuits the existing-macro check, so the
+        first candidate is claimed even though a handler is already registered."""
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = []
+        cur_lane._map = []
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.tool_cmds = {}
+        func.afc.force_assign_map = True
+        func.afc.gcode.ready_gcode_handlers = {"T0": MagicMock()}
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert cur_lane.map == ["T0"]
+
+    def test_auto_assign_second_existing_macro_hit_does_not_overwrite_current_map(self):
+        """Covers the loop continuing past a second already-claimed candidate
+        without re-setting current_map, since it was set on the first hit."""
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = []
+        cur_lane._map = []
+        cur_lane.current_map = ""
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.tool_cmds = {}
+        func.afc.force_assign_map = False
+        func.afc.gcode.ready_gcode_handlers = {"T0": MagicMock(), "T1": MagicMock()}
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert cur_lane.map == ["T2"]
+        assert cur_lane.current_map == "T0"
+
+    def test_auto_assign_exhausts_range_without_finding_command(self):
+        """Covers the range(99) loop finishing without a break when every
+        candidate command is already claimed in tool_cmds."""
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = []
+        cur_lane._map = []
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.tool_cmds = {f"T{i}": "otherlane" for i in range(99)}
+        func.afc.force_assign_map = False
+        func.afc.gcode.ready_gcode_handlers = {}
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert cur_lane.map == []
+        func.register_tool_macro.assert_not_called()
+
+    def test_skips_none_placeholder_already_in_map(self):
+        """cur_lane.map already holding a "NONE" placeholder alongside a real
+        mapping should skip NONE and only register the real command."""
+        func = _make_func()
+        cur_lane = _make_afc_lane("AFC_stepper lane1")
+        cur_lane.map = ["NONE", "T1"]
+        cur_lane._map = []
+        cur_lane.current_map = ""
+        func.afc.lanes = {"lane1": cur_lane}
+        func.afc.tool_cmds = {}
+        func.afc.force_assign_map = False
+        func.register_tool_macro = MagicMock()
+
+        func.TcmdAssign(cur_lane)
+
+        assert "NONE" not in func.afc.tool_cmds
+        assert func.afc.tool_cmds == {"T1": "lane1"}
+        func.register_tool_macro.assert_called_once_with("lane1", "T1", "")
+
+# ── end TcmdAssign ─────────────────────────────────────────────────────────────
+
 class TestCalibrateAFC:
     # ------------------------------------------------------------------
     # Fixtures / builders

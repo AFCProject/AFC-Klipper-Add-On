@@ -269,7 +269,7 @@ class afcFunction:
                 cmd = 'T{}'.format(x)
                 # Checking to see if cmd exists in lanes that have manually assigned mapping
                 # skip cmd and generate next if cmd is manually assigned by user
-                manually_assigned = any( cmd in (lane.map or []) for lane in self.afc.lanes.values() )
+                manually_assigned = any( cmd in (lane._map or []) for lane in self.afc.lanes.values() )
                 if (not manually_assigned and
                     cmd not in self.afc.tool_cmds):
                     # Checking if macro already exists, generate next valid cmd if current generated cmd exists
@@ -280,13 +280,19 @@ class afcFunction:
                         # Reassigning (not appending in place) so Klipper's
                         # status diff sees a new list and pushes the update
                         cur_lane.map = cur_lane.map + [cmd]
-                        cur_lane._map = cur_lane._map + [cmd]
                         break
                     # Set first T(n) macro to current map if its not already set
                     if not cur_lane.current_map:
                         cur_lane.current_map = cmd
 
-        use_rename = bool(cur_lane.map) or self.afc.force_assign_map
+        # Renaming is needed if one of this lane's current T(n) commands was manually
+        # assigned to a lane in the config, even if that assignment now lives on a
+        # different lane (e.g. after a swap or multimapping reassignment).
+        # Only place this will fail is if a AFC_extruder has a mapping but is not a standalone lane,
+        # if this is the case then force_assign_map needs to be set to true in the users AFC config.
+        use_rename = (self.afc.force_assign_map
+                      or any(m in (lane._map or []) for lane in self.afc.lanes.values()
+                             for m in cur_lane.map))
         for map_str in cur_lane.map:
             if map_str == "NONE":
                 continue

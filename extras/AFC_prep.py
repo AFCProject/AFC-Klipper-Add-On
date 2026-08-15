@@ -190,11 +190,11 @@ class afcPrep:
                     if 'runout_lane' in units[cur_lane.unit][cur_lane.name]: cur_lane.runout_lane = units[cur_lane.unit][cur_lane.name]['runout_lane']
                     if cur_lane.runout_lane == '' or cur_lane.runout_lane == 'NONE': cur_lane.runout_lane = None
                     temp_map = units[cur_lane.unit][cur_lane.name].get('map', None)
-                    if (temp_map and
-                        isinstance(temp_map, str)):
-                        cur_lane.map = temp_map.replace(" ", "").split(",")
-                    else:
-                        cur_lane.map = list(temp_map or [])
+                    if temp_map:
+                        if isinstance(temp_map, str):
+                            cur_lane.map = temp_map.replace(" ", "").split(",")
+                        else:
+                            cur_lane.map = list(temp_map)
                     cur_lane.current_map = units[cur_lane.unit][cur_lane.name].get("current_map", "")
 
                     if cur_lane.map != None:

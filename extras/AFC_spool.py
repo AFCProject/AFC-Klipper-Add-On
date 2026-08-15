@@ -11,6 +11,7 @@ import copy
 import traceback
 import re
 
+from extras.AFC_utils import natural_sort_key
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
@@ -830,7 +831,10 @@ class AFCSpool:
         manually_assigned = {cmd for lane in self.afc.lanes.values() for cmd in lane._map}
         # Fresh T0..T(n-1) sequence for auto lanes, skipping manually assigned numbers
         total_lanes = sum(len(unit.lanes) for unit in self.afc.units.values())
-        auto_cmds = [f"T{i}" for i in range(total_lanes) if f"T{i}" not in manually_assigned]
+        # Generate enough candidates that reserved manual numbers cannot starve
+        # the auto lanes
+        auto_cmds = [f"T{i}" for i in range(total_lanes + len(manually_assigned))
+                     if f"T{i}" not in manually_assigned][:total_lanes]
         for unit in self.afc.units.values():
             for lane in unit.lanes.values():
                 lane.map = []
@@ -852,8 +856,7 @@ class AFCSpool:
         # leftovers from a removed unit), popped before send_lane_data() below
         # so it sees them as gone rather than still owned by this lane.
         new_cmds = {lane.map[0] for unit in self.afc.units.values() for lane in unit.lanes.values()}
-        stale_cmds = sorted(previously_used_cmds - new_cmds,
-                            key=lambda x: int("".join([i for i in x if i.isdigit()])))
+        stale_cmds = sorted(previously_used_cmds - new_cmds, key=natural_sort_key)
         if stale_cmds:
             self.logger.info(f"{', '.join(stale_cmds)} remain, removing these mappings")
             for cmd in stale_cmds:

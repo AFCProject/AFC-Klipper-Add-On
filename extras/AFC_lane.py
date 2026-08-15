@@ -159,17 +159,16 @@ class AFCLane:
         self.afc_extruder_name    = config.get('extruder', None)                          # Extruder name(AFC_extruder) that belongs to this stepper, overrides extruder that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
         self.standalone_lane      = config.getboolean("standalone", False)
         self.remember_spool :bool = config.getboolean('remember_spool', None)             # remember_spool that is set in AFC_Stepper section, overrides remember_spool that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
-        self.map: list        = config.getlist('cmd', [])                           # Keeping this in so it does not break others config that may have used this, use map instead
+        self.map: list            = config.getlist('cmd', [])                           # Keeping this in so it does not break others config that may have used this, use map instead
         # Saving to self._map so that if a user has it defined it will be reset back to this when
         # RESET_AFC_MAPPING macro is called.
         self.map = config.getlist('map', self.map)
-        self._map: list       = list(self.map)
-        # Holds which T(n) macro is currently mapped to this lane
-        # since map can be a list of T(n) now
+        self._map: list           = list(self.map)
+        # Holds which T(n) macro is currently mapped to this lane since map can be a list of T(n) now
         self.current_map: str     = ""
-        # T(n) keys this lane last pushed a lane_data record for -- lets
-        # send_lane_data() detect and clear out mappings that were removed
-        # since the last call, without every mapping macro having to do it.
+        # Keeps track of which T(n) macros have been pushed up to moonrakers lane_data database
+        # endpoint. That way send_lane_data method and clear out mappings that were removed since
+        # last updated.
         self._sent_lane_data_keys: list = []
 
         # LED SETTINGS
@@ -2362,6 +2361,7 @@ class AFCLane:
         response['lane'] = self.index
         if not save_to_file:
             response['map'] = self.map
+            response['_map'] = self._map
         else:
             response['map'] = self.map_to_string()
         response['current_map'] = self.current_map
