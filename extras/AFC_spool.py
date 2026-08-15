@@ -20,6 +20,12 @@ if TYPE_CHECKING:
 
 class AFCSpool:
     def __init__(self, config: ConfigWrapper) -> None:
+        """
+        Basic setup, actual initialization happens in handle_connect/register_commands
+        once the AFC object is available.
+
+        :param config: Klipper config wrapper for this section
+        """
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.SPOOLMAN_REMOTE_METHOD = 'spoolman_set_active_spool'
@@ -165,7 +171,7 @@ class AFCSpool:
             return
         cur_lane = self.afc.lanes.get(lane)
         if cur_lane is None:
-            self.logger.info('{} Unknown'.format(lane))
+            self.logger.info(f"{lane} Unknown")
             return
         cur_lane.bed_temp = gcmd.get_int('BED_TEMP', cur_lane.bed_temp, minval=0)
         cur_lane.extruder_temp = gcmd.get_int('EXTRUDER_TEMP', cur_lane.extruder_temp, minval=0)
@@ -192,15 +198,15 @@ class AFCSpool:
         map_cmd = map_cmd.upper()
 
         if map_cmd not in self.afc.tool_cmds:
-            self.logger.error("Invalid map command: {}".format(map_cmd))
+            self.logger.error(f"Invalid map command: {map_cmd}")
             return
 
         lane_switch = self.afc.tool_cmds[map_cmd]
-        self.logger.debug("lane to switch is {}".format(lane_switch))
+        self.logger.debug(f"lane to switch is {lane_switch}")
 
         cur_lane = self.afc.lanes.get(lane, None)
         if cur_lane is None:
-            self.logger.info('{} Unknown'.format(lane))
+            self.logger.info(f"{lane} Unknown")
             return
 
         sw_lane = self.afc.lanes.get(lane_switch, None)
@@ -302,7 +308,7 @@ class AFCSpool:
                                    "MAPPING": {"type": "string", "default": "T0"}}
     def cmd_AFC_ADD_MAPPING(self, gcmd: GCodeCommand) -> None:
         """
-        This macro adds passed in mapping to specified lane, allows the ability to create "virtual tools". 
+        This macro adds passed in mapping to specified lane, allows the ability to create "virtual tools".
         The new maps will be registered into klipper so that they can be called correctly. Mappings
         can be passed in as a comma separated list to add multiple to a single lane.
 
@@ -396,8 +402,8 @@ class AFCSpool:
     cmd_AFC_ENABLE_MULTIPLE_MAPPING_options ={"ENABLE":{"type": "int", "default": 0}}
     def cmd_AFC_ENABLE_MULTIPLE_MAPPING(self, gcmd: GCodeCommand) -> None:
         """
-        This macro enables the ability to have T(n) macros mapped to multiple lanes. Enabling 
-        multiple mapping also adds the ability to add virtual tools with AFC_ADD_MAPPING and 
+        This macro enables the ability to have T(n) macros mapped to multiple lanes. Enabling
+        multiple mapping also adds the ability to add virtual tools with AFC_ADD_MAPPING and
         AFC_REMOVE_MAPPING macros.
 
         When disabling multiple mapping, lanes mappings are also reset via RESET_AFC_MAPPING command.
@@ -419,8 +425,6 @@ class AFCSpool:
                              "add virtual tools with AFC_ADD_MAPPING macro")
         else:
             self.enable_multiple_mapping = False
-            # TODO: figure out a way to properly reset lane mappings back to a 1-1 not n-1
-            # Maybe reset everything back and then remove the remaining T(n) macros
             self.logger.info("Multiple T(n) mapping per lane and virtual tools has been disabled")
             self._reset_mapping()
 
@@ -450,10 +454,10 @@ class AFCSpool:
             return
         color = gcmd.get('COLOR', '#000000')
         if lane not in self.afc.lanes:
-            self.logger.info('{} Unknown'.format(lane))
+            self.logger.info(f"{lane} Unknown")
             return
         cur_lane = self.afc.lanes[lane]
-        cur_lane.color = '#{}'.format(color.replace('#',''))
+        cur_lane.color = f"#{color.replace('#', '')}"
         cur_lane.multi_color = []
         cur_lane.send_lane_data()
         # Refresh LED only if filament is loaded — empty lanes keep their state color
@@ -486,7 +490,7 @@ class AFCSpool:
             return
         weight = gcmd.get_float('WEIGHT', 1000.0)
         if lane not in self.afc.lanes:
-            self.logger.info('{} Unknown'.format(lane))
+            self.logger.info(f"{lane} Unknown")
             return
         cur_lane = self.afc.lanes[lane]
         cur_lane.weight = weight
@@ -525,7 +529,7 @@ class AFCSpool:
             self.logger.info("No LANE Defined")
             return
         if lane not in self.afc.lanes:
-            self.logger.info('{} Unknown'.format(lane))
+            self.logger.info(f"{lane} Unknown")
             return
         cur_lane = self.afc.lanes[lane]
         density = gcmd.get_float('DENSITY', None)
@@ -544,6 +548,11 @@ class AFCSpool:
         self.set_snapmaker_filament_params(cur_lane)
 
     def set_active_spool(self, ID: Optional[Union[int, str]]) -> None:
+        """
+        Notifies Spoolman of the spool that is now active on the toolhead.
+
+        :param ID: Spool ID to set as active, pass None to clear the active spool
+        """
         webhooks = self.printer.lookup_object('webhooks')
         if self.afc.spoolman is not None:
             if (ID
@@ -556,7 +565,7 @@ class AFCSpool:
             try:
                 webhooks.call_remote_method(self.SPOOLMAN_REMOTE_METHOD, **args)
             except self.printer.command_error as e:
-                self.logger.error("Error trying to set active spool \n{}".format(e))
+                self.logger.error(f"Error trying to set active spool \n{e}")
 
     cmd_SET_SPOOL_ID_help = "Set lanes spoolman ID"
     def cmd_SET_SPOOL_ID(self, gcmd: GCodeCommand) -> None:
@@ -582,7 +591,7 @@ class AFCSpool:
                 return
             SpoolID: Union[int, str] = gcmd.get('SPOOL_ID', '')
             if lane not in self.afc.lanes:
-                self.logger.info('{} Unknown'.format(lane))
+                self.logger.info(f"{lane} Unknown")
                 return
 
             cur_lane = self.afc.lanes[lane]
@@ -592,7 +601,7 @@ class AFCSpool:
                 try:
                     SpoolID = int(SpoolID)
                 except ValueError:
-                    self.logger.error("Invalid spool ID: {}".format(SpoolID))
+                    self.logger.error(f"Invalid spool ID: {SpoolID}")
                     return
 
                 if (cur_lane.spool_id != SpoolID
@@ -660,6 +669,16 @@ class AFCSpool:
 
     def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]],
                     save_vars: bool = True) -> None:
+        """
+        Assigns a spool from Spoolman to a lane, pulling material, color, weight,
+        and temperature values from Spoolman and updating the lane accordingly.
+        Clears the lane's values instead when SpoolID is empty/None and the lane
+        isn't set to remember its spool.
+
+        :param cur_lane:  AFC lane to assign the spool to
+        :param SpoolID:   Spoolman spool ID to assign, or None/'' to clear
+        :param save_vars: Whether to save AFC vars after assigning
+        """
         if (self.afc.spoolman is not None
             and self.afc.moonraker is not None):
             if (SpoolID is not None
@@ -688,13 +707,13 @@ class AFCSpool:
 
                     weight_check = self.disable_weight_check
 
-                    self.afc.logger.debug('Weight remaining for SpoolID {}: {}'.format(SpoolID, cur_lane.weight))
+                    self.afc.logger.debug(f"Weight remaining for SpoolID {SpoolID}: {cur_lane.weight}")
 
                     if not weight_check:
                         if (cur_lane.weight is None
                             or cur_lane.weight <= 0):
-                            error_str = ("Invalid weight for spoolID: {}. "
-                                        "Please check remaining weight before assigning.").format(SpoolID)
+                            error_str = (f"Invalid weight for spoolID: {SpoolID}. "
+                                        "Please check remaining weight before assigning.")
                             self.afc.error.AFC_error(error_str, False)
                             self.clear_values(cur_lane)
                             return
@@ -706,7 +725,7 @@ class AFCSpool:
                         cur_lane.multi_color = multi_color_hex.split(",")
                         cur_lane.color = f"#{cur_lane.multi_color[0]}"
                     else:
-                        cur_lane.color = '#{}'.format(self._get_filament_values(result['filament'], 'color_hex'))
+                        cur_lane.color = f"#{self._get_filament_values(result['filament'], 'color_hex')}"
                         cur_lane.multi_color = []
 
                     cur_lane.send_lane_data()
@@ -717,7 +736,7 @@ class AFCSpool:
                         self.afc.function.afc_led(unit._get_lane_color(cur_lane, cur_lane.led_ready), cur_lane.led_index)
 
                 except Exception as e:
-                    self.afc.error.AFC_error("Error when trying to get Spoolman data for ID:{}, Error: {}".format(SpoolID, e), False)
+                    self.afc.error.AFC_error(f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}", False)
             elif not cur_lane.remember_spool:
                 self.clear_values(cur_lane)
         elif not cur_lane.remember_spool:
@@ -754,16 +773,16 @@ class AFCSpool:
         is_none = runout.upper() == 'NONE'
         # Check to make sure runout does not equal lane
         if lane == runout:
-            self.logger.error("Lane({}) and runout({}) cannot be the same".format(lane, runout))
+            self.logger.error(f"Lane({lane}) and runout({runout}) cannot be the same")
             return
         # Check to make sure specified lane exists
         if lane not in self.afc.lanes:
-            self.logger.error('Unknown lane: {}'.format(lane))
+            self.logger.error(f"Unknown lane: {lane}")
             return
         # Check to make sure specified runout lane exists as long as runout is not set as 'NONE'
         if (not is_none
             and runout not in self.afc.lanes):
-            self.logger.error('Unknown runout lane: {}'.format(runout))
+            self.logger.error(f"Unknown runout lane: {runout}")
             return
 
         cur_lane = self.afc.lanes[lane]
@@ -878,7 +897,7 @@ class AFCSpool:
             try:
                 self.next_spool_id = int(SpoolID)
             except ValueError:
-                self.logger.error("Invalid spool ID: {}".format(SpoolID))
+                self.logger.error(f"Invalid spool ID: {SpoolID}")
                 self.next_spool_id = None
         else:
             self.next_spool_id = None
@@ -888,4 +907,9 @@ class AFCSpool:
             self.logger.info(f"Spool ID set for next load: '{self.next_spool_id}'")
 
 def load_config(config: ConfigWrapper) -> AFCSpool:
+    """
+    Klipper config entry point for this module.
+
+    :param config: Klipper config wrapper for this section
+    """
     return AFCSpool(config)

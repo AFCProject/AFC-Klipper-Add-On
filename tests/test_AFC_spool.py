@@ -315,6 +315,26 @@ class TestSetMap:
 # ── cmd_AFC_SWAP_MAPPING ────────────────────────────────────────────────────────
 
 class TestAfcSwapMapping:
+    def test_from_equals_to_raises_and_does_not_swap(self):
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        lane1.current_map = "T0"
+        spool.afc.lanes = {"lane1": lane1}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane1")
+        with pytest.raises(Exception, match=r"FROM\(lane1\) TO\(lane1\) values are the same, not swapping\."):
+            spool.cmd_AFC_SWAP_MAPPING(gcmd)
+        assert lane1.map == ["T0"]
+        assert lane1.current_map == "T0"
+
+    def test_from_equals_to_case_insensitive_raises(self):
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        spool.afc.lanes = {"lane1": lane1}
+        gcmd = _make_gcmd(FROM="Lane1", TO="lane1")
+        with pytest.raises(Exception, match=r"FROM\(Lane1\) TO\(lane1\) values are the same, not swapping\."):
+            spool.cmd_AFC_SWAP_MAPPING(gcmd)
+
     def test_from_lane_not_found_raises(self):
         spool = _make_spool()
         spool.afc.lanes = {"lane2": _make_lane("lane2")}
@@ -629,6 +649,22 @@ class TestAfcEnableMultipleMapping:
         gcmd = _make_gcmd()
         spool.cmd_AFC_ENABLE_MULTIPLE_MAPPING(gcmd)
         assert spool.enable_multiple_mapping is False
+
+    def test_disable_resets_mapping(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        spool._reset_mapping = MagicMock()
+        gcmd = _make_gcmd(ENABLE=0)
+        spool.cmd_AFC_ENABLE_MULTIPLE_MAPPING(gcmd)
+        spool._reset_mapping.assert_called_once_with()
+
+    def test_enable_does_not_reset_mapping(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = False
+        spool._reset_mapping = MagicMock()
+        gcmd = _make_gcmd(ENABLE=1)
+        spool.cmd_AFC_ENABLE_MULTIPLE_MAPPING(gcmd)
+        spool._reset_mapping.assert_not_called()
 
 
 # ── register_commands ─────────────────────────────────────────────────────────
