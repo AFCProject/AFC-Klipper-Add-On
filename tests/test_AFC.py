@@ -31,6 +31,17 @@ from extras.AFC_lane import AFCLaneState, AFCMoveWarning
 from klippy import Printer
 
 from tests.test_AFC_lane import _make_afc_lane
+
+
+def _build_gcmd(params=None, commandline=""):
+    """Build a gcmd mock backed by MockGCodeCommand, matching real Klipper's
+    sentinel-based .get()/.get_int()/.get_float() semantics -- a parameter
+    with no value in params and no default supplied by the caller raises,
+    rather than silently returning None."""
+    from tests.conftest import MockGCodeCommand
+    return MockGCodeCommand(params=params or {}, commandline=commandline)
+
+
 # ── State constants ───────────────────────────────────────────────────────────
 
 class TestStateConstants:
@@ -1705,15 +1716,12 @@ class TestCmdChangeTool_NewExtruderTempParsing:
     """Tests for NEW_EXTRUDER_TEMP parameter parsing in cmd_CHANGE_TOOL."""
 
     def _make_gcmd(self, new_extruder_temp_str, lane="lane1", purge_length=None):
-        gcmd = MagicMock()
         # Use a T0 command line so cmd_CHANGE_TOOL takes the simple else-branch
         # (no "CHANGE" in command) and Tcmd = "T0" directly.
-        gcmd.get_commandline.return_value = "T0"
-        gcmd.get.side_effect = lambda key, default=None: {
+        return _build_gcmd({
             "PURGE_LENGTH": purge_length,
             "NEW_EXTRUDER_TEMP": new_extruder_temp_str,
-        }.get(key, default)
-        return gcmd
+        }, commandline="T0")
 
     def _make_afc_for_cmd(self):
         obj = _make_afc()
@@ -1771,12 +1779,10 @@ class TestCmdChangeTool_NewExtruderTempParsing:
     def test_invalid_purge_length_reports_error_and_does_not_call_change_tool(self):
         """A non-numeric PURGE_LENGTH triggers AFC_error and aborts without calling CHANGE_TOOL."""
         obj = self._make_afc_for_cmd()
-        gcmd = MagicMock()
-        gcmd.get_commandline.return_value = "T0"
-        gcmd.get.side_effect = lambda key, default=None: {
+        gcmd = _build_gcmd({
             "PURGE_LENGTH": "notanumber",
             "NEW_EXTRUDER_TEMP": None,
-        }.get(key, default)
+        }, commandline="T0")
         obj.cmd_CHANGE_TOOL(gcmd)
         obj.error.AFC_error.assert_called_once()
         error_msg = obj.error.AFC_error.call_args.args[0]
@@ -1785,11 +1791,9 @@ class TestCmdChangeTool_NewExtruderTempParsing:
 
 class TestCmdChange_ToolCheckBypass_CheckHomed():
     def _make_gcmd(self):
-        gcmd = MagicMock()
         # Use a T0 command line so cmd_CHANGE_TOOL takes the simple else-branch
         # (no "CHANGE" in command) and Tcmd = "T0" directly.
-        gcmd.get_commandline.return_value = "T0"
-        return gcmd
+        return _build_gcmd(commandline="T0")
 
     def test_check_bypass_True(self):
         obj, _, _ = _make_afc_for_change_tool()
@@ -1809,14 +1813,9 @@ class TestCmdChange_ToolCheckBypass_CheckHomed():
 
 class TestCmdChangeTool_SnapmakerPath:
     def _make_gcmd(self, tcmd="T0"):
-        gcmd = MagicMock()
         # Use a T0 command line so cmd_CHANGE_TOOL takes the simple else-branch
         # (no "CHANGE" in command) and Tcmd = "T0" directly.
-        gcmd.get_commandline.return_value = f"{tcmd} A0"
-        gcmd.get.side_effect = lambda key, default=None: {
-            "A": "0"
-        }.get(key, default)
-        return gcmd
+        return _build_gcmd({"A": "0"}, commandline=f"{tcmd} A0")
     def get_snapmaker_config_dir():
             pass
 
@@ -2188,8 +2187,7 @@ class TestCmdToolLoad_LaneLoadedGuard:
         obj, lane, extruder = self._make_cmd_afc()
         extruder.lane_loaded = "lane1"  # same as target
 
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: {"LANE": "lane1", "PURGE_LENGTH": None}.get(key, default)
+        gcmd = _build_gcmd({"LANE": "lane1", "PURGE_LENGTH": None})
 
         obj.cmd_TOOL_LOAD(gcmd)
 
@@ -2201,8 +2199,7 @@ class TestCmdToolLoad_LaneLoadedGuard:
         obj, lane, extruder = self._make_cmd_afc()
         extruder.lane_loaded = "lane2"  # different lane — stale, let TOOL_LOAD handle it
 
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: {"LANE": "lane1", "PURGE_LENGTH": None}.get(key, default)
+        gcmd = _build_gcmd({"LANE": "lane1", "PURGE_LENGTH": None})
 
         obj.cmd_TOOL_LOAD(gcmd)
 
@@ -2218,8 +2215,7 @@ class TestCmdToolLoad_LaneLoadedGuard:
         extruder.lane_loaded = None
         obj.TOOL_LOAD.return_value = False
 
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: {"LANE": "lane1", "PURGE_LENGTH": None}.get(key, default)
+        gcmd = _build_gcmd({"LANE": "lane1", "PURGE_LENGTH": None})
 
         obj.cmd_TOOL_LOAD(gcmd)
 
@@ -2230,8 +2226,7 @@ class TestCmdToolLoad_LaneLoadedGuard:
         obj, lane, extruder = self._make_cmd_afc()
         extruder.lane_loaded = None
 
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: {"LANE": "lane1", "PURGE_LENGTH": None}.get(key, default)
+        gcmd = _build_gcmd({"LANE": "lane1", "PURGE_LENGTH": None})
 
         obj.cmd_TOOL_LOAD(gcmd)
 
@@ -2249,9 +2244,7 @@ class TestCmdToolLoad_UnknownLane:
         obj.TOOL_LOAD = MagicMock(return_value=True)
         obj.error = MagicMock()
 
-        params = {"LANE": "lane_missing", "PURGE_LENGTH": None}
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: params.get(key, default)
+        gcmd = _build_gcmd({"LANE": "lane_missing", "PURGE_LENGTH": None})
 
         obj.cmd_TOOL_LOAD(gcmd)
 
@@ -2280,9 +2273,7 @@ class TestCmdToolUnload_ErrorCounting:
         return obj, lane
 
     def _make_gcmd(self):
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: {"LANE": "lane1"}.get(key, default)
-        return gcmd
+        return _build_gcmd({"LANE": "lane1"})
 
     def test_increase_unload_error_count_called_with_afc_instance(self):
         """increase_unload_error_count() now takes the afc instance itself
@@ -2322,10 +2313,7 @@ class TestCmdToolUnload_Guards:
 
     @staticmethod
     def _make_gcmd(params=None):
-        params = params or {}
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: params.get(key, default)
-        return gcmd
+        return _build_gcmd(params)
 
     def test_bypass_detected_returns_without_calling_tool_unload(self):
         """When _check_bypass(unload=True) is truthy, cmd_TOOL_UNLOAD returns
@@ -3206,11 +3194,7 @@ def _make_afc_for_lane_move(is_printing=False):
 
 
 def _make_gcmd(lane="lane1", distance=10.0, force=0):
-    gcmd = MagicMock()
-    gcmd.get.side_effect = lambda key, default=None: {"LANE": lane}.get(key, default)
-    gcmd.get_float.side_effect = lambda key, default=0: {"DISTANCE": distance}.get(key, default)
-    gcmd.get_int.side_effect = lambda key, default=0: {"FORCE": force}.get(key, default)
-    return gcmd
+    return _build_gcmd({"LANE": lane, "DISTANCE": distance, "FORCE": force})
 
 
 class TestCmdLaneMove:

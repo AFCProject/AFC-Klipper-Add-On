@@ -882,8 +882,8 @@ class TestCmdAfcResume:
         afc.gcode_move.last_position = [0.0, 0.0, 0.0]
         afc.move_z_pos = MagicMock()
         afc.restore_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.set_error_state = MagicMock()
         err.cmd_AFC_RESUME(gcmd)
         afc.gcode.run_script_from_command.assert_called_once()
@@ -898,8 +898,8 @@ class TestCmdAfcResume:
         afc.gcode_move.last_position = [0.0, 0.0, 0.0]  # z=0 ≤ 0+0.5
         afc.move_z_pos = MagicMock()
         afc.restore_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.set_error_state = MagicMock()
         err.cmd_AFC_RESUME(gcmd)
         afc.move_z_pos.assert_called_once()
@@ -912,8 +912,8 @@ class TestCmdAfcResume:
         afc.gcode_move.last_position = [0.0, 0.0, 10.0]  # z=10 > 0+0.5
         afc.move_z_pos = MagicMock()
         afc.restore_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.set_error_state = MagicMock()
         err.cmd_AFC_RESUME(gcmd)
         afc.move_z_pos.assert_not_called()
@@ -938,8 +938,8 @@ class TestCmdAfcResume:
         afc.gcode_move.last_position = [0.0, 0.0, 0.0]
         afc.move_z_pos = MagicMock()
         afc.restore_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.set_error_state = MagicMock()
         err.pause = True
         err.cmd_AFC_RESUME(gcmd)
@@ -957,8 +957,8 @@ class TestCmdAfcResume:
         afc.gcode_move.last_position = [0.0, 0.0, 0.0]
         afc.move_z_pos = MagicMock()
         afc.restore_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.set_error_state = MagicMock()
         err.pause = True
         err.cmd_AFC_RESUME(gcmd)
@@ -978,8 +978,8 @@ class TestCmdAfcResume:
         afc.gcode_move.last_position = [0.0, 0.0, 0.0]
         afc.move_z_pos = MagicMock()
         afc.restore_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.set_error_state = MagicMock()
         err.pause = True
         err.cmd_AFC_RESUME(gcmd)
@@ -1001,8 +1001,8 @@ class TestCmdAfcResume:
         afc.gcode_move.last_position = [0.0, 0.0, 0.0]
         afc.move_z_pos = MagicMock()
         afc.restore_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.set_error_state = MagicMock()
         err.pause = True
         err.cmd_AFC_RESUME(gcmd)
@@ -1041,8 +1041,8 @@ class TestCmdAfcPause:
         afc.move_z_pos = MagicMock()
         afc.last_gcode_position = [0.0, 0.0, 0.0, 0.0]
         afc.gcode_move.last_position = [0.0, 0.0, 0.0]
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.cmd_AFC_PAUSE(gcmd)
         # run_script_from_command called at least twice: PAUSE macro + SET_IDLE_TIMEOUT
         assert afc.gcode.run_script_from_command.call_count >= 1
@@ -1085,8 +1085,8 @@ class TestCmdAfcPause:
         afc.z_hop = 0.5  # target = 0 + 0.5 = 0.5
         afc.gcode_move.last_position = [0.0, 0.0, 1.0]  # current z = 1.0 > 0.5
         afc.move_z_pos = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get_raw_command_parameters.return_value = ""
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
         err.cmd_AFC_PAUSE(gcmd)
         afc.move_z_pos.assert_not_called()
         assert err.logger.messages == [

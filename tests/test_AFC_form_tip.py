@@ -60,11 +60,8 @@ def _make_tip_form(values=None):
 
 
 def _make_gcmd(**kwargs):
-    gcmd = MagicMock()
-    gcmd.get_float = lambda key, default: kwargs.get(key, default)
-    gcmd.get_int = lambda key, default: int(kwargs.get(key, default))
-    gcmd.get = lambda key, default: str(kwargs.get(key, default))
-    return gcmd
+    from tests.conftest import MockGCodeCommand
+    return MockGCodeCommand(params=kwargs)
 
 
 # ── Attribute initialization ──────────────────────────────────────────────────

@@ -654,19 +654,15 @@ class TestCalibrateAFC:
 
     def _make_gcmd_for_calibration(self, distance=25, tolerance=5, bowden=None, lane=None,
                                    unit=None, TD1=None):
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
+        from tests.conftest import MockGCodeCommand
+        return MockGCodeCommand(params={
             "BOWDEN": bowden,
             "LANE": lane,
             "UNIT": unit,
-            "TD1": TD1
-        }.get(key, default)
-
-        gcmd.get_float.side_effect = lambda key, default=None: {
+            "TD1": TD1,
             "DISTANCE": distance,
             "TOLERANCE": tolerance,
-        }.get(key, default)
-        return gcmd
+        })
 
     def _setup_calibration(self, standalone=False, td1_present=False, moonraker=None):
         """Builds func/afc/lane with the defaults nearly every test relies on."""
@@ -1239,11 +1235,8 @@ class TestCmdAfcLaneResetUnitDelegation:
         afc, lane = self._make_afc_lane()
         func.afc = afc
         func.get_current_lane_obj = MagicMock(return_value=None)
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
-            "LANE": lane.name,
-            "DISTANCE": distance,
-        }.get(key, default)
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand(params={"LANE": lane.name, "DISTANCE": distance})
         return func, lane, gcmd
 
     def _make_afc_lane(self):
@@ -1320,11 +1313,8 @@ class TestCmdAfcLaneResetToolheadLoadedGuard:
         func = _make_func()
         afc, lane = self._make_afc_lane()
         func.afc = afc
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
-            "LANE": lane.name,
-            "DISTANCE": distance,
-        }.get(key, default)
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand(params={"LANE": lane.name, "DISTANCE": distance})
         return func, lane, gcmd
 
     def _make_afc_lane(self):

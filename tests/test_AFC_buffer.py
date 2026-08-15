@@ -183,15 +183,13 @@ def _make_fps_buffer(name="FPS_buffer1", **overrides):
     return buf, afc, reactor, printer
 
 def _make_gcmd(values=None, floats=None):
-    """General-purpose gcmd mock: gcmd.get(key) / gcmd.get_float(key) pull
-    from the given dicts, falling back to the provided default arg."""
-    values = values or {}
-    floats = floats or {}
-    gcmd = MagicMock()
-    gcmd.get = MagicMock(side_effect=lambda k, default=None: values.get(k, default))
-    gcmd.get_float = MagicMock(side_effect=lambda k, default=None, **kw: floats.get(k, default))
-    gcmd.error = MagicMock(side_effect=lambda msg: Exception(msg))
-    return gcmd
+    """General-purpose gcmd mock backed by MockGCodeCommand: values/floats
+    are merged into one params dict, mirroring real Klipper's single
+    underlying params dict (get()/get_float() differ only in how they parse
+    the same stored value, not in where it comes from)."""
+    from tests.conftest import MockGCodeCommand
+    params = {**(values or {}), **(floats or {})}
+    return MockGCodeCommand(params=params)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1649,8 +1647,7 @@ class TestCmdEnableBuffer:
         """cmd_ENABLE_BUFFER should call enable_buffer() exactly once."""
         buf = _make_buffer()
         lane = _make_lane(buf)
-        gcmd = MagicMock()
-        gcmd.get.return_value = "lane1"
+        gcmd = _make_gcmd({"LANE": "lane1"})
         buf.enable_buffer = MagicMock()
         buf.cmd_ENABLE_BUFFER(gcmd)
         buf.enable_buffer.assert_called_once()
@@ -1660,17 +1657,14 @@ class TestCmdEnableBuffer:
         buf = _make_buffer()
         lane = _make_lane(buf)
         buf.set_multiplier = MagicMock()
-        gcmd = MagicMock()
-        gcmd.get.return_value = "lane1"
+        gcmd = _make_gcmd({"LANE": "lane1"})
         buf.cmd_ENABLE_BUFFER(gcmd)
         assert buf.enable is True
         assert buf.current_lane == lane
 
     def test_unassigned_lane_raises_gcmd_error(self):
         buf = _make_buffer()
-        gcmd = MagicMock()
-        gcmd.get.return_value = "not_a_real_lane"
-        gcmd.error = MagicMock(side_effect=lambda msg: Exception(msg))
+        gcmd = _make_gcmd({"LANE": "not_a_real_lane"})
         with pytest.raises(Exception, match="not_a_real_lane not assigned"):
             buf.cmd_ENABLE_BUFFER(gcmd)
 
@@ -1701,10 +1695,9 @@ class TestCmdDisableBuffer:
 # ── cmd_AFC_SET_ERROR_SENSITIVITY ─────────────────────────────────────────────
 
 def _gcmd(sensitivity):
-    """Return a mock gcmd whose get_float returns the given sensitivity."""
-    gcmd = MagicMock()
-    gcmd.get_float.return_value = sensitivity
-    return gcmd
+    """Return a mock gcmd whose get_float('SENSITIVITY', ...) returns the
+    given sensitivity."""
+    return _make_gcmd(floats={"SENSITIVITY": sensitivity})
 
 
 class TestCmdSetErrorSensitivity:

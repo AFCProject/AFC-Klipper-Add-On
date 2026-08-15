@@ -233,8 +233,8 @@ class TestCmdAfcSelectLane:
         lane = _make_lane("lane1")
         unit.afc.lanes = {"lane1": lane}
         unit.select_lane = MagicMock(return_value=(True, 15.0))
-        gcmd = MagicMock()
-        gcmd.get.return_value = "lane1"
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand(params={"LANE": "lane1"})
         unit.cmd_AFC_SELECT_LANE(gcmd)
         unit.select_lane.assert_called_once_with(lane)
 
@@ -243,8 +243,8 @@ class TestCmdAfcSelectLane:
         lane = _make_lane("lane1")
         unit.afc.lanes = {"lane1": lane}
         unit.select_lane = MagicMock(return_value=(True, 15.0))
-        gcmd = MagicMock()
-        gcmd.get.return_value = "lane1"
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand(params={"LANE": "lane1"})
         unit.cmd_AFC_SELECT_LANE(gcmd)
         info_msgs = [m for lvl, m in unit.logger.messages if lvl == "info"]
         assert any("lane1" in m for m in info_msgs)
@@ -254,8 +254,8 @@ class TestCmdAfcSelectLane:
         lane = _make_lane("lane1")
         unit.afc.lanes = {"lane1": lane}
         unit.select_lane = MagicMock(return_value=(False, 0))
-        gcmd = MagicMock()
-        gcmd.get.return_value = "lane1"
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand(params={"LANE": "lane1"})
         unit.cmd_AFC_SELECT_LANE(gcmd)
         error_msgs = [m for lvl, m in unit.logger.messages if lvl == "error"]
         assert any("lane1" in m for m in error_msgs)
@@ -263,8 +263,8 @@ class TestCmdAfcSelectLane:
     def test_calls_gcmd_error_when_lane_not_found(self):
         unit = _make_vivid()
         unit.afc.lanes = {}
-        gcmd = MagicMock()
-        gcmd.get.return_value = "missing_lane"
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand(params={"LANE": "missing_lane"})
         unit.cmd_AFC_SELECT_LANE(gcmd)
         gcmd.error.assert_called()
 

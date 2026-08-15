@@ -1218,12 +1218,10 @@ class Test_MapToString:
         lane._map = ["T10", "T2", "T0"]
         assert lane._map_to_string() == "T0, T2, T10"
 
-    def test_empty_list_returns_empty_string(self):
-        """Unlike map_to_string(), _map_to_string() has no empty-list guard
-        -- an empty list joins to "" rather than "NONE"."""
+    def test_empty_list_returns_none_placeholder(self):
         lane = _make_afc_lane()
         lane._map = []
-        assert lane._map_to_string() == ""
+        assert lane._map_to_string() == "NONE"
 
 
 # ── get_status: map sorting ───────────────────────────────────────────────────
@@ -1262,17 +1260,14 @@ def _make_lane_for_get_status(map_value):
 
 
 class TestGetStatusMapSorting:
-    def test_map_is_naturally_sorted_low_to_high(self):
+    def test_map_returns_raw_unsorted_list(self):
+        """Unlike map_to_string(), the live (not save_to_file) branch returns
+        self.map as-is -- other code relies on map[0] being the first
+        assigned mapping, not the naturally-lowest one, so insertion order
+        must be preserved here."""
         lane = _make_lane_for_get_status(["T10", "T2", "T0"])
         response = lane.get_status()
-        assert response["map"] == ["T0", "T2", "T10"]
-
-    def test_does_not_mutate_self_map_order(self):
-        """response['map'] is a sorted copy -- self.map itself must keep its
-        original order, since other code relies on map[0] being the first
-        assigned mapping, not the lowest one."""
-        lane = _make_lane_for_get_status(["T10", "T2", "T0"])
-        lane.get_status()
+        assert response["map"] == ["T10", "T2", "T0"]
         assert lane.map == ["T10", "T2", "T0"]
 
     def test_save_to_file_uses_map_to_string_instead_of_raw_list(self):

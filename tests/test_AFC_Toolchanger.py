@@ -13,6 +13,15 @@ from extras.AFC import State
 from extras.AFC_lane import AFCMoveWarning
 from tests.test_AFC_extruder import _make_extruder_obj
 
+
+def _build_gcmd(params=None, commandline=""):
+    """Build a gcmd mock backed by MockGCodeCommand, matching real Klipper's
+    sentinel-based .get() semantics (raises when a param has no value and no
+    default is supplied by the caller under test)."""
+    from tests.conftest import MockGCodeCommand
+    return MockGCodeCommand(params=params or {}, commandline=commandline)
+
+
 def _make_toolchanger(values=None):
     """Build a real AfcToolchanger via its actual __init__ (mocking config/
     printer/reactor dependencies), rather than bypassing construction with
@@ -259,10 +268,7 @@ class TestcmdAFCSelectTool:
         extruder1 = _make_extruder_for_toolchanger(tool, "e1", "extruder1")
 
         key_tool = "extruder"
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
-            "TOOL": key_tool
-        }.get(key, default)
+        gcmd = _build_gcmd({"TOOL": key_tool})
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
         tool.tool_swap.assert_called_once_with(extruder.tc_lane)
@@ -274,10 +280,7 @@ class TestcmdAFCSelectTool:
         extruder1 = _make_extruder_for_toolchanger(tool, "e1", "extruder1")
         
         key_tool = "e1"
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
-            "TOOL": key_tool
-        }.get(key, default)
+        gcmd = _build_gcmd({"TOOL": key_tool})
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
         tool.tool_swap.assert_called_once_with(extruder1.tc_lane)
@@ -289,10 +292,7 @@ class TestcmdAFCSelectTool:
         extruder1 = _make_extruder_for_toolchanger(tool, "e1", "extruder1")
         
         key_tool = "e2"
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
-            "TOOL": key_tool
-        }.get(key, default)
+        gcmd = _build_gcmd({"TOOL": key_tool})
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
         tool.tool_swap.assert_not_called()
@@ -307,10 +307,7 @@ class TestcmdAFCSelectTool:
         extruder1.tc_lane = None
 
         key_tool = "e1"
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
-            "TOOL": key_tool
-        }.get(key, default)
+        gcmd = _build_gcmd({"TOOL": key_tool})
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
         tool.tool_swap.assert_not_called()
@@ -326,10 +323,7 @@ class TestcmdAFCSelectTool:
         sentinel = object()
         extruder.status = sentinel
 
-        gcmd = MagicMock()
-        gcmd.get.side_effect = lambda key, default=None: {
-            "TOOL": "unknown"
-        }.get(key, default)
+        gcmd = _build_gcmd({"TOOL": "unknown"})
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
 
@@ -350,7 +344,7 @@ class TestCmdAFCUnselectTool:
     def test_calls_increase_unselect(self):
         extruder = _make_extruder_obj()
         tool = _make_toolchanger_for_unselect(current_extruder=extruder)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -366,7 +360,7 @@ class TestCmdAFCUnselectTool:
             captured["state_during_unselect"] = tool.afc.current_state
 
         tool.afc.gcode.run_script_from_command = MagicMock(side_effect=_capture)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -383,7 +377,7 @@ class TestCmdAFCUnselectTool:
             captured["status_during_unselect"] = extruder.status
 
         tool.afc.gcode.run_script_from_command = MagicMock(side_effect=_capture)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -394,7 +388,7 @@ class TestCmdAFCUnselectTool:
         """Covers the `current_extruder` falsy branch: no .status assignment
         happens, but current_state still transitions normally."""
         tool = _make_toolchanger_for_unselect(current_extruder=None)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -404,7 +398,7 @@ class TestCmdAFCUnselectTool:
         extruder = _make_extruder_obj()
         extruder.custom_unselect = "MY_CUSTOM_UNSELECT"
         tool = _make_toolchanger_for_unselect(current_extruder=extruder)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -418,7 +412,7 @@ class TestCmdAFCUnselectTool:
         extruder = _make_extruder_obj()
         extruder.custom_unselect = None
         tool = _make_toolchanger_for_unselect(current_extruder=extruder)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -427,7 +421,7 @@ class TestCmdAFCUnselectTool:
     def test_runs_default_unselect_when_no_current_extruder(self):
         """Covers the `current_extruder` falsy half of the combined condition."""
         tool = _make_toolchanger_for_unselect(current_extruder=None)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -439,7 +433,7 @@ class TestCmdAFCUnselectTool:
         lane_obj.load_state = True
         lane_obj.tool_loaded = True
         tool = _make_toolchanger_for_unselect(current_lane=lane_obj)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -453,7 +447,7 @@ class TestCmdAFCUnselectTool:
         lane_obj.load_state = True
         lane_obj.tool_loaded = False
         tool = _make_toolchanger_for_unselect(current_lane=lane_obj)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -467,7 +461,7 @@ class TestCmdAFCUnselectTool:
         lane_obj.prep_state = False
         lane_obj.load_state = True
         tool = _make_toolchanger_for_unselect(current_lane=lane_obj)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -482,7 +476,7 @@ class TestCmdAFCUnselectTool:
         lane_obj.prep_state = True
         lane_obj.load_state = False
         tool = _make_toolchanger_for_unselect(current_lane=lane_obj)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -490,14 +484,14 @@ class TestCmdAFCUnselectTool:
 
     def test_no_lane_actions_when_no_current_lane(self):
         tool = _make_toolchanger_for_unselect(current_lane=None)
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         # Must not raise despite no lane_obj being present.
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
     def test_sets_active_spool_empty(self):
         tool = _make_toolchanger_for_unselect()
-        gcmd = MagicMock()
+        gcmd = _build_gcmd()
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
@@ -744,11 +738,7 @@ class TestToolSwap:
 # ── cmd_AFC_SET_TOOLHEAD_LED ────────────────────────────────────────────────
 
 def _make_gcmd_for_set_toolhead_led(mapping="T0", turn_on=1):
-    gcmd = MagicMock()
-    gcmd.get.side_effect = lambda key, default=None: {"MAP": mapping}.get(key, default)
-    gcmd.get_int.side_effect = lambda key, default=None: {"TURN_ON": turn_on}.get(key, default)
-    gcmd.error = MagicMock(side_effect=lambda msg: Exception(msg))
-    return gcmd
+    return _build_gcmd({"MAP": mapping, "TURN_ON": turn_on})
 
 
 class TestCmdAFCSetToolheadLed:

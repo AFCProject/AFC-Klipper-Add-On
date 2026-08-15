@@ -646,13 +646,19 @@ class TestUpdateToolAfterExtr:
 class TestCmdUpdateToolheadSensors:
     def _make_gcmd(self, tool_stn=None, tool_stn_unload=None, tool_after=None,
                    ext=None):
-        gcmd = MagicMock()
-        gcmd.get_float.side_effect = lambda key, default: {
-            "TOOL_STN": tool_stn if tool_stn is not None else (ext.tool_stn if ext else default),
-            "TOOL_STN_UNLOAD": tool_stn_unload if tool_stn_unload is not None else (ext.tool_stn_unload if ext else default),
-            "TOOL_AFTER_EXTRUDER": tool_after if tool_after is not None else (ext.tool_sensor_after_extruder if ext else default),
-        }[key]
-        return gcmd
+        """Values left as None fall through to cmd_UPDATE_TOOLHEAD_SENSORS's
+        own default (gcmd.get_float(..., self.tool_stn) etc.), so there's no
+        need to duplicate that fallback here -- ext is unused now but kept
+        as a parameter so existing call sites don't need to change."""
+        from tests.conftest import MockGCodeCommand
+        params = {}
+        if tool_stn is not None:
+            params["TOOL_STN"] = tool_stn
+        if tool_stn_unload is not None:
+            params["TOOL_STN_UNLOAD"] = tool_stn_unload
+        if tool_after is not None:
+            params["TOOL_AFTER_EXTRUDER"] = tool_after
+        return MockGCodeCommand(params=params)
 
     def test_changed_tool_stn_calls_update(self):
         ext = _make_afc_extruder()

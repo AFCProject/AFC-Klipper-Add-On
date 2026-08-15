@@ -14,6 +14,7 @@ import pathlib
 import queue
 import sys
 import types
+from typing import Callable
 from unittest.mock import MagicMock, patch  # noqa: F401
 
 import pytest
@@ -118,13 +119,14 @@ def _make_webhooks_mock():
     return mod
 
 
+class CommandError(Exception):
+    """Mirrors Klipper's gcode.CommandError -- raised by GCodeCommand.get()
+    (real and mocked) and by run_script_from_command failures."""
+
+
 def _make_gcode_mock():
     """Mock for Klipper's gcode module."""
     mod = types.ModuleType("gcode")
-
-    class CommandError(Exception):
-        pass
-
     mod.CommandError = CommandError
     return mod
 
@@ -338,6 +340,111 @@ class MockGcode:
 
     def create_gcode_command(self, command, commandline, params):
         return MagicMock()
+
+
+class MockGCodeCommand:
+    """Mock for Klipper's GCodeCommand, mirroring gcode.py's real .get()/
+    .get_int()/.get_float() sentinel-default semantics: a parameter with no
+    default supplied and no value in params raises .error(...), exactly like
+    real Klipper -- so code under test that assumes a parameter is present
+    can't silently receive None back in a test the way a bare
+    MagicMock()/lambda mock would let it.
+
+    Values are stored as given (not coerced to strings the way a real parsed
+    command line would be) so tests can pass native ints/floats/strings for
+    convenience; get_int()/get_float() still route through the same parser/
+    minval/maxval/above/below validation as real Klipper.
+    """
+
+    class sentinel:
+        pass
+
+    def __init__(self, params=None, commandline="", command=""):
+        self._params: dict = dict(params or {})
+        self._commandline = commandline
+        self._command = command
+        # A trackable Mock (not a bare class attribute like real Klipper's
+        # `error = CommandError`) so tests can assert on the exact call
+        # (gcmd.error.assert_called_once_with(...)). side_effect is a lambda,
+        # not the CommandError class directly -- Mock's side_effect treats an
+        # exception class specially and raises it immediately with no args,
+        # which would silently drop the message. The lambda instead just
+        # returns a real CommandError(msg) for the caller to `raise`, exactly
+        # like production's `raise gcmd.error(msg)`.
+        self.error = MagicMock(side_effect=lambda *a, **kw: CommandError(*a, **kw))
+        self.respond_info = MagicMock()
+        self.respond_raw = MagicMock()
+        # get()/get_int()/get_float() are trackable Mocks wrapping the real
+        # (renamed _get*) implementations below via side_effect, so tests can
+        # both assert on the exact call (gcmd.get_int.assert_called_once_with(...))
+        # and get real sentinel/parsing/minval/maxval behavior back -- side_effect's
+        # return value becomes the mock's return value, and a raised exception
+        # propagates the same as calling the real method directly.
+        self.get = MagicMock(side_effect=self._get)
+        self.get_int = MagicMock(side_effect=self._get_int)
+        self.get_float = MagicMock(side_effect=self._get_float)
+
+    def get_command(self):
+        return self._command
+
+    def get_commandline(self):
+        return self._commandline
+
+    def get_raw_command_parameters(self):
+        """Mirrors real Klipper's slicing logic exactly, so the defaults
+        (command="", commandline="") naturally return "" without any extra
+        setup -- override get_raw_command_parameters on the instance for a
+        test that needs a specific raw string."""
+        command = self._command
+        origline = self._commandline
+        param_start = len(command)
+        param_end = len(origline)
+        if origline[:param_start].upper() != command:
+            param_start += origline.upper().find(command)
+            end = origline.rfind('*')
+            if end >= 0 and origline[end + 1:].isdigit():
+                param_end = end
+        if origline[param_start:param_start + 1].isspace():
+            param_start += 1
+        return origline[param_start:param_end]
+
+    def get_command_parameters(self):
+        return self._params
+
+    def _get(self, name, default=sentinel, parser: Callable = str, minval=None, maxval=None,
+             above=None, below=None):
+        value = self._params.get(name)
+        if value is None:
+            if default is self.sentinel:
+                error_str = f"Error on '{self._commandline}': missing {name}"
+                raise self.error(error_str)
+            return default
+        try:
+            value = parser(value)
+        except Exception:
+            error_str = f"Error on '{self._commandline}': unable to parse {value}"
+            raise self.error(error_str)
+        if minval is not None and value < minval:
+            error_str = f"Error on '{self._commandline}': {name} must have minimum of {minval}"
+            raise self.error(error_str)
+        if maxval is not None and value > maxval:
+            error_str = f"Error on '{self._commandline}': {name} must have maximum of {maxval}"
+            raise self.error(error_str)
+        if above is not None and value <= above:
+            error_str = f"Error on '{self._commandline}': {name} must be above {above}"
+            raise self.error(error_str)
+        if below is not None and value >= below:
+            error_str = f"Error on '{self._commandline}': {name} must be below {below}"
+            raise self.error(error_str)
+        return value
+
+    def _get_int(self, name, default=sentinel, minval=None, maxval=None):
+        return self._get(name, default, parser=int, minval=minval, maxval=maxval)
+
+    def _get_float(self, name, default=sentinel, minval=None, maxval=None,
+                   above=None, below=None):
+        return self._get(name, default, parser=float, minval=minval,
+                         maxval=maxval, above=above, below=below)
 
 
 class MockLogger:

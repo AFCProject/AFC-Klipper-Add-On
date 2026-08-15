@@ -22,6 +22,7 @@ from extras.AFC_utils import (
     VirtualRunoutHelper, VirtualFilamentSensor, AFC_PrintFileMetaData,
     natural_sort_key,
 )
+from tests.conftest import MockGCodeCommand
 
 
 # ── natural_sort_key ────────────────────────────────────────────────────────
@@ -1048,7 +1049,7 @@ class TestVirtualFilamentSensor:
         printer = self._make_printer_with_add_object()
         sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
         sensor.runout_helper.note_filament_present(100.0, True)
-        gcmd = MagicMock()
+        gcmd = MockGCodeCommand()
         sensor.cmd_QUERY_FILAMENT_SENSOR(gcmd)
         gcmd.respond_info.assert_called_once_with(
             "Filament Sensor FPS1_expanded: filament detected")
@@ -1056,7 +1057,7 @@ class TestVirtualFilamentSensor:
     def test_cmd_query_filament_sensor_reports_not_detected(self):
         printer = self._make_printer_with_add_object()
         sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
-        gcmd = MagicMock()
+        gcmd = MockGCodeCommand()
         sensor.cmd_QUERY_FILAMENT_SENSOR(gcmd)
         gcmd.respond_info.assert_called_once_with(
             "Filament Sensor FPS1_expanded: filament not detected")
@@ -1064,8 +1065,7 @@ class TestVirtualFilamentSensor:
     def test_cmd_set_filament_sensor_enables(self):
         printer = self._make_printer_with_add_object()
         sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
-        gcmd = MagicMock()
-        gcmd.get_int = MagicMock(return_value=1)
+        gcmd = MockGCodeCommand(params={"ENABLE": 1})
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
         gcmd.get_int.assert_called_once_with("ENABLE", 1, minval=0, maxval=1)
         assert sensor.runout_helper.sensor_enabled is True
@@ -1074,7 +1074,6 @@ class TestVirtualFilamentSensor:
         printer = self._make_printer_with_add_object()
         sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
         sensor.runout_helper.sensor_enabled = True
-        gcmd = MagicMock()
-        gcmd.get_int = MagicMock(return_value=0)
+        gcmd = MockGCodeCommand(params={"ENABLE": 0})
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
         assert sensor.runout_helper.sensor_enabled is False

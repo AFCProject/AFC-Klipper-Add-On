@@ -109,20 +109,8 @@ def _make_oams(oams_idx=0, config_values=None):
 
 def _make_gcmd(values=None):
     """Minimal gcmd stand-in matching AFC's GCodeCommand-ish interface."""
-    values = values or {}
-    gcmd = MagicMock()
-
-    def get_float(name, default=None, **kwargs):
-        return values.get(name, default)
-
-    def get_int(name, default=None, **kwargs):
-        return values.get(name, default)
-
-    gcmd.get_float = MagicMock(side_effect=get_float)
-    gcmd.get_int = MagicMock(side_effect=get_int)
-    gcmd.error = MagicMock(side_effect=lambda msg: Exception(msg))
-    gcmd.respond_info = MagicMock()
-    return gcmd
+    from tests.conftest import MockGCodeCommand
+    return MockGCodeCommand(params=values or {})
 
 
 # ── OAMSStatus / OAMSOpCode / _oams_enum_name ────────────────────────────────
