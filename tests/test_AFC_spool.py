@@ -1353,6 +1353,9 @@ class TestSetSpoolID:
         return spool
 
     def test_no_spoolman_not_remember_spool_clears_values(self):
+        """Covers the `spoolman is not None` half of the combined condition
+        being falsy on its own -- _make_spool()'s afc.moonraker defaults to
+        set, so this proves moonraker alone isn't enough either."""
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1367,6 +1370,18 @@ class TestSetSpoolID:
         spool.clear_values = MagicMock()
         spool.set_spoolID(lane, "")
         spool.clear_values.assert_not_called()
+
+    def test_spoolman_set_but_no_moonraker_clears_values(self):
+        """Covers the `moonraker is not None` half of the combined condition
+        being falsy on its own, with spoolman still set -- proves spoolman
+        alone isn't enough to enter the lookup branch."""
+        spool = self._make_spool_with_spoolman()
+        spool.afc.moonraker = None
+        lane = _make_lane()
+        lane.remember_spool = False
+        spool.clear_values = MagicMock()
+        spool.set_spoolID(lane, "42")
+        spool.clear_values.assert_called_once_with(lane)
 
     def test_valid_spool_id_sets_lane_attributes(self):
         spool = self._make_spool_with_spoolman()

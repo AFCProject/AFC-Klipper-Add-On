@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from gcode import CommandError
 
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -124,18 +124,18 @@ class AFCLane:
         # when lanes are unloaded
         self.tool_loaded        = False
         self.loaded_to_hub      = False
-        self.spool_id           = None
+        self.spool_id: Optional[Union[int, str]] = None
         self.color: str         = ""
         self.multi_color: list  = []
         self.spool_vendor: str  = ""
         self.filament_name: str = ""
         self.weight: float      = 0.
-        self.auto_switch_triggered = False
+        self.auto_switch_triggered: bool = False
         self._material: str     = None
-        self.extruder_temp      = None
-        self.bed_temp           = None
+        self.extruder_temp: Optional[int] = None
+        self.bed_temp: Optional[int] = None
         self.td1_data           = {}
-        self.runout_lane        = None
+        self.runout_lane: Optional[str] = None
         self.status             = AFCLaneState.NONE
         self.need_purge         = False
         self._afc_staged_spool_id: Optional[int] = None
@@ -149,7 +149,7 @@ class AFCLane:
         self.hub: Optional[str] = config.get('hub',None)                                # Hub name(AFC_hub) that belongs to this stepper, overrides hub that is set in unit(AFC_BoxTurtle/NightOwl/etc) section.
         # Overrides buffers set at the unit and extruder level
         self.buffer_name: Optional[str] = config.get("buffer", None)                            # Buffer name(AFC_buffer) that belongs to this stepper, overrides buffer that is set in extruder(AFC_extruder) or unit(AFC_BoxTurtle/NightOwl/etc) sections.
-        self.unit               = unit.split(':')[0]
+        self.unit: str           = unit.split(':')[0]
         try:
             self.index              = int(unit.split(':')[1])
         except:
@@ -170,9 +170,9 @@ class AFCLane:
 
         # LED SETTINGS
         # All variables use: (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.led_index            = config.get('led_index', None)                       # LED index of lane in chain of lane LEDs
+        self.led_index: Optional[str] = config.get('led_index', None)                       # LED index of lane in chain of lane LEDs
         self.led_fault            = config.get('led_fault',None)                        # LED color to set when faults occur in lane
-        self.led_ready            = config.get('led_ready',None)                        # LED color to set when lane is ready
+        self.led_ready: Optional[str] = config.get('led_ready',None)                        # LED color to set when lane is ready
         self.led_not_ready        = config.get('led_not_ready',None)                    # LED color to set when lane not ready
         self.led_loading          = config.get('led_loading',None)                      # LED color to set when lane is loading
         self.led_prep_loaded      = config.get('led_loading',None)                      # LED color to set when lane is loaded
@@ -240,7 +240,7 @@ class AFCLane:
 
         self.selector: str = config.get("selector", None)
 
-        self.espooler = AFC_assist.Espooler(self.name, config)
+        self.espooler: AFC_assist.Espooler = AFC_assist.Espooler(self.name, config)
         self.lane_load_count = None
 
         self.filament_diameter: float  = config.getfloat("filament_diameter", 1.75)    # Diameter of filament being used

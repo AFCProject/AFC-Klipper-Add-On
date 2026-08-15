@@ -453,7 +453,7 @@ class Espooler:
 
         self.past_extruder_position = -1
 
-        self.espooler_values        = Espooler_values(config)
+        self.espooler_values: Espooler_values = Espooler_values(config)
         self.stats                  = None
 
         self.function = self.printer.load_object(config, 'AFC_functions')
