@@ -156,6 +156,7 @@ def _make_afc():
     obj.print_tool_temperatures = []
     obj.print_data_metadata = None
     obj.disable_print_temp_check = False
+    obj.enable_multiple_mapping = False
     return obj
 
 
@@ -240,7 +241,7 @@ class TestGetStatus:
         required = {
             "current_load", "current_state", "error_state",
             "lanes", "extruders", "hubs", "buffers", "units",
-            "message", "position_saved",
+            "message", "position_saved", "multiple_tool_mapping"
         }
         for key in required:
             assert key in status, f"Missing key: {key}"
@@ -281,6 +282,15 @@ class TestGetStatus:
         obj = _make_afc()
         assert obj.get_status()["version"] == AFC_VERSION
 
+    def test_multiple_tool_mapping_disabled(self):
+        obj = _make_afc()
+        assert obj.get_status()["multiple_tool_mapping"] == obj.enable_multiple_mapping
+    
+    def test_multiple_tool_mapping_enabled(self):
+        obj = _make_afc()
+        obj.enable_multiple_mapping = True
+        assert obj.get_status()["multiple_tool_mapping"] == obj.enable_multiple_mapping
+        
 
 # ── _webhooks_status ─────────────────────────────────────────────────────────
 
@@ -466,7 +476,7 @@ class TestCheckExtruderTemp:
         heater.can_extrude = True
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [230]
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         pheaters.set_temperature.assert_called_once_with(heater, 230.0)
         obj._wait_for_temp_within_tolerance.assert_called_once_with(obj.heater, 230,
@@ -481,7 +491,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [180, 220, 260]
-        lane.map = "T1"
+        lane.current_map = "T1"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_not_called()
         pheaters.set_temperature.assert_called_once_with(heater, 220.0)
@@ -496,7 +506,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [210]
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         pheaters.set_temperature.assert_called_once_with(heater, 210.0)
         obj._wait_for_temp_within_tolerance.assert_not_called()
@@ -510,7 +520,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = False
         obj.print_tool_temperatures = [999]
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_called_once_with(lane)
         pheaters.set_temperature.assert_called_once_with(heater, 210.0)
@@ -525,7 +535,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = []
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_called_once_with(lane)
         pheaters.set_temperature.assert_called_once_with(heater, 210.0)
@@ -550,7 +560,7 @@ class TestCheckExtruderTemp:
         heater.can_extrude = True
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = []
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_not_called()
         pheaters.set_temperature.assert_not_called()
@@ -567,7 +577,7 @@ class TestCheckExtruderTemp:
         heater.can_extrude = True
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = []
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_not_called()
         pheaters.set_temperature.assert_not_called()
@@ -584,23 +594,23 @@ class TestCheckExtruderTemp:
         heater.can_extrude = True
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [230]
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_not_called()
         pheaters.set_temperature.assert_not_called()
         assert result is None
 
-    # ── lane.map parsing failures ─────────────────────────────────────────────
+    # ── lane.current_map parsing failures ─────────────────────────────────────
 
     def test_non_numeric_lane_map_returns_without_setting_temp(self):
-        """lane.map that doesn't parse to an int after stripping "T" (ValueError)
+        """lane.current_map that doesn't parse to an int after stripping "T" (ValueError)
         logs and returns without touching the heater."""
         obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
             heater_target_temp=150, actual_temp=148, target_material_temp=210
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [230]
-        lane.map = "custom_lane"
+        lane.current_map = "custom_lane"
         result = obj._check_extruder_temp(lane)
         pheaters.set_temperature.assert_not_called()
         obj._wait_for_temp_within_tolerance.assert_not_called()
@@ -610,26 +620,26 @@ class TestCheckExtruderTemp:
         assert any("custom_lane" in m for m in infos)
 
     def test_lane_map_index_out_of_range_returns_without_setting_temp(self):
-        """lane.map index beyond print_tool_temperatures' length (IndexError)
+        """lane.current_map index beyond print_tool_temperatures' length (IndexError)
         logs and returns without touching the heater."""
         obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
             heater_target_temp=150, actual_temp=148, target_material_temp=210
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [230]
-        lane.map = "T5"
+        lane.current_map = "T5"
         result = obj._check_extruder_temp(lane)
         pheaters.set_temperature.assert_not_called()
         obj._wait_for_temp_within_tolerance.assert_not_called()
         obj._get_default_material_temps.assert_not_called()
         assert result is None
         infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
-        # Message logs lane.name + the caught exception, not cur_lane.map directly
+        # Message logs lane.name + the caught exception, not cur_lane.current_map directly
         # (see test_lane_map_attribute_error_returns_without_setting_temp for why).
         assert any(lane.name in m and "index out of range" in m for m in infos)
 
     def test_negative_lane_map_index_returns_without_setting_temp(self):
-        """lane.map that parses to a negative index (e.g. "T-1") is explicitly
+        """lane.current_map that parses to a negative index (e.g. "T-1") is explicitly
         rejected rather than silently wrapping around to the last entry in
         print_tool_temperatures via Python's negative-index semantics."""
         obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
@@ -637,7 +647,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [230, 999]
-        lane.map = "T-1"
+        lane.current_map = "T-1"
         result = obj._check_extruder_temp(lane)
         pheaters.set_temperature.assert_not_called()
         obj._wait_for_temp_within_tolerance.assert_not_called()
@@ -655,7 +665,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = {230}  # set: truthy but not subscriptable
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         pheaters.set_temperature.assert_not_called()
         obj._wait_for_temp_within_tolerance.assert_not_called()
@@ -665,11 +675,11 @@ class TestCheckExtruderTemp:
         assert any(lane.name in m and "not subscriptable" in m for m in infos)
 
     def test_lane_map_attribute_error_returns_without_setting_temp(self):
-        """An AttributeError raised while resolving lane.map (e.g. a custom
+        """An AttributeError raised while resolving lane.current_map (e.g. a custom
         object whose __str__ blows up) is caught and returns without touching
         the heater rather than propagating. The except handler must log via
-        lane.name/the caught exception rather than cur_lane.map -- referencing
-        cur_lane.map again here would re-raise the same AttributeError and
+        lane.name/the caught exception rather than cur_lane.current_map -- referencing
+        cur_lane.current_map again here would re-raise the same AttributeError and
         escape the try/except entirely."""
 
         class _RaisesAttributeError:
@@ -681,7 +691,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [230]
-        lane.map = _RaisesAttributeError()
+        lane.current_map = _RaisesAttributeError()
         result = obj._check_extruder_temp(lane)
         pheaters.set_temperature.assert_not_called()
         obj._wait_for_temp_within_tolerance.assert_not_called()
@@ -700,7 +710,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [None, 220]
-        lane.map = "T0"
+        lane.current_map = "T0"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_not_called()
         pheaters.set_temperature.assert_not_called()
@@ -3570,7 +3580,7 @@ class TestToolLoadNeedPurge:
         afc.gcode.run_script_from_command.assert_not_called()
 
         info_msgs = [m for lvl, m in afc.logger.messages if lvl == "info"]
-        assert any(f"Flag set to purge for {lane.extruder_obj.name}:{lane.map}" in m for m in info_msgs)
+        assert any(f"Flag set to purge for {lane.extruder_obj.name}:{lane.current_map}" in m for m in info_msgs)
 
     def test_need_purge_with_purge_length(self):
         afc, lane = self._make_afc_lane_for_need_purge()

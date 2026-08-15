@@ -10,6 +10,7 @@ from __future__ import annotations
 import traceback
 import json
 import inspect
+import re
 
 from datetime import datetime
 from urllib.request import (
@@ -38,6 +39,20 @@ if TYPE_CHECKING:
     from extras.pause_resume import PauseResume
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
+
+_NATURAL_SORT_RE = re.compile(r'(\d+)')
+
+def natural_sort_key(value: str) -> list:
+    """
+    Splits a string into digit/non-digit chunks so lists of e.g. T(n) macros
+    sort numerically (T2 before T10) rather than lexicographically (T10
+    before T2).
+
+    :param value: String to build a sort key for, e.g. "T10"
+    :return list: Chunks with digit runs converted to int for numeric ordering
+    """
+    return [int(chunk) if chunk.isdigit() else chunk.lower()
+            for chunk in _NATURAL_SORT_RE.split(value)]
 
 def add_filament_switch(switch_name: str, switch_pin: str, printer: Printer,
                         show_sensor: bool=True, runout_callback: Callable = None,

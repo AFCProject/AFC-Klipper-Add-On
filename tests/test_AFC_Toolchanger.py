@@ -36,7 +36,9 @@ def _make_extruder_for_toolchanger(toolchanger, afc_name="e0", extruder_name="ex
 def _make_lane_for_system_test(name="lane1", tcmd="T0"):
     lane = MagicMock()
     lane.name = name
-    lane.map = tcmd
+    lane.map = [tcmd]
+    lane.current_map = tcmd
+    lane.map_to_string = MagicMock(return_value=tcmd)
     lane.prep_state = False
     lane.load_state = False
     lane.extruder_obj.lane_loaded = None

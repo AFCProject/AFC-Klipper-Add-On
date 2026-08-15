@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Union, Optional, Any, List
 
 if TYPE_CHECKING:
     from extras.AFC import afc
-    from AFC_logger import AFC_logger
+    from extras.AFC_logger import AFC_logger
     from extras.AFC_lane import AFCLane
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_stepper import AFCExtruderStepper
@@ -232,7 +232,28 @@ class afcFunction:
         msg +='\n<span class=info--text>Key {} not found in section {} added to AFC_auto_vars.cfg file</span>'.format(rawkey, rawsection)
         self.logger.info(msg)
 
-    def TcmdAssign(self, cur_lane):
+    def register_tool_macro(self, lane_name: str, tool_command:str, rename_map: str="") -> None:
+        """
+        Helper method for registering T(n) macros into klipper
+
+        :param lane_name: Lane name when trying to register T(n) macro, this is only used when
+            an error has occurred and logs lane with T(n) macro
+        :param tool_command: T(n) macro to register
+        :param rename: When a non-empty string is supplied, this method calls _rename with this name
+            instead of calling gcode.register_command
+        """
+        try:
+            if rename_map:
+                self._rename(tool_command, rename_map, self.afc.cmd_CHANGE_TOOL,
+                             self.afc.cmd_CHANGE_TOOL_help)
+            else:
+                self.afc.gcode.register_command(tool_command, self.afc.cmd_CHANGE_TOOL,
+                                                desc=self.afc.cmd_CHANGE_TOOL_help)
+        except Exception:
+            self.logger.error((f"Error trying to map lane {lane_name} to {tool_command}, "
+                               f"please make sure there are no macros already setup for {tool_command}"))
+
+    def TcmdAssign(self, cur_lane: AFCLane) -> None:
         """
         Function automatically tries to generate T(n) macros for lanes. If user has already assigned mapping to `map`
         variable in their configs, this is used instead of an auto assigned command. Before assigning command, checks
@@ -243,30 +264,39 @@ class afcFunction:
 
         :param cur_lane: Lane to assign auto generated T(n) macro
         """
-        if cur_lane.map is None:
+        if not cur_lane.map:
             for x in range(99):
                 cmd = 'T{}'.format(x)
                 # Checking to see if cmd exists in lanes that have manually assigned mapping
                 # skip cmd and generate next if cmd is manually assigned by user
-                manually_assigned = any( cmd == lane._map for lane in self.afc.lanes.values() )
-                if not manually_assigned and cmd not in self.afc.tool_cmds:
+                manually_assigned = any( cmd in (lane.map or []) for lane in self.afc.lanes.values() )
+                if (not manually_assigned and
+                    cmd not in self.afc.tool_cmds):
                     # Checking if macro already exists, generate next valid cmd if current generated cmd exists
                     existing = False
                     if not self.afc.force_assign_map:
                         existing = self.afc.gcode.ready_gcode_handlers.get(cmd)
                     if not existing:
-                        cur_lane._map = cur_lane.map = cmd
+                        # Reassigning (not appending in place) so Klipper's
+                        # status diff sees a new list and pushes the update
+                        cur_lane.map = cur_lane.map + [cmd]
+                        cur_lane._map = cur_lane._map + [cmd]
                         break
-        self.afc.tool_cmds[cur_lane.map]=cur_lane.name
-        try:
-            if (cur_lane._map
-                or self.afc.force_assign_map):
-                rename_map = ("_{}".format(cur_lane.map))
-                self._rename(cur_lane.map, rename_map, self.afc.cmd_CHANGE_TOOL, self.afc.cmd_CHANGE_TOOL_help)
-            else:
-                self.afc.gcode.register_command(cur_lane.map, self.afc.cmd_CHANGE_TOOL, desc=self.afc.cmd_CHANGE_TOOL_help)
-        except:
-                self.logger.error("Error trying to map lane {lane} to {tool_macro}, please make sure there are no macros already setup for {tool_macro}".format(lane=[cur_lane.name], tool_macro=cur_lane.map), )
+                    # Set first T(n) macro to current map if its not already set
+                    if not cur_lane.current_map:
+                        cur_lane.current_map = cmd
+
+        use_rename = bool(cur_lane.map) or self.afc.force_assign_map
+        for map_str in cur_lane.map:
+            if map_str == "NONE":
+                continue
+            self.afc.tool_cmds.update({map_str: cur_lane.name})
+            # Set first T(n) macro to current map if its not already set
+            if not cur_lane.current_map:
+                cur_lane.current_map = map_str
+            rename_map = f"_{map_str}" if use_rename else ""
+            self.register_tool_macro(cur_lane.name, map_str, rename_map)
+
         self.afc.save_vars()
 
     def check_macro_present(self, macro_name):

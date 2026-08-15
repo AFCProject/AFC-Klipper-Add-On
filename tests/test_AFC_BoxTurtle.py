@@ -56,7 +56,9 @@ def _make_lane(prep_state=False, load_state=False, tool_loaded=False):
     lane.prep_state = prep_state
     lane.load_state = load_state
     lane.tool_loaded = tool_loaded
-    lane.map = "T0"
+    lane.map = ["T0"]
+    lane.current_map = "T0"
+    lane.map_to_string = MagicMock(return_value="T0")
     lane.led_ready = "0,1,0,0"
     lane.led_not_ready = "0,0,0,0.25"
     lane.led_fault = "1,0,0,0"

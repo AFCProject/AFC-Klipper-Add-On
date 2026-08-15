@@ -20,7 +20,31 @@ import pytest
 from extras.AFC_utils import (
     check_and_return, section_in_config, DebounceButton, AFC_moonraker,
     VirtualRunoutHelper, VirtualFilamentSensor, AFC_PrintFileMetaData,
+    natural_sort_key,
 )
+
+
+# ── natural_sort_key ────────────────────────────────────────────────────────
+
+class TestNaturalSortKey:
+    def test_sorts_t_macros_numerically_not_lexicographically(self):
+        items = ["T10", "T2", "T1", "T0"]
+        assert sorted(items, key=natural_sort_key) == ["T0", "T1", "T2", "T10"]
+
+    def test_digit_chunk_compares_as_int(self):
+        """Covers the digit branch of the inline conditional: "T10" and "T2"
+        share the same non-digit prefix, so only the int comparison of the
+        digit chunk decides the order."""
+        assert natural_sort_key("T2") < natural_sort_key("T10")
+
+    def test_non_digit_chunk_compares_as_lowercased_string(self):
+        """Covers the non-digit branch: differing prefixes are compared as
+        lowercased strings before any digit chunk is reached."""
+        assert natural_sort_key("ALPHA") < natural_sort_key("beta")
+
+    def test_placeholder_sorts_with_string_entries(self):
+        items = ["T1", "NONE", "T0"]
+        assert sorted(items, key=natural_sort_key) == ["NONE", "T0", "T1"]
 
 
 # ── check_and_return ──────────────────────────────────────────────────────────

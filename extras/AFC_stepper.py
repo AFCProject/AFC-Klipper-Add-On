@@ -24,7 +24,7 @@ try: from extras.AFC_lane import AFCLane, AFCHomingPoints, VALID_DIRECT_HUB
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
-    from toolhead import Toolhead
+    from toolhead import ToolHead
     from stepper import PrinterStepper
     from mcu import MCU_endstop
 
@@ -404,7 +404,7 @@ class AFCExtruderStepper(AFCLane):
         # Advance internal time to satisfy homing scheduler
         self.next_cmd_time += max(0., delay)
 
-    def _drip_update_time(self, toolhead: Toolhead, max_time: float, drip_completion) -> None:
+    def _drip_update_time(self, toolhead: ToolHead, max_time: float, drip_completion) -> None:
         """
         Helper function for mimicking how klipper toolhead does drip moves
 
@@ -460,7 +460,7 @@ class AFCExtruderStepper(AFCLane):
         dwell_time = self._submit_move( start_time, delta, speed, self._homing_accel)
         max_time = start_time + dwell_time
 
-        toolhead: Toolhead = self.printer.lookup_object('toolhead')
+        toolhead: ToolHead = self.printer.lookup_object('toolhead')
 
         # TODO: add a check for toolhead.drip_update_time and test with https://github.com/KalicoCrew/kalico/pull/825 PR
         if self.motion_queuing is None:

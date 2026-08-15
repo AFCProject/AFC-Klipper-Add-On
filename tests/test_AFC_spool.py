@@ -15,16 +15,14 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import pytest
 
-from extras.AFC_spool import AFCSpool
+from extras.AFC_spool import AFCSpool, load_config
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_spool():
-    """Build an AFCSpool instance bypassing __init__."""
-    spool = AFCSpool.__new__(AFCSpool)
-
-    from tests.conftest import MockAFC, MockPrinter, MockLogger, MockGcode
+    """Build an AFCSpool instance through the real __init__."""
+    from tests.conftest import MockAFC, MockConfig, MockPrinter, MockLogger, MockGcode
 
     afc = MockAFC()
     printer = MockPrinter(afc=afc)
@@ -36,15 +34,17 @@ def _make_spool():
     afc.lanes = {}
     afc.units = {}
 
-    spool.printer = printer
+    config = MockConfig(name="AFC_Spool", printer=printer)
+    spool = AFCSpool(config)
+
     spool.afc = afc
     spool.error = afc.error
     spool.reactor = afc.reactor
     spool.gcode = afc.gcode
     spool.logger = afc.logger
     spool.disable_weight_check = False
-    spool.next_spool_id = None
-    spool.SPOOLMAN_REMOTE_METHOD = 'spoolman_set_active_spool'
+    spool.enable_multiple_mapping = afc.enable_multiple_mapping
+    spool.function = afc.function
 
     return spool
 
@@ -52,7 +52,9 @@ def _make_spool():
 def _make_lane(name="lane1", extruder_name="extruder", extruder_index=0):
     lane = MagicMock()
     lane.name = name
-    lane.map = None
+    lane.map = []
+    lane._map = []
+    lane.current_map = None
     lane.color = ""
     lane.material = ""
     lane.weight = 0
@@ -68,18 +70,52 @@ def _make_lane(name="lane1", extruder_name="extruder", extruder_index=0):
 
 
 def _make_gcmd(**kwargs):
-    """Build a gcmd mock that returns values from kwargs."""
-    gcmd = MagicMock()
-    gcmd.get = lambda key, default=None: kwargs.get(key, default)
-    def _get_float(key, default=0.0, **kw):
-        val = kwargs.get(key, default)
-        return float(val) if val is not None else None
-    gcmd.get_float = _get_float
-    def _get_int(key, default=0, **kw):
-        val = kwargs.get(key, default)
-        return int(val) if val is not None else None
-    gcmd.get_int = _get_int
-    return gcmd
+    """Build a gcmd mock that returns values from kwargs.
+
+    Backed by MockGCodeCommand, so a key with no default supplied by the
+    caller under test (e.g. gcmd.get('LANE') with no second argument) raises
+    gcmd.error(...) exactly like real Klipper -- it does not silently
+    return None the way a lambda-based mock would.
+    """
+    from tests.conftest import MockGCodeCommand
+    return MockGCodeCommand(params=kwargs)
+
+
+# ── __init__ ─────────────────────────────────────────────────────────────────
+
+class TestAFCSpoolInit:
+    def _make_config(self):
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
+
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(name="AFC_Spool", printer=printer)
+        return config, printer
+
+    def test_stores_printer_from_config(self):
+        config, printer = self._make_config()
+        spool = AFCSpool(config)
+        assert spool.printer is printer
+
+    def test_sets_spoolman_remote_method(self):
+        config, _ = self._make_config()
+        spool = AFCSpool(config)
+        assert spool.SPOOLMAN_REMOTE_METHOD == "spoolman_set_active_spool"
+
+    def test_print_task_config_obj_starts_none(self):
+        config, _ = self._make_config()
+        spool = AFCSpool(config)
+        assert spool.print_task_config_obj is None
+
+    def test_next_spool_id_starts_none(self):
+        config, _ = self._make_config()
+        spool = AFCSpool(config)
+        assert spool.next_spool_id is None
+
+    def test_registers_klippy_connect_handler_to_handle_connect(self):
+        config, printer = self._make_config()
+        spool = AFCSpool(config)
+        assert printer._event_handlers["klippy:connect"] == [spool.handle_connect]
 
 
 # ── cmd_SET_MAP ────────────────────────────────────────────────────────────────
@@ -88,50 +124,565 @@ class TestSetMap:
     def test_set_map_assigns_lane_mapping(self):
         spool = _make_spool()
         lane1 = _make_lane("lane1")
+        lane1.map = ["T1"]
+        lane1.current_map = "T1"
         lane2 = _make_lane("lane2")
-        lane2.map = "T0"
+        lane2.map = ["T0"]
+        lane2.current_map = "T0"
         # T0 is currently mapped to lane2; we want to remap it to lane1
         spool.afc.tool_cmds = {"T0": "lane2"}
         spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
         gcmd = _make_gcmd(LANE="lane1", MAP="T0")
         spool.cmd_SET_MAP(gcmd)
-        assert lane1.map == "T0"
+        assert lane1.current_map == "T0"
         assert spool.afc.tool_cmds.get("T0") == "lane1"
+        assert lane2.map == ["T1"]
+        assert spool.afc.tool_cmds.get("T1") == "lane2"
 
     def test_set_map_invalid_lane_logs_error(self):
         spool = _make_spool()
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="nonexistent", MAP="T1")
         spool.cmd_SET_MAP(gcmd)
-        # Should log an error about invalid lane
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert len(error_msgs) > 0
+        assert spool.logger.messages == [("error", "Invalid map command: T1")]
 
-    def test_no_lane_param_logs_info(self):
-        """Covers lines 66-68: lane is None → log info + return."""
+    def test_no_lane_param_raises(self):
+        """No default is passed to gcmd.get('LANE'), so a missing LANE
+        parameter is expected to raise via Klipper's own required-parameter
+        handling, not a hand-rolled None check."""
         spool = _make_spool()
-        gcmd = _make_gcmd()  # no LANE key → returns None
-        spool.cmd_SET_MAP(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("LANE" in m for m in info_msgs)
+        gcmd = _make_gcmd(MAP="T0")  # no LANE key
+        with pytest.raises(Exception, match="missing LANE"):
+            spool.cmd_SET_MAP(gcmd)
 
-    def test_no_map_param_logs_info(self):
-        """Covers lines 72-74: map_cmd is None → log info + return."""
+    def test_no_map_param_raises(self):
+        """Same as above, for the MAP parameter."""
         spool = _make_spool()
-        gcmd = _make_gcmd(LANE="lane1")  # no MAP key → returns None
+        gcmd = _make_gcmd(LANE="lane1")  # no MAP key
+        with pytest.raises(Exception, match="missing MAP"):
+            spool.cmd_SET_MAP(gcmd)
+
+    def test_map_already_assigned_to_lane_logs_info_and_returns(self):
+        """MAP already resolves to the requested lane (sw_lane is cur_lane)
+        -> logs info and returns without touching any state."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        lane1.current_map = "T0"
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
         spool.cmd_SET_MAP(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("MAP" in m for m in info_msgs)
+        assert spool.logger.messages == [
+            ("debug", "lane to switch is lane1"),
+            ("info", "T0 is already mapped to lane1"),
+        ]
+        assert lane1.map == ["T0"]
+
+    def test_single_mapping_swap_leaves_sw_lane_current_map_empty_when_map_empty(self):
+        """sw_lane.map[0] if sw_lane.map else "" -- covers the falsy branch:
+        cur_lane.map is empty, so after the swap sw_lane.map is also empty
+        and current_map must fall back to ""."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = []
+        lane1.current_map = ""
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0"]
+        lane2.current_map = "T0"
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.tool_cmds = {"T0": "lane2"}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
+        spool.cmd_SET_MAP(gcmd)
+        assert lane2.map == []
+        assert lane2.current_map == ""
+
+    def test_single_mapping_swap_skips_none_placeholder_in_tool_cmds(self):
+        """Covers the "NONE" continue branch in both tool_cmds rebuild loops
+        for the enable_multiple_mapping=False path."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["NONE"]
+        lane1.current_map = None
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0"]
+        lane2.current_map = "T0"
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.tool_cmds = {"T0": "lane2"}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
+        spool.cmd_SET_MAP(gcmd)
+        assert "NONE" not in spool.afc.tool_cmds
+        assert spool.afc.tool_cmds["T0"] == "lane1"
 
     def test_lane_not_in_lanes_with_valid_tool_cmd_logs_info(self):
-        """Covers lines 84-86: MAP in tool_cmds, lane not in lanes → log info + return."""
+        """MAP in tool_cmds, lane not in lanes → log info + return."""
         spool = _make_spool()
         spool.afc.tool_cmds = {"T0": "lane2"}
         spool.afc.lanes = {}  # lane1 not present
         gcmd = _make_gcmd(LANE="lane1", MAP="T0")
         spool.cmd_SET_MAP(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("lane1" in m for m in info_msgs)
+        assert spool.logger.messages == [
+            ("debug", "lane to switch is lane2"),
+            ("info", "lane1 Unknown"),
+        ]
+
+    def test_switch_lane_missing_logs_info_and_returns(self):
+        """tool_cmds points MAP at a lane name that isn't in afc.lanes (e.g.
+        stale save data) -> logs info and returns without touching state."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        spool.afc.tool_cmds = {"T0": "ghost_lane"}
+        spool.afc.lanes = {"lane1": lane1}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
+        spool.cmd_SET_MAP(gcmd)
+        assert spool.logger.messages == [
+            ("debug", "lane to switch is ghost_lane"),
+            ("info", "ghost_lane is not found when swapping mapping."),
+        ]
+        # Nothing was mutated -- tool_cmds still points at the stale lane
+        assert spool.afc.tool_cmds["T0"] == "ghost_lane"
+        assert lane1.map == []
+
+    def test_multiple_mapping_moves_single_map_cmd_between_lanes(self):
+        """enable_multiple_mapping=True: MAP is popped out of sw_lane's list
+        and appended to cur_lane's list, rather than swapping the full list
+        (the enable_multiple_mapping=False behavior covered above)."""
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T2"]
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0", "T1"]
+        lane2.current_map = "T1"
+        spool.afc.tool_cmds = {"T0": "lane2", "T1": "lane2"}
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
+        spool.cmd_SET_MAP(gcmd)
+        # Only T0 moved -- T1 (sw_lane's other mapping) is untouched
+        assert lane2.map == ["T1"]
+        assert lane1.map == ["T2", "T0"]
+        assert spool.afc.tool_cmds["T0"] == "lane1"
+
+    def test_multiple_mapping_clears_sw_lane_current_map_when_it_matches(self):
+        """sw_lane.current_map == map_cmd -> cleared, since the tool that was
+        actively loaded on sw_lane is the one being moved away."""
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = []
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0"]
+        lane2.current_map = "T0"
+        spool.afc.tool_cmds = {"T0": "lane2"}
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
+        spool.cmd_SET_MAP(gcmd)
+        assert lane2.current_map == ""
+
+    def test_multiple_mapping_leaves_sw_lane_current_map_when_it_differs(self):
+        """sw_lane.current_map != map_cmd -> left untouched (the tool being
+        moved away wasn't the one actively loaded on sw_lane)."""
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = []
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0", "T1"]
+        lane2.current_map = "T1"
+        spool.afc.tool_cmds = {"T0": "lane2", "T1": "lane2"}
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
+        spool.cmd_SET_MAP(gcmd)
+        assert lane2.current_map == "T1"
+
+    def test_multiple_mapping_filters_none_placeholder_from_cur_lane(self):
+        """cur_lane starting with the "NONE" placeholder must lose it once a
+        real mapping is added, rather than keeping ["NONE", "T0"]."""
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["NONE"]
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0"]
+        lane2.current_map = "T0"
+        spool.afc.tool_cmds = {"T0": "lane2"}
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        gcmd = _make_gcmd(LANE="lane1", MAP="T0")
+        spool.cmd_SET_MAP(gcmd)
+        assert lane1.map == ["T0"]
+
+
+# ── cmd_AFC_SWAP_MAPPING ────────────────────────────────────────────────────────
+
+class TestAfcSwapMapping:
+    def test_from_lane_not_found_raises(self):
+        spool = _make_spool()
+        spool.afc.lanes = {"lane2": _make_lane("lane2")}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        with pytest.raises(Exception, match="Swapping from lane1 not found"):
+            spool.cmd_AFC_SWAP_MAPPING(gcmd)
+
+    def test_to_lane_not_found_raises(self):
+        spool = _make_spool()
+        spool.afc.lanes = {"lane1": _make_lane("lane1")}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        with pytest.raises(Exception, match="Swapping to lane2 not found"):
+            spool.cmd_AFC_SWAP_MAPPING(gcmd)
+
+    def test_swap_exchanges_map_and_current_map(self):
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        lane1.current_map = "T0"
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T1", "T2"]
+        lane2.current_map = "T1"
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        spool.cmd_AFC_SWAP_MAPPING(gcmd)
+        assert lane1.map == ["T1", "T2"]
+        assert lane1.current_map == "T1"
+        assert lane2.map == ["T0"]
+        assert lane2.current_map == "T0"
+
+    def test_swap_updates_tool_cmds_to_lane_names(self):
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        lane1.current_map = "T0"
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T1", "T2"]
+        lane2.current_map = "T1"
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.tool_cmds = {"T0": "lane1", "T1": "lane2", "T2": "lane2"}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        spool.cmd_AFC_SWAP_MAPPING(gcmd)
+        assert spool.afc.tool_cmds["T1"] == "lane1"
+        assert spool.afc.tool_cmds["T2"] == "lane1"
+        assert spool.afc.tool_cmds["T0"] == "lane2"
+
+    def test_swap_skips_none_placeholder_in_tool_cmds(self):
+        """A lane with no real mapping carries map=["NONE"]; that
+        placeholder must not be written into tool_cmds."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["NONE"]
+        lane1.current_map = None
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T1"]
+        lane2.current_map = "T1"
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.tool_cmds = {"T1": "lane2"}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        spool.cmd_AFC_SWAP_MAPPING(gcmd)
+        assert "NONE" not in spool.afc.tool_cmds
+
+    def test_swap_skips_none_placeholder_landing_on_from_lane(self):
+        """Same guard as above, but exercised for the FROM lane's post-swap
+        list (i.e. the "NONE" placeholder originated from the TO lane)."""
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T1"]
+        lane1.current_map = "T1"
+        lane2 = _make_lane("lane2")
+        lane2.map = ["NONE"]
+        lane2.current_map = None
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.tool_cmds = {"T1": "lane1"}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        spool.cmd_AFC_SWAP_MAPPING(gcmd)
+        assert "NONE" not in spool.afc.tool_cmds
+        assert spool.afc.tool_cmds["T1"] == "lane2"
+
+    def test_swap_sends_lane_data_for_both_lanes_and_saves(self):
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T1"]
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        spool.cmd_AFC_SWAP_MAPPING(gcmd)
+        lane1.send_lane_data.assert_called_once()
+        lane2.send_lane_data.assert_called_once()
+        spool.afc.save_vars.assert_called_once()
+
+
+# ── cmd_AFC_ADD_MAPPING ─────────────────────────────────────────────────────────
+
+class TestAfcAddMapping:
+    def test_raises_when_multiple_mapping_disabled(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = False
+        gcmd = _make_gcmd(LANE="lane1", MAPPING="T1")
+        with pytest.raises(Exception, match="enable multiple mapping needs to be enabled"):
+            spool.cmd_AFC_ADD_MAPPING(gcmd)
+
+    def test_raises_when_lane_not_found(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        spool.afc.lanes = {}
+        gcmd = _make_gcmd(LANE="lane1", MAPPING="T1")
+        with pytest.raises(Exception, match="lane1 is not a valid lane"):
+            spool.cmd_AFC_ADD_MAPPING(gcmd)
+
+    def test_adds_single_mapping(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        gcmd = _make_gcmd(LANE="lane1", MAPPING="T1")
+        spool.cmd_AFC_ADD_MAPPING(gcmd)
+        assert spool.afc.tool_cmds["T1"] == "lane1"
+        assert lane1.map == ["T0", "T1"]
+        spool.function.register_tool_macro.assert_called_once_with("lane1", "T1")
+        lane1.send_lane_data.assert_called_once()
+        spool.afc.save_vars.assert_called_once()
+
+    def test_adds_comma_separated_multiple_mappings(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        gcmd = _make_gcmd(LANE="lane1", MAPPING="T1,T2")
+        spool.cmd_AFC_ADD_MAPPING(gcmd)
+        assert spool.afc.tool_cmds["T1"] == "lane1"
+        assert spool.afc.tool_cmds["T2"] == "lane1"
+        assert lane1.map == ["T0", "T1", "T2"]
+
+    def test_mapping_is_uppercased(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = []
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {}
+        gcmd = _make_gcmd(LANE="lane1", MAPPING="t1")
+        spool.cmd_AFC_ADD_MAPPING(gcmd)
+        assert "T1" in spool.afc.tool_cmds
+        assert "t1" not in spool.afc.tool_cmds
+
+    def test_skips_and_logs_error_when_mapping_already_exists(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1", "T1": "lane2"}
+        gcmd = _make_gcmd(LANE="lane1", MAPPING="T1")
+        spool.cmd_AFC_ADD_MAPPING(gcmd)
+        # Existing mapping is untouched, not stolen from lane2
+        assert spool.afc.tool_cmds["T1"] == "lane2"
+        assert lane1.map == ["T0"]
+        spool.afc.error.AFC_error.assert_called_once_with(
+            "Cannot map T1 to lane1, as mapping already exists.", False
+        )
+
+    def test_skips_and_logs_error_when_mapping_is_not_t_number_format(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        gcmd = _make_gcmd(LANE="lane1", MAPPING="CUSTOM_LANE")
+        spool.cmd_AFC_ADD_MAPPING(gcmd)
+        assert "CUSTOM_LANE" not in spool.afc.tool_cmds
+        assert lane1.map == ["T0"]
+        spool.afc.error.AFC_error.assert_called_once_with(
+            "'CUSTOM_LANE' is not a valid mapping, expect T(n) format.", False
+        )
+
+
+# ── cmd_AFC_REMOVE_MAPPING ───────────────────────────────────────────────────────
+
+class TestAfcRemoveMapping:
+    def test_raises_when_multiple_mapping_disabled(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = False
+        gcmd = _make_gcmd(MAPPING="T1")
+        with pytest.raises(Exception, match="enable multiple mapping needs to be enabled"):
+            spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+
+    def test_removes_existing_mapping(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0", "T1"]
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1", "T1": "lane1"}
+        gcmd = _make_gcmd(MAPPING="T1")
+        spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+        assert "T1" not in spool.afc.tool_cmds
+        assert lane1.map == ["T0"]
+        lane1.send_lane_data.assert_called_once()
+        # MockGcode.register_command records into _commands rather than being a Mock
+        assert spool.gcode._commands.get("T1") is None
+        assert "T1" in spool.gcode._commands
+        spool.afc.save_vars.assert_called_once()
+
+    def test_removing_active_mapping_falls_back_to_next_remaining_entry(self):
+        """lane_obj.current_map == m -> current_map is refreshed to the
+        lane's next remaining mapping."""
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0", "T1"]
+        lane1.current_map = "T1"
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1", "T1": "lane1"}
+        gcmd = _make_gcmd(MAPPING="T1")
+        spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+        assert lane1.current_map == "T0"
+
+    def test_removing_active_mapping_falls_back_to_empty_when_no_mappings_remain(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        lane1.current_map = "T0"
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        gcmd = _make_gcmd(MAPPING="T0")
+        spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+        assert lane1.current_map == ""
+
+    def test_removing_inactive_mapping_leaves_current_map_unchanged(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0", "T1"]
+        lane1.current_map = "T0"
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1", "T1": "lane1"}
+        gcmd = _make_gcmd(MAPPING="T1")
+        spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+        assert lane1.current_map == "T0"
+
+    def test_removes_multiple_comma_separated_mappings(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0", "T1", "T2"]
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1", "T1": "lane1", "T2": "lane1"}
+        gcmd = _make_gcmd(MAPPING="T1,T2")
+        spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+        assert "T1" not in spool.afc.tool_cmds
+        assert "T2" not in spool.afc.tool_cmds
+        assert lane1.map == ["T0"]
+
+    def test_logs_error_and_skips_unregister_for_nonexistent_mapping(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        spool.afc.tool_cmds = {}
+        gcmd = _make_gcmd(MAPPING="T9")
+        spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+        spool.afc.error.AFC_error.assert_called_once_with("Mapping T9 does not exist", False)
+        assert "T9" not in spool.gcode._commands
+
+    def test_missing_lane_object_still_unregisters_command(self):
+        """tool_cmds can reference a lane name that's no longer in afc.lanes;
+        the gcode command should still be torn down."""
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        spool.afc.lanes = {}
+        spool.afc.tool_cmds = {"T1": "missing_lane"}
+        gcmd = _make_gcmd(MAPPING="T1")
+        spool.cmd_AFC_REMOVE_MAPPING(gcmd)
+        assert "T1" not in spool.afc.tool_cmds
+        assert spool.gcode._commands.get("T1") is None
+        assert "T1" in spool.gcode._commands
+
+
+# ── cmd_AFC_ENABLE_MULTIPLE_MAPPING ─────────────────────────────────────────────
+
+class TestAfcEnableMultipleMapping:
+    def test_enable_sets_flag_true(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = False
+        gcmd = _make_gcmd(ENABLE=1)
+        spool.cmd_AFC_ENABLE_MULTIPLE_MAPPING(gcmd)
+        assert spool.enable_multiple_mapping is True
+        spool.function.ConfigRewrite.assert_called_once_with(
+            "AFC", "enable_multiple_mapping", True
+        )
+
+    def test_disable_sets_flag_false(self):
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        gcmd = _make_gcmd(ENABLE=0)
+        spool.cmd_AFC_ENABLE_MULTIPLE_MAPPING(gcmd)
+        assert spool.enable_multiple_mapping is False
+        spool.function.ConfigRewrite.assert_called_once_with(
+            "AFC", "enable_multiple_mapping", False
+        )
+
+    def test_default_enable_value_is_disable(self):
+        """Covers ENABLE defaulting to 0 when the param is omitted."""
+        spool = _make_spool()
+        spool.enable_multiple_mapping = True
+        gcmd = _make_gcmd()
+        spool.cmd_AFC_ENABLE_MULTIPLE_MAPPING(gcmd)
+        assert spool.enable_multiple_mapping is False
+
+
+# ── register_commands ─────────────────────────────────────────────────────────
+
+def _make_spool_for_register_commands(show_macros=True):
+    """Build an AFCSpool through the real __init__, ready for register_commands()."""
+    from tests.conftest import MockAFC, MockConfig, MockPrinter
+
+    afc = MockAFC()
+    afc.show_macros = show_macros
+    printer = MockPrinter(afc=afc)
+    config = MockConfig(name="AFC_Spool", printer=printer)
+    spool = AFCSpool(config)
+    return spool, afc
+
+
+class TestRegisterCommands:
+    def test_stores_afc_function_and_enable_multiple_mapping(self):
+        spool, afc = _make_spool_for_register_commands()
+        afc.enable_multiple_mapping = True
+        spool.register_commands(afc)
+        assert spool.afc is afc
+        assert spool.function is afc.function
+        assert spool.enable_multiple_mapping is True
+
+    def test_afc_swap_mapping_registered_without_show_macros(self):
+        """AFC_SWAP_MAPPING is an internal command invoked by
+        _perform_infinite_runout, not a user-facing macro, so it must always
+        register with show_macros=False regardless of afc.show_macros."""
+        spool, afc = _make_spool_for_register_commands(show_macros=True)
+        spool.register_commands(afc)
+        calls = afc.function.register_commands.call_args_list
+        swap_call = next(c for c in calls if c.args[1] == "AFC_SWAP_MAPPING")
+        assert swap_call.args[0] is False
+
+    def test_add_and_remove_mapping_use_show_macros_true(self):
+        spool, afc = _make_spool_for_register_commands(show_macros=True)
+        spool.register_commands(afc)
+        calls = afc.function.register_commands.call_args_list
+        names = {c.args[1]: c.args[0] for c in calls}
+        assert names["AFC_ADD_MAPPING"] is True
+        assert names["AFC_REMOVE_MAPPING"] is True
+        assert names["AFC_ENABLE_MULTIPLE_MAPPING"] is True
+
+    def test_add_and_remove_mapping_use_show_macros_false(self):
+        """Proves afc.show_macros is actually threaded through rather than
+        hardcoded, by driving it to the opposite value from the true case."""
+        spool, afc = _make_spool_for_register_commands(show_macros=False)
+        spool.register_commands(afc)
+        calls = afc.function.register_commands.call_args_list
+        names = {c.args[1]: c.args[0] for c in calls}
+        assert names["AFC_ADD_MAPPING"] is False
+        assert names["AFC_REMOVE_MAPPING"] is False
+        assert names["AFC_ENABLE_MULTIPLE_MAPPING"] is False
 
 
 # ── cmd_SET_COLOR ──────────────────────────────────────────────────────────────
@@ -193,21 +744,19 @@ class TestSetColor:
         spool.afc.save_vars.assert_called()
 
     def test_no_lane_param_logs_info(self):
-        """Covers lines 117-119: lane is None → log info + return."""
+        """lane is None → log info + return."""
         spool = _make_spool()
         gcmd = _make_gcmd()  # no LANE key
         spool.cmd_SET_COLOR(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("LANE" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "No LANE Defined")]
 
     def test_lane_not_in_lanes_logs_info(self):
-        """Covers lines 121-123: lane not in lanes dict → log info + return."""
+        """lane not in lanes dict → log info + return."""
         spool = _make_spool()
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="ghost", COLOR="FF0000")
         spool.cmd_SET_COLOR(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("ghost" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "ghost Unknown")]
 
 
 # ── cmd_SET_MATERIAL ───────────────────────────────────────────────────────────
@@ -233,24 +782,22 @@ class TestSetMaterial:
         spool.afc.save_vars.assert_called()
 
     def test_no_lane_param_logs_info(self):
-        """Covers lines 185-187: lane is None → log info + return."""
+        """lane is None → log info + return."""
         spool = _make_spool()
         gcmd = _make_gcmd()  # no LANE key
         spool.cmd_SET_MATERIAL(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("LANE" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "No LANE Defined")]
 
     def test_lane_not_in_lanes_logs_info(self):
-        """Covers lines 188-190: lane not in lanes → log info + return."""
+        """lane not in lanes → log info + return."""
         spool = _make_spool()
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="ghost", MATERIAL="PLA")
         spool.cmd_SET_MATERIAL(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("ghost" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "ghost Unknown")]
 
     def test_with_density_sets_filament_density(self):
-        """Covers lines 200-201: density is not None → sets cur_lane.filament_density."""
+        """density is not None → sets cur_lane.filament_density."""
         spool = _make_spool()
         lane = _make_lane("lane1")
         spool.afc.lanes = {"lane1": lane}
@@ -283,16 +830,14 @@ class TestSetWeight:
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="missing", WEIGHT=100)
         spool.cmd_SET_WEIGHT(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert len(info_msgs) > 0
+        assert spool.logger.messages == [("info", "missing Unknown")]
 
     def test_no_lane_param_logs_info(self):
-        """Covers lines 146-148: lane is None → log info + return."""
+        """lane is None → log info + return."""
         spool = _make_spool()
         gcmd = _make_gcmd()  # no LANE key
         spool.cmd_SET_WEIGHT(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("LANE" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "No LANE Defined")]
 
 
 # ── cmd_AFC_SET_SPOOL_TEMP ─────────────────────────────────────────────────────
@@ -339,17 +884,16 @@ class TestAFCSetSpoolTemp:
         spool = _make_spool()
         gcmd = _make_gcmd()
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("LANE" in m for m in info_msgs)
-
+        assert spool.logger.messages == [
+            ("info", "No LANE parameter provided, please specify a valid LANE parameter.")
+        ]
 
     def test_unknown_lane_logs_info(self):
         spool = _make_spool()
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="ghost", BED_TEMP=60, EXTRUDER_TEMP=210)
         spool.cmd_AFC_SET_SPOOL_TEMP(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("ghost" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "ghost Unknown")]
 
 
 # ── cmd_SET_RUNOUT ─────────────────────────────────────────────────────────────
@@ -375,31 +919,30 @@ class TestSetRunout:
         spool.afc.save_vars.assert_called()
 
     def test_no_lane_param_logs_info(self):
-        """Covers lines 373-375: lane is None → log info + return."""
+        """lane is None → log info + return."""
         spool = _make_spool()
         gcmd = _make_gcmd()  # no LANE key
         spool.cmd_SET_RUNOUT(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("LANE" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "No LANE Defined")]
 
     def test_lane_equals_runout_logs_error(self):
-        """Covers lines 379-381: lane == runout → log error + return."""
+        """lane == runout → log error + return."""
         spool = _make_spool()
         lane1 = _make_lane("lane1")
         spool.afc.lanes = {"lane1": lane1}
         gcmd = _make_gcmd(LANE="lane1", RUNOUT="lane1")
         spool.cmd_SET_RUNOUT(gcmd)
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert any("lane1" in m for m in error_msgs)
+        assert spool.logger.messages == [
+            ("error", "Lane(lane1) and runout(lane1) cannot be the same")
+        ]
 
     def test_lane_not_in_lanes_logs_error(self):
-        """Covers lines 383-385: lane not in lanes → log error + return."""
+        """lane not in lanes → log error + return."""
         spool = _make_spool()
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="ghost", RUNOUT="lane2")
         spool.cmd_SET_RUNOUT(gcmd)
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert any("ghost" in m for m in error_msgs)
+        assert spool.logger.messages == [("error", "Unknown lane: ghost")]
 
     def test_set_runout_none_clears_runout_lane(self):
         """RUNOUT='NONE' (uppercase) → runout_lane set to None."""
@@ -432,29 +975,26 @@ class TestSetRunout:
         assert lane1.runout_lane is None
 
     def test_runout_not_in_lanes_logs_error(self):
-        """Covers lines 387-389: runout != 'NONE' but not in lanes → log error + return."""
+        """runout != 'NONE' but not in lanes → log error + return."""
         spool = _make_spool()
         lane1 = _make_lane("lane1")
         spool.afc.lanes = {"lane1": lane1}
         gcmd = _make_gcmd(LANE="lane1", RUNOUT="no_such_lane")
         spool.cmd_SET_RUNOUT(gcmd)
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert any("no_such_lane" in m for m in error_msgs)
+        assert spool.logger.messages == [("error", "Unknown runout lane: no_such_lane")]
 
 
 # ── cmd_RESET_AFC_MAPPING ─────────────────────────────────────────────────────
 
 class TestResetAFCMapping:
     def _make_reset_gcmd(self, runout="yes"):
-        gcmd = MagicMock()
-        gcmd.get = lambda key, default=None: runout if key == "RUNOUT" else default
-        return gcmd
+        return _make_gcmd(RUNOUT=runout)
 
     def _make_lane_for_reset(self, name, map_cmd="T0"):
-        """Lane mock with explicit _map=None and map=map_cmd."""
+        """Lane mock with explicit _map=[] (not manually assigned) and map=[map_cmd]."""
         lane = _make_lane(name)
-        lane.map = map_cmd
-        lane._map = None  # not manually assigned
+        lane.map = [map_cmd]
+        lane._map = []  # not manually assigned
         lane.runout_lane = None
         return lane
 
@@ -488,33 +1028,56 @@ class TestResetAFCMapping:
         assert lane1.runout_lane == "lane2"  # not cleared
 
     def test_reset_reassigns_map_without_manual_mapping(self):
-        """Covers lines 422-431 else branch: lane._map=None → pops from existing_cmds."""
+        """lane._map=[] → pops from existing_cmds."""
         spool = _make_spool()
         # Set up a lane in afc.lanes used to build existing_cmds
         lane1 = self._make_lane_for_reset("lane1", "T0")
         spool.afc.lanes = {"lane1": lane1}
-        # Unit whose lane also has _map=None (else branch)
+        # Unit whose lane also has _map=[] (else branch)
         unit_lane = MagicMock()
         unit_lane.name = "lane1"
-        unit_lane._map = None
+        unit_lane._map = []
         unit = MagicMock()
         unit.lanes = {"lane1": unit_lane}
         spool.afc.units = {"unit_1": unit}
         gcmd = self._make_reset_gcmd()
         spool.cmd_RESET_AFC_MAPPING(gcmd)
-        # tool_cmds and lane.map must have been updated
+        # tool_cmds and the unit's lane.current_map must have been updated
         assert spool.afc.tool_cmds.get("T0") == "lane1"
-        assert spool.afc.lanes["lane1"].map == "T0"
+        assert unit_lane.current_map == "T0"
 
-    def test_reset_uses_manual_map_when_set(self):
-        """Covers lines 425-427 if branch: lane._map is not None → uses it directly."""
+    def test_reset_excludes_none_placeholder_from_existing_cmds(self):
+        """"NONE" entries in lane.map must be filtered out by value, not
+        object identity -- lane.map values loaded from config/saved vars are
+        never the same string object as a "NONE" literal in the source, so
+        an identity check silently fails to filter them. Left unfiltered,
+        "NONE" also has no digit chars, so the numeric sort right after would
+        raise ValueError -- this call must complete without raising."""
         spool = _make_spool()
         lane1 = self._make_lane_for_reset("lane1", "T0")
-        lane1._map = "T0"  # manually assigned
+        none_placeholder = "".join(["N", "O", "N", "E"])
+        lane2 = self._make_lane_for_reset("lane2", none_placeholder)
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.units = {}  # isolates existing_cmds construction/sort from the reassignment loop
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
+        # "T0" is never consumed since afc.units is empty, so it also shows
+        # up in the trailing "leftover mappings" cleanup message.
+        assert info_msgs == [
+            "Tool mappings reset and runout lanes reset",
+            "T0 remain, removing these mappings",
+        ]
+
+    def test_reset_uses_manual_map_when_set(self):
+        """lane._map is not empty → uses it directly."""
+        spool = _make_spool()
+        lane1 = self._make_lane_for_reset("lane1", "T0")
+        lane1._map = ["T0"]  # manually assigned
         spool.afc.lanes = {"lane1": lane1}
         unit_lane = MagicMock()
         unit_lane.name = "lane1"
-        unit_lane._map = "T0"  # manual assignment
+        unit_lane._map = ["T0"]  # manual assignment
         unit = MagicMock()
         unit.lanes = {"lane1": unit_lane}
         spool.afc.units = {"unit_1": unit}
@@ -534,16 +1097,18 @@ class TestSetNextSpoolId:
         assert spool.next_spool_id == 42
 
     def test_invalid_spool_id_logs_error_and_clears(self):
-        """Covers lines 466-468: ValueError → log error, next_spool_id stays None."""
+        """ValueError → log error, next_spool_id stays None."""
         spool = _make_spool()
         gcmd = _make_gcmd(SPOOL_ID="not_a_number")
         spool.cmd_SET_NEXT_SPOOL_ID(gcmd)
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert len(error_msgs) > 0
+        assert spool.logger.messages == [
+            ("error", "Invalid spool ID: not_a_number"),
+            ("info", "Spool ID set for next load: 'None'"),
+        ]
         assert spool.next_spool_id is None
 
     def test_empty_spool_id_clears_next(self):
-        """Covers lines 469-470: SpoolID='' → next_spool_id set to None."""
+        """SpoolID='' → next_spool_id set to None."""
         spool = _make_spool()
         spool.next_spool_id = 99
         gcmd = _make_gcmd()  # no SPOOL_ID key → default ''
@@ -551,38 +1116,41 @@ class TestSetNextSpoolId:
         assert spool.next_spool_id is None
 
     def test_overwrites_existing_spool_id_logs_overwrite(self):
-        """Covers lines 471-472: previous_id is set → log overwrite info message."""
+        """previous_id is set → log overwrite info message."""
         spool = _make_spool()
         spool.next_spool_id = 10  # existing
         gcmd = _make_gcmd(SPOOL_ID=20)
         spool.cmd_SET_NEXT_SPOOL_ID(gcmd)
         assert spool.next_spool_id == 20
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("10" in m for m in info_msgs)
+        assert spool.logger.messages == [
+            ("info", "Spool ID '10' being overwritten for next load: '20'")
+        ]
 
 
 # ── handle_connect / register_lane_macros ─────────────────────────────────────
 
 class TestHandleConnect:
     def test_handle_connect_stores_afc_references(self):
-        from tests.conftest import MockAFC, MockPrinter
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
         afc = MockAFC()
         printer = MockPrinter(afc=afc)
-        spool = AFCSpool.__new__(AFCSpool)
-        spool.printer = printer
-        spool.next_spool_id = None
+        config = MockConfig(name="AFC_Spool", printer=printer)
+        spool = AFCSpool(config)
+        # register_commands() is what normally sets self.afc, ahead of the
+        # klippy:connect event that triggers handle_connect()
+        spool.register_commands(afc)
         spool.handle_connect()
         assert spool.afc is afc
         assert spool.gcode is afc.gcode
         assert spool.logger is afc.logger
 
     def test_handle_connect_registers_commands(self):
-        from tests.conftest import MockAFC, MockPrinter
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
         afc = MockAFC()
         printer = MockPrinter(afc=afc)
-        spool = AFCSpool.__new__(AFCSpool)
-        spool.printer = printer
-        spool.next_spool_id = None
+        config = MockConfig(name="AFC_Spool", printer=printer)
+        spool = AFCSpool(config)
+        spool.register_commands(afc)
         spool.handle_connect()
         assert "RESET_AFC_MAPPING" in afc.gcode._commands
         assert "SET_NEXT_SPOOL_ID" in afc.gcode._commands
@@ -644,8 +1212,13 @@ class TestSetActiveSpool:
         spool.afc.spoolman = MagicMock()
         spool.printer.lookup_object = MagicMock(return_value=None)
         spool.set_active_spool(7)
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert any("Error trying to set active spool" in m for m in error_msgs)
+        assert spool.logger.messages == [
+            (
+                "error",
+                "Error trying to set active spool \n"
+                "'NoneType' object has no attribute 'call_remote_method'",
+            )
+        ]
 
 
 # ── _get_filament_values ──────────────────────────────────────────────────────
@@ -929,7 +1502,7 @@ class TestSetSpoolID:
         assert lane.extruder_temp is None
 
     def test_exception_in_get_spool_calls_afc_error(self):
-        """Covers lines 346-348: exception in get_spool → AFC_error called."""
+        """exception in get_spool → AFC_error called."""
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
@@ -940,7 +1513,7 @@ class TestSetSpoolID:
         spool.afc.error.AFC_error.assert_called()
 
     def test_empty_spool_id_with_spoolman_not_remember_spool_clears_values(self):
-        """Covers lines 348-349: spoolman not None + SpoolID='' + not remember_spool → clear_values."""
+        """spoolman not None + SpoolID='' + not remember_spool → clear_values."""
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1021,26 +1594,24 @@ class TestCmdSetSpoolID:
         spool.set_spoolID.assert_called_once_with(lane1, '')
 
     def test_no_lane_param_logs_info(self):
-        """Covers lines 239-241: spoolman not None + lane=None → log info + return."""
+        """spoolman not None + lane=None → log info + return."""
         spool = _make_spool()
         spool.afc.spoolman = MagicMock()
         gcmd = _make_gcmd()  # no LANE key
         spool.cmd_SET_SPOOL_ID(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("LANE" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "No LANE Defined")]
 
     def test_lane_not_in_lanes_logs_info(self):
-        """Covers lines 243-245: spoolman not None + lane not in lanes → log info + return."""
+        """spoolman not None + lane not in lanes → log info + return."""
         spool = _make_spool()
         spool.afc.spoolman = MagicMock()
         spool.afc.lanes = {}
         gcmd = _make_gcmd(LANE="ghost", SPOOL_ID="7")
         spool.cmd_SET_SPOOL_ID(gcmd)
-        info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
-        assert any("ghost" in m for m in info_msgs)
+        assert spool.logger.messages == [("info", "ghost Unknown")]
 
     def test_calls_set_active_spool_when_lane_is_current(self):
-        """Covers lines 264-265: cur_lane.name == afc.current → set_active_spool called."""
+        """cur_lane.name == afc.current → set_active_spool called."""
         spool = _make_spool()
         spool.afc.spoolman = MagicMock()
         lane1 = _make_lane("lane1")
@@ -1172,8 +1743,14 @@ class TestSetSnapmakerFilamentParams:
         spool.printer = MagicMock()
         spool.printer.update_snapmaker_config_file.side_effect = RuntimeError("Creating error")
         spool.set_snapmaker_filament_params(lane)
-        error_msgs = [m for lvl, m in spool.logger.messages if lvl == "error"]
-        assert any("Error when trying to update colors for snapmaker print_task_config" in m for m in error_msgs)
+        levels = [lvl for lvl, _ in spool.logger.messages]
+        # The debug entry is traceback.format_exc(), whose exact text is
+        # environment-dependent (file paths/line numbers) so only its
+        # presence is checked; the error message is asserted verbatim.
+        assert levels == ["error", "debug"]
+        assert spool.logger.messages[0] == (
+            "error", "Error when trying to update colors for snapmaker print_task_config"
+        )
     
     def test_snapmaker_printer_extruder_update_called(self):
         from tests.conftest import _make_print_task_config
@@ -1402,4 +1979,28 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_color_multi"][extruder_num]["mode"] == 1
         assert print_task_config["filament_color_multi"][extruder_num]["nums"] == 3
         assert print_task_config["filament_color_multi"][extruder_num]["colors"] == ["123456", "589465", "725893"]
+
+
+# ── load_config ──────────────────────────────────────────────────────────────
+
+class TestLoadConfig:
+    def test_returns_afc_spool_instance(self):
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
+
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(name="AFC_Spool", printer=printer)
+        result = load_config(config)
+        assert isinstance(result, AFCSpool)
+
+    def test_registers_klippy_connect_handler(self):
+        """Proves load_config actually wires the real constructor through,
+        not just that some AFCSpool-shaped object comes back."""
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
+
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(name="AFC_Spool", printer=printer)
+        load_config(config)
+        assert printer._event_handlers.get("klippy:connect")
     

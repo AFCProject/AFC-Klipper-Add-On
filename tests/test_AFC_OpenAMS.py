@@ -2061,7 +2061,9 @@ def _make_lane(name, index=1, **overrides):
     lane.remember_spool = False
     lane.tool_loaded = False
     lane.load_state = False
-    lane.map = "T0"
+    lane.map = ["T0"]
+    lane.current_map = "T0"
+    lane.map_to_string = MagicMock(return_value="T0")
     lane._oams_runout_detected = False
     for k, v in overrides.items():
         setattr(lane, k, v)

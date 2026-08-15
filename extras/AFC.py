@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from extras.AFC_spool import AFCSpool
     from extras.AFC_error import afcError
     from extras.AFC_stepper import AFCExtruderStepper
+    from extras.AFC_unit import afcUnit
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -79,10 +80,10 @@ class afc:
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
         self.logger  = AFC_logger(self.printer, self)
 
+        self.function: afcFunction = self.printer.load_object(config, 'AFC_functions')
         self.spool: AFCSpool = self.printer.load_object(config, 'AFC_spool')
         self.error: afcError = self.printer.load_object(config, 'AFC_error')
 
-        self.function: afcFunction   = self.printer.load_object(config, 'AFC_functions')
         self.function.afc = self
         self.function.logger = self.logger
         self.gcode: GCodeDispatch = self.printer.load_object(config, 'gcode')
@@ -114,7 +115,7 @@ class afc:
         self.db_backup          = False
 
         # Objects for everything configured for AFC
-        self.units      = {}
+        self.units: Dict[str, afcUnit] = {}
         self.tools: Dict[str, AFCExtruder] = {}
         self.lanes: Dict[str, Union[AFCLane, AFCExtruderStepper]] = {}
         self.hubs       = {}
@@ -282,6 +283,7 @@ class afc:
         self.debug                  = config.getboolean('debug', False)             # Setting to True turns on more debugging to show on console
         self.log_frame_data         = config.getboolean('log_frame_data', True)
         self.testing                = config.getboolean('testing', False)           # Set to true for testing only so that failure states can be tested without stats being reset
+        self.enable_multiple_mapping = config.getboolean("enable_multiple_mapping",False)
         self.manual_home_has_probe_pos_param: bool = False
 
         # Klippy debuginput start_args can only be passed in when doing tests, this way AFC
@@ -329,6 +331,7 @@ class afc:
                                         self.cmd_UNSET_LANE_LOADED_help)
         self.function.register_commands(self.show_macros, 'AFC_RESET_STATS', self.cmd_AFC_RESET_STATS,
                                         self.cmd_AFC_RESET_STATS_help, self.cmd_AFC_RESET_STATS_options)
+        self.spool.register_commands(self)
 
     @property
     def current(self):
@@ -720,15 +723,15 @@ class afc:
             using_min_value = False
             target_temp = None
             try:
-                # cur_lane.map is expected to be the tool number as "T<n>" (e.g. "T3"),
+                # cur_lane.current_map is expected to be the tool number as "T<n>" (e.g. "T3"),
                 # used here as the index into print_tool_temperatures from the sliced
                 # file's metadata. Custom user-assigned maps may not follow this format.
-                idx = int(str(cur_lane.map).lstrip("T"))
+                idx = int(str(cur_lane.current_map).lstrip("T"))
                 if idx < 0: raise ValueError("Negative tool index")
                 target_temp = self.print_tool_temperatures[idx]
             except (ValueError, IndexError, TypeError, AttributeError) as e:
-                # Logging lane.name/e rather than cur_lane.map here: if the error came from
-                # resolving cur_lane.map itself, referencing it again would raise the same error.
+                # Logging lane.name/e rather than cur_lane.current_map here: if the error came from
+                # resolving cur_lane.current_map itself, referencing it again would raise the same error.
                 self.logger.info(
                     f"Could not resolve print_tool_temperatures index for lane {cur_lane.name}: {e}"
                 )
@@ -1616,14 +1619,16 @@ class afc:
                 if cur_hub is not None and cur_hub.state:
                     message = 'Hub not clear when trying to load.\nPlease check that hub does not contain broken filament and is clear'
                     if self.function.in_print():
-                        message += '\nOnce issue is resolved please manually load {} with {} macro and click resume to continue printing.'.format(cur_lane.name, cur_lane.map)
+                        message += f'\nOnce issue is resolved please manually load {cur_lane.name} '
+                        message += f'with {cur_lane.current_map} macro and click resume to continue printing.'
                     self.error.handle_lane_failure(cur_lane, message, pause=self.function.in_print())
                     return False
                 if not cur_lane.load_state:
                     message = 'Current lane not loaded, LOAD TRIGGER NOT TRIGGERED\n||==>--||----||-----||\nTRG   LOAD   HUB   TOOL'
                     message += '\nPlease load lane before continuing.'
                     if self.function.in_print():
-                        message += '\nOnce issue is resolved please manually load {} with {} macro and click resume to continue printing.'.format(cur_lane.name, cur_lane.map)
+                        message += f'\nOnce issue is resolved please manually load {cur_lane.name} '
+                        message += f'with {cur_lane.current_map} macro and click resume to continue printing.'
                     self.error.handle_lane_failure(cur_lane, message, pause=self.function.in_print())
                     return False
 
@@ -1631,7 +1636,7 @@ class afc:
         if cur_lane.need_purge:
             temp_state = self.capture_toolhead_temp()
             try:
-                self.logger.info(f"Flag set to purge for {cur_lane.extruder_obj.name}:{cur_lane.map}")
+                self.logger.info(f"Flag set to purge for {cur_lane.extruder_obj.name}:{cur_lane.current_map}")
                 # Make sure toolhead is up to temp before purging
                 if self._check_extruder_temp(cur_lane):
                     self.afcDeltaTime.log_with_time("Done heating toolhead")
@@ -1744,8 +1749,10 @@ class afc:
                 if hub_attempts > 20:
                     message = 'filament did not trigger hub sensor, CHECK FILAMENT PATH\n||=====||==>--||-----||\nTRG   LOAD   HUB   TOOL.'
                     if self.function.in_print():
-                        message += '\nOnce issue is resolved please manually load {} with {} macro and click resume to continue printing.'.format(cur_lane.name, cur_lane.map)
-                        message += '\nIf you have to retract filament back, use LANE_MOVE macro for {}.'.format(cur_lane.name)
+                        message += f'\nOnce issue is resolved please manually load {cur_lane.name} '
+                        message += f'with {cur_lane.current_map} macro and click resume to continue '
+                        message += 'printing. \nIf you have to retract filament back, use '
+                        message += f'LANE_MOVE macro for {cur_lane.name}.'
                     self.error.handle_lane_failure(cur_lane, message)
                     return False
 
@@ -1799,8 +1806,9 @@ class afc:
                         message += f'\nManually move filament with LANE_MOVE macro for {cur_lane.name} until filament is right before toolhead extruder gears,'
                         message += ' then load into extruder gears with extrude button in your gui of choice until the color fully changes'
                         if self.homing_enabled:
-                            message += f"\nFilament can also be reset back to hub by running AFC_RESET command then select {cur_lane.name} to reset"
-                            message += f"back to hub. Once lane is reset try reload lane with {cur_lane.map} macro."
+                            message += "\nFilament can also be reset back to hub by running AFC_RESET "
+                            message += f"command then select {cur_lane.name} to reset"
+                            message += f"back to hub. Once lane is reset try reload lane with {cur_lane.current_map} macro."
                         if self.function.in_print():
                             message += '\nOnce filament is fully loaded click resume to continue printing'
                         self.error.handle_lane_failure(cur_lane, message)
@@ -2143,7 +2151,7 @@ class afc:
                         msg += f"and select {cur_lane.name}, then AFC will slowly move lane until hub is no longer triggered.\n"
                         if self.next_lane_load is not None:
                             msg += f"\nOnce lane is behind hub and hub is no longer triggered manually load {self.next_lane_load}\n"
-                            msg += f"with {self.lanes[self.next_lane_load].map} macro.\n"
+                            msg += f"with {self.lanes[self.next_lane_load].current_map} macro.\n"
                             if self.function.in_print():
                                 msg += "Once lane is loaded click resume to continue printing"
                         self.error.handle_lane_failure(cur_lane, msg)
@@ -2186,7 +2194,8 @@ class afc:
                             message += "\nThen Manually run UNSET_LANE_LOADED to let AFC know nothing is loaded into toolhead"
                             # Check to make sure next_lane_loaded is not None before adding instructions on how to manually load next lane
                             if self.next_lane_load is not None:
-                                message += "\nThen manually load {} with {} macro".format(self.next_lane_load, self.lanes[self.next_lane_load].map)
+                                map_str = self.lanes[self.next_lane_load].current_map
+                                message += f"\nThen manually load {self.next_lane_load} with {map_str} macro"
                                 if self.function.in_print():
                                     message += "\nOnce lane is loaded click resume to continue printing"
                         self.error.handle_lane_failure(cur_lane, message)
@@ -2272,7 +2281,8 @@ class afc:
                     if self.function.in_print():
                         # Check to make sure next_lane_loaded is not None before adding instructions on how to manually load next lane
                         if self.next_lane_load is not None:
-                            message += "\nOnce hub is clear, manually load {} with {} macro".format(self.next_lane_load, self.lanes[self.next_lane_load].map)
+                            map_str = self.lanes[self.next_lane_load].current_map
+                            message += f"\nOnce hub is clear, manually load {self.next_lane_load} with {map_str} macro"
                             if self.function.in_print():
                                 message += "\nOnce lane is loaded click resume to continue printing"
 
@@ -2425,7 +2435,13 @@ class afc:
             self.error.AFC_error("I did not understand the change -- " + cmd, pause=self.function.in_print())
             return
 
-        self.CHANGE_TOOL(self.lanes[self.tool_cmds[Tcmd]], purge_length, new_extruder_temp=new_extruder_temp)
+        change_to_lane_name: str = self.tool_cmds.get(Tcmd, "")
+        change_to_lane = self.lanes.get(change_to_lane_name, None)
+        if change_to_lane:
+            change_to_lane.current_map = Tcmd
+            self.CHANGE_TOOL(change_to_lane, purge_length, new_extruder_temp=new_extruder_temp)
+        else:
+            self.error.AFC_error(f"Error trying to lookup lane for {Tcmd}")
 
     def CHANGE_TOOL(self, cur_lane: AFCLane, purge_length: Optional[float]=None, restore_pos: bool=True, new_extruder_temp: Optional[float]=None) -> None:
         try:
@@ -2620,6 +2636,8 @@ class afc:
         str["buffers"] = list(self.buffers.keys())
         str["message"] = self._get_message()
         str["led_state"] = self.led_state
+
+        str["multiple_tool_mapping"] = self.enable_multiple_mapping
         return str
 
     def _webhooks_status(self, web_request):
@@ -2764,9 +2782,9 @@ class afc:
                         lane_obj = self.lanes.get(curr_extr_lane, None)
                         if lane_obj:
                             if (lane_obj.name == curr_extruder.lane_loaded
-                                and map == lane_obj.map):
+                                and map == lane_obj.current_map):
                                 break
-                            elif (lane_obj.map == map):
+                            elif (lane_obj.current_map == map):
                                 self.logger.raw(
                                     ("<span class=warning--text>WARNING: "
                                     f"Not setting temperature for {map} since another lane is loaded for {curr_extruder.name}</span>")

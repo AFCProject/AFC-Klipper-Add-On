@@ -1,6 +1,6 @@
-# AFCProject Automated Filament Changer
+# AFCProject Automated Filament Changer Software
 #
-# Copyright (C) 2024-2026 AFCProject
+# Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 

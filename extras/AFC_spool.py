@@ -1,6 +1,7 @@
-# Armored Turtle Automated Filament Changer
+# AFCProject Automated Filament Changer Software
 #
 # Copyright (C) 2024-2026 Armored Turtle
+# Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 from __future__ import annotations
@@ -8,20 +9,48 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import copy
 import traceback
+import re
+
 
 if TYPE_CHECKING:
+    from gcode import GCodeCommand
+    from configfile import ConfigWrapper
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
 
 class AFCSpool:
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper):
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.SPOOLMAN_REMOTE_METHOD = 'spoolman_set_active_spool'
         self.print_task_config_obj = None
 
+
         # Temporary status variables
         self.next_spool_id      = None
+
+    def register_commands(self, afc: afc) -> None:
+        """
+        Method to register macros, this should be called after class has been initialized during the
+        initialization phase.
+
+        :param afc: AFC object to use
+        """
+        self.afc = afc
+        self.function = afc.function
+        self.enable_multiple_mapping = self.afc.enable_multiple_mapping
+        self.function.register_commands(self.afc.show_macros, "AFC_ADD_MAPPING",
+                                        self.cmd_AFC_ADD_MAPPING, self.cmd_AFC_ADD_MAPPING_help,
+                                        self.cmd_AFC_ADD_MAPPING_options)
+        self.function.register_commands(self.afc.show_macros, "AFC_REMOVE_MAPPING",
+                                        self.cmd_AFC_REMOVE_MAPPING, self.cmd_AFC_REMOVE_MAPPING_help,
+                                        self.cmd_AFC_REMOVE_MAPPING_options)
+        self.function.register_commands(self.afc.show_macros, "AFC_ENABLE_MULTIPLE_MAPPING",
+                                        self.cmd_AFC_ENABLE_MULTIPLE_MAPPING,
+                                        self.cmd_AFC_ENABLE_MULTIPLE_MAPPING_help,
+                                        self.cmd_AFC_ENABLE_MULTIPLE_MAPPING_options)
+        self.function.register_commands(False, "AFC_SWAP_MAPPING",
+                                        self.cmd_AFC_SWAP_MAPPING, self.cmd_AFC_SWAP_MAPPING_help)
 
     def handle_connect(self):
         """
@@ -29,7 +58,6 @@ class AFCSpool:
         This function is called when the printer connects. It looks up the AFC object
         and assigns it to the instance variable `self.AFC`.
         """
-        self.afc: afc   = self.printer.lookup_object('AFC')
         self.error      = self.afc.error
         self.reactor    = self.afc.reactor
         self.gcode      = self.afc.gcode
@@ -159,17 +187,8 @@ class AFCSpool:
         SET_MAP LANE=lane1 MAP=T1
         ```
         """
-        lane = gcmd.get('LANE', None)
-        if lane is None:
-            self.logger.info("No LANE parameter provided, please specify a valid LANE parameter.")
-            return
-
-        map_cmd = gcmd.get('MAP', None)
-
-        if map_cmd is None:
-            self.logger.info("No MAP parameter provided, please specify a valid MAP parameter.")
-            return
-
+        lane = gcmd.get('LANE')
+        map_cmd = gcmd.get('MAP')
         map_cmd = map_cmd.upper()
 
         if map_cmd not in self.afc.tool_cmds:
@@ -178,20 +197,165 @@ class AFCSpool:
 
         lane_switch = self.afc.tool_cmds[map_cmd]
         self.logger.debug("lane to switch is {}".format(lane_switch))
-        if lane not in self.afc.lanes:
+
+        cur_lane = self.afc.lanes.get(lane, None)
+        if cur_lane is None:
             self.logger.info('{} Unknown'.format(lane))
             return
-        cur_lane = self.afc.lanes[lane]
-        self.afc.tool_cmds[map_cmd]=lane
-        map_switch = cur_lane.map
-        cur_lane.map = map_cmd
+
+        sw_lane = self.afc.lanes.get(lane_switch, None)
+        if sw_lane is None:
+            self.logger.info(f"{lane_switch} is not found when swapping mapping.")
+            return
+
+        if sw_lane is cur_lane:
+            self.logger.info(f"{map_cmd} is already mapped to {lane}")
+            return
+
+        if self.enable_multiple_mapping:
+            sw_lane.map = [c for c in sw_lane.map if c != map_cmd]
+            if sw_lane.current_map == map_cmd:
+                sw_lane.current_map = ""
+            # Reassigning (not appending/removing in place) so Klipper's status
+            # diff sees a new list and pushes the update
+            cur_lane.map = cur_lane.map + [map_cmd]
+            cur_lane.map = [m for m in cur_lane.map if m != "NONE"]
+        else:
+            sw_lane.map = list(cur_lane.map)
+            sw_lane.current_map = sw_lane.map[0] if sw_lane.map else ""
+
+            cur_lane.map = [map_cmd]
+            cur_lane.current_map = map_cmd
+
+        for m in sw_lane.map:
+            if m == "NONE": continue
+            self.afc.tool_cmds[m] = sw_lane.name
+        # cur_lane.map can't contain "NONE" here: the enable_multiple_mapping
+        # branch filters it explicitly, and the else branch sets it to
+        # [map_cmd], which is always a real mapping (already validated
+        # against tool_cmds above), so no guard is needed for this loop.
+        for m in cur_lane.map:
+            self.afc.tool_cmds[m] = cur_lane.name
+        sw_lane.send_lane_data()
+
+        # TODO: need to check lane data to see how it looks
         cur_lane.send_lane_data()
 
-        sw_lane = self.afc.lanes[lane_switch]
-        self.afc.tool_cmds[map_switch] = lane_switch
-        sw_lane.map = map_switch
-        sw_lane.send_lane_data()
         self.afc.save_vars()
+
+    cmd_AFC_SWAP_MAPPING_help = "Swaps mapping between two lanes as provided with the FROM/TO variables"
+    def cmd_AFC_SWAP_MAPPING(self, gcmd: GCodeCommand) -> None:
+        lane_from = gcmd.get("FROM")
+        lane_to   = gcmd.get("TO")
+
+        lane_from_obj = self.afc.lanes.get(lane_from)
+        lane_to_obj   = self.afc.lanes.get(lane_to)
+        # TODO: verify that raised commands so not crash klipper if this is called when printing
+        if not lane_from_obj:
+            raise gcmd.error(f"Swapping from {lane_from} not found")
+        if not lane_to_obj:
+            raise gcmd.error(f"Swapping to {lane_to} not found")
+
+        lane_from_mapping = lane_from_obj.map
+        lane_to_mapping = lane_to_obj.map
+        lane_from_current = lane_from_obj.current_map
+
+        lane_from_obj.current_map = lane_to_obj.current_map
+        lane_from_obj.map = lane_to_mapping
+
+        lane_to_obj.current_map = lane_from_current
+        lane_to_obj.map = lane_from_mapping
+
+        for map_str in lane_from_obj.map:
+            if map_str == "NONE": continue
+            self.afc.tool_cmds.update({map_str: lane_from_obj.name})
+        for map_str in lane_to_obj.map:
+            if map_str == "NONE": continue
+            self.afc.tool_cmds.update({map_str: lane_to_obj.name})
+
+        lane_from_obj.send_lane_data()
+        lane_to_obj.send_lane_data()
+        self.afc.save_vars()
+
+    cmd_AFC_ADD_MAPPING_help = (
+        "Adds a new T(n) macro that currently does not exist to a lane. Mapping can be passed in "
+        "a comma separated list to add multiple to a single lane"
+    )
+    cmd_AFC_ADD_MAPPING_options = {"LANE": {"type": "string", "default": "lane1"},
+                                   "MAPPING": {"type": "string", "default": "T0"}}
+    def cmd_AFC_ADD_MAPPING(self, gcmd: GCodeCommand) -> None:
+        if not self.enable_multiple_mapping:
+            raise gcmd.error("enable multiple mapping needs to be enabled to add mappings,"
+                                " enable by running AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1")
+        lane = gcmd.get("LANE")
+        mapping: str = gcmd.get("MAPPING")
+        mapping_list: list = mapping.upper().split(",")
+
+        lane_obj = self.afc.lanes.get(lane, None)
+        if not lane_obj:
+            raise gcmd.error(f"{lane} is not a valid lane")
+
+        for m in mapping_list:
+            if not re.fullmatch(r"T\d+", m):
+                self.afc.error.AFC_error(f"'{m}' is not a valid mapping, expect T(n) format.", False)
+                continue
+
+            if m in self.afc.tool_cmds:
+                self.afc.error.AFC_error(f"Cannot map {m} to {lane}, as mapping already exists.", False)
+                continue
+            self.logger.info(f"Adding {m} to {lane}")
+            self.afc.tool_cmds.update({m: lane})
+            lane_obj.map = lane_obj.map + [m]
+            self.function.register_tool_macro(lane, m)
+        lane_obj.send_lane_data()
+        self.afc.save_vars()
+
+    cmd_AFC_REMOVE_MAPPING_help = (
+        "Removes T(n) macro from specified lane, mapping can be passed in as comma separated list "
+        "to remove multiple mappings from a lane"
+    )
+    cmd_AFC_REMOVE_MAPPING_options = {"MAPPING": {"type": "string", "default": "T0"}}
+    def cmd_AFC_REMOVE_MAPPING(self, gcmd: GCodeCommand) -> None:
+        if not self.enable_multiple_mapping:
+            raise gcmd.error("enable multiple mapping needs to be enabled to remove mappings,"
+                             " enable by running AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1")
+        mapping: str = gcmd.get("MAPPING")
+        mapping_list: list = mapping.upper().split(",")
+
+        for m in mapping_list:
+            if m not in self.afc.tool_cmds:
+                self.afc.error.AFC_error(f"Mapping {m} does not exist", False)
+                continue
+            lane = self.afc.tool_cmds.pop(m)
+            lane_obj = self.afc.lanes.get(lane)
+            if lane_obj:
+                self.logger.info(f"Removing {m} macro from {lane}")
+                lane_obj.map = [ c for c in lane_obj.map if c != m]
+                if lane_obj.current_map == m:
+                    lane_obj.current_map = lane_obj.map[0] if lane_obj.map else ""
+                lane_obj.send_lane_data()
+            self.gcode.register_command(m, None)
+        self.afc.save_vars()
+
+    cmd_AFC_ENABLE_MULTIPLE_MAPPING_help = (
+        "Enable ability to have multiple T(n) macros mapped to a single lane and enables use"
+        " of virtual tools"
+    )
+    cmd_AFC_ENABLE_MULTIPLE_MAPPING_options ={"ENABLE":{"type": "int", "default": 0}}
+    def cmd_AFC_ENABLE_MULTIPLE_MAPPING(self, gcmd: GCodeCommand) -> None:
+        enable = bool(gcmd.get_int("ENABLE", 0))
+        if enable:
+            self.enable_multiple_mapping = True
+            self.logger.info("Multiple T(n) mapping per lane has been enabled along with ability to "
+                             "add virtual tools with AFC_ADD_MAPPING macro")
+        else:
+            self.enable_multiple_mapping = False
+            # TODO: figure out a way to properly reset lane mappings back to a 1-1 not n-1
+            # Maybe reset everything back and then remove the remaining T(n) macros
+            self.logger.info("Multiple T(n) mapping per lane and virtual tools has been disabled")
+
+        self.afc.enable_multiple_mapping = self.enable_multiple_mapping
+        self.function.ConfigRewrite("AFC", "enable_multiple_mapping", self.enable_multiple_mapping)
 
     cmd_SET_COLOR_help = "Set filaments color for a lane"
     def cmd_SET_COLOR(self, gcmd):
@@ -528,7 +692,10 @@ class AFCSpool:
     cmd_RESET_AFC_MAPPING_help = "Resets all lane mapping in AFC"
     def cmd_RESET_AFC_MAPPING(self, gcmd):
         """
-        Resets all tool lane mapping to the order set up in the configuration.
+        Resets all tool lane mapping to the order set up in the configuration. When multiple tool
+        mapping is enabled, when reset is called and virtual tools have been added, the virtual
+        tools will be removed since reset will always revert back to a 1 to 1 mapping.
+
         Optionally resets runout lanes unless RUNOUT=no is specified.
 
         Useful to put in your PRINT_END macro to reset mapping
@@ -543,25 +710,27 @@ class AFCSpool:
         RESET_AFC_MAPPING RUNOUT=no
         ```
         """
-
+        # TODO: update this before merging into DEV
         # Gathering existing lane mapping and add to list
-        existing_cmds = [lane.map for lane in self.afc.lanes.values()]
+        existing_cmds: list[str] = [cmd for lane in self.afc.lanes.values() for cmd in lane.map if cmd != "NONE"]
         # Gather manually assigned mappings and add to list
-        manually_assigned = [ lane._map for lane in self.afc.lanes.values()]
+        manually_assigned = [ cmd for lane in self.afc.lanes.values() for cmd in lane._map]
         # Remove manually assigned mappings from auto assigned mappings
         existing_cmds = list(set(existing_cmds) - set(manually_assigned))
         # Sort list in numerical order
         existing_cmds = sorted(existing_cmds, key=lambda x: int("".join([i for i in x if i.isdigit()])))
-        for key, unit in self.afc.units.items():
+        for unit in self.afc.units.values():
             for lane in unit.lanes.values():
+                lane.map = []
                 # Reassigning manually assigned mapping to lane
-                if lane._map is not None:
-                    map_cmd = lane._map
+                if lane._map:
+                    map_cmd = lane._map[0]
                 else:
                     map_cmd = existing_cmds.pop(0)
 
                 self.afc.tool_cmds[map_cmd] = lane.name
-                self.afc.lanes[lane.name].map = map_cmd
+                lane.current_map = map_cmd
+                lane.map = [map_cmd]
 
         # Resetting runout lanes to None
         runout_opt = gcmd.get('RUNOUT', 'yes').lower()
@@ -571,6 +740,14 @@ class AFCSpool:
 
         self.afc.save_vars()
         self.logger.info("Tool mappings reset" + ("" if runout_opt == "no" else " and runout lanes reset"))
+
+        # Checking if more lanes exist, remove then since we do not know where these should be added
+        # since reset just resets back to a 1:1 mapping.
+        if len(existing_cmds) > 0:
+            self.logger.info(f"{', '.join(existing_cmds)} remain, removing these mappings")
+            for cmd in existing_cmds:
+                self.afc.tool_cmds.pop(cmd, None)
+                self.gcode.register_command(cmd, None)
 
     cmd_SET_NEXT_SPOOL_ID_help = "Set the spool id to be loaded next into AFC"
     def cmd_SET_NEXT_SPOOL_ID(self, gcmd):

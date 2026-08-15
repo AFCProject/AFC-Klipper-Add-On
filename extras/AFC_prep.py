@@ -189,9 +189,21 @@ class afcPrep:
 
                     if 'runout_lane' in units[cur_lane.unit][cur_lane.name]: cur_lane.runout_lane = units[cur_lane.unit][cur_lane.name]['runout_lane']
                     if cur_lane.runout_lane == '' or cur_lane.runout_lane == 'NONE': cur_lane.runout_lane = None
-                    if 'map' in units[cur_lane.unit][cur_lane.name]: cur_lane.map = units[cur_lane.unit][cur_lane.name]['map']
+                    temp_map = units[cur_lane.unit][cur_lane.name].get('map', None)
+                    if (temp_map and
+                        isinstance(temp_map, str)):
+                        cur_lane.map = temp_map.replace(" ", "").split(",")
+                    else:
+                        cur_lane.map = list(temp_map or [])
+                    cur_lane.current_map = units[cur_lane.unit][cur_lane.name].get("current_map", "")
+
                     if cur_lane.map != None:
-                        self.afc.tool_cmds[cur_lane.map] = cur_lane.name
+                        for map_str in cur_lane.map:
+                            # NONE is a special placeholder so that when assigning T(n) commands
+                            # lanes with NONE will not get one assigned to keep the T(n) macros from
+                            # growing over time with the new multi mapping update
+                            if map_str != "NONE":
+                                self.afc.tool_cmds[map_str] = cur_lane.name
                     # Check first for hub_loaded as this was the old name in software with version <= 1030
                     if 'hub_loaded' in units[cur_lane.unit][cur_lane.name]: lane.loaded_to_hub = units[cur_lane.unit][cur_lane.name]['hub_loaded']
                     # Check for loaded_to_hub as this is how its being saved version > 1030

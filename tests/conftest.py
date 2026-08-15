@@ -1,7 +1,7 @@
 """
 Shared test fixtures and Klipper mock infrastructure for AFC unit tests.
 
-All Klipper-specific modules (configfile, queuelogger, webhooks) are mocked
+All Klipper-specific modules (configfile, queuelogger, webhooks, gcode) are mocked
 here at the module level so that all test files can import AFC extras modules
 without a running Klipper instance.
 """
@@ -118,6 +118,17 @@ def _make_webhooks_mock():
     return mod
 
 
+def _make_gcode_mock():
+    """Mock for Klipper's gcode module."""
+    mod = types.ModuleType("gcode")
+
+    class CommandError(Exception):
+        pass
+
+    mod.CommandError = CommandError
+    return mod
+
+
 def _make_led_mock():
     """Mock for extras.led (Klipper's shared LED helper module).
 
@@ -227,6 +238,7 @@ def _make_print_task_config():
 sys.modules.setdefault("configfile", _make_configfile_mock())
 sys.modules.setdefault("queuelogger", _make_queuelogger_mock())
 sys.modules.setdefault("webhooks", _make_webhooks_mock())
+sys.modules.setdefault("gcode", _make_gcode_mock())
 
 # C-extension / Klipper internals mocks
 sys.modules.setdefault("chelper", _make_chelper_mock())
@@ -468,6 +480,7 @@ class MockAFC:
         self.restore_pos = MagicMock()
 
         self.snapmaker_printer = False
+        self.enable_multiple_mapping = False
 
 
 class MockPrinter:
