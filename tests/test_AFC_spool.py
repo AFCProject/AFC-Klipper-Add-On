@@ -1063,10 +1063,12 @@ class TestResetAFCMapping:
         spool.cmd_RESET_AFC_MAPPING(gcmd)
         info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
         # "T0" is never consumed since afc.units is empty, so it also shows
-        # up in the trailing "leftover mappings" cleanup message.
+        # up in the leftover-mappings cleanup message, which now logs before
+        # the final "reset" message since it must run before the
+        # send_lane_data() pass for tool_cmds to be fully consistent.
         assert info_msgs == [
-            "Tool mappings reset and runout lanes reset",
             "T0 remain, removing these mappings",
+            "Tool mappings reset and runout lanes reset",
         ]
 
     def test_reset_uses_manual_map_when_set(self):
@@ -1085,6 +1087,111 @@ class TestResetAFCMapping:
         spool.cmd_RESET_AFC_MAPPING(gcmd)
         # The manually assigned T0 should be applied
         assert spool.afc.tool_cmds.get("T0") == "lane1"
+
+    def test_reset_renumbers_sequentially_after_unit_removed(self):
+        """Simulates a unit having been removed: the 2 remaining lanes still
+        carry their old (now-gapped) T4/T5 numbers from when more lanes
+        existed. Reset must renumber them down to a clean T0/T1 sequence
+        instead of recycling the old high numbers, and unregister the old
+        numbers since no lane claims them anymore."""
+        spool = _make_spool()
+        lane3 = self._make_lane_for_reset("lane3", "T4")
+        lane4 = self._make_lane_for_reset("lane4", "T5")
+        spool.afc.lanes = {"lane3": lane3, "lane4": lane4}
+        unit = MagicMock()
+        unit.lanes = {"lane3": lane3, "lane4": lane4}
+        spool.afc.units = {"unit2": unit}
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        assert spool.afc.tool_cmds.get("T0") == "lane3"
+        assert spool.afc.tool_cmds.get("T1") == "lane4"
+        assert lane3.current_map == "T0"
+        assert lane4.current_map == "T1"
+        assert spool.gcode._commands.get("T4") is None and "T4" in spool.gcode._commands
+        assert spool.gcode._commands.get("T5") is None and "T5" in spool.gcode._commands
+        assert "T4" not in spool.afc.tool_cmds
+        assert "T5" not in spool.afc.tool_cmds
+
+    def test_reset_registers_newly_assigned_auto_command(self):
+        """A unit was added, so this lane's auto-assigned number (T1) was
+        never in use before and has no gcode handler registered yet."""
+        spool = _make_spool()
+        lane1 = self._make_lane_for_reset("lane1", "T0")
+        lane2 = self._make_lane_for_reset("lane2", "NONE")
+        lane2.map = []
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        unit = MagicMock()
+        unit.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.units = {"unit1": unit}
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        assert spool.afc.tool_cmds.get("T1") == "lane2"
+        spool.function.register_tool_macro.assert_called_once_with("lane2", "T1")
+
+    def test_reset_does_not_reregister_command_already_in_use(self):
+        """Covers the `map_cmd not in previously_used_cmds` condition being
+        falsy on its own: a command that already existed before the reset
+        (recycled onto the same or a different lane) must not be
+        re-registered -- proven independently of the newly-added case above."""
+        spool = _make_spool()
+        lane1 = self._make_lane_for_reset("lane1", "T0")
+        spool.afc.lanes = {"lane1": lane1}
+        unit = MagicMock()
+        unit.lanes = {"lane1": lane1}
+        spool.afc.units = {"unit1": unit}
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.function.register_tool_macro.assert_not_called()
+
+    def test_reset_registers_newly_manually_assigned_command(self):
+        """A manual mapping (config `map:` value) that's never been used
+        before also needs registering, not just auto-assigned ones."""
+        spool = _make_spool()
+        lane1 = self._make_lane_for_reset("lane1", "NONE")
+        lane1.map = []
+        lane1._map = ["T7"]
+        spool.afc.lanes = {"lane1": lane1}
+        unit = MagicMock()
+        unit.lanes = {"lane1": lane1}
+        spool.afc.units = {"unit1": unit}
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        assert spool.afc.tool_cmds.get("T7") == "lane1"
+        spool.function.register_tool_macro.assert_called_once_with("lane1", "T7")
+
+    def test_reset_skips_manually_assigned_number_for_auto_lanes(self):
+        """A manual mapping in the middle of the sequence (T1) must not be
+        reused by an auto-assigned lane -- the auto lanes get T0 and T2."""
+        spool = _make_spool()
+        lane1 = self._make_lane_for_reset("lane1", "T0")
+        lane2 = self._make_lane_for_reset("lane2", "T1")
+        lane2._map = ["T1"]  # manually assigned
+        lane3 = self._make_lane_for_reset("lane3", "T2")
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2, "lane3": lane3}
+        unit = MagicMock()
+        unit.lanes = {"lane1": lane1, "lane2": lane2, "lane3": lane3}
+        spool.afc.units = {"unit1": unit}
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        assert spool.afc.tool_cmds.get("T0") == "lane1"
+        assert spool.afc.tool_cmds.get("T1") == "lane2"
+        assert spool.afc.tool_cmds.get("T2") == "lane3"
+
+    def test_reset_removes_multimapping_virtual_tool_extras(self):
+        """A lane with 2 T(n)'s mapped (multimapping) collapses back to 1 on
+        reset; the extra T(n) no longer assigned to any lane is removed."""
+        spool = _make_spool()
+        lane1 = self._make_lane_for_reset("lane1", "T0")
+        lane1.map = ["T0", "T5"]  # T5 is a virtual-tool extra
+        spool.afc.lanes = {"lane1": lane1}
+        unit = MagicMock()
+        unit.lanes = {"lane1": lane1}
+        spool.afc.units = {"unit1": unit}
+        gcmd = self._make_reset_gcmd()
+        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        assert lane1.map == ["T0"]
+        assert spool.gcode._commands.get("T5") is None and "T5" in spool.gcode._commands
+        assert "T5" not in spool.afc.tool_cmds
 
 
 # ── cmd_SET_NEXT_SPOOL_ID ─────────────────────────────────────────────────────

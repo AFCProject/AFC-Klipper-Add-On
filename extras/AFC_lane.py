@@ -167,12 +167,16 @@ class AFCLane:
         # Holds which T(n) macro is currently mapped to this lane
         # since map can be a list of T(n) now
         self.current_map: str     = ""
+        # T(n) keys this lane last pushed a lane_data record for -- lets
+        # send_lane_data() detect and clear out mappings that were removed
+        # since the last call, without every mapping macro having to do it.
+        self._sent_lane_data_keys: list = []
 
         # LED SETTINGS
         # All variables use: (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
-        self.led_index: Optional[str] = config.get('led_index', None)                       # LED index of lane in chain of lane LEDs
-        self.led_fault            = config.get('led_fault',None)                        # LED color to set when faults occur in lane
-        self.led_ready: Optional[str] = config.get('led_ready',None)                        # LED color to set when lane is ready
+        self.led_index: str       = config.get('led_index', None)                       # LED index of lane in chain of lane LEDs
+        self.led_fault: str       = config.get('led_fault',None)                        # LED color to set when faults occur in lane
+        self.led_ready: str       = config.get('led_ready',None)                        # LED color to set when lane is ready
         self.led_not_ready        = config.get('led_not_ready',None)                    # LED color to set when lane not ready
         self.led_loading          = config.get('led_loading',None)                      # LED color to set when lane is loading
         self.led_prep_loaded      = config.get('led_loading',None)                      # LED color to set when lane is loaded
@@ -1852,19 +1856,48 @@ class AFCLane:
             self.extruder_obj.tc_unit_obj.tool_swap(self, set_start_time=False)
 
 
+    def _mapped_keys(self) -> list:
+        """
+        Returns the real T(n) mappings currently assigned to this lane, with
+        the "NONE" placeholder filtered out.
+
+        :return list: T(n) command strings currently mapped to this lane
+        """
+        return [m for m in self.map if m != "NONE"]
+
     def send_lane_data(self):
         """
-        Sends lane data to moonrakers `machine/set_lane_data` endpoint
-        """
-        if (self.afc.moonraker
-            and self.current_map is not None
-            and "T" in self.current_map):
-            scan_time = self.td1_data['scan_time'] if 'scan_time' in self.td1_data else ""
-            td        = self.td1_data['td']        if 'td'        in self.td1_data else ""
+        Sends lane data to moonrakers `machine/set_lane_data` endpoint, one record
+        per T(n) currently mapped to this lane -- so a lane mapped to multiple T(n)
+        macros shows up correctly in every mapped slot, not just current_map's.
 
+        Also removes records for any T(n) this lane sent data for last time but no
+        longer maps to, skipping ones that got reassigned to a different lane --
+        that lane's own send_lane_data() call is responsible for posting its record.
+        """
+        if not self.afc.moonraker:
+            return
+
+        current_keys = self._mapped_keys()
+
+        for key in self._sent_lane_data_keys:
+            if key in current_keys:
+                continue
+            # Only remove if no lane (including this one) claims this T(n)
+            # anymore -- if it got reassigned to another lane, that lane's
+            # own map already carries it, so leave its record alone; that
+            # lane's own send_lane_data() call is responsible for it.
+            still_claimed = any(key in lane.map for lane in self.afc.lanes.values())
+            if not still_claimed:
+                self.afc.moonraker.remove_database_entry("lane_data", key)
+
+        scan_time = self.td1_data['scan_time'] if 'scan_time' in self.td1_data else ""
+        td        = self.td1_data['td']        if 'td'        in self.td1_data else ""
+
+        for key in current_keys:
             lane_data = {
                 "namespace": "lane_data",
-                "key": self.name,
+                "key": key,
                 "value": {
                     "color"          : self.color,
                     "material"       : self.material,
@@ -1872,7 +1905,7 @@ class AFCLane:
                     "nozzle_temp"    : self.extruder_temp,
                     "scan_time"      : scan_time,
                     "td"             : td,
-                    "lane"           : self.lane_index,
+                    "lane"           : key.replace("T", ""),
                     "extruder_index" : self.lane_extruder_index,
                     "spool_id"       : self.spool_id,
                     "weight"         : self.weight
@@ -1880,16 +1913,24 @@ class AFCLane:
             }
             self.afc.moonraker.send_lane_data(lane_data)
 
+        self._sent_lane_data_keys = current_keys
+
     def clear_lane_data(self):
         """
-        Clears lane data that is currently stored at moonrakers `machine/set_lane_data` endpoint
+        Clears lane data that is currently stored at moonrakers `machine/set_lane_data`
+        endpoint for every T(n) currently mapped to this lane, without touching the
+        mapping itself -- used when spool contents are cleared but the lane keeps
+        its T(n) mapping(s), e.g. on unload.
         """
-        if (self.afc.moonraker
-            and self.current_map is not None
-            and "T" in self.current_map):
+        if not self.afc.moonraker:
+            return
+
+        current_keys = self._mapped_keys()
+
+        for key in current_keys:
             lane_data = {
                 "namespace": "lane_data",
-                "key": self.name,
+                "key": key,
                 "value": {
                     "color"          : "",
                     "material"       : "",
@@ -1897,13 +1938,15 @@ class AFCLane:
                     "nozzle_temp"    : "",
                     "scan_time"      : "",
                     "td"             : "",
-                    "lane"           : self.lane_index,
+                    "lane"           : key.replace("T", ""),
                     "extruder_index" : self.lane_extruder_index,
                     "spool_id"       : None,
                     "weight"         : 0
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
+
+        self._sent_lane_data_keys = current_keys
 
     def get_td1_data_load(self):
         """

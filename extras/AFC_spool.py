@@ -6,7 +6,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 from __future__ import annotations
 
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Optional, Union, Any, TYPE_CHECKING
 import copy
 import traceback
 import re
@@ -245,8 +245,25 @@ class AFCSpool:
 
     cmd_AFC_SWAP_MAPPING_help = "Swaps mapping between two lanes as provided with the FROM/TO variables"
     def cmd_AFC_SWAP_MAPPING(self, gcmd: GCodeCommand) -> None:
+        """
+        This macro allows a way to easily swap mappings between two lanes, this macro is used during
+        infinite spool runout so that a lanes current mappings correctly moves to the runout lane mapping.
+
+        Usage
+        -----
+        `AFC_SWAP_MAPPING FROM=<lane name> TO=<lane name>`
+
+        Example
+        -----
+        ```
+        AFC_SWAP_MAPPING FROM=lane1 TO=lane2
+        ```
+        """
         lane_from = gcmd.get("FROM")
         lane_to   = gcmd.get("TO")
+
+        if lane_from.lower() == lane_to.lower():
+            raise gcmd.error(f"FROM({lane_from}) TO({lane_to}) values are the same, not swapping.")
 
         lane_from_obj = self.afc.lanes.get(lane_from)
         lane_to_obj   = self.afc.lanes.get(lane_to)
@@ -284,6 +301,24 @@ class AFCSpool:
     cmd_AFC_ADD_MAPPING_options = {"LANE": {"type": "string", "default": "lane1"},
                                    "MAPPING": {"type": "string", "default": "T0"}}
     def cmd_AFC_ADD_MAPPING(self, gcmd: GCodeCommand) -> None:
+        """
+        This macro adds passed in mapping to specified lane, allows the ability to create "virtual tools". 
+        The new maps will be registered into klipper so that they can be called correctly. Mappings
+        can be passed in as a comma separated list to add multiple to a single lane.
+
+        Multiple lane mappings need to be enabled first with `AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1
+        before running this command.
+
+        Usage
+        -----
+        `AFC_ADD_MAPPING MAPPING=<mappings to be add>`
+
+        Example
+        -----
+        ```
+        AFC_ADD_MAPPING LANE=lane1 MAPPING=T5,T6
+        ```
+        """
         if not self.enable_multiple_mapping:
             raise gcmd.error("enable multiple mapping needs to be enabled to add mappings,"
                                 " enable by running AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1")
@@ -316,6 +351,23 @@ class AFCSpool:
     )
     cmd_AFC_REMOVE_MAPPING_options = {"MAPPING": {"type": "string", "default": "T0"}}
     def cmd_AFC_REMOVE_MAPPING(self, gcmd: GCodeCommand) -> None:
+        """
+        This macro removes specified mapping from a lanes and deregisters it in klipper so it cannot
+        be called. Comma separated list can be passed in for mappings to be removed.
+
+        Multiple lane mappings need to be enabled first with `AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1
+        before running this command.
+
+        Usage
+        -----
+        `AFC_REMOVE_MAPPING MAPPING=<mappings to be removed>`
+
+        Example
+        -----
+        ```
+        AFC_REMOVE_MAPPING MAPPING=T5,T6
+        ```
+        """
         if not self.enable_multiple_mapping:
             raise gcmd.error("enable multiple mapping needs to be enabled to remove mappings,"
                              " enable by running AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1")
@@ -343,6 +395,23 @@ class AFCSpool:
     )
     cmd_AFC_ENABLE_MULTIPLE_MAPPING_options ={"ENABLE":{"type": "int", "default": 0}}
     def cmd_AFC_ENABLE_MULTIPLE_MAPPING(self, gcmd: GCodeCommand) -> None:
+        """
+        This macro enables the ability to have T(n) macros mapped to multiple lanes. Enabling 
+        multiple mapping also adds the ability to add virtual tools with AFC_ADD_MAPPING and 
+        AFC_REMOVE_MAPPING macros.
+
+        When disabling multiple mapping, lanes mappings are also reset via RESET_AFC_MAPPING command.
+
+        Usage
+        -----
+        `AFC_ENABLE_MULTIPLE_MAPPING ENABLE=<0/1>`
+
+        Example
+        -----
+        ```
+        AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1
+        ```
+        """
         enable = bool(gcmd.get_int("ENABLE", 0))
         if enable:
             self.enable_multiple_mapping = True
@@ -353,6 +422,7 @@ class AFCSpool:
             # TODO: figure out a way to properly reset lane mappings back to a 1-1 not n-1
             # Maybe reset everything back and then remove the remaining T(n) macros
             self.logger.info("Multiple T(n) mapping per lane and virtual tools has been disabled")
+            self._reset_mapping()
 
         self.afc.enable_multiple_mapping = self.enable_multiple_mapping
         self.function.ConfigRewrite("AFC", "enable_multiple_mapping", self.enable_multiple_mapping)
@@ -536,15 +606,15 @@ class AFCSpool:
             if cur_lane.name == self.afc.current:
                 self.set_active_spool(cur_lane.spool_id)
 
-    def _get_filament_values( self, filament, field, default=None):
-        '''
+    def _get_filament_values( self, filament: dict, field: str, default: Any=None) -> Any:
+        """
         Helper function for checking if field is set and returns value if it exists,
         otherwise returns None
 
         :param filament: Dictionary for filament values
         :param field:    Field name to check for in dictionary
         :return:         Returns value if field exists or None if field does not exist
-        '''
+        """
         value = default
         if field in filament:
             value = filament[field]
@@ -588,7 +658,8 @@ class AFCSpool:
         cur_lane.spool_vendor = ""
         cur_lane.filament_name = ""
 
-    def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]], save_vars: bool = True) -> None:
+    def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]],
+                    save_vars: bool = True) -> None:
         if (self.afc.spoolman is not None
             and self.afc.moonraker is not None):
             if (SpoolID is not None
@@ -702,7 +773,7 @@ class AFCSpool:
     cmd_RESET_AFC_MAPPING_help = "Resets all lane mapping in AFC"
     def cmd_RESET_AFC_MAPPING(self, gcmd: GCodeCommand) -> None:
         """
-        Resets all tool lane mapping to the order set up in the configuration. When multiple tool
+        Resets all tool lane mapping to the order set up in the configuration. If multiple tool
         mapping is enabled, when reset is called and virtual tools have been added, the virtual
         tools will be removed since reset will always revert back to a 1 to 1 mapping.
 
@@ -720,15 +791,27 @@ class AFCSpool:
         RESET_AFC_MAPPING RUNOUT=no
         ```
         """
-        # TODO: update this before merging into DEV
-        # Gathering existing lane mapping and add to list
-        existing_cmds: list[str] = [cmd for lane in self.afc.lanes.values() for cmd in lane.map if cmd != "NONE"]
+        # Resetting runout lanes to None
+        runout_opt = gcmd.get('RUNOUT', 'yes').lower()
+        self._reset_mapping(runout_opt)
+
+    def _reset_mapping(self, runout_opt: str = 'no') -> None:
+        """
+        Resets all lane mapping back to a 1:1 T(n) assignment, renumbering lanes
+        sequentially so adding or removing a unit doesn't leave gaps or stale
+        high numbers behind.
+
+        :param runout_opt: "no" leaves runout lanes untouched, anything else clears them
+        """
+        # Commands in use before the reset, used further down to spot leftovers
+        previously_used_cmds = {
+            cmd for lane in self.afc.lanes.values() for cmd in lane.map if cmd != "NONE"
+        }
         # Gather manually assigned mappings and add to list
-        manually_assigned = [ cmd for lane in self.afc.lanes.values() for cmd in lane._map]
-        # Remove manually assigned mappings from auto assigned mappings
-        existing_cmds = list(set(existing_cmds) - set(manually_assigned))
-        # Sort list in numerical order
-        existing_cmds = sorted(existing_cmds, key=lambda x: int("".join([i for i in x if i.isdigit()])))
+        manually_assigned = {cmd for lane in self.afc.lanes.values() for cmd in lane._map}
+        # Fresh T0..T(n-1) sequence for auto lanes, skipping manually assigned numbers
+        total_lanes = sum(len(unit.lanes) for unit in self.afc.units.values())
+        auto_cmds = [f"T{i}" for i in range(total_lanes) if f"T{i}" not in manually_assigned]
         for unit in self.afc.units.values():
             for lane in unit.lanes.values():
                 lane.map = []
@@ -736,28 +819,39 @@ class AFCSpool:
                 if lane._map:
                     map_cmd = lane._map[0]
                 else:
-                    map_cmd = existing_cmds.pop(0)
+                    map_cmd = auto_cmds.pop(0)
+
+                # New commands not already registered need to be registered in klipper
+                if map_cmd not in previously_used_cmds:
+                    self.function.register_tool_macro(lane.name, map_cmd)
 
                 self.afc.tool_cmds[map_cmd] = lane.name
                 lane.current_map = map_cmd
                 lane.map = [map_cmd]
 
-        # Resetting runout lanes to None
-        runout_opt = gcmd.get('RUNOUT', 'yes').lower()
+        # Remove commands no longer assigned to a lane (virtual-tool extras, or
+        # leftovers from a removed unit), popped before send_lane_data() below
+        # so it sees them as gone rather than still owned by this lane.
+        new_cmds = {lane.map[0] for unit in self.afc.units.values() for lane in unit.lanes.values()}
+        stale_cmds = sorted(previously_used_cmds - new_cmds,
+                            key=lambda x: int("".join([i for i in x if i.isdigit()])))
+        if stale_cmds:
+            self.logger.info(f"{', '.join(stale_cmds)} remain, removing these mappings")
+            for cmd in stale_cmds:
+                self.afc.tool_cmds.pop(cmd, None)
+                self.gcode.register_command(cmd, None)
+
+        # Run after every lane is reassigned so send_lane_data() sees the final mapping
+        for unit in self.afc.units.values():
+            for lane in unit.lanes.values():
+                lane.send_lane_data()
+
         if runout_opt != 'no':
             for lane in self.afc.lanes.values():
                 lane.runout_lane = None
 
         self.afc.save_vars()
         self.logger.info("Tool mappings reset" + ("" if runout_opt == "no" else " and runout lanes reset"))
-
-        # Checking if more lanes exist, remove then since we do not know where these should be added
-        # since reset just resets back to a 1:1 mapping.
-        if len(existing_cmds) > 0:
-            self.logger.info(f"{', '.join(existing_cmds)} remain, removing these mappings")
-            for cmd in existing_cmds:
-                self.afc.tool_cmds.pop(cmd, None)
-                self.gcode.register_command(cmd, None)
 
     cmd_SET_NEXT_SPOOL_ID_help = "Set the spool id to be loaded next into AFC"
     def cmd_SET_NEXT_SPOOL_ID(self, gcmd: GCodeCommand) -> None:
