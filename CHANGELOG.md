@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2026-08-15]
+### Breaking Change
+- `RESET_AFC_MAPPING` has now been renamed to `AFC_RESET_MAPPING`
+
 ### Added
 - Ability to map multiple T(n) macros to a single lane. New `AFC_ADD_MAPPING` and
   `AFC_REMOVE_MAPPING` macros add/remove T(n) mappings on a lane, and `AFC_ENABLE_MULTIPLE_MAPPING`
@@ -14,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses this to move a lane's mappings to the runout lane automatically.
 
 ### Fixed
-- `RESET_AFC_MAPPING` now renumbers T(n) mappings sequentially instead of reusing old numbers, so
+- `AFC_RESET_MAPPING` now renumbers T(n) mappings sequentially instead of reusing old numbers, so
   removing a unit no longer leaves gaps or stale high-numbered mappings behind. Newly assigned
   commands are now also re-registered with Klipper.
 - `lane_data` sent to Moonraker is now keyed per T(n) mapping instead of per lane name, fixing

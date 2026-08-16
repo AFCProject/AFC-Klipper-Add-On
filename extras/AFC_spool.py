@@ -79,7 +79,7 @@ class AFCSpool:
         # Registering stepper callback so that mux macro can be set properly with valid lane names
         self.printer.register_event_handler("afc_stepper:register_macros",self.register_lane_macros)
 
-        self.gcode.register_command("RESET_AFC_MAPPING", self.cmd_RESET_AFC_MAPPING, desc=self.cmd_RESET_AFC_MAPPING_help)
+        self.gcode.register_command("AFC_RESET_MAPPING", self.cmd_AFC_RESET_MAPPING, desc=self.cmd_AFC_RESET_MAPPING_help)
         self.gcode.register_command("SET_NEXT_SPOOL_ID", self.cmd_SET_NEXT_SPOOL_ID, desc=self.cmd_SET_NEXT_SPOOL_ID_help)
 
     def register_lane_macros(self, lane_obj: AFCLane) -> None:
@@ -330,7 +330,7 @@ class AFCSpool:
         ```
         """
         if not self.enable_multiple_mapping:
-            raise gcmd.error("enable multiple mapping needs to be enabled to add mappings,"
+            raise gcmd.error("Enable multiple mapping needs to be enabled to add mappings,"
                                 " enable by running AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1")
         lane = gcmd.get("LANE")
         mapping: str = gcmd.get("MAPPING")
@@ -379,7 +379,7 @@ class AFCSpool:
         ```
         """
         if not self.enable_multiple_mapping:
-            raise gcmd.error("enable multiple mapping needs to be enabled to remove mappings,"
+            raise gcmd.error("Enable multiple mapping needs to be enabled to remove mappings,"
                              " enable by running AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1")
         mapping: str = gcmd.get("MAPPING")
         mapping_list: list = mapping.upper().split(",")
@@ -410,7 +410,7 @@ class AFCSpool:
         multiple mapping also adds the ability to add virtual tools with AFC_ADD_MAPPING and
         AFC_REMOVE_MAPPING macros.
 
-        When disabling multiple mapping, lanes mappings are also reset via RESET_AFC_MAPPING command.
+        When disabling multiple mapping, lanes mappings are also reset via AFC_RESET_MAPPING command.
 
         Usage
         -----
@@ -793,8 +793,8 @@ class AFCSpool:
         cur_lane.runout_lane = None if is_none else runout
         self.afc.save_vars()
 
-    cmd_RESET_AFC_MAPPING_help = "Resets all lane mapping in AFC"
-    def cmd_RESET_AFC_MAPPING(self, gcmd: GCodeCommand) -> None:
+    cmd_AFC_RESET_MAPPING_help = "Resets all lane mapping in AFC"
+    def cmd_AFC_RESET_MAPPING(self, gcmd: GCodeCommand) -> None:
         """
         Resets all tool lane mapping to the order set up in the configuration. If multiple tool
         mapping is enabled, when reset is called and virtual tools have been added, the virtual
@@ -806,12 +806,12 @@ class AFCSpool:
 
         Usage
         -----
-        `RESET_AFC_MAPPING [RUNOUT=yes|no]`
+        `AFC_RESET_MAPPING [RUNOUT=yes|no]`
 
         Example
         -----
         ```
-        RESET_AFC_MAPPING RUNOUT=no
+        AFC_RESET_MAPPING RUNOUT=no
         ```
         """
         # Resetting runout lanes to None

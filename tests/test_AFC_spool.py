@@ -7,7 +7,7 @@ Covers:
   - cmd_SET_COLOR / cmd_SET_MATERIAL / cmd_SET_WEIGHT: attribute updates
   - cmd_SET_SPOOL_ID: spoolman interaction
   - cmd_SET_RUNOUT: runout lane assignment
-  - cmd_RESET_AFC_MAPPING: clears mappings
+  - cmd_AFC_RESET_MAPPING: clears mappings
 """
 
 from __future__ import annotations
@@ -435,7 +435,7 @@ class TestAfcAddMapping:
         spool = _make_spool()
         spool.enable_multiple_mapping = False
         gcmd = _make_gcmd(LANE="lane1", MAPPING="T1")
-        with pytest.raises(Exception, match="enable multiple mapping needs to be enabled"):
+        with pytest.raises(Exception, match="Enable multiple mapping needs to be enabled"):
             spool.cmd_AFC_ADD_MAPPING(gcmd)
 
     def test_raises_when_lane_not_found(self):
@@ -525,7 +525,7 @@ class TestAfcRemoveMapping:
         spool = _make_spool()
         spool.enable_multiple_mapping = False
         gcmd = _make_gcmd(MAPPING="T1")
-        with pytest.raises(Exception, match="enable multiple mapping needs to be enabled"):
+        with pytest.raises(Exception, match="Enable multiple mapping needs to be enabled"):
             spool.cmd_AFC_REMOVE_MAPPING(gcmd)
 
     def test_removes_existing_mapping(self):
@@ -1020,7 +1020,7 @@ class TestSetRunout:
         assert spool.logger.messages == [("error", "Unknown runout lane: no_such_lane")]
 
 
-# ── cmd_RESET_AFC_MAPPING ─────────────────────────────────────────────────────
+# ── cmd_AFC_RESET_MAPPING ─────────────────────────────────────────────────────
 
 class TestResetAFCMapping:
     def _make_reset_gcmd(self, runout="yes"):
@@ -1040,7 +1040,7 @@ class TestResetAFCMapping:
         spool.afc.lanes = {"lane1": lane1}
         spool.afc.units = {}  # no units, loop skips mapping reassignment
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         spool.afc.save_vars.assert_called()
 
     def test_reset_clears_runout_lanes(self):
@@ -1050,7 +1050,7 @@ class TestResetAFCMapping:
         spool.afc.lanes = {"lane1": lane1}
         spool.afc.units = {}
         gcmd = self._make_reset_gcmd(runout="yes")
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         assert lane1.runout_lane is None
 
     def test_reset_skips_runout_when_no(self):
@@ -1060,7 +1060,7 @@ class TestResetAFCMapping:
         spool.afc.lanes = {"lane1": lane1}
         spool.afc.units = {}
         gcmd = self._make_reset_gcmd(runout="no")
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         assert lane1.runout_lane == "lane2"  # not cleared
 
     def test_reset_reassigns_map_without_manual_mapping(self):
@@ -1077,7 +1077,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane1": unit_lane}
         spool.afc.units = {"unit_1": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         # tool_cmds and the unit's lane.current_map must have been updated
         assert spool.afc.tool_cmds.get("T0") == "lane1"
         assert unit_lane.current_map == "T0"
@@ -1096,7 +1096,7 @@ class TestResetAFCMapping:
         spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
         spool.afc.units = {}  # isolates existing_cmds construction/sort from the reassignment loop
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         info_msgs = [m for lvl, m in spool.logger.messages if lvl == "info"]
         # "T0" is never consumed since afc.units is empty, so it also shows
         # up in the leftover-mappings cleanup message, which now logs before
@@ -1120,7 +1120,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane1": unit_lane}
         spool.afc.units = {"unit_1": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         # The manually assigned T0 should be applied
         assert spool.afc.tool_cmds.get("T0") == "lane1"
 
@@ -1138,7 +1138,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane3": lane3, "lane4": lane4}
         spool.afc.units = {"unit2": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         assert spool.afc.tool_cmds.get("T0") == "lane3"
         assert spool.afc.tool_cmds.get("T1") == "lane4"
         assert lane3.current_map == "T0"
@@ -1160,7 +1160,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane1": lane1, "lane2": lane2}
         spool.afc.units = {"unit1": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         assert spool.afc.tool_cmds.get("T1") == "lane2"
         spool.function.register_tool_macro.assert_called_once_with("lane2", "T1")
 
@@ -1176,7 +1176,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane1": lane1}
         spool.afc.units = {"unit1": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         spool.function.register_tool_macro.assert_not_called()
 
     def test_reset_registers_newly_manually_assigned_command(self):
@@ -1191,7 +1191,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane1": lane1}
         spool.afc.units = {"unit1": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         assert spool.afc.tool_cmds.get("T7") == "lane1"
         spool.function.register_tool_macro.assert_called_once_with("lane1", "T7")
 
@@ -1208,7 +1208,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane1": lane1, "lane2": lane2, "lane3": lane3}
         spool.afc.units = {"unit1": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         assert spool.afc.tool_cmds.get("T0") == "lane1"
         assert spool.afc.tool_cmds.get("T1") == "lane2"
         assert spool.afc.tool_cmds.get("T2") == "lane3"
@@ -1224,7 +1224,7 @@ class TestResetAFCMapping:
         unit.lanes = {"lane1": lane1}
         spool.afc.units = {"unit1": unit}
         gcmd = self._make_reset_gcmd()
-        spool.cmd_RESET_AFC_MAPPING(gcmd)
+        spool.cmd_AFC_RESET_MAPPING(gcmd)
         assert lane1.map == ["T0"]
         assert spool.gcode._commands.get("T5") is None and "T5" in spool.gcode._commands
         assert "T5" not in spool.afc.tool_cmds
@@ -1295,7 +1295,7 @@ class TestHandleConnect:
         spool = AFCSpool(config)
         spool.register_commands(afc)
         spool.handle_connect()
-        assert "RESET_AFC_MAPPING" in afc.gcode._commands
+        assert "AFC_RESET_MAPPING" in afc.gcode._commands
         assert "SET_NEXT_SPOOL_ID" in afc.gcode._commands
 
 
