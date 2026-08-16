@@ -805,8 +805,8 @@ class TestTcmdAssign:
 
     def test_auto_assign_skips_command_with_existing_gcode_macro(self):
         """When a candidate T(n) already has a registered gcode handler and
-        force_assign_map is off, TcmdAssign moves on without claiming it,
-        but still records it as the lane's current_map."""
+        force_assign_map is off, TcmdAssign moves on without claiming it, and
+        current_map ends up as the command the lane actually owns."""
         func = _make_func()
         cur_lane = _make_afc_lane("AFC_stepper lane1")
         cur_lane.map = []
@@ -821,7 +821,7 @@ class TestTcmdAssign:
         func.TcmdAssign(cur_lane)
 
         assert cur_lane.map == ["T1"]
-        assert cur_lane.current_map == "T0"
+        assert cur_lane.current_map == "T1"
 
     def test_auto_assign_force_assign_map_ignores_existing_gcode_macro(self):
         """force_assign_map short-circuits the existing-macro check, so the
@@ -840,9 +840,10 @@ class TestTcmdAssign:
 
         assert cur_lane.map == ["T0"]
 
-    def test_auto_assign_second_existing_macro_hit_does_not_overwrite_current_map(self):
-        """Covers the loop continuing past a second already-claimed candidate
-        without re-setting current_map, since it was set on the first hit."""
+    def test_auto_assign_second_existing_macro_hit_keeps_current_map_unset(self):
+        """Covers the loop continuing past two already-claimed candidates
+        without setting current_map to either, since neither is owned by
+        this lane; current_map ends up as the real assignment, T2."""
         func = _make_func()
         cur_lane = _make_afc_lane("AFC_stepper lane1")
         cur_lane.map = []
@@ -857,7 +858,7 @@ class TestTcmdAssign:
         func.TcmdAssign(cur_lane)
 
         assert cur_lane.map == ["T2"]
-        assert cur_lane.current_map == "T0"
+        assert cur_lane.current_map == "T2"
 
     def test_auto_assign_exhausts_range_without_finding_command(self):
         """Covers the range(99) loop finishing without a break when every

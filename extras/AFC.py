@@ -2782,9 +2782,9 @@ class afc:
                         lane_obj = self.lanes.get(curr_extr_lane, None)
                         if lane_obj:
                             if (lane_obj.name == curr_extruder.lane_loaded
-                                and map == lane_obj.current_map):
+                                and map in lane_obj.map):
                                 break
-                            elif (lane_obj.current_map == map):
+                            elif (map in lane_obj.map):
                                 self.logger.raw(
                                     ("<span class=warning--text>WARNING: "
                                     f"Not setting temperature for {map} since another lane is loaded for {curr_extruder.name}</span>")

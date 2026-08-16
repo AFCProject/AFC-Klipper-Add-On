@@ -281,9 +281,6 @@ class afcFunction:
                         # status diff sees a new list and pushes the update
                         cur_lane.map = cur_lane.map + [cmd]
                         break
-                    # Set first T(n) macro to current map if its not already set
-                    if not cur_lane.current_map:
-                        cur_lane.current_map = cmd
 
         # Renaming is needed if one of this lane's current T(n) commands was manually
         # assigned to a lane in the config, even if that assignment now lives on a
