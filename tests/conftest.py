@@ -299,6 +299,9 @@ class MockReactor:
     def register_callback(self, callback, waketime=None):
         pass
 
+    def register_async_callback(self, callback, waketime=None):
+        pass
+
     def unregister_timer(self, timer):
         pass
 

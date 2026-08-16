@@ -8,6 +8,8 @@ import json
 import re
 import traceback
 import inspect
+import queue
+import threading
 from enum import Enum
 from functools import cached_property
 from configfile import error
@@ -161,6 +163,13 @@ class afc:
         self.unit_order_list        = config.get('unit_order_list','')
         self.VarFile                = config.get('VarFile','../printer_data/config/AFC/AFC.var')# Path to the variables file for AFC configuration.
         self.cfgloc                 = self._remove_after_last(self.VarFile,"/")
+
+        # save_vars() only builds the state dict on the reactor thread; the actual file
+        # write happens on this background thread so a slow disk can't stall Klipper.
+        # A single worker (rather than a thread per call) keeps writes ordered.
+        self._var_write_queue: queue.Queue = queue.Queue()
+        self._var_write_thread = threading.Thread(target=self._var_write_worker, daemon=True)
+        self._var_write_thread.start()
         self.default_material_temps = config.getlists("default_material_temps",
                                                       ("default: 235", "PLA:210", "PETG:235", "ABS:235", "ASA:235"))# Default temperature to set extruder when loading/unloading lanes. Material needs to be either manually set or uses material from spoolman if extruder temp is not set in spoolman.
         self.default_material_temps = list(self.default_material_temps) if self.default_material_temps is not None else None
@@ -1294,12 +1303,47 @@ class afc:
             str["system"]["extruders"][cur_extruder.name]={}
             str["system"]["extruders"][cur_extruder.name]['lane_loaded'] = cur_extruder.lane_loaded
 
+        # Handing off to the background writer thread so a slow disk doesn't
+        # block the reactor; queue.put_nowait never blocks the caller here
+        self._var_write_queue.put_nowait(str)
+
+    def _var_write_worker(self) -> None:
+        """
+        Background thread loop that pulls queued save_vars() values and
+        writes them to VarFile.unit file in the order they were queued. Runs for
+        the life of the process (daemon thread) so it needs no explicit shutdown.
+        """
+        while True:
+            data = self._var_write_queue.get()
+            self._write_vars_snapshot(data)
+
+    def _write_vars_snapshot(self, data: dict) -> None:
+        """
+        Writes a single save_vars() values to VarFile.unit. Called from the
+        background writer thread, so a slow disk only blocks that thread and
+        not the reactor.
+
+        :param data: Dictionary of lane/unit/system state to write to VarFile.unit
+        """
         try:
-            with open(self.VarFile+ '.unit', 'w') as f:
-                f.write(json.dumps(str, indent=4))
+            with open(self.VarFile + '.unit', 'w') as f:
+                f.write(json.dumps(data, indent=4))
         except Exception as e:
-            self.logger.error("Error happened when trying to save variables, check AFC.log for error")
-            self.logger.debug(f"Error:{e}\n{traceback.format_exc()}", only_debug=True)
+            err = f"Error:{e}\n{traceback.format_exc()}"
+            # Push back onto the reactor thread before logging: AFC_logger
+            # touches gcode/webhooks state that isn't safe to call from here
+            self.reactor.register_async_callback(
+                lambda et, err=err: self._log_save_vars_error(err))
+
+    def _log_save_vars_error(self, err: str) -> None:
+        """
+        Logs a save_vars file-write failure. Called back on the reactor thread
+        via register_async_callback since the write happens on a background thread.
+
+        :param err: Formatted error/traceback string to log
+        """
+        self.logger.error("Error happened when trying to save variables, check AFC.log for error")
+        self.logger.debug(err, only_debug=True)
 
     # HUB COMMANDS
     cmd_HUB_LOAD_help = "Load lane into hub"
