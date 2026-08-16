@@ -1487,7 +1487,7 @@ class afcAMS(afcUnit):
             self.afc.function.TcmdAssign(cur_lane)
         cur_lane.do_enable(False)
         self.logger.info('{lane_name} tool cmd: {tcmd:3} {msg}'.format(
-            lane_name=cur_lane.name, tcmd=cur_lane.current_map, msg=msg))
+            lane_name=cur_lane.name, tcmd=cur_lane.map_to_string(), msg=msg))
         cur_lane.set_afc_prep_done()
         return succeeded
 
