@@ -248,7 +248,6 @@ class AFCSpool:
             self.afc.tool_cmds[m] = cur_lane.name
         sw_lane.send_lane_data()
 
-        # TODO: need to check lane data to see how it looks
         cur_lane.send_lane_data()
 
         self.afc.save_vars()
@@ -277,7 +276,7 @@ class AFCSpool:
 
         lane_from_obj = self.afc.lanes.get(lane_from)
         lane_to_obj   = self.afc.lanes.get(lane_to)
-        # TODO: verify that raised commands so not crash klipper if this is called when printing
+
         if not lane_from_obj:
             raise gcmd.error(f"Swapping from {lane_from} not found")
         if not lane_to_obj:
