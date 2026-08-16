@@ -1248,6 +1248,7 @@ def _make_lane_for_get_status(map_value):
     lane.spool_id = None
     lane.color = ""
     lane.filament_name = ""
+    lane.spool_vendor = ""
     lane.multi_color = []
     lane.weight = 0
     lane.extruder_temp = None
@@ -1579,6 +1580,9 @@ def _make_lane_for_moonraker(extruder_name="extruder", map_value="T0"):
     lane.td1_data = {"scan_time": "1.23", "td": "0.95"}
     lane.spool_id = "abc123"
     lane.weight = 750.0
+    lane.spool_vendor = "Overture"
+    lane.filament_name = "Overture Gray ASA"
+    lane.espooler.espooler_values.full_weight = 1000
     return lane
 
 
@@ -1594,6 +1598,30 @@ def _get_cleared_payload(lane):
     lane.clear_lane_data()
     lane.afc.moonraker.send_lane_data.assert_called_once()
     return lane.afc.moonraker.send_lane_data.call_args[0][0]
+
+
+class TestGetStatusSpoolVendor:
+    def test_spool_vendor_reported(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.spool_vendor = "Overture"
+        response = lane.get_status()
+        assert response["spool_vendor"] == "Overture"
+
+    def test_spool_vendor_tracks_the_attribute(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.spool_vendor = ""
+        response = lane.get_status()
+        assert response["spool_vendor"] == ""
+
+    def test_spool_vendor_omitted_when_saving_to_file(self):
+        """Vendor is re-fetched from Spoolman, so it is not persisted -- the
+        same treatment filament_name already gets."""
+        lane = _make_lane_for_get_status(["T0"])
+        lane.spool_vendor = "Overture"
+        lane.td1_data = {"td": "", "color": "", "scan_time": ""}
+        response = lane.get_status(save_to_file=True)
+        assert "spool_vendor" not in response
+        assert "filament_name" not in response
 
 
 class TestSendLaneDataExtruderIndex:
@@ -1637,6 +1665,37 @@ class TestSendLaneDataExtruderIndex:
         lane = _make_lane_for_moonraker()
         payload = _get_sent_payload(lane)
         assert payload["value"]["weight"] == 750.0
+
+    def test_vendor_published_as_vendor_name(self):
+        """`lane_data` is a shared namespace with an established key for this
+        value, so the record uses that key rather than the lane attribute's."""
+        lane = _make_lane_for_moonraker()
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["vendor_name"] == "Overture"
+        assert "spool_vendor" not in payload["value"]
+        assert "vendor" not in payload["value"]
+
+    def test_filament_name_published_as_name(self):
+        """Same shared-namespace key rule as the vendor above."""
+        lane = _make_lane_for_moonraker()
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["name"] == "Overture Gray ASA"
+        assert "filament_name" not in payload["value"]
+
+    def test_initial_weight_is_included(self):
+        lane = _make_lane_for_moonraker()
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["initial_weight"] == 1000
+
+    def test_vendor_and_name_empty_for_unlinked_lane(self):
+        """A lane with no Spoolman link publishes the keys as empty strings
+        rather than omitting them."""
+        lane = _make_lane_for_moonraker()
+        lane.spool_vendor = ""
+        lane.filament_name = ""
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["vendor_name"] == ""
+        assert payload["value"]["name"] == ""
 
     def test_no_send_when_map_is_empty(self):
         lane = _make_lane_for_moonraker(map_value=None)
@@ -1744,6 +1803,19 @@ class TestClearLaneDataExtruderIndex:
         lane = _make_lane_for_moonraker()
         payload = _get_cleared_payload(lane)
         assert payload["value"]["weight"] == 0
+
+    def test_vendor_and_name_are_cleared(self):
+        """Cleared independently of the lane attributes, which AFC_spool resets
+        after the push rather than before it."""
+        lane = _make_lane_for_moonraker()
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["vendor_name"] == ""
+        assert payload["value"]["name"] == ""
+
+    def test_initial_weight_is_cleared(self):
+        lane = _make_lane_for_moonraker()
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["initial_weight"] == 0
 
     def test_clears_one_record_per_mapping(self):
         lane = _make_lane_for_moonraker(map_value="T0")

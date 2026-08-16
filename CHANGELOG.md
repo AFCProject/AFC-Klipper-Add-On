@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   turns the feature on (existing single-mapping behavior is unchanged until enabled).
 - Added `AFC_SWAP_MAPPING` macro to swap T(n) mappings between two lanes. Infinite spool runout now
   uses this to move a lane's mappings to the runout lane automatically.
+- `lane_data` records now carry `vendor_name`, `name` and `initial_weight`, and a lane's status reports
+  `spool_vendor`. AFC already fetched all three during a Spoolman lookup but never published them, so
+  anything reading `lane_data` could see a lane's material but not its brand. A slicer can now match a
+  lane to a brand-specific filament preset instead of falling back to the generic preset for that
+  material type (#808).
 
 ### Fixed
 - `AFC_RESET_MAPPING` now renumbers T(n) mappings sequentially instead of reusing old numbers, so

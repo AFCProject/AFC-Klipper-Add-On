@@ -1900,6 +1900,8 @@ class AFCLane:
                 "value": {
                     "color"          : self.color,
                     "material"       : self.material,
+                    "vendor_name"    : self.spool_vendor,
+                    "name"           : self.filament_name,
                     "bed_temp"       : self.bed_temp,
                     "nozzle_temp"    : self.extruder_temp,
                     "scan_time"      : scan_time,
@@ -1907,7 +1909,8 @@ class AFCLane:
                     "lane"           : key.replace("T", ""),
                     "extruder_index" : self.lane_extruder_index,
                     "spool_id"       : self.spool_id,
-                    "weight"         : self.weight
+                    "weight"         : self.weight,
+                    "initial_weight" : self.espooler.espooler_values.full_weight
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
@@ -1933,6 +1936,8 @@ class AFCLane:
                 "value": {
                     "color"          : "",
                     "material"       : "",
+                    "vendor_name"    : "",
+                    "name"           : "",
                     "bed_temp"       : "",
                     "nozzle_temp"    : "",
                     "scan_time"      : "",
@@ -1940,7 +1945,8 @@ class AFCLane:
                     "lane"           : key.replace("T", ""),
                     "extruder_index" : self.lane_extruder_index,
                     "spool_id"       : None,
-                    "weight"         : 0
+                    "weight"         : 0,
+                    "initial_weight" : 0
                 }
             }
             self.afc.moonraker.send_lane_data(lane_data)
@@ -2382,6 +2388,7 @@ class AFCLane:
         response["color"]=self.color
         if not save_to_file:
             response["filament_name"] = self.filament_name
+            response["spool_vendor"] = self.spool_vendor
             response["multi_color_hexes"] = self.multi_color
             response["initial_weight"] = self.espooler.espooler_values.full_weight
 
