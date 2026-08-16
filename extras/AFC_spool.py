@@ -303,6 +303,7 @@ class AFCSpool:
         lane_from_obj.send_lane_data()
         lane_to_obj.send_lane_data()
         self.afc.save_vars()
+        self.logger.info(f"Swapping mapping from({lane_from}) to({lane_to}) successful.")
 
     cmd_AFC_ADD_MAPPING_help = (
         "Adds a new T(n) macro that currently does not exist to a lane. Mapping can be passed in "

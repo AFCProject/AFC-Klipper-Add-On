@@ -2361,7 +2361,6 @@ class AFCLane:
         response['lane'] = self.index
         if not save_to_file:
             response['map'] = self.map
-            response['_map'] = self._map
         else:
             response['map'] = self.map_to_string()
         response['current_map'] = self.current_map

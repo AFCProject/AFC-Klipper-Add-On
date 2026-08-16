@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-08-15]
+### Added
+- Ability to map multiple T(n) macros to a single lane. New `AFC_ADD_MAPPING` and
+  `AFC_REMOVE_MAPPING` macros add/remove T(n) mappings on a lane, and `AFC_ENABLE_MULTIPLE_MAPPING`
+  turns the feature on (existing single-mapping behavior is unchanged until enabled).
+- Added `AFC_SWAP_MAPPING` macro to swap T(n) mappings between two lanes. Infinite spool runout now
+  uses this to move a lane's mappings to the runout lane automatically.
+
+### Fixed
+- `RESET_AFC_MAPPING` now renumbers T(n) mappings sequentially instead of reusing old numbers, so
+  removing a unit no longer leaves gaps or stale high-numbered mappings behind. Newly assigned
+  commands are now also re-registered with Klipper.
+- `lane_data` sent to Moonraker is now keyed per T(n) mapping instead of per lane name, fixing
+  OrcaSlicer picking up duplicate or incorrect filament data when multiple T(n) macros map to
+  one lane.
+- Fixed T(n) macro renaming so a command manually assigned in the config is still renamed
+  correctly after it's moved to a different lane via a swap or multimapping.
+
 ## [2026-08-13]
 ### Fixed
 - `LANE_UNLOAD` now reports its refusals as warnings instead of console-only messages, so they reach
