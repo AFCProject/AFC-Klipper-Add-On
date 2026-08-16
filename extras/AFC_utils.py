@@ -11,6 +11,8 @@ import traceback
 import json
 import inspect
 import re
+import queue
+import threading
 
 from datetime import datetime
 from urllib.request import (
@@ -27,7 +29,7 @@ from urllib.error import (
     HTTPError
 )
 
-from typing import TYPE_CHECKING, Optional, Callable, List
+from typing import TYPE_CHECKING, Optional, Callable, List, Any
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
@@ -393,9 +395,10 @@ class AFC_moonraker:
         AFC logger object to log and print to console
     """
     ERROR_STRING = "Error getting data from moonraker, check AFC.log for more information"
-    def __init__(self, host: str, port: str, logger: AFC_logger):
+    def __init__(self, host: str, port: str, logger: AFC_logger, reactor: Reactor):
         self.port           = port
         self.logger         = logger
+        self.reactor        = reactor
         self.host           = f'{host.rstrip("/")}:{port}'
         self.database_url   = urljoin(self.host, "server/database/item")
         self.afc_stats_key  = "afc_stats"
@@ -404,6 +407,42 @@ class AFC_moonraker:
         self._lane_data     = False
         self.logger.debug(f"Moonraker url: {self.host}")
         self.FILENAME_PATH: str = "server/files/metadata?filename="
+
+        # Fire-and-forget writes (stat updates, lane_data pushes, database
+        # deletes) run on this background thread so a slow/hung moonraker
+        # can't stall the reactor. A single worker keeps them ordered.
+        self._write_queue: queue.Queue = queue.Queue()
+        self._write_thread = threading.Thread(target=self._write_worker, daemon=True)
+        self._write_thread.start()
+
+    def _log_async(self, log_fn: Callable, message: str, **kwargs: Any) -> None:
+        """
+        Schedules a logger call to run on the reactor thread via
+        register_async_callback. AFC_logger touches gcode/webhooks state that
+        isn't safe to call from the background writer thread, and this is also
+        safe to call from the main/reactor thread, so _get_results uses it
+        for every log call regardless of which thread it's running on.
+
+        :param log_fn: Bound AFC_logger method to call (e.g. self.logger.error)
+        :param message: Message to log
+        """
+        self.reactor.register_async_callback(
+            lambda et, log_fn=log_fn, message=message, kwargs=kwargs: log_fn(message, **kwargs))
+
+    def _write_worker(self) -> None:
+        """
+        Background thread loop that drains queued fire-and-forget moonraker
+        requests (stat updates, lane_data pushes, database deletes) in the
+        order they were queued. Runs for the life of the process (daemon
+        thread) so it needs no explicit shutdown.
+        """
+        while True:
+            func, args = self._write_queue.get()
+            try:
+                func(*args)
+            except Exception:
+                self._log_async(self.logger.error, "Unexpected error in moonraker background writer")
+                self._log_async(self.logger.debug, traceback.format_exc())
 
     def _get_results(self, url_string, print_error=True):
         """
@@ -428,10 +467,10 @@ class AFC_moonraker:
             if resp.status >= 200 and resp.status <= 300:
                 data = json.load(resp)
             else:
-                logger(self.ERROR_STRING)
-                logger(f"Response: {resp.status} Reason: {resp.reason}")
+                self._log_async(logger, self.ERROR_STRING)
+                self._log_async(logger, f"Response: {resp.status} Reason: {resp.reason}")
         except:
-            logger(self.ERROR_STRING, traceback=traceback.format_exc())
+            self._log_async(logger, self.ERROR_STRING, traceback=traceback.format_exc())
             data = None
         return data['result'] if data is not None else data
 
@@ -519,7 +558,18 @@ class AFC_moonraker:
 
     def update_afc_stats(self, key, value):
         """
-        Updates afc_stats in moonrakers database with key, value pair
+        Queues an update to afc_stats in moonrakers database with key, value pair.
+        Runs on the background writer thread so the caller isn't blocked.
+
+        :param key: The key indicating the field where the value should be inserted
+        :param value: The value to insert into the database
+        """
+        self._write_queue.put_nowait((self._update_afc_stats_sync, (key, value)))
+
+    def _update_afc_stats_sync(self, key, value) -> None:
+        """
+        Does the actual POST to update afc_stats in moonrakers database.
+        Called from the background writer thread.
 
         :param key: The key indicating the field where the value should be inserted
         :param value: The value to insert into the database
@@ -535,7 +585,8 @@ class AFC_moonraker:
 
         resp = self._get_results(req)
         if resp is None:
-            self.logger.error(f"Error when trying to update {key} in moonraker, see AFC.log for more info")
+            self._log_async(self.logger.error,
+                            f"Error when trying to update {key} in moonraker, see AFC.log for more info")
 
     def get_spool(self, id:int):
         """
@@ -619,9 +670,19 @@ class AFC_moonraker:
 
     def send_lane_data(self, data):
         """
-        Send lane data to moonrakers `machine/set_lane_data` endpoint so that
+        Queues lane data to be sent to moonrakers `machine/set_lane_data` endpoint so that
         other programs can query moonrakers `machine/lane_data` endpoint to see what lanes
-        are loaded and what their colors are.
+        are loaded and what their colors are. Runs on the background writer thread so the
+        caller isn't blocked.
+
+        :params data: Data to send to endpoint
+        """
+        self._write_queue.put_nowait((self._send_lane_data_sync, (data,)))
+
+    def _send_lane_data_sync(self, data) -> None:
+        """
+        Does the actual POST of lane data to moonraker. Called from the
+        background writer thread.
 
         :params data: Data to send to endpoint
         """
@@ -633,15 +694,26 @@ class AFC_moonraker:
             req = Request( url=self.database_url, data=json.dumps(data).encode(),
                         method="POST", headers={"Content-Type": "application/json"})
             if self._get_results(req) is None:
-                self.logger.error("Error sending lane data, check AFC.log for more information")
+                self._log_async(self.logger.error, "Error sending lane data, check AFC.log for more information")
         except HTTPError as e:
-            self.logger.error("Error occurred when trying to send lane data to moonraker database,"+
-                              "\nplease check AFC.log for more information.")
-            self.logger.debug(f"{e}")
+            self._log_async(self.logger.error, "Error occurred when trying to send lane data to moonraker database,"+
+                            "\nplease check AFC.log for more information.")
+            self._log_async(self.logger.debug, f"{e}")
 
     def remove_database_entry(self, namespace, key):
         """
-        Common function for removing entries in moonrakers database
+        Queues removal of an entry in moonrakers database. Runs on the
+        background writer thread so the caller isn't blocked.
+
+        :param namespace: Namespace for moonrakers database
+        :param key: Key to delete from namespace
+        """
+        self._write_queue.put_nowait((self._remove_database_entry_sync, (namespace, key)))
+
+    def _remove_database_entry_sync(self, namespace, key) -> None:
+        """
+        Does the actual DELETE of an entry from moonrakers database. Called
+        from the background writer thread.
 
         :param namespace: Namespace for moonrakers database
         :param key: Key to delete from namespace
@@ -654,16 +726,17 @@ class AFC_moonraker:
             }
             req = Request( self.database_url, urlencode(payload).encode(), method="DELETE")
             urlopen(req)
-            self.logger.debug(f"Removing {key} from {namespace}")
+            self._log_async(self.logger.debug, f"Removing {key} from {namespace}")
         except HTTPError as e:
-            self.logger.debug(
-                f"Error occurred when trying to delete {key} from {namespace} namespace"
-            )
-            self.logger.debug(f"{e}")
+            self._log_async(self.logger.debug,
+                            f"Error occurred when trying to delete {key} from {namespace} namespace")
+            self._log_async(self.logger.debug, f"{e}")
 
     def delete_lane_data(self):
         """
         Function recursively delete's lane_data namespace from moonrakers database.
+        Queries the current keys synchronously (only run once at boot), then queues
+        each removal on the background writer thread via remove_database_entry.
 
         Purpose would be to remove data upon boot just incase someone when from a 8 lane
         system to a 4 lane system, removing and then readding will make sure database has
@@ -672,12 +745,8 @@ class AFC_moonraker:
         resp = self._get_results(urljoin(self.database_url, "?namespace=lane_data"), print_error=False)
         if resp is not None:
             value = resp.get("value")
-            try:
-                for key in value.keys():
-                    self.remove_database_entry("lane_data", key)
-            except HTTPError as e:
-                self.logger.debug("Error occurred when trying to delete lane data")
-                self.logger.debug(f"{e}")
+            for key in value.keys():
+                self.remove_database_entry("lane_data", key)
 
     def trigger_db_backup(self) -> bool:
         """

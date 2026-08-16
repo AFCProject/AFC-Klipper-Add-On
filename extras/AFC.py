@@ -413,7 +413,7 @@ class afc:
         """
 
         try:
-            self.moonraker = AFC_moonraker( self.moonraker_host, self.moonraker_port, self.logger )
+            self.moonraker = AFC_moonraker( self.moonraker_host, self.moonraker_port, self.logger, self.reactor )
             if not self.moonraker.wait_for_moonraker( toolhead=self.toolhead, timeout=self.moonraker_connect_to ):
                 return False
 

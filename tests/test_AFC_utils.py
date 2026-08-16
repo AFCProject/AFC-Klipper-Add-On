@@ -313,9 +313,20 @@ class TestDebounceButton:
 # ── AFC_moonraker ─────────────────────────────────────────────────────────────
 class TestAFCMoonraker:
     def _make_moonraker(self, host="http://localhost", port="7125"):
-        from tests.conftest import MockLogger
+        from tests.conftest import MockLogger, MockReactor
         logger = MockLogger()
-        return AFC_moonraker(host, port, logger)
+        reactor = MockReactor()
+        # Run register_async_callback callbacks immediately by default so most
+        # tests can assert on logger.messages the same way they would if the
+        # log call happened inline; tests that care about the deferral itself
+        # override this to inspect the raw callback instead.
+        reactor.register_async_callback = lambda cb, waketime=None: cb(0.0)
+        mr = AFC_moonraker(host, port, logger, reactor)
+        # The real background writer thread is already parked on the original
+        # queue at this point (blocked in queue.get()); swapping it out here
+        # keeps tests deterministic instead of racing the live thread.
+        mr._write_queue = MagicMock()
+        return mr
 
     def test_init_sets_host_with_port(self):
         mr = self._make_moonraker("http://localhost", "7125")
@@ -363,12 +374,25 @@ class TestAFCMoonraker:
         from extras.AFC_utils import check_and_return
         assert check_and_return("x", {"x": 42}) == 42
 
-    def test_update_afc_stats_logs_on_failure(self):
+    def test_update_afc_stats_queues_sync_write(self):
+        mr = self._make_moonraker()
+        mr.update_afc_stats("some.key", 10)
+        mr._write_queue.put_nowait.assert_called_once_with(
+            (mr._update_afc_stats_sync, ("some.key", 10)))
+
+    def test_update_afc_stats_sync_logs_on_failure(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value=None)
-        mr.update_afc_stats("some.key", 10)
+        mr._update_afc_stats_sync("some.key", 10)
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) == 1
+
+    def test_update_afc_stats_sync_no_error_on_success(self):
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"value": "ok"})
+        mr._update_afc_stats_sync("some.key", 10)
+        errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
+        assert len(errors) == 0
 
     def test_get_spool_not_found_logs_info(self):
         mr = self._make_moonraker()
@@ -478,34 +502,47 @@ class TestAFCMoonraker:
 
     # ── send_lane_data ────────────────────────────────────────────────────────
 
-    def test_send_lane_data_logs_error_on_failure(self):
+    def test_send_lane_data_queues_sync_write(self):
+        mr = self._make_moonraker()
+        data = {"lane1": {"color": "red"}}
+        mr.send_lane_data(data)
+        mr._write_queue.put_nowait.assert_called_once_with(
+            (mr._send_lane_data_sync, (data,)))
+
+    def test_send_lane_data_sync_logs_error_on_failure(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value=None)
-        mr.send_lane_data({"lane1": {"color": "red"}})
+        mr._send_lane_data_sync({"lane1": {"color": "red"}})
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) == 1
 
-    def test_send_lane_data_success_no_error(self):
+    def test_send_lane_data_sync_success_no_error(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value={"value": "ok"})
-        mr.send_lane_data({"lane1": {"color": "red"}})
+        mr._send_lane_data_sync({"lane1": {"color": "red"}})
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) == 0
 
     # ── remove_database_entry ─────────────────────────────────────────────────
 
-    def test_remove_database_entry_calls_urlopen(self):
+    def test_remove_database_entry_queues_sync_write(self):
+        mr = self._make_moonraker()
+        mr.remove_database_entry("lane_data", "lane1")
+        mr._write_queue.put_nowait.assert_called_once_with(
+            (mr._remove_database_entry_sync, ("lane_data", "lane1")))
+
+    def test_remove_database_entry_sync_calls_urlopen(self):
         mr = self._make_moonraker()
         with patch("extras.AFC_utils.urlopen") as mock_urlopen:
-            mr.remove_database_entry("lane_data", "lane1")
+            mr._remove_database_entry_sync("lane_data", "lane1")
         mock_urlopen.assert_called_once()
 
-    def test_remove_database_entry_logs_debug_on_http_error(self):
+    def test_remove_database_entry_sync_logs_debug_on_http_error(self):
         from urllib.error import HTTPError
         mr = self._make_moonraker()
         with patch("extras.AFC_utils.urlopen",
                    side_effect=HTTPError(None, 404, "Not Found", {}, None)):
-            mr.remove_database_entry("lane_data", "missing_key")
+            mr._remove_database_entry_sync("lane_data", "missing_key")
         debug_msgs = [m for lvl, m in mr.logger.messages if lvl == "debug"]
         assert len(debug_msgs) > 0
 
@@ -597,28 +634,16 @@ class TestAFCMoonraker:
         # Two _get_results calls: once per call since refetch was triggered
         assert mr._get_results.call_count == 2
 
-    def test_send_lane_data_http_error_logs_error(self):
-        """Covers lines 432-435: HTTPError propagated from _get_results."""
+    def test_send_lane_data_sync_http_error_logs_error(self):
+        """HTTPError propagated from _get_results."""
         from urllib.error import HTTPError
         mr = self._make_moonraker()
         mr._get_results = MagicMock(
             side_effect=HTTPError(None, 500, "Internal Server Error", {}, None)
         )
-        mr.send_lane_data({"lane1": {"color": "red"}})
+        mr._send_lane_data_sync({"lane1": {"color": "red"}})
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) >= 1
-
-    def test_delete_lane_data_http_error_logs_debug(self):
-        """Covers lines 473-475: HTTPError raised by remove_database_entry."""
-        from urllib.error import HTTPError
-        mr = self._make_moonraker()
-        mr._get_results = MagicMock(return_value={"value": {"lane1": {}}})
-        mr.remove_database_entry = MagicMock(
-            side_effect=HTTPError(None, 500, "Error", {}, None)
-        )
-        mr.delete_lane_data()
-        debug_msgs = [m for lvl, m in mr.logger.messages if lvl == "debug"]
-        assert len(debug_msgs) >= 1
 
     def test_trigger_db_backup_http_error_returns_true(self):
         """Covers lines 491-495: HTTPError from _get_results in trigger_db_backup."""
@@ -631,6 +656,78 @@ class TestAFCMoonraker:
         assert error is True
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) >= 1
+
+
+# ── AFC_moonraker background writer ─────────────────────────────────────────
+
+class TestAFCMoonrakerBackgroundWriter:
+    def _make_moonraker_with_real_reactor_hook(self):
+        """Build an AFC_moonraker but capture the register_async_callback
+        call instead of running it immediately, so tests can drive it by hand."""
+        from tests.conftest import MockLogger, MockReactor
+        logger = MockLogger()
+        reactor = MockReactor()
+        reactor.register_async_callback = MagicMock()
+        mr = AFC_moonraker("http://localhost", "7125", logger, reactor)
+        mr._write_queue = MagicMock()
+        return mr
+
+    def test_init_starts_background_writer_thread(self):
+        from tests.conftest import MockLogger, MockReactor
+        mr = AFC_moonraker("http://localhost", "7125", MockLogger(), MockReactor())
+        assert mr._write_thread.is_alive()
+        assert mr._write_thread.daemon is True
+
+    def test_log_async_schedules_callback_on_reactor(self):
+        mr = self._make_moonraker_with_real_reactor_hook()
+        log_fn = MagicMock()
+        mr._log_async(log_fn, "hello", traceback="tb")
+        mr.reactor.register_async_callback.assert_called_once()
+        scheduled_cb = mr.reactor.register_async_callback.call_args[0][0]
+        log_fn.assert_not_called()
+        scheduled_cb(0.0)
+        log_fn.assert_called_once_with("hello", traceback="tb")
+
+    def test_write_worker_processes_queued_call_then_loops(self):
+        """Drives exactly one loop iteration: the second queue.get() raises
+        to break out of the otherwise-infinite loop deterministically."""
+        mr = self._make_moonraker_with_real_reactor_hook()
+        called = []
+        mr._write_queue.get.side_effect = [
+            (lambda a, b: called.append((a, b)), (1, 2)),
+            RuntimeError("stop test loop"),
+        ]
+
+        with pytest.raises(RuntimeError, match="stop test loop"):
+            mr._write_worker()
+
+        assert called == [(1, 2)]
+
+    def test_write_worker_survives_exception_and_logs_it(self):
+        """A queued call that raises must not kill the worker loop -- it
+        should be caught, logged, and the loop must continue to the next item."""
+        mr = self._make_moonraker_with_real_reactor_hook()
+
+        def boom():
+            raise ValueError("kaboom")
+
+        mr._write_queue.get.side_effect = [
+            (boom, ()),
+            RuntimeError("stop test loop"),
+        ]
+
+        with pytest.raises(RuntimeError, match="stop test loop"):
+            mr._write_worker()
+
+        scheduled_calls = mr.reactor.register_async_callback.call_args_list
+        assert len(scheduled_calls) == 2
+        scheduled_calls[0][0][0](0.0)
+        scheduled_calls[1][0][0](0.0)
+        errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
+        debug_msgs = [m for lvl, m in mr.logger.messages if lvl == "debug"]
+        assert errors == ["Unexpected error in moonraker background writer"]
+        assert any("kaboom" in m for m in debug_msgs)
+
 
 # ── AFC_PrintFileMetaData ───────────────────────────────────────────────────
 
