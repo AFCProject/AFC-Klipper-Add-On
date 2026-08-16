@@ -2311,12 +2311,7 @@ class afcAMS(afcUnit):
                 f"Same-FPS reload failed for {target_name}: {e}", pause=True)
             return False
 
-        source_map = getattr(source_lane, 'map', None)
-        if source_map:
-            self.gcode.run_script_from_command(
-                f'SET_MAP LANE={target_name} MAP={source_map}')
-            self.logger.info(
-                f"Remapped {source_map} from {source_name} to {target_name}")
+        self.gcode.run_script_from_command(f'AFC_SWAP_MAPPING FROM={source_name} TO={target_name}')
 
         target_lane.set_tool_loaded()
         self.lane_tool_loaded(target_lane)

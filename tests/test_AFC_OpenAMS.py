@@ -2914,7 +2914,7 @@ class TestHandleSameFpsReload:
             "info", "Same-FPS reload complete: lane2 now active"
         ) in ams.logger.messages
 
-    def test_remaps_source_map_when_present(self):
+    def test_swaps_mapping_via_afc_swap_mapping_when_source_map_present(self):
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load = MagicMock(return_value=True)
         ams.lane_not_ready = MagicMock()
@@ -2926,12 +2926,11 @@ class TestHandleSameFpsReload:
         ams.handle_same_fps_reload(source, target)
 
         ams.gcode.run_script_from_command.assert_called_once_with(
-            "SET_MAP LANE=lane2 MAP=T0")
-        assert (
-            "info", "Remapped T0 from lane1 to lane2"
-        ) in ams.logger.messages
+            "AFC_SWAP_MAPPING FROM=lane1 TO=lane2")
 
-    def test_no_source_map_skips_remap(self):
+    def test_swaps_mapping_via_afc_swap_mapping_when_no_source_map(self):
+        """AFC_SWAP_MAPPING is called unconditionally, regardless of whether
+        the source lane currently has a map assigned."""
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load = MagicMock(return_value=True)
         ams.lane_not_ready = MagicMock()
@@ -2942,7 +2941,8 @@ class TestHandleSameFpsReload:
 
         ams.handle_same_fps_reload(source, target)
 
-        ams.gcode.run_script_from_command.assert_not_called()
+        ams.gcode.run_script_from_command.assert_called_once_with(
+            "AFC_SWAP_MAPPING FROM=lane1 TO=lane2")
 
     def test_hardware_load_failure_pauses_and_returns_false(self):
         ams, afc, printer, reactor = _make_ams()
