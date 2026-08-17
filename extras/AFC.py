@@ -645,7 +645,10 @@ class afc:
         """
         Print timer callback to check if printer is currently in a print. If printer is in a print,
         current filename is looked up and metadata is pulled from moonraker to get total filament change
-        count and per-tool temperatures. Once this is done timer callback is stopped and unregistered.
+        count and per-tool temperatures. Metadata is fetched asynchronously since this reactor timer runs
+        while printing and can't block on the HTTP round trip to moonraker; _finish_print_start runs once
+        it's ready (or immediately if there's no moonraker to query). Once this is done timer callback is
+        stopped and unregistered.
         """
         # Remove timer from reactor
         self.reactor.unregister_timer(self.in_print_timer)
@@ -656,20 +659,35 @@ class afc:
             self.number_of_toolchanges = 0
             if (self.moonraker is not None
                 and self.print_data_metadata):
-                self.print_data_metadata.filename = print_filename
-                self.number_of_toolchanges = self.print_data_metadata.tool_change_count
-                self.print_tool_temperatures = self.print_data_metadata.tool_temperatures
-            self.current_toolchange     = -1 # Reset
-            self.logger.info("Total number of toolchanges set to {}".format(self.number_of_toolchanges))
-
-            # Get current lane and update position to reset fault detection as sometimes
-            # purging in PRINT_START can lead to false positive detections
-            current_lane = self.function.get_current_lane_obj()
-            if current_lane:
-                if current_lane.buffer_obj is not None:
-                    current_lane.buffer_obj.update_filament_error_pos()
+                self.print_data_metadata.query_filename(print_filename, on_ready=self._finish_print_start)
+            else:
+                self._finish_print_start()
 
         return self.reactor.NEVER
+
+    def _finish_print_start(self) -> None:
+        """
+        Completes print-start bookkeeping: applies the toolchange count/per-tool
+        temperatures cached by print_data_metadata (if a query was made), resets
+        current_toolchange, and resets the current lane's fault-detection position.
+
+        Runs either immediately from in_print_reactor_timer (no moonraker/
+        print_data_metadata to query) or as the completion callback once
+        print_data_metadata.query_filename() finishes fetching metadata.
+        """
+        if (self.moonraker is not None
+            and self.print_data_metadata):
+            self.number_of_toolchanges = self.print_data_metadata.tool_change_count
+            self.print_tool_temperatures = self.print_data_metadata.tool_temperatures
+        self.current_toolchange     = -1 # Reset
+        self.logger.info("Total number of toolchanges set to {}".format(self.number_of_toolchanges))
+
+        # Get current lane and update position to reset fault detection as sometimes
+        # purging in PRINT_START can lead to false positive detections
+        current_lane = self.function.get_current_lane_obj()
+        if current_lane:
+            if current_lane.buffer_obj is not None:
+                current_lane.buffer_obj.update_filament_error_pos()
 
     def _get_default_material_temps(self, cur_lane):
         """

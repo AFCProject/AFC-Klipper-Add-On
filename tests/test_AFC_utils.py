@@ -739,6 +739,18 @@ def _make_print_file_metadata(moonraker=None):
     return AFC_PrintFileMetaData(moonraker, logger), moonraker
 
 
+def _stub_get_file_metadata(moonraker, *values):
+    """Makes moonraker.get_file_metadata(filename, callback) invoke callback
+    immediately (as if the async fetch completed inline) with each of
+    `values` in turn, one per call."""
+    remaining = list(values)
+
+    def _side_effect(filename, callback):
+        callback(remaining.pop(0))
+
+    moonraker.get_file_metadata.side_effect = _side_effect
+
+
 class TestAFCPrintFileMetaDataInit:
     def test_init_defaults(self):
         meta, _ = _make_print_file_metadata()
@@ -750,38 +762,81 @@ class TestAFCPrintFileMetaDataInit:
 class TestAFCPrintFileMetaDataFilename:
     def test_setting_filename_queries_moonraker_metadata(self):
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = {"filament_change_count": 3}
-        meta.filename = "test.gcode"
-        moonraker.get_file_metadata.assert_called_once_with("test.gcode")
+        _stub_get_file_metadata(moonraker, {"filament_change_count": 3})
+        meta.query_filename("test.gcode")
+        assert moonraker.get_file_metadata.call_count == 1
+        assert moonraker.get_file_metadata.call_args[0][0] == "test.gcode"
         assert meta.filename == "test.gcode"
 
     def test_setting_empty_filename_does_not_query_moonraker(self):
         """Covers the `value` half of `if self._moonraker and value` being falsy
         while `self._moonraker` alone is truthy."""
         meta, moonraker = _make_print_file_metadata()
-        meta.filename = ""
+        meta.query_filename("")
         moonraker.get_file_metadata.assert_not_called()
         assert meta.tool_change_count == 0
+
+    def test_setting_empty_filename_calls_on_ready_immediately(self):
+        meta, moonraker = _make_print_file_metadata()
+        on_ready = MagicMock()
+        meta.query_filename("", on_ready=on_ready)
+        on_ready.assert_called_once_with()
 
     def test_setting_filename_with_no_moonraker_does_not_raise(self):
         """Covers the `self._moonraker` half of `if self._moonraker and value`
         being falsy while `value` alone is truthy."""
         from tests.conftest import MockLogger
         meta = AFC_PrintFileMetaData(None, MockLogger())
-        meta.filename = "test.gcode"
+        meta.query_filename("test.gcode")
         assert meta.filename == "test.gcode"
         assert meta.tool_change_count == 0
         assert meta.tool_temperatures == []
 
+    def test_setting_filename_with_no_moonraker_calls_on_ready_immediately(self):
+        from tests.conftest import MockLogger
+        meta = AFC_PrintFileMetaData(None, MockLogger())
+        on_ready = MagicMock()
+        meta.query_filename("test.gcode", on_ready=on_ready)
+        on_ready.assert_called_once_with()
+
+    def test_query_filename_calls_on_ready_after_metadata_cached(self):
+        meta, moonraker = _make_print_file_metadata()
+        _stub_get_file_metadata(moonraker, {"filament_change_count": 3})
+        seen_count_at_callback_time = []
+
+        def on_ready():
+            seen_count_at_callback_time.append(meta.tool_change_count)
+
+        meta.query_filename("test.gcode", on_ready=on_ready)
+        assert seen_count_at_callback_time == [3]
+
+    def test_stale_response_for_superseded_filename_is_dropped(self):
+        """If filename changed again before an in-flight query's callback
+        fires, the stale response must not clobber the newer state."""
+        meta, moonraker = _make_print_file_metadata()
+        captured_calls = []
+        moonraker.get_file_metadata.side_effect = (
+            lambda filename, callback: captured_calls.append((filename, callback))
+        )
+        meta.query_filename("first.gcode")
+        # Simulate a second query superseding the first before the first's
+        # response has arrived
+        meta.query_filename("second.gcode")
+        # Now the first (stale) query's response finally lands
+        first_filename, first_callback = captured_calls[0]
+        assert first_filename == "first.gcode"
+        first_callback({"filament_change_count": 99})
+        assert meta.filename == "second.gcode"
+        assert meta.tool_change_count == 0
+
     def test_updating_filename_refreshes_metadata(self):
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.side_effect = [
-            {"filament_change_count": 2},
-            {"filament_change_count": 9},
-        ]
-        meta.filename = "first.gcode"
+        _stub_get_file_metadata(moonraker,
+                                {"filament_change_count": 2},
+                                {"filament_change_count": 9})
+        meta.query_filename("first.gcode")
         assert meta.tool_change_count == 2
-        meta.filename = "second.gcode"
+        meta.query_filename("second.gcode")
         assert meta.tool_change_count == 9
         assert moonraker.get_file_metadata.call_count == 2
 
@@ -790,8 +845,8 @@ class TestAFCPrintFileMetaDataFilename:
         the cached metadata must still behave as an empty dict rather than
         None so downstream property access doesn't operate on None."""
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = None
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, None)
+        meta.query_filename("test.gcode")
         assert meta.tool_change_count == 0
         assert meta.tool_temperatures == []
 
@@ -799,13 +854,12 @@ class TestAFCPrintFileMetaDataFilename:
         """A failed query (None) for one filename must not leave stale/bad
         state that breaks a subsequent successful query for another filename."""
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.side_effect = [
-            None, {"filament_change_count": 7, "filament_temps": [220]},
-        ]
-        meta.filename = "first.gcode"
+        _stub_get_file_metadata(moonraker,
+                                None, {"filament_change_count": 7, "filament_temps": [220]})
+        meta.query_filename("first.gcode")
         assert meta.tool_change_count == 0
         assert meta.tool_temperatures == []
-        meta.filename = "second.gcode"
+        meta.query_filename("second.gcode")
         assert meta.tool_change_count == 7
         assert meta.tool_temperatures == [220]
 
@@ -813,22 +867,22 @@ class TestAFCPrintFileMetaDataFilename:
 class TestAFCPrintFileMetaDataToolChangeCount:
     def test_tool_change_count_from_metadata(self):
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = {"filament_change_count": 5}
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, {"filament_change_count": 5})
+        meta.query_filename("test.gcode")
         assert meta.tool_change_count == 5
 
     def test_tool_change_count_default_zero_when_missing(self):
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = {}
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, {})
+        meta.query_filename("test.gcode")
         assert meta.tool_change_count == 0
 
     def test_tool_change_count_default_zero_when_metadata_empty_dict(self):
         """Covers the falsy-`self._metadata` half of
         `if self._metadata and "filament_change_count" in self._metadata`."""
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = None
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, None)
+        meta.query_filename("test.gcode")
         assert meta.tool_change_count == 0
         debug_msgs = [m for lvl, m in meta.logger.messages if lvl == "debug"]
         assert any("test.gcode" in m for m in debug_msgs)
@@ -837,37 +891,36 @@ class TestAFCPrintFileMetaDataToolChangeCount:
 class TestAFCPrintFileMetaDataToolTemperatures:
     def test_tool_temperatures_from_filament_temps(self):
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = {"filament_temps": [200, 210, 220]}
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, {"filament_temps": [200, 210, 220]})
+        meta.query_filename("test.gcode")
         assert meta.tool_temperatures == [200, 210, 220]
 
     def test_tool_temperatures_falls_back_to_nozzle_temp(self):
         """Snapmaker U1 files use `nozzle_temp` instead of `filament_temps`."""
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = {"nozzle_temp": [215]}
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, {"nozzle_temp": [215]})
+        meta.query_filename("test.gcode")
         assert meta.tool_temperatures == [215]
 
     def test_tool_temperatures_empty_when_neither_key_present(self):
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = {}
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, {})
+        meta.query_filename("test.gcode")
         assert meta.tool_temperatures == []
 
     def test_tool_temperatures_empty_when_metadata_none(self):
         """Covers the falsy-`self._metadata` branch of `if self._metadata`."""
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = None
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker, None)
+        meta.query_filename("test.gcode")
         assert meta.tool_temperatures == []
 
 class TestAFCPrintFileMetaDataReset:
     def test_reset_clears_filename_and_metadata(self):
         meta, moonraker = _make_print_file_metadata()
-        moonraker.get_file_metadata.return_value = {
-            "filament_change_count": 4, "filament_temps": [200, 210],
-        }
-        meta.filename = "test.gcode"
+        _stub_get_file_metadata(moonraker,
+                                {"filament_change_count": 4, "filament_temps": [200, 210]})
+        meta.query_filename("test.gcode")
         meta.reset()
         assert meta.filename == ""
         assert meta.tool_change_count == 0

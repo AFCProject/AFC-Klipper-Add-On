@@ -3235,18 +3235,47 @@ class TestInPrintReactorTimer:
         assert result == obj.reactor.NEVER
 
     def test_calls_moonraker_when_in_print_and_moonraker_set(self):
-        """Happy path: print_data_metadata is queried when both in_print and moonraker are set."""
+        """Happy path: print_data_metadata is queried (async) when both
+        in_print and moonraker are set; applying the result is deferred to
+        the on_ready callback, simulated here firing immediately."""
         obj = self._make()
         obj.moonraker = MagicMock()
         obj.print_data_metadata = MagicMock()
         obj.print_data_metadata.tool_change_count = 7
         obj.print_data_metadata.tool_temperatures = [210]
+        obj.print_data_metadata.query_filename.side_effect = (
+            lambda value, on_ready=None: on_ready() if on_ready else None
+        )
         obj.function.in_print.return_value = (True, "test.gcode")
         obj.function.get_current_lane_obj.return_value = None
         obj.in_print_reactor_timer(0.0)
-        assert obj.print_data_metadata.filename == "test.gcode"
+        obj.print_data_metadata.query_filename.assert_called_once_with(
+            "test.gcode", on_ready=obj._finish_print_start)
         assert obj.number_of_toolchanges == 7
         assert obj.print_tool_temperatures == [210]
+        assert obj.current_toolchange == -1
+
+    def test_toolchange_count_not_applied_until_on_ready_fires(self):
+        """The metadata fetch is async: number_of_toolchanges must stay at
+        its reset-to-0 value until the on_ready callback actually runs, not
+        just because query_filename() was called."""
+        obj = self._make()
+        obj.moonraker = MagicMock()
+        obj.print_data_metadata = MagicMock()
+        obj.print_data_metadata.tool_change_count = 7
+        captured = {}
+        obj.print_data_metadata.query_filename.side_effect = (
+            lambda value, on_ready=None: captured.setdefault("on_ready", on_ready)
+        )
+        obj.function.in_print.return_value = (True, "test.gcode")
+        obj.function.get_current_lane_obj.return_value = None
+
+        obj.in_print_reactor_timer(0.0)
+        assert obj.number_of_toolchanges == 0
+        assert obj.current_toolchange != -1
+
+        captured["on_ready"]()
+        assert obj.number_of_toolchanges == 7
         assert obj.current_toolchange == -1
 
     def test_does_not_call_moonraker_when_not_in_print(self):
@@ -3258,6 +3287,20 @@ class TestInPrintReactorTimer:
         obj.in_print_reactor_timer(0.0)
         assert not obj.print_data_metadata.method_calls
         assert obj.number_of_toolchanges == 0
+
+    def test_finish_print_start_skips_buffer_update_when_lane_has_no_buffer(self):
+        """Covers current_lane truthy but buffer_obj falsy in _finish_print_start."""
+        obj = self._make()
+        obj.moonraker = None
+        current_lane = MagicMock()
+        current_lane.buffer_obj = None
+        obj.function.get_current_lane_obj.return_value = current_lane
+        obj.function.in_print.return_value = (True, "test.gcode")
+
+        # Would raise AttributeError from None.update_filament_error_pos() if
+        # the buffer_obj-is-None guard were missing
+        obj.in_print_reactor_timer(0.0)
+        assert obj.current_toolchange == -1
 
     def test_skips_metadata_lookup_when_print_data_metadata_is_none(self):
         """Covers the `self.print_data_metadata` half of

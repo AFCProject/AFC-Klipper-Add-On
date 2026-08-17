@@ -510,15 +510,29 @@ class AFC_moonraker:
             self.logger.debug("Spoolman server is not defined")
             return None
 
-    def get_file_metadata(self, filename: str) -> dict:
+    def get_file_metadata(self, filename: str, callback: Callable[[Optional[dict]], None]) -> None:
         """
-        Queries moonraker for a print file's metadata.
+        Queues a query for a print file's metadata to run on the background
+        writer thread. Runs asynchronously because the only caller of this
+        (print-start bookkeeping) runs from a reactor timer while printing
+        and can't block on the HTTP round trip to moonraker.
 
-        :param filename: Filename to query moonraker and pull metadata
-        :return dict: Metadata dictionary returned by moonraker, None if the query fails
+        :param filename: Filename to query moonraker and pull metadata for
+        :param callback: Called with the metadata dict (or None on failure)
+                         once the query completes. Runs on the reactor thread.
         """
-        resp: dict = self._get_results(urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}"))
-        return resp
+        self._write_queue.put_nowait((self._get_file_metadata_sync, (filename, callback)))
+
+    def _get_file_metadata_sync(self, filename: str, callback: Callable[[Optional[dict]], None]) -> None:
+        """
+        Does the actual GET for a print file's metadata. Called from the
+        background writer thread; schedules callback on the reactor thread.
+
+        :param filename: Filename to query moonraker and pull metadata for
+        :param callback: Called with the metadata dict (or None on failure)
+        """
+        resp: Optional[dict] = self._get_results(urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}"))
+        self.reactor.register_async_callback(lambda et, resp=resp: callback(resp))
 
     def get_afc_stats(self) -> Optional[dict]:
         """
@@ -791,18 +805,43 @@ class AFC_PrintFileMetaData:
         :return str: Filename that metadata is currently cached for
         """
         return self._filename
-    @filename.setter
-    def filename(self, value: str) -> None:
+
+    def query_filename(self, value: str, on_ready: Optional[Callable[[], None]] = None) -> None:
         """
-        Sets current filename and queries moonraker for its metadata, caching
-        the result for the `tool_change_count`/`tool_temperatures` properties.
+        Sets current filename and queues a moonraker query for its metadata,
+        caching the result for the `tool_change_count`/`tool_temperatures`
+        properties once it arrives. Runs asynchronously since the only caller
+        of this runs from a reactor timer during printing and can't block on
+        the HTTP round trip.
 
         :param value: Filename to query moonraker and pull metadata for
+        :param on_ready: Called (on the reactor thread) once metadata has been
+                         fetched and cached, or immediately if there's nothing
+                         to fetch
         """
         self._filename = value
         if (self._moonraker
             and value):
-            self._metadata = self._moonraker.get_file_metadata(self._filename) or {}
+            self._moonraker.get_file_metadata(
+                value, lambda resp: self._apply_metadata(value, resp, on_ready))
+        elif on_ready is not None:
+            on_ready()
+
+    def _apply_metadata(self, filename: str, resp: Optional[dict],
+                        on_ready: Optional[Callable[[], None]]) -> None:
+        """
+        Caches a metadata query result, guarding against a stale response
+        landing after filename has since changed again (e.g. the print ended
+        and reset() ran, or a new print started, before this query returned).
+
+        :param filename: Filename this response was fetched for
+        :param resp: Metadata dict returned by moonraker, or None on failure
+        :param on_ready: Called once cached, if provided
+        """
+        if filename == self._filename:
+            self._metadata = resp or {}
+        if on_ready is not None:
+            on_ready()
 
     @property
     def tool_change_count(self) -> int:
