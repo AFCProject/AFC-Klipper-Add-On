@@ -1143,7 +1143,7 @@ class afc:
         Only save previous location on the first toolchange call to keep an error state from
         overwriting the location
         """
-        if not self.function.is_homed():
+        if not self.function.is_homed(hardware_only=True):
             self.function.log_toolhead_pos(
                 f"Not Saving unhomed position, Error State: {self.error_state}, "
                 f"Is Paused {self.function.is_paused()}, Position_saved {self.position_saved}, "
