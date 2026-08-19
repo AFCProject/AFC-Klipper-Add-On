@@ -602,14 +602,28 @@ class AFC_moonraker:
             self._log_async(self.logger.error,
                             f"Error when trying to update {key} in moonraker, see AFC.log for more info")
 
-    def get_spool(self, id:int):
+    def get_spool(self, id: int, callback: Callable[[Optional[dict]], None]) -> None:
         """
-        Uses moonrakers proxy to query spoolID from spoolman
+        Queues a query for a spool's data from spoolman (via moonrakers proxy)
+        to run on the background writer thread. Runs asynchronously because
+        this can be called from a load sequence and can't block on the HTTP
+        round trip.
 
         :param id: SpoolID to lookup and fetch data from spoolman
-        :return: Returns dictionary of spoolID, returns None if error occurred or ID does not exist
+        :param callback: Called with the spool data dict (or None if error
+                         occurred or ID does not exist) once the query completes.
+                         Runs on the reactor thread.
         """
-        resp = None
+        self._write_queue.put_nowait((self._get_spool_sync, (id, callback)))
+
+    def _get_spool_sync(self, id: int, callback: Callable[[Optional[dict]], None]) -> None:
+        """
+        Does the actual GET for a spool's data from spoolman. Called from the
+        background writer thread; schedules callback on the reactor thread.
+
+        :param id: SpoolID to lookup and fetch data from spoolman
+        :param callback: Called with the spool data dict (or None on failure)
+        """
         request_payload = {
             "request_method": "GET",
             "path": f"/v1/spool/{id}"
@@ -618,11 +632,9 @@ class AFC_moonraker:
         req = Request( spool_url, urlencode(request_payload).encode() )
 
         resp = self._get_results(req)
-        if resp is not None:
-            resp = resp
-        else:
-            self.logger.info(f"SpoolID: {id} not found")
-        return resp
+        if resp is None:
+            self._log_async(self.logger.info, f"SpoolID: {id} not found")
+        self.reactor.register_async_callback(lambda et, resp=resp: callback(resp))
 
     def check_for_td1(self):
         """
@@ -806,7 +818,7 @@ class AFC_PrintFileMetaData:
         """
         return self._filename
 
-    def query_filename(self, value: str, on_ready: Optional[Callable[[], None]] = None) -> None:
+    def query_filename(self, value: str, on_fetched: Optional[Callable[[], None]] = None) -> None:
         """
         Sets current filename and queues a moonraker query for its metadata,
         caching the result for the `tool_change_count`/`tool_temperatures`
@@ -815,20 +827,20 @@ class AFC_PrintFileMetaData:
         the HTTP round trip.
 
         :param value: Filename to query moonraker and pull metadata for
-        :param on_ready: Called (on the reactor thread) once metadata has been
-                         fetched and cached, or immediately if there's nothing
-                         to fetch
+        :param on_fetched: Called (on the reactor thread) once metadata has been
+                           fetched and cached, or immediately if there's nothing
+                           to fetch
         """
         self._filename = value
         if (self._moonraker
             and value):
             self._moonraker.get_file_metadata(
-                value, lambda resp: self._apply_metadata(value, resp, on_ready))
-        elif on_ready is not None:
-            on_ready()
+                value, lambda resp: self._apply_metadata(value, resp, on_fetched))
+        elif on_fetched is not None:
+            on_fetched()
 
     def _apply_metadata(self, filename: str, resp: Optional[dict],
-                        on_ready: Optional[Callable[[], None]]) -> None:
+                        on_fetched: Optional[Callable[[], None]]) -> None:
         """
         Caches a metadata query result, guarding against a stale response
         landing after filename has since changed again (e.g. the print ended
@@ -836,12 +848,12 @@ class AFC_PrintFileMetaData:
 
         :param filename: Filename this response was fetched for
         :param resp: Metadata dict returned by moonraker, or None on failure
-        :param on_ready: Called once cached, if provided
+        :param on_fetched: Called once cached, if provided
         """
         if filename == self._filename:
             self._metadata = resp or {}
-        if on_ready is not None:
-            on_ready()
+        if on_fetched is not None:
+            on_fetched()
 
     @property
     def tool_change_count(self) -> int:

@@ -6,7 +6,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 from __future__ import annotations
 
-from typing import Optional, Union, Any, TYPE_CHECKING
+from typing import Optional, Union, Any, Callable, TYPE_CHECKING
 import copy
 import traceback
 import re
@@ -612,11 +612,21 @@ class AFCSpool:
                     self.logger.error(f"SpoolId {SpoolID} already assigned to a lane, cannot assign to {lane}.")
                     return
 
-            self.set_spoolID(cur_lane, SpoolID)
+            # Updating the active spool in Spoolman needs to wait for set_spoolID's
+            # async fetch to actually apply the new spool_id to the lane first
+            self.set_spoolID(cur_lane, SpoolID,
+                             on_done=lambda: self._update_active_spool_if_current(cur_lane))
 
-            # If the lane is currently loaded to the toolhead, update the active spool in Spoolman
-            if cur_lane.name == self.afc.current:
-                self.set_active_spool(cur_lane.spool_id)
+    def _update_active_spool_if_current(self, cur_lane: AFCLane) -> None:
+        """
+        Pushes a lane's spool ID to Spoolman as the active spool if this lane
+        is currently loaded to the toolhead. Runs as set_spoolID()'s on_done
+        callback, once the (possibly async) spool assignment has finished.
+
+        :param cur_lane: Lane that was just assigned/cleared a spool ID
+        """
+        if cur_lane.name == self.afc.current:
+            self.set_active_spool(cur_lane.spool_id)
 
     def _get_filament_values( self, filament: dict, field: str, default: Any=None) -> Any:
         """
@@ -671,74 +681,36 @@ class AFCSpool:
         cur_lane.filament_name = ""
 
     def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]],
-                    save_vars: bool = True) -> None:
+                    save_vars: bool = True, on_done: Optional[Callable[[], None]] = None) -> None:
         """
         Assigns a spool from Spoolman to a lane, pulling material, color, weight,
         and temperature values from Spoolman and updating the lane accordingly.
         Clears the lane's values instead when SpoolID is empty/None and the lane
-        isn't set to remember its spool.
+        isn't set to remember its spool. Fetching Spoolman data is async (see
+        _apply_spool_data) since this can be called from a load sequence and
+        can't block on the HTTP round trip.
 
         :param cur_lane:  AFC lane to assign the spool to
         :param SpoolID:   Spoolman spool ID to assign, or None/'' to clear
         :param save_vars: Whether to save AFC vars after assigning
+        :param on_done:   Called once this lane's spool data has actually been
+                          applied (immediately for the synchronous branches
+                          below, or once the async Spoolman fetch resolves)
         """
         if (self.afc.spoolman is not None
             and self.afc.moonraker is not None):
             if (SpoolID is not None
                 and SpoolID != ''):
+                spool_id_value: Union[int, str] = SpoolID
                 try:
-                    result = self.afc.moonraker.get_spool(int(SpoolID))
-                    cur_lane.spool_id = SpoolID
-                    cur_lane.auto_switch_triggered = False
-
-                    cur_lane.material           = self._get_filament_values(result['filament'], 'material')
-                    if not self.afc.ignore_spoolman_material_temps:
-                        cur_lane.extruder_temp      = self._get_filament_values(result['filament'], 'settings_extruder_temp')
-                    cur_lane.bed_temp           = self._get_filament_values(result['filament'], 'settings_bed_temp')
-                    cur_lane.filament_density   = self._get_filament_values(result['filament'], 'density')
-                    cur_lane.filament_diameter  = self._get_filament_values(result['filament'], 'diameter')
-                    cur_lane.empty_spool_weight = self._get_filament_values(result, 'spool_weight', default=190)
-                    cur_lane.weight             = self._get_filament_values(result, 'remaining_weight')
-                    full_weight                 = self._get_filament_values(result, 'initial_weight', default=1000)
-                    cur_lane.espooler.espooler_values.full_weight = full_weight
-                    cur_lane.filament_name      = self._get_filament_values(result['filament'], 'name', default="")
-
-                    vendor_result  = result["filament"].get("vendor", None)
-                    cur_lane.spool_vendor       = ""
-                    if vendor_result:
-                        cur_lane.spool_vendor   = self._get_filament_values(vendor_result, "name", None)
-
-                    weight_check = self.disable_weight_check
-
-                    self.afc.logger.debug(f"Weight remaining for SpoolID {SpoolID}: {cur_lane.weight}")
-
-                    if not weight_check:
-                        if (cur_lane.weight is None
-                            or cur_lane.weight <= 0):
-                            error_str = (f"Invalid weight for spoolID: {SpoolID}. "
-                                        "Please check remaining weight before assigning.")
-                            self.afc.error.AFC_error(error_str, False)
-                            self.clear_values(cur_lane)
-                            return
-
-                    # Check to see if filament is defined as multi-color and take the first color for now
-                    # Once support for multicolor is added this needs to be updated
-                    multi_color_hex = self._get_filament_values(result['filament'], 'multi_color_hexes')
-                    if multi_color_hex:
-                        cur_lane.multi_color = multi_color_hex.split(",")
-                        cur_lane.color = f"#{cur_lane.multi_color[0]}"
-                    else:
-                        cur_lane.color = f"#{self._get_filament_values(result['filament'], 'color_hex')}"
-                        cur_lane.multi_color = []
-
-                    cur_lane.send_lane_data()
-                    # Refresh LED only if filament is loaded — empty lanes keep their state color
-                    if (cur_lane.load_state
-                        and cur_lane.unit in self.afc.units):
-                        cur_lane.unit_obj.lane_loaded(cur_lane, force=True)
-
+                    spool_id_int = int(SpoolID)
                 except Exception as e:
                     self.afc.error.AFC_error(f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}", False)
+                else:
+                    self.afc.moonraker.get_spool(
+                        spool_id_int,
+                        lambda result: self._apply_spool_data(cur_lane, spool_id_value, result, save_vars, on_done))
+                    return
             elif not cur_lane.remember_spool:
                 self.clear_values(cur_lane)
         elif not cur_lane.remember_spool:
@@ -748,6 +720,90 @@ class AFCSpool:
 
         self.set_snapmaker_filament_params(cur_lane)
 
+        if save_vars: self.afc.save_vars()
+        if on_done is not None:
+            on_done()
+
+    def _apply_spool_data(self, cur_lane: AFCLane, SpoolID: Union[int, str],
+                          result: Optional[dict], save_vars: bool,
+                          on_done: Optional[Callable[[], None]] = None) -> None:
+        """
+        Applies a Spoolman spool lookup result to a lane: material, color,
+        weight, temperatures, etc. Runs as the completion callback for
+        set_spoolID()'s async fetch, once moonraker's response arrives.
+
+        :param cur_lane:  AFC lane to assign the spool to
+        :param SpoolID:   Spoolman spool ID that was queried
+        :param result:    Spool data dict returned by moonraker, None on failure
+        :param save_vars: Whether to save AFC vars after assigning
+        :param on_done:   Called once this attempt to apply spool data is finished,
+                          on every exit path (success, invalid weight, or error)
+        """
+        try:
+            try:
+                if result is None:
+                    raise ValueError(f"No spool data returned for SpoolID {SpoolID}")
+
+                cur_lane.spool_id = SpoolID
+                cur_lane.auto_switch_triggered = False
+
+                cur_lane.material           = self._get_filament_values(result['filament'], 'material')
+                if not self.afc.ignore_spoolman_material_temps:
+                    cur_lane.extruder_temp      = self._get_filament_values(result['filament'], 'settings_extruder_temp')
+                cur_lane.bed_temp           = self._get_filament_values(result['filament'], 'settings_bed_temp')
+                cur_lane.filament_density   = self._get_filament_values(result['filament'], 'density')
+                cur_lane.filament_diameter  = self._get_filament_values(result['filament'], 'diameter')
+                cur_lane.empty_spool_weight = self._get_filament_values(result, 'spool_weight', default=190)
+                cur_lane.weight             = self._get_filament_values(result, 'remaining_weight')
+                full_weight                 = self._get_filament_values(result, 'initial_weight', default=1000)
+                cur_lane.espooler.espooler_values.full_weight = full_weight
+                cur_lane.filament_name      = self._get_filament_values(result['filament'], 'name', default="")
+
+                vendor_result  = result["filament"].get("vendor", None)
+                cur_lane.spool_vendor       = ""
+                if vendor_result:
+                    cur_lane.spool_vendor   = self._get_filament_values(vendor_result, "name", None)
+
+                weight_check = self.disable_weight_check
+
+                self.afc.logger.debug(f"Weight remaining for SpoolID {SpoolID}: {cur_lane.weight}")
+
+                if not weight_check:
+                    if (cur_lane.weight is None
+                        or cur_lane.weight <= 0):
+                        error_str = (f"Invalid weight for spoolID: {SpoolID}. "
+                                    "Please check remaining weight before assigning.")
+                        self.afc.error.AFC_error(error_str, False)
+                        self.clear_values(cur_lane)
+                        return
+
+                # Check to see if filament is defined as multi-color and take the first color for now
+                # Once support for multicolor is added this needs to be updated
+                multi_color_hex = self._get_filament_values(result['filament'], 'multi_color_hexes')
+                if multi_color_hex:
+                    cur_lane.multi_color = multi_color_hex.split(",")
+                    cur_lane.color = f"#{cur_lane.multi_color[0]}"
+                else:
+                    cur_lane.color = f"#{self._get_filament_values(result['filament'], 'color_hex')}"
+                    cur_lane.multi_color = []
+
+                cur_lane.send_lane_data()
+                # Refresh LED only if filament is loaded — empty lanes keep their state color
+                if (cur_lane.load_state
+                    and cur_lane.unit in self.afc.units):
+                        cur_lane.unit_obj.lane_loaded(cur_lane, force=True)
+
+            except Exception as e:
+                self.afc.error.AFC_error(f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}", False)
+        finally:
+            # Runs on every exit path (early return, exception, or the happy
+            # path) so on_done fires exactly once regardless of which branch
+            # was taken -- matching the original synchronous behavior where
+            # callers resumed right after set_spoolID() returned either way.
+            if on_done is not None:
+                on_done()
+
+        self.set_snapmaker_filament_params(cur_lane)
         if save_vars: self.afc.save_vars()
 
     cmd_SET_RUNOUT_help = "Set runout lane"

@@ -3237,27 +3237,27 @@ class TestInPrintReactorTimer:
     def test_calls_moonraker_when_in_print_and_moonraker_set(self):
         """Happy path: print_data_metadata is queried (async) when both
         in_print and moonraker are set; applying the result is deferred to
-        the on_ready callback, simulated here firing immediately."""
+        the on_fetched callback, simulated here firing immediately."""
         obj = self._make()
         obj.moonraker = MagicMock()
         obj.print_data_metadata = MagicMock()
         obj.print_data_metadata.tool_change_count = 7
         obj.print_data_metadata.tool_temperatures = [210]
         obj.print_data_metadata.query_filename.side_effect = (
-            lambda value, on_ready=None: on_ready() if on_ready else None
+            lambda value, on_fetched=None: on_fetched() if on_fetched else None
         )
         obj.function.in_print.return_value = (True, "test.gcode")
         obj.function.get_current_lane_obj.return_value = None
         obj.in_print_reactor_timer(0.0)
         obj.print_data_metadata.query_filename.assert_called_once_with(
-            "test.gcode", on_ready=obj._finish_print_start)
+            "test.gcode", on_fetched=obj._finish_print_start)
         assert obj.number_of_toolchanges == 7
         assert obj.print_tool_temperatures == [210]
         assert obj.current_toolchange == -1
 
-    def test_toolchange_count_not_applied_until_on_ready_fires(self):
+    def test_toolchange_count_not_applied_until_on_fetched_fires(self):
         """The metadata fetch is async: number_of_toolchanges must stay at
-        its reset-to-0 value until the on_ready callback actually runs, not
+        its reset-to-0 value until the on_fetched callback actually runs, not
         just because query_filename() was called."""
         obj = self._make()
         obj.moonraker = MagicMock()
@@ -3265,7 +3265,7 @@ class TestInPrintReactorTimer:
         obj.print_data_metadata.tool_change_count = 7
         captured = {}
         obj.print_data_metadata.query_filename.side_effect = (
-            lambda value, on_ready=None: captured.setdefault("on_ready", on_ready)
+            lambda value, on_fetched=None: captured.setdefault("on_fetched", on_fetched)
         )
         obj.function.in_print.return_value = (True, "test.gcode")
         obj.function.get_current_lane_obj.return_value = None
@@ -3274,7 +3274,7 @@ class TestInPrintReactorTimer:
         assert obj.number_of_toolchanges == 0
         assert obj.current_toolchange != -1
 
-        captured["on_ready"]()
+        captured["on_fetched"]()
         assert obj.number_of_toolchanges == 7
         assert obj.current_toolchange == -1
 

@@ -1489,6 +1489,13 @@ def _make_spool_result(material="PLA", color_hex="FF0000", weight=800.0):
     }
 
 
+def _stub_get_spool(spool, result):
+    """Makes afc.moonraker.get_spool(id, callback) invoke callback
+    immediately (as if the async fetch completed inline) with `result`."""
+    spool.afc.moonraker.get_spool = MagicMock(
+        side_effect=lambda id, callback: callback(result))
+
+
 class TestSetSpoolID:
     def _make_spool_with_spoolman(self):
         spool = _make_spool()
@@ -1533,7 +1540,7 @@ class TestSetSpoolID:
         lane.remember_spool = False
         lane.espooler = MagicMock()
         result = _make_spool_result()
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         assert lane.spool_id == 42
         assert lane.material == "PLA"
@@ -1551,7 +1558,7 @@ class TestSetSpoolID:
         result = _make_spool_result()
         result["filament"]["vendor"] = {}
         result["filament"]["vendor"]["name"] = "Polymaker"
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         assert lane.spool_id == 42
         assert lane.material == "PLA"
@@ -1559,7 +1566,7 @@ class TestSetSpoolID:
         assert lane.spool_vendor == "Polymaker"
         spool.set_snapmaker_filament_params.assert_called_once()
         spool.afc.function.afc_led.assert_not_called()
-    
+
     def test_valid_spool_id_lane_not_loaded_lane_in_unit(self):
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
@@ -1569,7 +1576,7 @@ class TestSetSpoolID:
         lane.unit = "test"
         spool.afc.units[lane.unit] = lane.unit_obj
         result = _make_spool_result()
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         spool.afc.function.afc_led.assert_not_called()
 
@@ -1582,10 +1589,10 @@ class TestSetSpoolID:
         lane.remember_spool = False
         lane.espooler = MagicMock()
         result = _make_spool_result()
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         lane.unit_obj.lane_loaded.assert_called_once_with(lane, force=True)
-    
+
     def test_valid_spool_id_lane_loaded_lane_not_in_unit(self):
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
@@ -1594,7 +1601,7 @@ class TestSetSpoolID:
         lane.remember_spool = False
         lane.espooler = MagicMock()
         result = _make_spool_result()
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         spool.afc.function.afc_led.assert_not_called()
 
@@ -1604,7 +1611,7 @@ class TestSetSpoolID:
         lane.remember_spool = False
         lane.espooler = MagicMock()
         result = _make_spool_result(weight=0.0)
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.disable_weight_check = False
         spool.clear_values = MagicMock()
         spool.set_spoolID(lane, 42)
@@ -1617,7 +1624,7 @@ class TestSetSpoolID:
         lane.remember_spool = False
         lane.espooler = MagicMock()
         result = _make_spool_result(weight=0.0)
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.disable_weight_check = True
         spool.set_spoolID(lane, 42)
         spool.afc.error.AFC_error.assert_not_called()
@@ -1629,7 +1636,7 @@ class TestSetSpoolID:
         lane.espooler = MagicMock()
         result = _make_spool_result()
         result["filament"]["multi_color_hexes"] = "AABBCC,001122,334455"
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         assert lane.color == "#AABBCC"
         assert lane.multi_color == result["filament"]["multi_color_hexes"].split(",")
@@ -1641,7 +1648,7 @@ class TestSetSpoolID:
         lane.espooler = MagicMock()
         result = _make_spool_result(color_hex="AABBCC")
         result["filament"]["multi_color_hexes"] = None
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         assert lane.color == "#AABBCC"
         assert lane.multi_color == []
@@ -1654,21 +1661,82 @@ class TestSetSpoolID:
         lane.extruder_temp = None  # explicitly set before call
         lane.espooler = MagicMock()
         result = _make_spool_result()
-        spool.afc.moonraker.get_spool = MagicMock(return_value=result)
+        _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42)
         # extruder_temp should NOT be overwritten when the flag is True
         assert lane.extruder_temp is None
 
-    def test_exception_in_get_spool_calls_afc_error(self):
-        """exception in get_spool → AFC_error called."""
+    def test_none_result_from_get_spool_calls_afc_error(self):
+        """A failed/not-found lookup delivers None to the callback (get_spool
+        already logs its own "not found" message); _apply_spool_data must
+        still report it via AFC_error rather than crashing."""
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
-        spool.afc.moonraker.get_spool = MagicMock(
-            side_effect=Exception("Connection refused")
-        )
+        _stub_get_spool(spool, None)
         spool.set_spoolID(lane, 42)
-        spool.afc.error.AFC_error.assert_called()
+        spool.afc.error.AFC_error.assert_called_once()
+        assert "42" in spool.afc.error.AFC_error.call_args[0][0]
+
+    def test_exception_while_applying_spool_data_calls_afc_error(self):
+        """An exception raised while processing a successful response (e.g.
+        malformed data) must still be caught and reported, not crash."""
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        _stub_get_spool(spool, {"filament": None})  # .get() on None -> AttributeError
+        spool.set_spoolID(lane, 42)
+        spool.afc.error.AFC_error.assert_called_once()
+
+    def test_get_spool_int_conversion_failure_calls_afc_error(self):
+        """SpoolID that can't convert to int (defensive edge case; normal
+        callers already validate) must be reported, not crash, and must not
+        dispatch a lookup at all."""
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        spool.afc.moonraker.get_spool = MagicMock()
+        spool.set_spoolID(lane, "not-a-number")
+        spool.afc.error.AFC_error.assert_called_once()
+        spool.afc.moonraker.get_spool.assert_not_called()
+
+    def test_valid_spool_id_dispatches_async_lookup_without_blocking(self):
+        """set_spoolID must not block on the lookup: with a callback that
+        never fires, the lane must remain unmodified when set_spoolID returns."""
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        original_spool_id = lane.spool_id
+        spool.afc.moonraker.get_spool = MagicMock()  # never invokes its callback
+
+        spool.set_spoolID(lane, 42)
+
+        spool.afc.moonraker.get_spool.assert_called_once()
+        assert spool.afc.moonraker.get_spool.call_args[0][0] == 42
+        assert lane.spool_id == original_spool_id
+        spool.afc.save_vars.assert_not_called()
+
+    def test_sync_clear_path_calls_on_done(self):
+        """Covers the synchronous branch of set_spoolID (no moonraker lookup
+        needed) still invoking on_done."""
+        spool = _make_spool()
+        lane = _make_lane()
+        lane.remember_spool = False
+        on_done = MagicMock()
+        spool.set_spoolID(lane, "", on_done=on_done)
+        on_done.assert_called_once_with()
+
+    def test_async_path_calls_on_done_via_apply_spool_data(self):
+        """Covers _apply_spool_data's finally block invoking on_done once
+        the async lookup resolves through the real set_spoolID/get_spool wiring."""
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        _stub_get_spool(spool, _make_spool_result())
+        on_done = MagicMock()
+        spool.set_spoolID(lane, 42, on_done=on_done)
+        on_done.assert_called_once_with()
 
     def test_empty_spool_id_with_spoolman_not_remember_spool_clears_values(self):
         """spoolman not None + SpoolID='' + not remember_spool → clear_values."""
@@ -1737,7 +1805,10 @@ class TestCmdSetSpoolID:
         gcmd = _make_gcmd(LANE="lane1", SPOOL_ID="5")
         spool.set_spoolID = MagicMock()
         spool.cmd_SET_SPOOL_ID(gcmd)
-        spool.set_spoolID.assert_called_once_with(lane1, 5)
+        spool.set_spoolID.assert_called_once()
+        call = spool.set_spoolID.call_args
+        assert call.args == (lane1, 5)
+        assert callable(call.kwargs["on_done"])
 
     def test_no_spoolid_provided_set_spool_id(self):
         spool = _make_spool()
@@ -1749,7 +1820,10 @@ class TestCmdSetSpoolID:
         gcmd = _make_gcmd(LANE="lane1")
         spool.set_spoolID = MagicMock()
         spool.cmd_SET_SPOOL_ID(gcmd)
-        spool.set_spoolID.assert_called_once_with(lane1, '')
+        spool.set_spoolID.assert_called_once()
+        call = spool.set_spoolID.call_args
+        assert call.args == (lane1, '')
+        assert callable(call.kwargs["on_done"])
 
     def test_no_lane_param_logs_info(self):
         """spoolman not None + lane=None → log info + return."""
@@ -1769,7 +1843,9 @@ class TestCmdSetSpoolID:
         assert spool.logger.messages == [("info", "ghost Unknown")]
 
     def test_calls_set_active_spool_when_lane_is_current(self):
-        """cur_lane.name == afc.current → set_active_spool called."""
+        """cur_lane.name == afc.current → set_active_spool called once
+        set_spoolID's on_done callback fires (deferred, since set_spoolID's
+        actual assignment can be async)."""
         spool = _make_spool()
         spool.afc.spoolman = MagicMock()
         lane1 = _make_lane("lane1")
@@ -1779,8 +1855,31 @@ class TestCmdSetSpoolID:
         gcmd = _make_gcmd(LANE="lane1", SPOOL_ID="9")
         spool.set_spoolID = MagicMock()
         spool.set_active_spool = MagicMock()
+
         spool.cmd_SET_SPOOL_ID(gcmd)
-        spool.set_active_spool.assert_called_once_with(lane1.spool_id)
+
+        spool.set_active_spool.assert_not_called()
+        on_done = spool.set_spoolID.call_args.kwargs["on_done"]
+        lane1.spool_id = 9  # simulate set_spoolID having applied the new id
+        on_done()
+        spool.set_active_spool.assert_called_once_with(9)
+
+    def test_does_not_call_set_active_spool_when_lane_not_current(self):
+        spool = _make_spool()
+        spool.afc.spoolman = MagicMock()
+        lane1 = _make_lane("lane1")
+        lane1.spool_id = None
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.current = "lane2"  # a different lane is active
+        gcmd = _make_gcmd(LANE="lane1", SPOOL_ID="9")
+        spool.set_spoolID = MagicMock()
+        spool.set_active_spool = MagicMock()
+
+        spool.cmd_SET_SPOOL_ID(gcmd)
+        on_done = spool.set_spoolID.call_args.kwargs["on_done"]
+        on_done()
+
+        spool.set_active_spool.assert_not_called()
 
 
 # ── Auto switch debounce flag reset ──────────────────────────────────────────
@@ -1806,7 +1905,7 @@ class TestAutoSwitchFlagReset:
         spool = _make_spool()
         spool.afc.spoolman = "http://spoolman:7912"
         spool.afc.moonraker = MagicMock()
-        spool.afc.moonraker.get_spool.return_value = {
+        result = {
             'filament': {
                 'material': 'PLA',
                 'settings_extruder_temp': 210,
@@ -1819,6 +1918,7 @@ class TestAutoSwitchFlagReset:
             'spool_weight': 190,
             'initial_weight': 1000,
         }
+        spool.afc.moonraker.get_spool.side_effect = lambda id, callback: callback(result)
         lane = _make_lane("lane1")
         lane.auto_switch_triggered = True
         lane.espooler = MagicMock()

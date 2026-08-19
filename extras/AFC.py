@@ -659,7 +659,7 @@ class afc:
             self.number_of_toolchanges = 0
             if (self.moonraker is not None
                 and self.print_data_metadata):
-                self.print_data_metadata.query_filename(print_filename, on_ready=self._finish_print_start)
+                self.print_data_metadata.query_filename(print_filename, on_fetched=self._finish_print_start)
             else:
                 self._finish_print_start()
 

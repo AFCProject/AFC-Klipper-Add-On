@@ -394,11 +394,20 @@ class TestAFCMoonraker:
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) == 0
 
-    def test_get_spool_not_found_logs_info(self):
+    def test_get_spool_queues_sync_read(self):
+        mr = self._make_moonraker()
+        callback = MagicMock()
+        mr.get_spool(42, callback)
+        mr._write_queue.put_nowait.assert_called_once_with(
+            (mr._get_spool_sync, (42, callback)))
+        callback.assert_not_called()
+
+    def test_get_spool_sync_not_found_logs_info(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value=None)
-        result = mr.get_spool(42)
-        assert result is None
+        callback = MagicMock()
+        mr._get_spool_sync(42, callback)
+        callback.assert_called_once_with(None)
         infos = [m for lvl, m in mr.logger.messages if lvl == "info"]
         assert any("42" in m for m in infos)
 
@@ -582,12 +591,12 @@ class TestAFCMoonraker:
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) == 1
 
-    def test_get_spool_returns_resp_when_found(self):
-        """Covers line 352: if resp is not None → resp = resp branch in get_spool."""
+    def test_get_spool_sync_returns_resp_when_found(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value={"id": 42, "name": "PLA"})
-        result = mr.get_spool(42)
-        assert result == {"id": 42, "name": "PLA"}
+        callback = MagicMock()
+        mr._get_spool_sync(42, callback)
+        callback.assert_called_once_with({"id": 42, "name": "PLA"})
 
     def test_check_for_td1_with_td1_in_config_and_data(self):
         """Covers lines 371-374: td1 in orig config and data returned."""
@@ -776,11 +785,11 @@ class TestAFCPrintFileMetaDataFilename:
         moonraker.get_file_metadata.assert_not_called()
         assert meta.tool_change_count == 0
 
-    def test_setting_empty_filename_calls_on_ready_immediately(self):
+    def test_setting_empty_filename_calls_on_fetched_immediately(self):
         meta, moonraker = _make_print_file_metadata()
-        on_ready = MagicMock()
-        meta.query_filename("", on_ready=on_ready)
-        on_ready.assert_called_once_with()
+        on_fetched = MagicMock()
+        meta.query_filename("", on_fetched=on_fetched)
+        on_fetched.assert_called_once_with()
 
     def test_setting_filename_with_no_moonraker_does_not_raise(self):
         """Covers the `self._moonraker` half of `if self._moonraker and value`
@@ -792,22 +801,22 @@ class TestAFCPrintFileMetaDataFilename:
         assert meta.tool_change_count == 0
         assert meta.tool_temperatures == []
 
-    def test_setting_filename_with_no_moonraker_calls_on_ready_immediately(self):
+    def test_setting_filename_with_no_moonraker_calls_on_fetched_immediately(self):
         from tests.conftest import MockLogger
         meta = AFC_PrintFileMetaData(None, MockLogger())
-        on_ready = MagicMock()
-        meta.query_filename("test.gcode", on_ready=on_ready)
-        on_ready.assert_called_once_with()
+        on_fetched = MagicMock()
+        meta.query_filename("test.gcode", on_fetched=on_fetched)
+        on_fetched.assert_called_once_with()
 
-    def test_query_filename_calls_on_ready_after_metadata_cached(self):
+    def test_query_filename_calls_on_fetched_after_metadata_cached(self):
         meta, moonraker = _make_print_file_metadata()
         _stub_get_file_metadata(moonraker, {"filament_change_count": 3})
         seen_count_at_callback_time = []
 
-        def on_ready():
+        def on_fetched():
             seen_count_at_callback_time.append(meta.tool_change_count)
 
-        meta.query_filename("test.gcode", on_ready=on_ready)
+        meta.query_filename("test.gcode", on_fetched=on_fetched)
         assert seen_count_at_callback_time == [3]
 
     def test_stale_response_for_superseded_filename_is_dropped(self):
