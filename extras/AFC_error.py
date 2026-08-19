@@ -276,7 +276,7 @@ class afcError:
         move_z_pos = self.afc.last_gcode_position[2] + self.afc.z_hop
         # Check if current position is below saved gcode position, if its lower first raise z above last saved
         #   position so that toolhead does not crash into part
-        if self.afc.gcode_move.last_position[2] <= move_z_pos:
+        if self.afc.function.is_homed() and self.afc.gcode_move.last_position[2] <= move_z_pos:
             self.afc.move_z_pos(move_z_pos, "AFC_RESUME")
         else:
             self.logger.debug(f"AFC_RESUME: not moving in z cur_pos:{self.afc.gcode_move.last_position} move_z_pos:{move_z_pos}")
@@ -329,7 +329,7 @@ class afcError:
             self.afc.function.check_absolute_mode("AFC_PAUSE")
             move_z_pos = self.afc.last_gcode_position[2] + self.afc.z_hop
             # Check to see if current position is less than saved position plus z-hop
-            if self.afc.gcode_move.last_position[2] <= move_z_pos:
+            if self.afc.function.is_homed() and self.afc.gcode_move.last_position[2] <= move_z_pos:
                 # Move Z up by z-hop value
                 self.afc.move_z_pos(move_z_pos, "AFC_PAUSE")
             else:
