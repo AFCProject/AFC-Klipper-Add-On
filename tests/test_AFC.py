@@ -2948,6 +2948,41 @@ class TestSavePos:
         )
         obj.function.log_toolhead_pos.assert_called_once_with(expected)
 
+    def test_does_not_save_when_not_homed(self):
+        """When function.is_homed(hardware_only=True) returns False, save_pos returns
+        immediately without inspecting in_toolchange/error_state/is_paused/position_saved."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.function.is_homed.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        assert obj.position_saved is False
+        assert not hasattr(obj, "last_toolhead_position")
+        obj.function.is_homed.assert_called_once_with(hardware_only=True)
+        obj.function.log_toolhead_pos.assert_called_once()
+
+    def test_logs_not_saving_unhomed_message(self):
+        """Verifies the exact log_toolhead_pos() call made on the not-homed branch."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.function.is_homed.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        expected = (
+            f"Not Saving unhomed position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused()}, Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+
     def test_does_not_save_when_in_toolchange(self):
         """When in_toolchange is True, the outer branch is taken regardless of
         error_state/is_paused/position_saved."""

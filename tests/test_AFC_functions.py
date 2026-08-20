@@ -452,6 +452,70 @@ class TestAfcDeltaTime:
         dt.log_with_time("safe call")
 
 
+# ── is_homed ──────────────────────────────────────────────────────────────────
+
+class TestIsHomed:
+    def _wire(self, func, homed_axes, disable_homing_check):
+        """Wire up func.afc.toolhead.get_kinematics().get_status() to report
+        `homed_axes` (a string such as "xyz", "xy", or "") and set
+        func.afc.disable_homing_check."""
+        func.afc.disable_homing_check = disable_homing_check
+        kin = MagicMock()
+        kin.get_status.return_value = {"homed_axes": homed_axes}
+        func.afc.toolhead.get_kinematics.return_value = kin
+
+    @pytest.mark.parametrize(
+        "hardware_only,disable_homing_check,homed_axes,expected",
+        [
+            # hardware_only=True: homing_check is always True, disable_homing_check
+            # is ignored entirely, and each individually-missing axis returns False.
+            (True, False, "xyz", True),
+            (True, False, "xy", False),
+            (True, False, "xz", False),
+            (True, False, "yz", False),
+            (True, False, "", False),
+            (True, True, "xyz", True),
+            (True, True, "xy", False),
+            (True, True, "xz", False),
+            (True, True, "yz", False),
+            (True, True, "", False),
+            # hardware_only=False, disable_homing_check=False: homing_check is True,
+            # so behavior matches the hardware_only=True/disable_homing_check=False case.
+            (False, False, "xyz", True),
+            (False, False, "xy", False),
+            (False, False, "xz", False),
+            (False, False, "yz", False),
+            (False, False, "", False),
+            # hardware_only=False, disable_homing_check=True: homing_check is False,
+            # so the result is always True regardless of which axes are homed.
+            (False, True, "xyz", True),
+            (False, True, "xy", True),
+            (False, True, "xz", True),
+            (False, True, "yz", True),
+            (False, True, "", True),
+        ],
+    )
+    def test_all_permutations(self, hardware_only, disable_homing_check, homed_axes, expected):
+        func = _make_func()
+        self._wire(func, homed_axes, disable_homing_check)
+        assert func.is_homed(hardware_only=hardware_only) is expected
+
+    def test_default_hardware_only_is_false(self):
+        """hardware_only defaults to False, so it should behave like the
+        hardware_only=False cases above when called with no argument."""
+        func = _make_func()
+        self._wire(func, homed_axes="xy", disable_homing_check=False)
+        assert func.is_homed() is False
+
+        func = _make_func()
+        self._wire(func, homed_axes="xyz", disable_homing_check=False)
+        assert func.is_homed() is True
+
+        func = _make_func()
+        self._wire(func, homed_axes="xy", disable_homing_check=True)
+        assert func.is_homed() is True
+
+
 # ── _rename ───────────────────────────────────────────────────────────────────
 
 class TestRename:
