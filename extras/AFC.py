@@ -2800,8 +2800,18 @@ class afc:
                     self.logger.error("extruder not configured for T{}".format(toolnum))
                     return
             else:
-                self.logger.error("extruder not configured for T{}".format(toolnum))
-                return
+                # No lane is mapped as T<n> (custom lane commands such as BT1..BT4).
+                # Fall back to stock Klipper semantics, T<n> -> extruder<n>, so
+                # toolheads without an AFC lane still receive their temperature
+                # (e.g. the primary extruder on an IDEX printer).
+                th_extruder_name = "extruder" if toolnum == 0 else f"extruder{toolnum}"
+                extruder = self.tools.get(th_extruder_name, None)
+                if extruder is None:
+                    extruder = self.printer.lookup_object(th_extruder_name, None)
+                if extruder is None:
+                    self.logger.error("extruder not configured for T{}".format(toolnum))
+                    return
+                self.logger.info("Lane map {} not found, setting temperature for {}".format(map, th_extruder_name))
         else:
             extruder = self.toolhead.get_extruder()
 
