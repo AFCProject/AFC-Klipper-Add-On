@@ -729,7 +729,10 @@ class afc:
                 # in which case fall back to the toolhead extruder index so multi-toolhead
                 # setups still resolve the correct per-tool temperature.
                 try:
-                    idx = int(str(cur_lane.current_map).lstrip("T"))
+                    map_match = re.fullmatch(r"T(\d+)", str(cur_lane.current_map))
+                    if map_match is None:
+                        raise ValueError("current_map is not in T<n> form")
+                    idx = int(map_match.group(1))
                 except (ValueError, TypeError):
                     idx = cur_lane.lane_extruder_index
                 if idx < 0: raise ValueError("Negative tool index")
