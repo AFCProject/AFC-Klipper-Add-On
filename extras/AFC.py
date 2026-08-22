@@ -725,8 +725,13 @@ class afc:
             try:
                 # cur_lane.current_map is expected to be the tool number as "T<n>" (e.g. "T3"),
                 # used here as the index into print_tool_temperatures from the sliced
-                # file's metadata. Custom user-assigned maps may not follow this format.
-                idx = int(str(cur_lane.current_map).lstrip("T"))
+                # file's metadata. Custom user-assigned maps may not follow this format,
+                # in which case fall back to the toolhead extruder index so multi-toolhead
+                # setups still resolve the correct per-tool temperature.
+                try:
+                    idx = int(str(cur_lane.current_map).lstrip("T"))
+                except (ValueError, TypeError):
+                    idx = cur_lane.lane_extruder_index
                 if idx < 0: raise ValueError("Negative tool index")
                 target_temp = self.print_tool_temperatures[idx]
             except (ValueError, IndexError, TypeError, AttributeError) as e:
