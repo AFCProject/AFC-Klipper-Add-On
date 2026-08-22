@@ -502,19 +502,43 @@ class afcUnit:
             led_color = self.afc.function.HexToLedString(color.replace("#", ""))
             self.afc.function.afc_led( led_color, self.led_logo_index )
 
-    def _stop_led_effects(self) -> None:
+    def _stop_led_effects(self , targets: Optional[list[str]]=None) -> None:
         """
         Iterates through active led effects that were successfully applied by AFC and disables
-        them.
+        them. When targets is supplied, only effects whose prefix matches a target name are
+        stopped.
+
+        :param targets: List of names(lane or extruder) to stop
         """
+        remaining = []
         for effect in self.afc.active_led_effects:
+            if (targets is not None
+                and not any(effect.startswith(f"{t}_") for t in targets)):
+                remaining.append(effect)
+                continue
             try:
                 script = f'SET_LED_EFFECT EFFECT={effect} STOP=1'
                 self.gcode.run_script_from_command(script)
             except Exception:
                 pass
-        # Clear out list once done disabling them all
-        self.afc.active_led_effects = []
+
+        self.afc.active_led_effects = remaining
+
+    def _call_led_effect(self, name: str, effect_suffix: str) -> None:
+        """
+        Common method of calling SET_LED_EFFECT with effect name, method constructs effect name as
+        <name>_<effect_suffix>, only called if the correct led_effects object exists.
+
+        :param name: Prefix name to add to effect_suffix, eg. lane/extruder name
+        :param effect_suffix: Effect name to apply, eg. loading, unloading, etc.
+        """
+        try:
+            effect_name = f"{name}_{effect_suffix}"
+            if f"led_effect {effect_name}" in self.printer.objects:
+                self.gcode.run_script_from_command(f"SET_LED_EFFECT EFFECT={effect_name}")
+                self.afc.active_led_effects.append(effect_name)
+        except Exception:
+            pass
 
     def _trigger_led_state(self, lane: Optional[AFCLane]=None,
                            extruder: Optional[AFCExtruder]=None,
@@ -528,14 +552,21 @@ class afcUnit:
         :param lane: AFCLane to apply led effect to
         :param extruder: AFCExtruder to apply led effect to
         :param static_color: Color to always apply to led
+        :param extruder_static_color: Extruder color to apply to extruder led, if `extruder` is
+            passed in a this is not set, then extruder led defaults to `static_color` variable
         :param effect_suffix: Suffix to add to lane/extruder name for when calling SET_LED_EFFECT macro
         """
-        # Clear any running effects started by AFC
-        self._stop_led_effects()
-
         if (lane is None
             and extruder is None):
             return
+        names_to_stop = []
+        if lane is not None:
+            names_to_stop.append(lane.name)
+        if extruder is not None:
+            names_to_stop.append(extruder.name)
+
+        # Clear running effects started by AFC
+        self._stop_led_effects(names_to_stop)
 
         # Always apply the standard AFC static color first
         if static_color is not None:
@@ -547,29 +578,11 @@ class afcUnit:
 
         # If an animation is requested, try to overlay it
         if effect_suffix:
-            lane_effect_name = ""
-            extruder_effect_name = ""
             if lane is not None:
-                lane_effect_name = f"{lane.name}_{effect_suffix}"
+                self._call_led_effect(lane.name, effect_suffix)
+
             if extruder is not None:
-                extruder_effect_name = f"{extruder.name}_{effect_suffix}"
-
-            try:
-                if (lane_effect_name
-                    and f"led_effect {lane_effect_name}" in self.printer.objects):
-                    self.gcode.run_script_from_command(f"SET_LED_EFFECT EFFECT={lane_effect_name}")
-                    self.afc.active_led_effects.append(lane_effect_name)
-            except Exception:
-                pass
-
-            try:
-                if (extruder_effect_name
-                    and f"led_effect {extruder_effect_name}" in self.printer.objects):
-                    self.gcode.run_script_from_command(f"SET_LED_EFFECT EFFECT={extruder_effect_name}")
-                    self.afc.active_led_effects.append(extruder_effect_name)
-            except Exception:
-                # If the effect doesn't exist, we just stay on the static color
-                pass
+                self._call_led_effect(extruder.name, effect_suffix)
 
     def _get_lane_color(self, lane: AFCLane, fallback: str) -> str:
         """
