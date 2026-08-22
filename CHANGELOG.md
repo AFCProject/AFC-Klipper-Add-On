@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Fixed
+- AFC no longer crashes with `AttributeError: 'GCodeMove' object has no attribute 'absolute_extrude'`
+  during tool changes on current Klipper master builds. Klipper moved `GCodeMove` to
+  `klippy/extras/gcode_move.py` and renamed the attribute to `allow_absolute_extrude`
+  (v0.13.0-708 and newer); AFC now reads and restores whichever attribute name the host
+  provides, so it keeps working on older and newer Klipper alike.
+
+
 ## [2026-08-15]
 ### Breaking Change
 - `RESET_AFC_MAPPING` has now been renamed to `AFC_RESET_MAPPING`
