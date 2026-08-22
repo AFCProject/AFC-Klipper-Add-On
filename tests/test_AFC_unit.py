@@ -428,27 +428,27 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         unit._stop_led_effects = MagicMock()
-        unit._trigger_led_state(lane, lane.led_ready)
+        unit._trigger_led_state(lane, static_color=lane.led_ready)
         unit._stop_led_effects.assert_called_once_with()
 
     def test_applies_static_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit._trigger_led_state(lane, lane.led_ready)
+        unit._trigger_led_state(lane, static_color=lane.led_ready)
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
 
     def test_none_static_color_skips_afc_led(self):
         """Covers the `static_color is not None` guard's False branch."""
         unit = _make_unit()
         lane = _make_lane()
-        unit._trigger_led_state(lane, None)
+        unit._trigger_led_state(lane, static_color=None)
         unit.afc.function.afc_led.assert_not_called()
 
     def test_no_effect_suffix_does_not_touch_printer_objects(self):
         """Covers the `if effect_suffix:` guard's False branch (default None)."""
         unit = _make_unit()
         lane = _make_lane()
-        unit._trigger_led_state(lane, lane.led_ready)
+        unit._trigger_led_state(lane, static_color=lane.led_ready)
         unit.gcode.run_script_from_command.assert_not_called()
         assert unit.afc.active_led_effects == []
 
@@ -456,7 +456,7 @@ class TestTriggerLedState:
         """Covers `if effect_suffix:` treating "" as falsy, distinct from None."""
         unit = _make_unit()
         lane = _make_lane()
-        unit._trigger_led_state(lane, lane.led_ready, "")
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="")
         unit.gcode.run_script_from_command.assert_not_called()
         assert unit.afc.active_led_effects == []
 
@@ -464,7 +464,7 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
-        unit._trigger_led_state(lane, lane.led_ready, "loaded")
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded")
         unit.gcode.run_script_from_command.assert_called_once_with(
             "SET_LED_EFFECT EFFECT=lane1_loaded")
         assert unit.afc.active_led_effects == ["lane1_loaded"]
@@ -473,7 +473,7 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         # printer.objects has no "led_effect lane1_loaded" entry
-        unit._trigger_led_state(lane, lane.led_ready, "loaded")
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded")
         unit.gcode.run_script_from_command.assert_not_called()
         assert unit.afc.active_led_effects == []
 
@@ -482,7 +482,7 @@ class TestTriggerLedState:
         lane = _make_lane()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
         unit.gcode.run_script_from_command.side_effect = Exception("boom")
-        unit._trigger_led_state(lane, lane.led_ready, "loaded")  # must not raise
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded")  # must not raise
         assert unit.afc.active_led_effects == []
 
     def test_static_color_still_applied_when_effect_lookup_raises(self):
@@ -492,8 +492,127 @@ class TestTriggerLedState:
         lane = _make_lane()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
         unit.gcode.run_script_from_command.side_effect = Exception("boom")
-        unit._trigger_led_state(lane, lane.led_ready, "loaded")
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
+
+    # ── lane is None / extruder is None combinations ──────────────────────────
+
+    def test_lane_none_and_extruder_none_returns_early(self):
+        """Covers the new `lane is None and extruder is None` guard."""
+        unit = _make_unit()
+        unit._trigger_led_state(static_color="0,1,0,0", effect_suffix="loaded")
+        unit.afc.function.afc_led.assert_not_called()
+        unit.gcode.run_script_from_command.assert_not_called()
+
+    def test_lane_none_and_extruder_none_still_stops_active_effects(self):
+        """The early return happens after _stop_led_effects(), not before."""
+        unit = _make_unit()
+        unit._stop_led_effects = MagicMock()
+        unit._trigger_led_state()
+        unit._stop_led_effects.assert_called_once_with()
+
+    def test_extruder_only_sets_extruder_led_not_lane_led(self):
+        unit = _make_unit()
+        extruder = MagicMock()
+        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0")
+        unit.afc.function.afc_led.assert_not_called()
+        extruder.set_status_led.assert_called_once_with("0,1,0,0")
+
+    def test_lane_and_extruder_both_get_static_color_when_no_override(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        extruder = MagicMock()
+        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_ready)
+        unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
+        extruder.set_status_led.assert_called_once_with(lane.led_ready)
+
+    def test_extruder_static_color_overrides_static_color_for_extruder_only(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        extruder = MagicMock()
+        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_ready,
+                                extruder_static_color=lane.led_tool_unloaded)
+        unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
+        extruder.set_status_led.assert_called_once_with(lane.led_tool_unloaded)
+
+    def test_extruder_static_color_ignored_when_extruder_not_given(self):
+        """extruder_static_color must not affect the lane's own LED."""
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state(lane, static_color=lane.led_ready,
+                                extruder_static_color=lane.led_tool_unloaded)
+        unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
+
+    # ── extruder LED effect lookup ─────────────────────────────────────────────
+
+    def test_extruder_effect_present_runs_set_led_effect(self):
+        unit = _make_unit()
+        extruder = MagicMock(name="extruder")
+        extruder.name = "extruder1"
+        unit.printer.objects["led_effect extruder1_tool_loaded"] = MagicMock()
+        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0",
+                                effect_suffix="tool_loaded")
+        unit.gcode.run_script_from_command.assert_called_once_with(
+            "SET_LED_EFFECT EFFECT=extruder1_tool_loaded")
+        assert unit.afc.active_led_effects == ["extruder1_tool_loaded"]
+
+    def test_extruder_effect_not_present_skips_set_led_effect(self):
+        unit = _make_unit()
+        extruder = MagicMock(name="extruder")
+        extruder.name = "extruder1"
+        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0",
+                                effect_suffix="tool_loaded")
+        unit.gcode.run_script_from_command.assert_not_called()
+        assert unit.afc.active_led_effects == []
+
+    def test_extruder_effect_exception_is_swallowed_and_not_recorded(self):
+        unit = _make_unit()
+        extruder = MagicMock(name="extruder")
+        extruder.name = "extruder1"
+        unit.printer.objects["led_effect extruder1_tool_loaded"] = MagicMock()
+        unit.gcode.run_script_from_command.side_effect = Exception("boom")
+        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0",
+                                effect_suffix="tool_loaded")  # must not raise
+        assert unit.afc.active_led_effects == []
+
+    def test_lane_none_with_effect_suffix_only_checks_extruder_effect(self):
+        """lane_effect_name stays "" when lane is None, so the lane branch of
+        the effect lookup must never fire -- only the extruder's."""
+        unit = _make_unit()
+        extruder = MagicMock(name="extruder")
+        extruder.name = "extruder1"
+        unit.printer.objects["led_effect extruder1_tool_loaded"] = MagicMock()
+        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0",
+                                effect_suffix="tool_loaded")
+        assert unit.afc.active_led_effects == ["extruder1_tool_loaded"]
+
+    def test_lane_and_extruder_effects_both_applied_independently(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        extruder = MagicMock(name="extruder")
+        extruder.name = "extruder1"
+        unit.printer.objects["led_effect lane1_tool_loaded"] = MagicMock()
+        unit.printer.objects["led_effect extruder1_tool_loaded"] = MagicMock()
+        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_tool_loaded,
+                                effect_suffix="tool_loaded")
+        assert unit.gcode.run_script_from_command.call_args_list == [
+            call("SET_LED_EFFECT EFFECT=lane1_tool_loaded"),
+            call("SET_LED_EFFECT EFFECT=extruder1_tool_loaded"),
+        ]
+        assert unit.afc.active_led_effects == ["lane1_tool_loaded", "extruder1_tool_loaded"]
+
+    def test_lane_effect_exception_does_not_prevent_extruder_effect(self):
+        """The lane and extruder effect lookups are independently try/excepted."""
+        unit = _make_unit()
+        lane = _make_lane()
+        extruder = MagicMock(name="extruder")
+        extruder.name = "extruder1"
+        unit.printer.objects["led_effect lane1_tool_loaded"] = MagicMock()
+        unit.printer.objects["led_effect extruder1_tool_loaded"] = MagicMock()
+        unit.gcode.run_script_from_command.side_effect = [Exception("boom"), None]
+        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_tool_loaded,
+                                effect_suffix="tool_loaded")
+        assert unit.afc.active_led_effects == ["extruder1_tool_loaded"]
 
 
 # ── lane_* -> _trigger_led_state suffix wiring ────────────────────────────────
@@ -508,21 +627,24 @@ class TestLedEffectSuffixMapping:
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
         unit.lane_not_ready(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_not_ready, "not_ready")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, static_color=lane.led_not_ready, effect_suffix="not_ready")
 
     def test_lane_loaded_uses_loaded_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
         unit.lane_loaded(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_ready, "loaded")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, static_color=lane.led_ready, effect_suffix="loaded")
 
     def test_lane_unloading_uses_unloading_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
         unit.lane_unloading(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_unloading, "unloading")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, static_color=lane.led_unloading, effect_suffix="unloading")
 
     def test_lane_unloaded_uses_unloaded_suffix_not_not_ready(self):
         """lane_unloaded used to just call lane_not_ready() (suffix
@@ -532,14 +654,16 @@ class TestLedEffectSuffixMapping:
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
         unit.lane_unloaded(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_not_ready, "unloaded")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, static_color=lane.led_not_ready, effect_suffix="unloaded")
 
     def test_lane_loading_uses_loading_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
         unit.lane_loading(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_loading, "loading")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, static_color=lane.led_loading, effect_suffix="loading")
 
     def test_lane_tool_loaded_uses_tool_loaded_suffix(self):
         unit = _make_unit()
@@ -547,7 +671,9 @@ class TestLedEffectSuffixMapping:
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
         unit.lane_tool_loaded(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_tool_loaded, "tool_loaded")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, lane.extruder_obj, static_color=lane.led_tool_loaded,
+            effect_suffix="tool_loaded")
 
     def test_lane_tool_unloaded_uses_tool_unloaded_suffix(self):
         unit = _make_unit()
@@ -555,7 +681,9 @@ class TestLedEffectSuffixMapping:
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
         unit.lane_tool_unloaded(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_ready, "tool_unloaded")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, lane.extruder_obj, static_color=lane.led_ready,
+            extruder_static_color=lane.led_tool_unloaded, effect_suffix="tool_unloaded")
 
     def test_lane_tool_loaded_idle_uses_tool_loaded_idle_suffix(self):
         unit = _make_unit()
@@ -564,14 +692,16 @@ class TestLedEffectSuffixMapping:
         unit._trigger_led_state = MagicMock()
         unit.lane_tool_loaded_idle(lane)
         unit._trigger_led_state.assert_called_once_with(
-            lane, lane.led_tool_loaded_idle, "tool_loaded_idle")
+            lane, static_color=lane.led_tool_loaded_idle, extruder=lane.extruder_obj,
+            effect_suffix="tool_loaded_idle")
 
     def test_lane_fault_uses_fault_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
         unit.lane_fault(lane)
-        unit._trigger_led_state.assert_called_once_with(lane, lane.led_fault, "fault")
+        unit._trigger_led_state.assert_called_once_with(
+            lane, static_color=lane.led_fault, effect_suffix="fault")
 
 
 # ── lane_illuminate_spool ────────────────────────────────────────────────────
