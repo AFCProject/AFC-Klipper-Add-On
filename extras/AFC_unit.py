@@ -507,12 +507,14 @@ class afcUnit:
         Iterates through active led effects that were successfully applied by AFC and disables
         them.
         """
-        try:
-            for effect in self.afc.active_led_effects:
+        for effect in self.afc.active_led_effects:
+            try:
                 script = f'SET_LED_EFFECT EFFECT={effect} STOP=1'
                 self.gcode.run_script_from_command(script)
-        except Exception:
-            pass
+            except Exception:
+                pass
+        # Clear out list once done disabling them all
+        self.afc.active_led_effects = []
 
     def _trigger_led_state(self, lane: AFCLane, static_color: str,
                            effect_suffix: Optional[str]=None) -> None:

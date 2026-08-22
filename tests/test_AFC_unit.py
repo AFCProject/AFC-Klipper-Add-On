@@ -387,11 +387,38 @@ class TestStopLedEffects:
         ])
         assert unit.gcode.run_script_from_command.call_count == 2
 
+    def test_clears_active_led_effects_after_stopping(self):
+        unit = _make_unit()
+        unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault"]
+        unit._stop_led_effects()
+        assert unit.afc.active_led_effects == []
+
     def test_exception_from_gcode_is_swallowed(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded"]
         unit.gcode.run_script_from_command.side_effect = Exception("boom")
         unit._stop_led_effects()  # must not raise
+
+    def test_exception_on_one_effect_does_not_skip_remaining_effects(self):
+        """The try/except is now per-iteration, not around the whole loop:
+        a failure stopping one effect must not prevent the rest from being
+        attempted too."""
+        unit = _make_unit()
+        unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault"]
+        unit.gcode.run_script_from_command.side_effect = [Exception("boom"), None]
+        unit._stop_led_effects()
+        unit.gcode.run_script_from_command.assert_has_calls([
+            call("SET_LED_EFFECT EFFECT=lane1_loaded STOP=1"),
+            call("SET_LED_EFFECT EFFECT=lane2_fault STOP=1"),
+        ])
+        assert unit.gcode.run_script_from_command.call_count == 2
+
+    def test_clears_active_led_effects_even_when_stopping_raised(self):
+        unit = _make_unit()
+        unit.afc.active_led_effects = ["lane1_loaded"]
+        unit.gcode.run_script_from_command.side_effect = Exception("boom")
+        unit._stop_led_effects()
+        assert unit.afc.active_led_effects == []
 
 
 # ── _trigger_led_state ───────────────────────────────────────────────────────
