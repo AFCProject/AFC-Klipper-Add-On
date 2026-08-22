@@ -130,6 +130,7 @@ class afc:
         self.number_of_toolchanges  = 0
         self.current_toolchange     = 0
         self.print_tool_temperatures: List[int] = []
+        self.active_led_effects: List[str] = []
 
         # tool position when tool change was requested
         self.change_tool_pos = None
