@@ -371,7 +371,7 @@ class afcError:
         stack_name = caller_frame.f_code.co_name if caller_frame else ""
 
         self.AFC_error(msg, pause, stack_name=stack_name)
-        self.afc.function.afc_led(self.afc.led_fault, cur_lane.led_index)
+        cur_lane.unit_obj.lane_fault(cur_lane)
 
 def load_config(config: ConfigWrapper) -> afcError:
     """

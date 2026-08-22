@@ -4574,17 +4574,17 @@ class TestOnFilamentInsert:
 class TestOnFilamentRemove:
     def test_clears_loaded_to_hub_and_unloads(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_unloaded = MagicMock()
+        ams.lane_not_ready = MagicMock()
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         lane = _make_lane("lane1", loaded_to_hub=True, tool_loaded=False)
         ams.on_filament_remove(lane)
         assert lane.loaded_to_hub is False
-        ams.lane_unloaded.assert_called_once_with(lane)
+        ams.lane_not_ready.assert_called_once_with(lane)
 
     def test_cancels_pending_spool_loaded_timer(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_unloaded = MagicMock()
+        ams.lane_not_ready = MagicMock()
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         timer = MagicMock()
@@ -4597,7 +4597,7 @@ class TestOnFilamentRemove:
 
     def test_timer_unregister_failure_is_swallowed(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_unloaded = MagicMock()
+        ams.lane_not_ready = MagicMock()
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         reactor.unregister_timer = MagicMock(side_effect=Exception("boom"))
@@ -4608,7 +4608,7 @@ class TestOnFilamentRemove:
 
     def test_clears_lane_info_when_not_tool_loaded(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_unloaded = MagicMock()
+        ams.lane_not_ready = MagicMock()
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         lane = _make_lane("lane1", tool_loaded=False)
@@ -4618,7 +4618,7 @@ class TestOnFilamentRemove:
 
     def test_skips_clear_lane_info_when_tool_loaded_runout(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_unloaded = MagicMock()
+        ams.lane_not_ready = MagicMock()
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         lane = _make_lane("lane1", tool_loaded=True)
@@ -4628,7 +4628,7 @@ class TestOnFilamentRemove:
 
     def test_updates_hardware_snapshot_when_mapped(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_unloaded = MagicMock()
+        ams.lane_not_ready = MagicMock()
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         ams._spool_map["lane1"] = 0
@@ -6658,7 +6658,7 @@ class TestSystemTest:
         assert result is True
         afc.spool.clear_values.assert_called_once_with(lane)
         ams.lane_loaded.assert_not_called()
-        afc.function.afc_led.assert_called_once_with(lane.led_not_ready, lane.led_index)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
         assert any(
             lvl == "info" and m.startswith("lane1 tool cmd: T0 ")
             for lvl, m in ams.logger.messages)

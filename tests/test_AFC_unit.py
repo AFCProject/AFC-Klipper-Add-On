@@ -76,6 +76,7 @@ def _make_lane(name="lane1", hub="hub1", extruder="ext1", buffer_name="buf1"):
     lane.short_moves_speed = 50
     lane.short_moves_accel = 50
     lane.led_spool_index = None
+    lane.current_led_state = ""
     return lane
 
 
@@ -337,6 +338,16 @@ class TestLaneStatusLeds:
         unit.lane_loading(lane)
         unit.afc.function.afc_led.assert_called_once_with(lane.led_loading, lane.led_index)
 
+    def test_lane_tool_loaded_gears_does_not_set_a_static_color(self):
+        """Unlike its siblings, lane_tool_loaded_gears passes no static_color
+        to _trigger_led_state -- it only overlays the effect."""
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.extruder_obj = MagicMock()
+        unit.lane_tool_loaded_gears(lane)
+        unit.afc.function.afc_led.assert_not_called()
+        lane.extruder_obj.set_status_led.assert_not_called()
+
     def test_lane_tool_loaded_calls_afc_led_with_tool_loaded_color(self):
         unit = _make_unit()
         lane = _make_lane()
@@ -366,6 +377,156 @@ class TestLaneStatusLeds:
         lane = _make_lane()
         unit.lane_fault(lane)
         unit.afc.function.afc_led.assert_called_once_with(lane.led_fault, lane.led_index)
+
+
+# ── _check_led_state ─────────────────────────────────────────────────────────
+
+class TestCheckLedState:
+    def test_new_state_returns_true(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.current_led_state = "loaded"
+        assert unit._check_led_state(lane, "not_ready") is True
+
+    def test_new_state_updates_current_led_state(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.current_led_state = "loaded"
+        unit._check_led_state(lane, "not_ready")
+        assert lane.current_led_state == "not_ready"
+
+    def test_matching_state_returns_false(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.current_led_state = "loaded"
+        assert unit._check_led_state(lane, "loaded") is False
+
+    def test_matching_state_leaves_current_led_state_unchanged(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.current_led_state = "loaded"
+        unit._check_led_state(lane, "loaded")
+        assert lane.current_led_state == "loaded"
+
+    def test_empty_initial_state_is_not_a_match(self):
+        """The AFCLane default ("") must not collide with a real state name,
+        so the very first lane_* call for a lane isn't accidentally deduped."""
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.current_led_state = ""
+        assert unit._check_led_state(lane, "not_ready") is True
+
+
+# ── lane_* LED-state dedup guards ──────────────────────────────────────────────
+
+class TestLedStateDedup:
+    """Each lane_* method must skip re-triggering the LED when called again
+    with the lane already in that state, and must proceed when the state
+    actually changes -- verified via _trigger_led_state's call count, which
+    would differ between the two branches, rather than just "no error"."""
+
+    def test_lane_not_ready_skips_when_already_not_ready(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_not_ready(lane)
+        unit.lane_not_ready(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_not_ready_runs_again_after_state_changes(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_loaded(lane)
+        unit.lane_not_ready(lane)
+        assert unit._trigger_led_state.call_count == 2
+
+    def test_lane_loaded_skips_when_already_loaded(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_loaded(lane)
+        unit.lane_loaded(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_unloading_skips_when_already_unloading(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_unloading(lane)
+        unit.lane_unloading(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_unloaded_skips_when_already_unloaded(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_unloaded(lane)
+        unit.lane_unloaded(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_loading_skips_when_already_loading(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_loading(lane)
+        unit.lane_loading(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_tool_loaded_gears_skips_when_already_tool_loaded_gears(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.extruder_obj = MagicMock()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_tool_loaded_gears(lane)
+        unit.lane_tool_loaded_gears(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_tool_loaded_skips_when_already_tool_loaded(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.extruder_obj = MagicMock()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_tool_loaded(lane)
+        unit.lane_tool_loaded(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_tool_unloaded_skips_when_already_tool_unloaded(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.extruder_obj = MagicMock()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_tool_unloaded(lane)
+        unit.lane_tool_unloaded(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_tool_loaded_idle_skips_when_already_tool_loaded_idle(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.extruder_obj = MagicMock()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_tool_loaded_idle(lane)
+        unit.lane_tool_loaded_idle(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_lane_fault_skips_when_already_fault(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_fault(lane)
+        unit.lane_fault(lane)
+        assert unit._trigger_led_state.call_count == 1
+
+    def test_different_lanes_are_deduped_independently(self):
+        """current_led_state lives on the lane, not the unit, so one lane's
+        state must not suppress another lane's first LED update."""
+        unit = _make_unit()
+        lane1 = _make_lane("lane1")
+        lane2 = _make_lane("lane2")
+        unit._trigger_led_state = MagicMock()
+        unit.lane_loaded(lane1)
+        unit.lane_loaded(lane2)
+        assert unit._trigger_led_state.call_count == 2
 
 
 # ── _stop_led_effects ────────────────────────────────────────────────────────
@@ -719,6 +880,15 @@ class TestLedEffectSuffixMapping:
         unit.lane_loading(lane)
         unit._trigger_led_state.assert_called_once_with(
             lane, static_color=lane.led_loading, effect_suffix="loading")
+
+    def test_lane_tool_loaded_gears_uses_tool_loaded_gears_suffix(self):
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.extruder_obj = MagicMock()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_tool_loaded_gears(lane)
+        unit._trigger_led_state.assert_called_once_with(
+            lane, lane.extruder_obj, effect_suffix="tool_loaded_gears")
 
     def test_lane_tool_loaded_uses_tool_loaded_suffix(self):
         unit = _make_unit()

@@ -1480,7 +1480,7 @@ class afcAMS(afcUnit):
             else:
                 if not cur_lane.remember_spool:
                     self.afc.spool.clear_values(cur_lane)
-                self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+                cur_lane.unit_obj.lane_not_ready(cur_lane)
                 msg += 'EMPTY READY FOR SPOOL'
 
         if assignTcmd:
@@ -2423,7 +2423,7 @@ class afcAMS(afcUnit):
                 pass
             del self._pending_spool_loaded_timers[lane.name]
         lane.loaded_to_hub = False
-        self.lane_unloaded(lane)
+        self.lane_not_ready(lane)
         spool_index = self._spool_map.get(lane.name)
         if spool_index is not None:
             hw = AMSHardwareService.for_printer(self.printer, self.oams_name, logger=self.logger)

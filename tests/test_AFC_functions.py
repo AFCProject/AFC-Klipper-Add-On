@@ -1646,3 +1646,92 @@ class TestCmdAfcLaneResetToolheadLoadedGuard:
         func.afc.error.AFC_error.assert_not_called()
         lane.unit_obj.move_to_hub.assert_called_once()
         func.afc.gcode.respond_info.assert_any_call("Resetting lane1 to hub")
+
+
+# ── handle_activate_extruder / _handle_activate_extruder ─────────────────────
+
+class TestHandleActivateExtruder:
+    def _make(self, cur_lane_loaded=None):
+        func = _make_func()
+        func.get_current_lane_obj = MagicMock(return_value=cur_lane_loaded)
+        func.afc.spool = MagicMock()
+        return func
+
+    def _make_other_lane(self, name="lane2", prep_state=False, load_state=False,
+                         tool_loaded=False):
+        lane = _make_afc_lane(f"AFC_stepper {name}")
+        lane.do_enable = MagicMock()
+        lane.disable_buffer = MagicMock()
+        lane.unsync_to_extruder = MagicMock()
+        lane.prep_state = prep_state
+        lane._load_state = load_state
+        lane.tool_loaded = tool_loaded
+        lane.unit_obj = MagicMock()
+        return lane
+
+    def test_handle_activate_extruder_delegates_to_underscore_variant(self):
+        func = self._make()
+        func._handle_activate_extruder = MagicMock()
+        func.handle_activate_extruder()
+        func._handle_activate_extruder.assert_called_once_with(0)
+
+    def test_not_ready_lane_calls_lane_not_ready(self):
+        """Covers the `prep_state and load_state` guard's False branch --
+        this now calls lane_not_ready (not the old lane_unloaded)."""
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=False, load_state=False)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        lane.unit_obj.lane_loaded.assert_not_called()
+        lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
+
+    def test_ready_prep_only_calls_lane_not_ready(self):
+        """prep_state alone must not satisfy the guard."""
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=True, load_state=False)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+    def test_ready_load_only_calls_lane_not_ready(self):
+        """load_state alone must not satisfy the guard."""
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=False, load_state=True)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+    def test_ready_not_tool_loaded_calls_lane_loaded(self):
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=False)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+        lane.unit_obj.lane_not_ready.assert_not_called()
+
+    def test_ready_and_tool_loaded_calls_lane_tool_loaded_idle(self):
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=True)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
+        lane.unit_obj.lane_loaded.assert_not_called()
+        lane.unit_obj.lane_not_ready.assert_not_called()
+
+    def test_active_lane_is_skipped_entirely(self):
+        """The currently-loaded lane must not be touched by this loop at all."""
+        func = self._make()
+        active_lane = self._make_other_lane("lane1", prep_state=True, load_state=True)
+        active_lane.enable_buffer = MagicMock()
+        active_lane.sync_to_extruder = MagicMock()
+        active_lane.spool_id = None
+        func.get_current_lane_obj = MagicMock(return_value=active_lane)
+        func.afc.lanes = {"lane1": active_lane}
+        func._handle_activate_extruder(0)
+        # do_enable(True) is legitimately called later, outside the loop, to
+        # enable the active lane -- do_enable(False) is what the (skipped)
+        # loop body would have called, so that's the call that must be absent.
+        active_lane.do_enable.assert_called_once_with(True)
+        active_lane.unit_obj.lane_not_ready.assert_not_called()
+        active_lane.unit_obj.lane_loaded.assert_not_called()

@@ -604,7 +604,7 @@ class afcFunction:
                     else:
                         obj.unit_obj.lane_loaded(obj)
                 else:
-                    obj.unit_obj.lane_unloaded(obj)
+                    obj.unit_obj.lane_not_ready(obj)
 
         # Exit early if lane is None
         if cur_lane_loaded is None:
