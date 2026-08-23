@@ -492,7 +492,7 @@ class afcUnit:
         prompt.create_custom_p(title, text, None,
                                True, buttons, back)
 
-    def set_logo_color(self, color: str) -> None:
+    def set_logo_color(self, color: Optional[str]=None) -> None:
         """
         Common function for setting a units logo led's
 
@@ -640,7 +640,7 @@ class afcUnit:
 
         :param lane: Lane object to set led
         :param force: Set True to re-apply the led even when the state is unchanged, used when
-+            only the filament color changed
+            only the filament color changed
         """
         if not self._check_led_state(lane, "loaded") and not force: return
         color = self._get_lane_color(lane, lane.led_ready)

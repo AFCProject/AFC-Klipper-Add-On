@@ -13,11 +13,13 @@
    surrounding file's conventions rather than imposing a different style.
 - **Correct typing** — including things like `Optional[float]` instead of
    `float = None`. Methods should be fully annotated (parameters and return
-   type). Local variables and attributes only need an explicit annotation
-   when a linter/type checker (e.g. mypy) can't infer the type on its own —
-   for example an attribute first assigned `None` and later assigned a
-   concrete type elsewhere, or an empty `{}`/`[]` whose element type isn't
-   obvious from that line alone.
+   type). This applies to actual code (`extras/*.py` and similar); unit test
+   methods may be annotated too, but it's optional there, not required.
+   Local variables and attributes only need an explicit annotation when a
+   linter/type checker (e.g. mypy) can't infer the type on its own — for
+   example an attribute first assigned `None` and later assigned a concrete
+   type elsewhere, or an empty `{}`/`[]` whose element type isn't obvious
+   from that line alone.
 - **Use f-strings, not `str.format()`** — `f"Lane {self.name}"` rather than
    `"Lane {}".format(self.name)`.
 - **Format error/exception strings before raising, not inline** — build the
@@ -36,7 +38,10 @@
    still need to make sense to the developer reading them, just don't let
    them turn into paragraphs.
 - **No em-dashes.** Use a period, comma, or colon instead when breaking up a
-   clause, in comments, docstrings, commit messages, or any other prose.
+   clause, in comments, docstrings, commit messages, or any other prose. This
+   applies to new code and documentation, and to existing documentation while
+   it's being edited (clean up any em-dashes in a doc you're already touching,
+   but don't go sweep unrelated files just for this).
 - **Docstrings** — every new or changed method needs a docstring matching
    Sphinx-style convention in this shape: a short description, a blank line,
    then one `:param name:` per parameter (skip `self`) and a `:return type:`

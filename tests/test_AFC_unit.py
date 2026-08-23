@@ -1053,6 +1053,12 @@ class TestSetLogoColor:
         unit.set_logo_color(None)
         unit.afc.function.afc_led.assert_not_called()
 
+    def test_no_call_when_color_omitted(self):
+        """Covers color's new default value (None) when called with no argument."""
+        unit = _make_unit()
+        unit.set_logo_color()
+        unit.afc.function.afc_led.assert_not_called()
+
     def test_no_call_when_color_is_empty_string(self):
         unit = _make_unit()
         unit.set_logo_color("")
