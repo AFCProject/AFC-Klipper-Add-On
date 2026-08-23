@@ -632,15 +632,17 @@ class afcUnit:
         if lane.led_spool_index is not None:
             self.afc.function.afc_led(self.afc.led_off, lane.led_spool_index)
 
-    def lane_loaded(self, lane: AFCLane) -> None:
+    def lane_loaded(self, lane: AFCLane, force: bool=False) -> None:
         """
         Common function for setting a lanes led when lane is loaded, normally this is called when
         filament in lane is staged behind hub. If a lane has an illumination led defined, its turned
         on with this call.
 
         :param lane: Lane object to set led
+        :param force: Set True to re-apply the led even when the state is unchanged, used when
++            only the filament color changed
         """
-        if not self._check_led_state(lane, "loaded"): return
+        if not self._check_led_state(lane, "loaded") and not force: return
         color = self._get_lane_color(lane, lane.led_ready)
         self._trigger_led_state(lane, static_color=color, effect_suffix="loaded")
         # TODO: double check quattrobox led sets
@@ -719,7 +721,7 @@ class afcUnit:
         """
         if not self._check_led_state(lane, "tool_loaded_idle"): return
         color = self._get_lane_color(lane, lane.led_tool_loaded_idle)
-        # Extruder LED also shows filament color when tool is parked/idle —
+        # Extruder LED also shows filament color when tool is parked/idle,
         # gives a visual indicator of what's loaded. Reverts to config color
         # when tool becomes active (lane_tool_loaded) or unloads (lane_tool_unloaded).
         self._trigger_led_state(lane, static_color=color, extruder=lane.extruder_obj,

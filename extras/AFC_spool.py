@@ -467,7 +467,7 @@ class AFCSpool:
         # Refresh LED only if filament is loaded — empty lanes keep their state color
         if (cur_lane.load_state
             and cur_lane.unit in self.afc.units):
-            cur_lane.unit_obj.lane_loaded(cur_lane)
+            cur_lane.unit_obj.lane_loaded(cur_lane,force=True)
         self.afc.save_vars()
         self.set_snapmaker_filament_params(cur_lane)
 
@@ -735,7 +735,7 @@ class AFCSpool:
                     # Refresh LED only if filament is loaded — empty lanes keep their state color
                     if (cur_lane.load_state
                         and cur_lane.unit in self.afc.units):
-                        cur_lane.unit_obj.lane_loaded(cur_lane)
+                        cur_lane.unit_obj.lane_loaded(cur_lane, force=True)
 
                 except Exception as e:
                     self.afc.error.AFC_error(f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}", False)
