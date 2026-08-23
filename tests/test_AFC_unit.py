@@ -298,6 +298,23 @@ class TestLaneStatusLeds:
         unit.lane_not_ready(lane)
         unit.afc.function.afc_led.assert_called_once_with(lane.led_not_ready, lane.led_index)
 
+    def test_lane_not_ready_turns_off_spool_led_when_spool_index_set(self):
+        """Covers the `lane.led_spool_index is not None` True branch."""
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.led_spool_index = "2"
+        unit.lane_not_ready(lane)
+        unit.afc.function.afc_led.assert_any_call(unit.afc.led_off, "2")
+
+    def test_lane_not_ready_skips_spool_led_when_spool_index_none(self):
+        """Covers the `lane.led_spool_index is not None` False branch."""
+        unit = _make_unit()
+        lane = _make_lane()
+        lane.led_spool_index = None
+        unit.lane_not_ready(lane)
+        for c in unit.afc.function.afc_led.call_args_list:
+            assert c[0][0] != unit.afc.led_off
+
     def test_lane_loaded_calls_afc_led_with_ready_color(self):
         unit = _make_unit()
         lane = _make_lane()
@@ -324,13 +341,15 @@ class TestLaneStatusLeds:
         unit.lane_unloaded(lane)
         unit.afc.function.afc_led.assert_called_once_with(lane.led_not_ready, lane.led_index)
 
-    def test_lane_unloaded_turns_off_spool_led_when_spool_index_set(self):
-        """Covers the `lane.led_spool_index is not None` True branch."""
+    def test_lane_unloaded_does_not_touch_spool_led(self):
+        """lane_unloaded no longer manages the spool illumination LED --
+        that responsibility moved to lane_not_ready."""
         unit = _make_unit()
         lane = _make_lane()
         lane.led_spool_index = "2"
         unit.lane_unloaded(lane)
-        unit.afc.function.afc_led.assert_any_call(unit.afc.led_off, "2")
+        for c in unit.afc.function.afc_led.call_args_list:
+            assert c[0][0] != unit.afc.led_off
 
     def test_lane_loading_calls_afc_led_with_loading_color(self):
         unit = _make_unit()

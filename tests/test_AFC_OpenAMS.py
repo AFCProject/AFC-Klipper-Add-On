@@ -2893,7 +2893,7 @@ class TestHandleSameFpsReload:
     def test_success_switches_active_lane(self):
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load = MagicMock(return_value=True)
-        ams.lane_not_ready = MagicMock()
+        ams.lane_unloaded = MagicMock()
         ams.lane_tool_loaded = MagicMock()
         ams.gcode = MagicMock()
         source = _make_lane("lane1", map=None)
@@ -2903,7 +2903,7 @@ class TestHandleSameFpsReload:
 
         assert result is True
         assert source.status == AFCLaneState.NONE
-        ams.lane_not_ready.assert_called_once_with(source)
+        ams.lane_unloaded.assert_called_once_with(source)
         target.set_tool_loaded.assert_called_once()
         ams.lane_tool_loaded.assert_called_once_with(target)
         afc.save_vars.assert_called_once()
@@ -2917,7 +2917,7 @@ class TestHandleSameFpsReload:
     def test_swaps_mapping_via_afc_swap_mapping_when_source_map_present(self):
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load = MagicMock(return_value=True)
-        ams.lane_not_ready = MagicMock()
+        ams.lane_unloaded = MagicMock()
         ams.lane_tool_loaded = MagicMock()
         ams.gcode = MagicMock()
         source = _make_lane("lane1", map="T0")
@@ -2933,7 +2933,7 @@ class TestHandleSameFpsReload:
         the source lane currently has a map assigned."""
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load = MagicMock(return_value=True)
-        ams.lane_not_ready = MagicMock()
+        ams.lane_unloaded = MagicMock()
         ams.lane_tool_loaded = MagicMock()
         ams.gcode = MagicMock()
         source = _make_lane("lane1", map=None)
@@ -2947,7 +2947,7 @@ class TestHandleSameFpsReload:
     def test_hardware_load_failure_pauses_and_returns_false(self):
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load = MagicMock(return_value=False)
-        ams.lane_not_ready = MagicMock()
+        ams.lane_unloaded = MagicMock()
         source = _make_lane("lane1")
         target = _make_lane("lane2")
 
@@ -2964,7 +2964,7 @@ class TestHandleSameFpsReload:
     def test_hardware_load_exception_pauses_and_returns_false(self):
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load = MagicMock(side_effect=Exception("mcu fault"))
-        ams.lane_not_ready = MagicMock()
+        ams.lane_unloaded = MagicMock()
         source = _make_lane("lane1")
         target = _make_lane("lane2")
 
@@ -2981,27 +2981,27 @@ class TestHandleSameFpsReload:
 class TestHandleRunout:
     def test_no_runout_lane_configured_pauses(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_not_ready = MagicMock()
+        ams.lane_unloaded = MagicMock()
         lane = _make_lane("lane1", runout_lane=None)
 
         result = ams.handle_runout(lane)
 
         assert result is True
         assert lane.status == AFCLaneState.NONE
-        ams.lane_not_ready.assert_called_once_with(lane)
+        ams.lane_unloaded.assert_called_once_with(lane)
         afc.error.AFC_error.assert_called_once()
         assert afc.error.AFC_error.call_args[1]["pause"] is True
 
     def test_runout_lane_not_found_pauses(self):
         ams, afc, printer, reactor = _make_ams()
-        ams.lane_not_ready = MagicMock()
+        ams.lane_unloaded = MagicMock()
         ams._resolve_lane_reference = MagicMock(return_value=None)
         lane = _make_lane("lane1", runout_lane="missing_lane")
 
         result = ams.handle_runout(lane)
 
         assert result is True
-        ams.lane_not_ready.assert_called_once_with(lane)
+        ams.lane_unloaded.assert_called_once_with(lane)
         afc.error.AFC_error.assert_called_once()
 
     def test_same_extruder_triggers_seamless_reload(self):

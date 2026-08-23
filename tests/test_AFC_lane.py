@@ -2847,7 +2847,7 @@ class TestPerformInfiniteRunout:
         info_msgs = [m for lvl, m in lane.logger.messages if lvl == "info"]
 
         assert lane.status is AFCLaneState.NONE
-        lane.unit_obj.lane_not_ready.assert_called_with(lane)
+        lane.unit_obj.lane_not_ready.assert_not_called()
         assert any(f"Infinite Spool triggered for {lane.name}" in m for m in info_msgs), info_msgs
         afc.lanes.get.assert_called_with(afc.current)
         assert afc.lanes.get.call_count == 1

@@ -2296,7 +2296,7 @@ class afcAMS(afcUnit):
             f"Same-FPS infinite runout: {source_name} -> {target_name}")
 
         source_lane.status = AFCLaneState.NONE
-        self.lane_not_ready(source_lane)
+        self.lane_unloaded(source_lane)
 
         try:
             success = self._oams_load(target_lane)
@@ -2356,7 +2356,7 @@ class afcAMS(afcUnit):
 
         if not runout_lane_name:
             lane.status = AFCLaneState.NONE
-            self.lane_not_ready(lane)
+            self.lane_unloaded(lane)
             self.afc.error.AFC_error(
                 f"Runout detected on OAMS {lane.name}. "
                 f"No runout lane configured.\n"
@@ -2368,7 +2368,7 @@ class afcAMS(afcUnit):
         target_lane = self._resolve_lane_reference(runout_lane_name)
         if target_lane is None:
             lane.status = AFCLaneState.NONE
-            self.lane_not_ready(lane)
+            self.lane_unloaded(lane)
             self.afc.error.AFC_error(
                 f"Runout on OAMS {lane.name}: "
                 f"runout lane '{runout_lane_name}' not found",

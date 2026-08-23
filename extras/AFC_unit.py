@@ -621,16 +621,22 @@ class afcUnit:
 
     def lane_not_ready(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when a lane is not ready
+        Common function for setting a lanes led when a lane is not ready, aka filament not loaded
+        into a lane (prep and load both False). If a lane has an illumination led defined, its turned
+        off with this call.
 
         :param lane: Lane object to set led
         """
         if not self._check_led_state(lane, "not_ready"): return
         self._trigger_led_state(lane, static_color=lane.led_not_ready, effect_suffix="not_ready")
+        if lane.led_spool_index is not None:
+            self.afc.function.afc_led(self.afc.led_off, lane.led_spool_index)
 
     def lane_loaded(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when lane is loaded
+        Common function for setting a lanes led when lane is loaded, normally this is called when
+        filament in lane is staged behind hub. If a lane has an illumination led defined, its turned
+        on with this call.
 
         :param lane: Lane object to set led
         """
@@ -643,7 +649,8 @@ class afcUnit:
 
     def lane_unloading(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when lane is unloading
+        Common function for setting a lanes led when lane is unloading, this can be called when
+        unloading from toolhead and when ejecting a lane.
 
         :param lane: Lane object to set led
         """
@@ -652,18 +659,17 @@ class afcUnit:
 
     def lane_unloaded(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when lane is unloaded
+        Common function for setting a lanes led when lane is unloaded but prep state is still True
 
         :param lane: Lane object to set led
         """
         if not self._check_led_state(lane, "unloaded"): return
         self._trigger_led_state(lane, static_color=lane.led_not_ready, effect_suffix="unloaded")
-        if lane.led_spool_index is not None:
-            self.afc.function.afc_led(self.afc.led_off, lane.led_spool_index)
 
     def lane_loading(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when lane is loading
+        Common function for setting a lanes led when lane is loading, this can be called when
+        loading to toolhead or when loading spool into lane.
 
         :param lane: Lane object to set led
         """

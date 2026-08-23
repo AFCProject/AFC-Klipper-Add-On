@@ -1032,7 +1032,6 @@ class AFCLane:
             - Once changeover is successful print is automatically resumed
         """
         self.status = AFCLaneState.NONE
-        self.unit_obj.lane_not_ready(self)
         self.logger.info("Infinite Spool triggered for {}".format(self.name))
         empty_lane = self.afc.lanes.get(self.afc.current)
 
