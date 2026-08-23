@@ -468,6 +468,25 @@ class TestLedStateDedup:
         unit.lane_loaded(lane)
         assert unit._trigger_led_state.call_count == 1
 
+    def test_lane_loaded_force_true_reapplies_even_when_already_loaded(self):
+        """force=True bypasses the dedup skip, used when only the filament
+        color changed while the lane stayed in the "loaded" state."""
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, force=True)
+        assert unit._trigger_led_state.call_count == 2
+
+    def test_lane_loaded_force_false_default_still_skips_when_already_loaded(self):
+        """Covers force's default value (False) taking the normal dedup path."""
+        unit = _make_unit()
+        lane = _make_lane()
+        unit._trigger_led_state = MagicMock()
+        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, force=False)
+        assert unit._trigger_led_state.call_count == 1
+
     def test_lane_unloading_skips_when_already_unloading(self):
         unit = _make_unit()
         lane = _make_lane()
