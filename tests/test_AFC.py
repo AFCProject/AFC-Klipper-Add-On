@@ -2949,7 +2949,7 @@ class TestSavePos:
         obj.function.log_toolhead_pos.assert_called_once_with(expected)
 
     def test_does_not_save_when_not_homed(self):
-        """When function.is_homed(hardware_only=True) returns False, save_pos returns
+        """When function.is_homed(for_move=True) returns False, save_pos returns
         immediately without inspecting in_toolchange/error_state/is_paused/position_saved."""
         obj = _make_afc_for_save_pos()
         obj.in_toolchange = False
@@ -2962,7 +2962,7 @@ class TestSavePos:
 
         assert obj.position_saved is False
         assert not hasattr(obj, "last_toolhead_position")
-        obj.function.is_homed.assert_called_once_with(hardware_only=True)
+        obj.function.is_homed.assert_called_once_with(for_move=True)
         obj.function.log_toolhead_pos.assert_called_once()
 
     def test_logs_not_saving_unhomed_message(self):

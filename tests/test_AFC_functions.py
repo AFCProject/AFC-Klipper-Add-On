@@ -465,9 +465,9 @@ class TestIsHomed:
         func.afc.toolhead.get_kinematics.return_value = kin
 
     @pytest.mark.parametrize(
-        "hardware_only,disable_homing_check,homed_axes,expected",
+        "for_move,disable_homing_check,homed_axes,expected",
         [
-            # hardware_only=True: homing_check is always True, disable_homing_check
+            # for_move=True: homing_check is always True, disable_homing_check
             # is ignored entirely, and each individually-missing axis returns False.
             (True, False, "xyz", True),
             (True, False, "xy", False),
@@ -479,14 +479,14 @@ class TestIsHomed:
             (True, True, "xz", False),
             (True, True, "yz", False),
             (True, True, "", False),
-            # hardware_only=False, disable_homing_check=False: homing_check is True,
-            # so behavior matches the hardware_only=True/disable_homing_check=False case.
+            # for_move=False, disable_homing_check=False: homing_check is True,
+            # so behavior matches the for_move=True/disable_homing_check=False case.
             (False, False, "xyz", True),
             (False, False, "xy", False),
             (False, False, "xz", False),
             (False, False, "yz", False),
             (False, False, "", False),
-            # hardware_only=False, disable_homing_check=True: homing_check is False,
+            # for_move=False, disable_homing_check=True: homing_check is False,
             # so the result is always True regardless of which axes are homed.
             (False, True, "xyz", True),
             (False, True, "xy", True),
@@ -495,14 +495,14 @@ class TestIsHomed:
             (False, True, "", True),
         ],
     )
-    def test_all_permutations(self, hardware_only, disable_homing_check, homed_axes, expected):
+    def test_all_permutations(self, for_move, disable_homing_check, homed_axes, expected):
         func = _make_func()
         self._wire(func, homed_axes, disable_homing_check)
-        assert func.is_homed(hardware_only=hardware_only) is expected
+        assert func.is_homed(for_move=for_move) is expected
 
-    def test_default_hardware_only_is_false(self):
-        """hardware_only defaults to False, so it should behave like the
-        hardware_only=False cases above when called with no argument."""
+    def test_default_for_move_is_true(self):
+        """for_move defaults to True, so it should behave like the
+        for_move=True cases above when called with no argument."""
         func = _make_func()
         self._wire(func, homed_axes="xy", disable_homing_check=False)
         assert func.is_homed() is False

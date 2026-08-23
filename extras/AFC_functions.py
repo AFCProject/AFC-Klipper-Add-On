@@ -347,18 +347,22 @@ class afcFunction:
         else:
             return True
 
-    def is_homed(self, hardware_only=False):
+    def is_homed(self, for_move=False):
         """
         Helper function to determine if printer is currently homed
 
-        :param hardware_only: When set to True will only return True if the printer is physically homed
+        :param for_move: True if the check is guarding a move, always returning hardware state
         :return boolean: True if xyz is homed
         """
         curtime = self.afc.reactor.monotonic()
         kin_status = self.afc.toolhead.get_kinematics().get_status(curtime)
-        homing_check = hardware_only or not self.afc.disable_homing_check
-        if ('x' not in kin_status['homed_axes'] or 'y' not in kin_status['homed_axes'] or 'z' not in kin_status['homed_axes']) and \
-            homing_check:
+        # Always return real homed status if the check is explicitly guarding a move, 
+        # or if homing_check is not disabled in the config
+        homing_check = for_move or not self.afc.disable_homing_check
+        if homing_check and \
+            ('x' not in kin_status['homed_axes'] 
+            or 'y' not in kin_status['homed_axes'] 
+            or 'z' not in kin_status['homed_axes']):
             return False
         else:
             return True
