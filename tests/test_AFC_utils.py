@@ -412,6 +412,38 @@ class TestAFCMoonraker:
         infos = [m for lvl, m in mr.logger.messages if lvl == "info"]
         assert any("42" in m for m in infos)
 
+    def test_get_file_metadata_queues_sync_read(self):
+        mr = self._make_moonraker()
+        callback = MagicMock()
+        mr.get_file_metadata("test.gcode", callback)
+        mr._write_queue.put_nowait.assert_called_once_with(
+            (mr._get_file_metadata_sync, ("test.gcode", callback)))
+        callback.assert_not_called()
+
+    def test_get_file_metadata_sync_returns_resp_when_found(self):
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"filament_change_count": 3})
+        callback = MagicMock()
+        mr._get_file_metadata_sync("test.gcode", callback)
+        callback.assert_called_once_with({"filament_change_count": 3})
+
+    def test_get_file_metadata_sync_returns_none_on_failure(self):
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value=None)
+        callback = MagicMock()
+        mr._get_file_metadata_sync("test.gcode", callback)
+        callback.assert_called_once_with(None)
+
+    def test_get_file_metadata_sync_queries_correct_url(self):
+        from urllib.parse import urljoin, quote
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value=None)
+        mr._get_file_metadata_sync("sub dir/test file.gcode", MagicMock())
+        queried_url = mr._get_results.call_args[0][0]
+        expected_url = urljoin(
+            mr.host, f"{mr.FILENAME_PATH}{quote('sub dir/test file.gcode')}")
+        assert queried_url == expected_url
+
     def test_get_spoolman_server_returns_none_when_missing(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value={"orig": {}})

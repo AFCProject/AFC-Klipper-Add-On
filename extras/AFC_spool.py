@@ -621,7 +621,7 @@ class AFCSpool:
         """
         Pushes a lane's spool ID to Spoolman as the active spool if this lane
         is currently loaded to the toolhead. Runs as set_spoolID()'s on_done
-        callback, once the (possibly async) spool assignment has finished.
+        callback, once the spool data has been fetched and assignment has finished.
 
         :param cur_lane: Lane that was just assigned/cleared a spool ID
         """
@@ -688,7 +688,7 @@ class AFCSpool:
         Clears the lane's values instead when SpoolID is empty/None and the lane
         isn't set to remember its spool. Fetching Spoolman data is async (see
         _apply_spool_data) since this can be called from a load sequence and
-        can't block on the HTTP round trip.
+        shouldn't block on the HTTP round trip.
 
         :param cur_lane:  AFC lane to assign the spool to
         :param SpoolID:   Spoolman spool ID to assign, or None/'' to clear
@@ -714,7 +714,8 @@ class AFCSpool:
             elif not cur_lane.remember_spool:
                 self.clear_values(cur_lane)
         elif not cur_lane.remember_spool:
-            # Clears out values if users are not using spoolman and lane isn't set to remember spool, this is to cover this function being called from LANE UNLOAD and clearing out
+            # Clears out values if users are not using spoolman and lane isn't set to remember spool,
+            # this is to cover this function being called from LANE UNLOAD and clearing out
             # Manually entered information
             self.clear_values(cur_lane)
 

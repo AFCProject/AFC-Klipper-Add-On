@@ -168,7 +168,7 @@ class afc:
 
         # save_vars() only builds the state dict on the reactor thread; the actual file
         # write happens on this background thread so a slow disk can't stall Klipper.
-        # A single worker (rather than a thread per call) keeps writes ordered.
+        # A single worker is created rather than a thread per call to keep writes ordered.
         self._var_write_queue: Queue = Queue()
         self._var_write_thread = threading.Thread(target=self._var_write_worker, daemon=True,
                                                   name="afc_save_vars")
@@ -416,8 +416,10 @@ class afc:
         """
 
         try:
-            self.moonraker = AFC_moonraker( self.moonraker_host, self.moonraker_port, self.logger, self.reactor )
-            if not self.moonraker.wait_for_moonraker( toolhead=self.toolhead, timeout=self.moonraker_connect_to ):
+            self.moonraker = AFC_moonraker(self.moonraker_host, self.moonraker_port, self.logger,
+                                           self.reactor)
+            if not self.moonraker.wait_for_moonraker(toolhead=self.toolhead,
+                                                     timeout=self.moonraker_connect_to):
                 return False
 
             # Remove current lane_data from database before pushing data back up so that
@@ -648,9 +650,11 @@ class afc:
         """
         Print timer callback to check if printer is currently in a print. If printer is in a print,
         current filename is looked up and metadata is pulled from moonraker to get total filament change
-        count and per-tool temperatures. Metadata is fetched asynchronously since this reactor timer runs
-        while printing and can't block on the HTTP round trip to moonraker; _finish_print_start runs once
-        it's ready (or immediately if there's no moonraker to query). Once this is done timer callback is
+        count and per-tool temperatures.
+
+        Metadata is fetched asynchronously since this reactor timer runs while printing and shouldn't
+        block on the HTTP round trip to moonraker. _finish_print_start runs once it's ready
+        (or immediately if there's no moonraker to query). Once this is done timer callback is
         stopped and unregistered.
         """
         # Remove timer from reactor
@@ -662,7 +666,8 @@ class afc:
             self.number_of_toolchanges = 0
             if (self.moonraker is not None
                 and self.print_data_metadata):
-                self.print_data_metadata.query_filename(print_filename, on_fetched=self._finish_print_start)
+                self.print_data_metadata.query_filename(print_filename,
+                                                        on_fetched=self._finish_print_start)
             else:
                 self._finish_print_start()
 
@@ -670,13 +675,13 @@ class afc:
 
     def _finish_print_start(self) -> None:
         """
-        Completes print-start bookkeeping: applies the toolchange count/per-tool
-        temperatures cached by print_data_metadata (if a query was made), resets
+        Completes print-start moonraker file metadata query: applies the toolchange count and
+        per-tool temperatures cached by print_data_metadata (if a query was made). Resets
         current_toolchange, and resets the current lane's fault-detection position.
 
-        Runs either immediately from in_print_reactor_timer (no moonraker/
-        print_data_metadata to query) or as the completion callback once
-        print_data_metadata.query_filename() finishes fetching metadata.
+        Runs either immediately from in_print_reactor_timer (no moonraker/print_data_metadata to
+        query) or from the completion callback once print_data_metadata.query_filename()
+        finishes fetching metadata.
         """
         if (self.moonraker is not None
             and self.print_data_metadata):
