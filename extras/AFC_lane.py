@@ -318,7 +318,8 @@ class AFCLane:
             self._get_extruder_object()
             pin = self.extruder_obj.tool_start
             if (pin
-                and "buffer" not in pin):
+                and "buffer" not in pin
+                and pin.lower() != "virtual"):
                 self._set_homing_endstop(query_endstops, ppins,
                                          pin, AFCHomingPoints.TOOL)
 
