@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2026-08-24]
 ### Added
 - Guided toolhead calibration macros for `tool_stn`, `tool_stn_unload`, and cutter retract length,
-  including per-tool cutter variables for multi-extruder setups.
+  including a gear/sensor-to-nozzle `tool_stn` measurement flow, unload/reload testing, and
+  per-tool cutter variables for multi-extruder setups.
 
 ## [2026-08-15]
 ### Breaking Change

@@ -3872,6 +3872,29 @@ class TestLoadSequenceUnitLoadLane:
 
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
 
+    def test_load_to_gears_stops_before_tool_stn_move(self):
+        afc, lane, hub, extruder = self._make()
+        afc.homing_enabled = True
+        afc.home_to_tool = True
+        afc.move_e_pos = MagicMock()
+        lane.unit_obj = MagicMock(spec=["load_then_home"])
+        lane.unit_obj.load_then_home.return_value = (None, None, AFCMoveWarning.NONE)
+        lane.loaded_to_hub = False
+        lane.hub_obj = hub
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.get_toolhead_endstop = MagicMock(return_value="tool_start")
+        lane.sync_to_extruder = MagicMock()
+        extruder.tool_start = None
+
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=True)
+
+        assert result is True
+        lane.sync_to_extruder.assert_called_once_with()
+        afc.move_e_pos.assert_not_called()
+        lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True)
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert afc.save_vars.call_count == 2
+
 
 # ── unload_sequence: unit_unload_lane delegation ────────────────────────────────
 
@@ -4114,6 +4137,41 @@ class TestToolLoadDisplayStatusLifecycle:
 
         assert events == [
             ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
+
+    def test_load_to_gears_skips_purge_post_load_and_statistics(self):
+        afc, lane, events = self._make()
+        afc.post_load_macro = "POST_LOAD"
+        afc.load_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_LOAD(lane, load_to_gears=True)
+
+        afc.load_sequence.assert_called_once_with(
+            lane, lane.hub_obj, lane.extruder_obj, True)
+        lane.espooler.do_assist_move.assert_not_called()
+        afc.do_poop_kick_wipe.assert_not_called()
+        lane.get_td1_data_load.assert_not_called()
+        lane.extruder_obj.estats.tc_tool_load.increase_count.assert_not_called()
+        lane.lane_load_count.increase_count.assert_not_called()
+        lane.espooler.stats.update_database.assert_not_called()
+        afc.gcode.run_script_from_command.assert_not_called()
+
+    def test_normal_load_keeps_purge_post_load_and_statistics(self):
+        afc, lane, events = self._make()
+        afc.post_load_macro = "POST_LOAD"
+        afc.load_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_LOAD(lane)
+
+        afc.load_sequence.assert_called_once_with(
+            lane, lane.hub_obj, lane.extruder_obj, False)
+        lane.espooler.do_assist_move.assert_called_once_with()
+        afc.do_poop_kick_wipe.assert_called_once_with(
+            cur_lane=lane, cur_extruder=lane.extruder_obj, purge_length=None)
+        lane.get_td1_data_load.assert_called_once_with()
+        lane.extruder_obj.estats.tc_tool_load.increase_count.assert_called_once_with()
+        lane.lane_load_count.increase_count.assert_called_once_with()
+        lane.espooler.stats.update_database.assert_called_once_with()
+        afc.gcode.run_script_from_command.assert_called_once_with("POST_LOAD")
 
 
 class TestToolUnloadDisplayStatusLifecycle:
