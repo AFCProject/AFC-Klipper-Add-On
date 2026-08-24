@@ -1195,6 +1195,15 @@ class afc:
 
         :param move_z_first: Enable to move z before moving x,y
         """
+        # Only restore position if a valid position was saved, otherwise just return
+        if not self.position_saved:
+            self.function.log_toolhead_pos(
+                f"Not restoring position, Error State: {self.error_state}, "
+                f"Is Paused {self.function.is_paused()}, Position_saved {self.position_saved}, "
+                f"in toolchange: {self.in_toolchange}, POS: "
+            )
+            return
+
         # Only rounded for the log message below, restore logic below uses full precision
         msg = f"Restoring Position {round_floats(self.last_toolhead_position)}"
         msg += f" Base position: {round_floats(self.base_position)}"

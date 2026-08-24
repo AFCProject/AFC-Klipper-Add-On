@@ -356,12 +356,12 @@ class afcFunction:
         """
         curtime = self.afc.reactor.monotonic()
         kin_status = self.afc.toolhead.get_kinematics().get_status(curtime)
-        # Always return real homed status if the check is explicitly guarding a move, 
+        # Always return real homed status if the check is explicitly guarding a move,
         # or if homing_check is not disabled in the config
         homing_check = for_move or not self.afc.disable_homing_check
         if homing_check and \
-            ('x' not in kin_status['homed_axes'] 
-            or 'y' not in kin_status['homed_axes'] 
+            ('x' not in kin_status['homed_axes']
+            or 'y' not in kin_status['homed_axes']
             or 'z' not in kin_status['homed_axes']):
             return False
         else:
