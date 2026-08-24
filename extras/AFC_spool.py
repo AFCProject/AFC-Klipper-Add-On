@@ -797,15 +797,14 @@ class AFCSpool:
             except Exception as e:
                 self.afc.error.AFC_error(f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}", False)
         finally:
+            self.set_snapmaker_filament_params(cur_lane)
+            if save_vars: self.afc.save_vars()
             # Runs on every exit path (early return, exception, or the happy
             # path) so on_done fires exactly once regardless of which branch
             # was taken -- matching the original synchronous behavior where
             # callers resumed right after set_spoolID() returned either way.
             if on_done is not None:
                 on_done()
-
-        self.set_snapmaker_filament_params(cur_lane)
-        if save_vars: self.afc.save_vars()
 
     cmd_SET_RUNOUT_help = "Set runout lane"
     def cmd_SET_RUNOUT(self, gcmd: GCodeCommand) -> None:

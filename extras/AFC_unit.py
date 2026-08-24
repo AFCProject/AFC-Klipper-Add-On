@@ -849,10 +849,28 @@ class afcUnit:
         :return boolean: True once filament is detected in TD-1 device
         """
         td1_data = self.afc.moonraker.get_td1_data()
+        return self._apply_td1_data(cur_lane, compare_time, td1_data, ignore_time)
+
+    def _apply_td1_data(self, cur_lane: AFCLane, compare_time: datetime,
+                        td1_data: Optional[dict], ignore_time: bool=False) -> bool:
+        """
+        Validates and applies an already-fetched TD-1 data payload to a lane,
+        without fetching it itself.
+
+        :param cur_lane: Current lane to apply TD-1 data to, also check's to see if lane has a specific TD-1 ID
+                         assigned to the lane.
+        :param compare_time: Time to compare returned data to, which helps verify that the data is valid and
+                             filament has reached TD-1 device
+        :param td1_data: TD-1 devices dict already fetched, None if the fetch failed
+        :param ignore_time: Override to just capture TD-1 data anyways, useful when loading filament to toolhead
+                            and want to capture data once loaded.
+
+        :return boolean: True once filament is detected in TD-1 device
+        """
         t_delta = timedelta(seconds = 10)
         valid_data = False
 
-        if len(td1_data) > 0:
+        if td1_data is not None and len(td1_data) > 0:
             self.logger.debug(f"Data: {td1_data}, Compare_time: {compare_time}")
 
             if cur_lane.td1_device_id in td1_data:
@@ -886,6 +904,7 @@ class afcUnit:
                 self.logger.info(f"{cur_lane.name} TD-1 data captured")
                 self.afc.save_vars()
                 return True
+        return False
 
     def prep_load(self, lane: AFCLane):
         """

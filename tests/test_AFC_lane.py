@@ -546,6 +546,81 @@ class TestGetTd1DataUnitHook:
         assert "not loaded" in msg.lower()
 
 
+# ── get_td1_data_load / _apply_td1_data_load ──────────────────────────────────
+# Runs at the end of every TOOL_LOAD, so this fetches asynchronously (unlike
+# get_td1_data above, used by calibration/PREP capture, which stays synchronous).
+
+class TestGetTd1DataLoad:
+    def _make(self, td1_present=True, td1_device_id="SN1"):
+        lane = _make_afc_lane()
+        lane.afc.td1_present = td1_present
+        lane.td1_device_id = td1_device_id
+        lane.afc.moonraker = MagicMock()
+        return lane
+
+    def test_td1_not_present_skips_entirely(self):
+        lane = self._make(td1_present=False)
+        lane.get_td1_data_load()
+        lane.afc.moonraker.get_td1_data_async.assert_not_called()
+
+    def test_no_device_id_skips_entirely(self):
+        lane = self._make(td1_device_id=None)
+        lane.get_td1_data_load()
+        lane.afc.moonraker.get_td1_data_async.assert_not_called()
+
+    def test_no_moonraker_skips_entirely(self):
+        lane = self._make()
+        lane.afc.moonraker = None
+        lane.get_td1_data_load()  # must not raise
+
+    def test_dispatches_async_fetch_with_apply_callback(self):
+        lane = self._make()
+        lane.get_td1_data_load()
+        lane.afc.moonraker.get_td1_data_async.assert_called_once_with(
+            lane._apply_td1_data_load)
+
+
+class TestApplyTd1DataLoad:
+    def _make(self, td1_device_id="SN1"):
+        lane = _make_afc_lane()
+        lane.td1_device_id = td1_device_id
+        lane.unit_obj = MagicMock()
+        return lane
+
+    def test_invalid_device_skips_apply(self):
+        lane = self._make()
+        lane.afc.function._check_td1_id_in_data.return_value = (False, "not found")
+
+        lane._apply_td1_data_load({"OTHER": {}})
+
+        lane.afc.function._check_td1_id_in_data.assert_called_once_with({"OTHER": {}}, "SN1")
+        lane.unit_obj._apply_td1_data.assert_not_called()
+
+    def test_valid_device_applies_with_ignore_time(self):
+        lane = self._make()
+        lane.afc.function._check_td1_id_in_data.return_value = (True, "")
+        devices = {"SN1": {"td": "PLA", "color": "#FF0000", "scan_time": "2024-01-01T12:00:00Z"}}
+
+        lane._apply_td1_data_load(devices)
+
+        args = lane.unit_obj._apply_td1_data.call_args[0]
+        assert args[0] is lane
+        assert args[2] == devices
+        kwargs = lane.unit_obj._apply_td1_data.call_args[1]
+        assert kwargs.get("ignore_time") is True
+
+    def test_none_devices_from_failed_fetch_is_treated_as_invalid(self):
+        """A failed async fetch delivers None; _check_td1_id_in_data already
+        handles that (device can't be found in no data), so apply is skipped."""
+        lane = self._make()
+        lane.afc.function._check_td1_id_in_data.return_value = (False, "not found")
+
+        lane._apply_td1_data_load(None)
+
+        lane.afc.function._check_td1_id_in_data.assert_called_once_with(None, "SN1")
+        lane.unit_obj._apply_td1_data.assert_not_called()
+
+
 # ── handle_load_runout ────────────────────────────────────────────────────────
 
 class TestHandleLoadRunout:

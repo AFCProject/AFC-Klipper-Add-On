@@ -528,6 +528,37 @@ class TestAFCMoonraker:
         result = mr.get_td1_data()
         assert result is None
 
+    # ── get_td1_data_async ───────────────────────────────────────────────────
+
+    def test_get_td1_data_async_queues_sync_read(self):
+        mr = self._make_moonraker()
+        callback = MagicMock()
+        mr.get_td1_data_async(callback)
+        mr._write_queue.put_nowait.assert_called_once_with(
+            (mr._get_td1_data_async_sync, (callback,)))
+        callback.assert_not_called()
+
+    def test_get_td1_data_async_sync_returns_devices_on_success(self):
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"devices": {"SN123": {}}})
+        callback = MagicMock()
+        mr._get_td1_data_async_sync(callback)
+        callback.assert_called_once_with({"SN123": {}})
+
+    def test_get_td1_data_async_sync_returns_none_when_no_devices_key(self):
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"other": "data"})
+        callback = MagicMock()
+        mr._get_td1_data_async_sync(callback)
+        callback.assert_called_once_with(None)
+
+    def test_get_td1_data_async_sync_returns_none_on_failure(self):
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value=None)
+        callback = MagicMock()
+        mr._get_td1_data_async_sync(callback)
+        callback.assert_called_once_with(None)
+
     # ── reboot_td1 ───────────────────────────────────────────────────────────
 
     def test_reboot_td1_returns_response(self):

@@ -18,6 +18,43 @@ import pytest
 from extras.AFC_spool import AFCSpool, load_config
 
 
+# ── Module-level import guard ────────────────────────────────────────────────
+
+class TestNaturalSortKeyImportGuard:
+    def test_raises_configfile_error_when_import_fails(self):
+        """Covers the module-level try/except around importing natural_sort_key
+        from extras.AFC_utils: if that import fails, the module must re-raise
+        as configfile.error rather than a raw ImportError.
+
+        Loads a throwaway copy of the module under a separate name instead of
+        reloading extras.AFC_spool in place: reload() mutates the canonical
+        module's namespace, which would leave every `from extras.AFC_spool
+        import AFCSpool` reference already captured elsewhere in this test
+        suite pointing at a stale, pre-reload class.
+        """
+        import sys
+        import importlib.util
+        from configfile import error as ConfigFileError
+
+        afc_utils = sys.modules["extras.AFC_utils"]
+        real_natural_sort_key = afc_utils.natural_sort_key
+        del afc_utils.natural_sort_key
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "extras.AFC_spool_import_guard_test",
+                sys.modules["extras.AFC_spool"].__file__,
+            )
+            fresh_module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = fresh_module
+            try:
+                with pytest.raises(ConfigFileError):
+                    spec.loader.exec_module(fresh_module)
+            finally:
+                del sys.modules[spec.name]
+        finally:
+            afc_utils.natural_sort_key = real_natural_sort_key
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_spool():
@@ -1617,6 +1654,26 @@ class TestSetSpoolID:
         spool.set_spoolID(lane, 42)
         spool.afc.error.AFC_error.assert_called()
         spool.clear_values.assert_called()
+
+    def test_zero_weight_still_calls_snapmaker_params_save_vars_and_on_done(self):
+        """The invalid-weight early return is inside _apply_spool_data's
+        finally block, so it must not skip these -- same guarantee as the
+        exception and success paths."""
+        spool = self._make_spool_with_spoolman()
+        spool.set_snapmaker_filament_params = MagicMock()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result(weight=0.0)
+        _stub_get_spool(spool, result)
+        spool.disable_weight_check = False
+        on_done = MagicMock()
+
+        spool.set_spoolID(lane, 42, on_done=on_done)
+
+        spool.set_snapmaker_filament_params.assert_called_once_with(lane)
+        spool.afc.save_vars.assert_called_once_with()
+        on_done.assert_called_once_with()
 
     def test_disable_weight_check_skips_validation(self):
         spool = self._make_spool_with_spoolman()

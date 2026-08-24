@@ -465,8 +465,10 @@ class MockLogger:
     def debug(self, msg, **kwargs):
         self.messages.append(("debug", msg))
 
-    def error(self, msg=None, **kwargs):
-        # AFC_logger.error() can be called as error(msg) or error(message=msg, ...)
+    def error(self, msg=None, traceback=None, stack_name="", **kwargs):
+        # Real AFC_logger.error() signature is (message, traceback=None, stack_name=""),
+        # accepting traceback/stack_name positionally or by keyword -- match that here
+        # so tests hitting either calling convention don't get a spurious TypeError.
         message = msg if msg is not None else kwargs.get("message", "")
         self.messages.append(("error", message))
 

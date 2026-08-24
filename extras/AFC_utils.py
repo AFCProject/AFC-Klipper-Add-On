@@ -396,6 +396,7 @@ class AFC_moonraker:
         AFC logger object to log and print to console
     """
     ERROR_STRING = "Error getting data from moonraker, check AFC.log for more information"
+    REQUEST_TIMEOUT = 10
     def __init__(self, host: str, port: str, logger: AFC_logger, reactor: Reactor):
         self.port           = port
         self.logger         = logger
@@ -470,7 +471,7 @@ class AFC_moonraker:
             logger = self.logger.debug
 
         try:
-            resp = urlopen(url_string)
+            resp = urlopen(url_string, timeout=self.REQUEST_TIMEOUT)
             if resp.status >= 200 and resp.status <= 300:
                 data = json.load(resp)
             else:
@@ -668,7 +669,9 @@ class AFC_moonraker:
 
     def get_td1_data(self):
         """
-        Fetches TD-1 data from moonrakers `machine/td1/data` endpoint
+        Synchronous fetch for TD-1 data from moonrakers `machine/td1/data` endpoint.
+        
+        See get_td1_data_async() for the non-blocking version.
 
         :returns dict: Returns dictionary of TD-1 devices by serial numbers with their data,
                        returns None if no TD-1 devices are found
@@ -680,6 +683,32 @@ class AFC_moonraker:
             return resp["devices"]
         else:
             return None
+
+    def get_td1_data_async(self, callback: Callable[[Optional[dict]], None]) -> None:
+        """
+        Queues a query for TD-1 device data to run on the background writer
+        thread. Runs asynchronously because for situations where a fetch cannot
+        block on the HTTP round trip during a print (eg. during a toolchange when printing).
+        
+        See get_td1_data() for the synchronous version.
+
+        :param callback: Called with the TD-1 devices dict (or None on failure)
+                         once the query completes. Runs on the reactor thread.
+        """
+        self._write_queue.put_nowait((self._get_td1_data_async_sync, (callback,)))
+
+    def _get_td1_data_async_sync(self, callback: Callable[[Optional[dict]], None]) -> None:
+        """
+        Does the actual GET for TD-1 device data. Called from the background
+        writer thread; schedules callback on the reactor thread.
+
+        :param callback: Called with the TD-1 devices dict (or None on failure)
+        """
+        url = urljoin(self.host, "machine/td1/data")
+        req = Request(url=url)
+        resp = self._get_results(req)
+        devices = resp["devices"] if resp is not None and "devices" in resp else None
+        self.reactor.register_async_callback(lambda et, devices=devices: callback(devices))
 
     def reboot_td1(self, serial_number):
         """

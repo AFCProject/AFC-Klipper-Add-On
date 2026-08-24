@@ -1954,18 +1954,32 @@ class AFCLane:
 
         self._sent_lane_data_keys = current_keys
 
-    def get_td1_data_load(self):
+    def get_td1_data_load(self) -> None:
         """
         Captures TD-1 data for a lane after being loaded into toolhead. When capturing
         data scan time is ignored as its assumed its scanned when loaded into toolhead.
+        Fetches TD-1 data asynchronously since this runs at the end of every TOOL_LOAD
+        and can't block on the HTTP round trip during a print.
         """
-        if self.afc.td1_present:
-            valid = False
-            if self.td1_device_id:
-                valid, _ = self.afc.function.check_for_td1_id(self.td1_device_id)
+        if not self.afc.td1_present:
+            return
+        if not self.td1_device_id:
+            return
+        if self.afc.moonraker is None:
+            return
+        self.afc.moonraker.get_td1_data_async(self._apply_td1_data_load)
 
-            if valid:
-                self.unit_obj.get_td1_data(self, datetime.now(), ignore_time=True)
+    def _apply_td1_data_load(self, devices: Optional[dict]) -> None:
+        """
+        Completion callback for get_td1_data_load()'s async TD-1 fetch. Validates
+        the configured device ID against the fetched data, then applies it to this lane.
+        Runs on the reactor thread.
+
+        :param devices: TD-1 devices dict fetched asynchronously, or None on failure
+        """
+        valid, _ = self.afc.function._check_td1_id_in_data(devices, self.td1_device_id)
+        if valid:
+            self.unit_obj._apply_td1_data(self, datetime.now(), devices, ignore_time=True)
 
     def get_td1_data(self):
         """

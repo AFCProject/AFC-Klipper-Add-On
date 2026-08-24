@@ -784,19 +784,34 @@ class afcFunction:
         :param print_error: Prints error message to logger if set to True
         :return bool,str: Returns tuple of True/False, error message if error occurred
         '''
+        td1_data = self.afc.moonraker.get_td1_data()
+        return self._check_td1_error_in_data(td1_data, serial_number, print_error)
+
+    def _check_td1_error_in_data(self, td1_data: Optional[dict], serial_number: Optional[str] = None,
+                                 print_error: bool = True) -> tuple[bool, str]:
+        '''
+        Checks an already-fetched TD-1 devices dict for errors, without
+        fetching it itself.
+
+        :param td1_data: TD-1 devices dict already fetched, None if the fetch failed
+        :param serial_number: Specific serial number to check for error
+        :param print_error: Prints error message to logger if set to True
+        :return bool,str: Returns tuple of True/False, error message if error occurred
+        '''
         error_occurred = False
         error_message = ""
-        td1_data = self.afc.moonraker.get_td1_data()
-        for serial in td1_data:
-            error = td1_data[serial].get("error")
-            if error is not None:
-                if serial_number is None or serial == serial_number:
-                    error_message = f"Error with TD-1 Serial: {serial}, please fix error with TD-1 and run 'AFC_RESET_TD1 SERIAL={serial}' macro.\n"
-                    error_message += "Some errors can occur when first booting machine and filament is in TD-1 device\n"
-                    error_message += f"Reported Error: {td1_data[serial]['error']}"
-                    error_occurred = True
-                    if print_error:
-                        self.logger.error(error_message)
+        if td1_data is not None:
+            for serial in td1_data:
+                error = td1_data[serial].get("error")
+                if error is not None:
+                    if (serial_number is None
+                        or serial == serial_number):
+                        error_message = f"Error with TD-1 Serial: {serial}, please fix error with TD-1 and run 'AFC_RESET_TD1 SERIAL={serial}' macro.\n"
+                        error_message += "Some errors can occur when first booting machine and filament is in TD-1 device\n"
+                        error_message += f"Reported Error: {td1_data[serial]['error']}"
+                        error_occurred = True
+                        if print_error:
+                            self.logger.error(error_message)
         return error_occurred, error_message
 
     def check_for_td1_id(self, serial_number):
@@ -809,10 +824,23 @@ class afcFunction:
                           str: error message if device does not exist or an error with TD-1 device
         """
         td1_data = self.afc.moonraker.get_td1_data()
-        if serial_number not in td1_data:
+        return self._check_td1_id_in_data(td1_data, serial_number)
+
+    def _check_td1_id_in_data(self, td1_data: Optional[dict], serial_number: Optional[str]) -> tuple[bool, str]:
+        """
+        Validates a serial number against an already-fetched TD-1 devices dict,
+        without fetching it itself.
+
+        :param td1_data: TD-1 devices dict already fetched, None if the fetch failed
+        :param serial_number: Serial number to check for
+        :return bool,str: bool: True if device exists/False if device does not exist or error with device
+                          str: error message if device does not exist or an error with TD-1 device
+        """
+        if (td1_data is None
+            or serial_number not in td1_data):
             return False, f"TD-1 Device ID ({serial_number}) supplied but ID not found."
 
-        no_error, error_message = self.check_for_td1_error(serial_number, print_error=False)
+        no_error, error_message = self._check_td1_error_in_data(td1_data, serial_number, print_error=False)
         return not no_error, error_message
 
     def gcode_get_value( self, gcmd, get_attr, variable, variable_name, section_name, key_name=None, cast_to_bool=False ):

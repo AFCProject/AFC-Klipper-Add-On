@@ -1889,3 +1889,107 @@ class TestHandleActivateExtruder:
         active_lane.do_enable.assert_called_once_with(True)
         active_lane.unit_obj.lane_not_ready.assert_not_called()
         active_lane.unit_obj.lane_loaded.assert_not_called()
+
+
+# ── check_for_td1_error / _check_td1_error_in_data ────────────────────────────
+
+class TestCheckForTd1Error:
+    def test_delegates_to_moonraker_fetch_then_checks_data(self):
+        func = _make_func()
+        func.afc.moonraker = MagicMock()
+        func.afc.moonraker.get_td1_data.return_value = {"SN1": {"error": None}}
+        error_occurred, msg = func.check_for_td1_error()
+        func.afc.moonraker.get_td1_data.assert_called_once_with()
+        assert error_occurred is False
+        assert msg == ""
+
+
+class TestCheckTd1ErrorInData:
+    def test_none_data_reports_no_error(self):
+        """Covers td1_data being None (a failed fetch) without crashing."""
+        func = _make_func()
+        error_occurred, msg = func._check_td1_error_in_data(None)
+        assert error_occurred is False
+        assert msg == ""
+
+    def test_no_devices_have_errors(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": None}, "SN2": {"error": None}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data)
+        assert error_occurred is False
+        assert msg == ""
+
+    def test_matching_serial_with_error_reports_it(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data, serial_number="SN1")
+        assert error_occurred is True
+        assert "SN1" in msg
+        assert "jam" in msg
+
+    def test_non_matching_serial_number_ignores_other_devices_error(self):
+        """A specific serial_number filters out errors on other devices."""
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data, serial_number="SN2")
+        assert error_occurred is False
+        assert msg == ""
+
+    def test_serial_number_none_checks_all_devices(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": None}, "SN2": {"error": "overheating"}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data, serial_number=None)
+        assert error_occurred is True
+        assert "SN2" in msg
+
+    def test_print_error_true_logs_error(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        func._check_td1_error_in_data(td1_data, serial_number="SN1", print_error=True)
+        errors = [m for lvl, m in func.logger.messages if lvl == "error"]
+        assert len(errors) == 1
+
+    def test_print_error_false_does_not_log(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        func._check_td1_error_in_data(td1_data, serial_number="SN1", print_error=False)
+        errors = [m for lvl, m in func.logger.messages if lvl == "error"]
+        assert len(errors) == 0
+
+
+# ── check_for_td1_id / _check_td1_id_in_data ──────────────────────────────────
+
+class TestCheckForTd1Id:
+    def test_delegates_to_moonraker_fetch_then_checks_data(self):
+        func = _make_func()
+        func.afc.moonraker = MagicMock()
+        func.afc.moonraker.get_td1_data.return_value = {"SN1": {"error": None}}
+        valid, msg = func.check_for_td1_id("SN1")
+        func.afc.moonraker.get_td1_data.assert_called_once_with()
+        assert valid is True
+
+
+class TestCheckTd1IdInData:
+    def test_none_data_reports_not_found(self):
+        """Covers td1_data being None (a failed fetch) without crashing."""
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data(None, "SN1")
+        assert valid is False
+        assert "SN1" in msg
+
+    def test_serial_not_in_data_reports_not_found(self):
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data({"SN2": {"error": None}}, "SN1")
+        assert valid is False
+        assert "SN1" in msg
+
+    def test_serial_present_with_no_error_is_valid(self):
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data({"SN1": {"error": None}}, "SN1")
+        assert valid is True
+
+    def test_serial_present_with_error_is_not_valid(self):
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data({"SN1": {"error": "jam"}}, "SN1")
+        assert valid is False
+        assert "jam" in msg
