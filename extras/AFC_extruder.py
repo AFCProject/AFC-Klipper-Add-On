@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
 
-try: from extras.AFC_utils import add_filament_switch
+try: from extras.AFC_utils import add_filament_switch, VirtualFilamentSensor
 except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.format_exc()))
 
 try: from extras.AFC_lane import AFCLane, AFCU1Lane
@@ -294,6 +294,15 @@ class AFCExtruder:
 
             if self.tool_start == "buffer":
                 self.logger.info("Setting up as buffer")
+            elif self.tool_start == "virtual":
+                # Virtual toolhead sensor for toolheads without a physical sensor (standalone
+                # toolchanger lanes). Filament presence is assumed and tracked in software only.
+                self.fila_tool_start = VirtualFilamentSensor(
+                    self.printer, f"{self.name}_tool_start", self.logger,
+                    show_in_gui=self.enable_sensors_in_gui,
+                    runout_cb=self.handle_start_runout, enable_runout=self.enable_runout)
+                self.fila_tool_start.runout_helper.note_filament_present(is_filament_present=True)
+                self.tool_start_state = True
             else:
                 self.fila_tool_start, self.debounce_button_start = add_filament_switch(f"{self.name}_tool_start", self.tool_start, self.printer,
                                                                                     self.enable_sensors_in_gui, self.handle_start_runout, self.enable_runout,

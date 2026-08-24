@@ -289,6 +289,29 @@ def _make_afc_extruder_as_standalone(name="extruder", extruder_values=None, afc_
 
 # ── AFCExtruder.__str__ ────────────────────────────────────────────────────────
 
+# -- pin_tool_start: virtual -----------------------------------------------------
+
+class TestVirtualToolStart:
+    def test_virtual_tool_start_assumes_filament_loaded(self):
+        ext = _make_afc_extruder_as_standalone("extruder", extruder_values={"pin_tool_start": "virtual"})
+        assert ext.tool_start_state is True
+        assert ext.fila_tool_start is not None
+        assert ext.fila_tool_start.runout_helper.filament_present is True
+
+    def test_virtual_tool_start_registers_no_debounce_button(self):
+        ext = _make_afc_extruder_as_standalone("extruder", extruder_values={"pin_tool_start": "virtual"})
+        assert getattr(ext, "debounce_button_start", None) is None
+
+    def test_standalone_ready_keeps_lane_loaded_with_virtual_sensor(self):
+        ext = _make_afc_extruder_as_standalone(
+            "extruder", extruder_values={"pin_tool_start": "virtual"})
+        ext.lanes.update({"extruder": ext})
+        ext.tc_lane = _make_afc_lane()
+        ext.handle_ready()
+        assert ext.no_lanes is True
+        assert ext.tc_lane._load_state is True
+
+
 class TestAFCExtruderStr:
     def test_str_returns_name(self):
         ext = _make_afc_extruder("my_extruder")
