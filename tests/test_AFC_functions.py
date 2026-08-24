@@ -500,9 +500,9 @@ class TestIsHomed:
         self._wire(func, homed_axes, disable_homing_check)
         assert func.is_homed(for_move=for_move) is expected
 
-    def test_default_for_move_is_true(self):
-        """for_move defaults to True, so it should behave like the
-        for_move=True cases above when called with no argument."""
+    def test_default_for_move_is_false(self):
+        """for_move defaults to False, so it should behave like the
+        for_move=False cases above when called with no argument."""
         func = _make_func()
         self._wire(func, homed_axes="xy", disable_homing_check=False)
         assert func.is_homed() is False

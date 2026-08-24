@@ -3154,14 +3154,26 @@ class TestRestorePos:
         obj = _make_afc_for_restore_pos()
         obj.position_saved = False
         obj.current_state = State.IDLE
+        obj.function.is_paused.return_value = False
+        last_position_before = list(obj.gcode_move.last_position)
+        base_position_before = list(obj.gcode_move.base_position)
 
         obj.restore_pos(move_z_first=False)
 
         assert obj.position_saved is False
         assert obj.current_state == State.IDLE
+        assert obj.gcode_move.last_position == last_position_before
+        assert obj.gcode_move.base_position == base_position_before
         obj.move_z_pos.assert_not_called()
         obj.gcode_move.move_with_transform.assert_not_called()
-        obj.function.log_toolhead_pos.assert_called_once()
+
+        expected = (
+            f"Not restoring position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused.return_value}, "
+            f"Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
         debug_msgs = [m for lvl, m in obj.logger.messages if lvl == "debug"]
         assert debug_msgs == []
 

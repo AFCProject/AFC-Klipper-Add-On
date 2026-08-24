@@ -359,10 +359,10 @@ class afcFunction:
         # Always return real homed status if the check is explicitly guarding a move,
         # or if homing_check is not disabled in the config
         homing_check = for_move or not self.afc.disable_homing_check
-        if homing_check and \
+        if (homing_check and
             ('x' not in kin_status['homed_axes']
             or 'y' not in kin_status['homed_axes']
-            or 'z' not in kin_status['homed_axes']):
+            or 'z' not in kin_status['homed_axes'])):
             return False
         else:
             return True
