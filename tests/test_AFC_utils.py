@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import configparser
 import json
+import threading
 from io import StringIO
 from unittest.mock import MagicMock, patch, call
 import pytest
@@ -686,6 +687,7 @@ class TestAFCMoonrakerBackgroundWriter:
         mr = AFC_moonraker("http://localhost", "7125", MockLogger(), MockReactor())
         assert mr._write_thread.is_alive()
         assert mr._write_thread.daemon is True
+        assert mr._write_thread.name == "afc_moonraker"
 
     def test_log_async_schedules_callback_on_reactor(self):
         mr = self._make_moonraker_with_real_reactor_hook()
@@ -736,6 +738,34 @@ class TestAFCMoonrakerBackgroundWriter:
         debug_msgs = [m for lvl, m in mr.logger.messages if lvl == "debug"]
         assert errors == ["Unexpected error in moonraker background writer"]
         assert any("kaboom" in m for m in debug_msgs)
+
+    def test_write_worker_sets_os_thread_name(self):
+        mr = self._make_moonraker_with_real_reactor_hook()
+        mr._write_queue.get.side_effect = [RuntimeError("stop test loop")]
+        fake_ffi_lib = MagicMock()
+
+        with patch("chelper.get_ffi", return_value=(MagicMock(), fake_ffi_lib)):
+            with pytest.raises(RuntimeError, match="stop test loop"):
+                mr._write_worker()
+
+        fake_ffi_lib.set_thread_name.assert_called_once_with(
+            threading.current_thread().name.encode("utf-8"))
+
+    def test_write_worker_survives_exception_setting_thread_name(self):
+        """A failure naming the OS thread (e.g. chelper unavailable) must not
+        stop the worker from processing queued calls."""
+        mr = self._make_moonraker_with_real_reactor_hook()
+        called = []
+        mr._write_queue.get.side_effect = [
+            (lambda a, b: called.append((a, b)), (1, 2)),
+            RuntimeError("stop test loop"),
+        ]
+
+        with patch("chelper.get_ffi", side_effect=Exception("boom")):
+            with pytest.raises(RuntimeError, match="stop test loop"):
+                mr._write_worker()
+
+        assert called == [(1, 2)]
 
 
 # ── AFC_PrintFileMetaData ───────────────────────────────────────────────────

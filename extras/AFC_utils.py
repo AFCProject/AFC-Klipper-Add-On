@@ -11,10 +11,11 @@ import traceback
 import json
 import inspect
 import re
-import queue
 import threading
+import chelper
 
 from datetime import datetime
+from queue import Queue
 from urllib.request import (
     Request,
     urlopen
@@ -411,8 +412,9 @@ class AFC_moonraker:
         # Fire-and-forget writes (stat updates, lane_data pushes, database
         # deletes) run on this background thread so a slow/hung moonraker
         # can't stall the reactor. A single worker keeps them ordered.
-        self._write_queue: queue.Queue = queue.Queue()
-        self._write_thread = threading.Thread(target=self._write_worker, daemon=True)
+        self._write_queue: Queue = Queue()
+        self._write_thread = threading.Thread(target=self._write_worker, daemon=True,
+                                              name="afc_moonraker")
         self._write_thread.start()
 
     def _log_async(self, log_fn: Callable, message: str, **kwargs: Any) -> None:
@@ -436,6 +438,11 @@ class AFC_moonraker:
         order they were queued. Runs for the life of the process (daemon
         thread) so it needs no explicit shutdown.
         """
+        try:
+            thread_name = threading.current_thread().name
+            chelper.get_ffi()[1].set_thread_name(thread_name.encode("utf-8"))
+        except:
+            pass
         while True:
             func, args = self._write_queue.get()
             try:

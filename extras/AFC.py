@@ -8,10 +8,12 @@ import json
 import re
 import traceback
 import inspect
-import queue
 import threading
+import chelper
+
 from enum import Enum
 from functools import cached_property
+from queue import Queue
 from configfile import error
 from klippy import Printer
 
@@ -167,8 +169,9 @@ class afc:
         # save_vars() only builds the state dict on the reactor thread; the actual file
         # write happens on this background thread so a slow disk can't stall Klipper.
         # A single worker (rather than a thread per call) keeps writes ordered.
-        self._var_write_queue: queue.Queue = queue.Queue()
-        self._var_write_thread = threading.Thread(target=self._var_write_worker, daemon=True)
+        self._var_write_queue: Queue = Queue()
+        self._var_write_thread = threading.Thread(target=self._var_write_worker, daemon=True,
+                                                  name="afc_save_vars")
         self._var_write_thread.start()
         self.default_material_temps = config.getlists("default_material_temps",
                                                       ("default: 235", "PLA:210", "PETG:235", "ABS:235", "ASA:235"))# Default temperature to set extruder when loading/unloading lanes. Material needs to be either manually set or uses material from spoolman if extruder temp is not set in spoolman.
@@ -1331,6 +1334,12 @@ class afc:
         writes them to VarFile.unit file in the order they were queued. Runs for
         the life of the process (daemon thread) so it needs no explicit shutdown.
         """
+        try:
+            thread_name = threading.current_thread().name
+            chelper.get_ffi()[1].set_thread_name(thread_name.encode("utf-8"))
+        except:
+            pass
+
         while True:
             data = self._var_write_queue.get()
             self._write_vars_snapshot(data)

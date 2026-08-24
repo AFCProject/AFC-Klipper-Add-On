@@ -24,6 +24,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import threading
 from unittest.mock import MagicMock, call, patch
 import pytest
 
@@ -4699,5 +4700,32 @@ class TestVarWriteWorker:
 
         with pytest.raises(RuntimeError, match="stop test loop"):
             obj._var_write_worker()
+
+        obj._write_vars_snapshot.assert_called_once_with({"a": 1})
+
+    def test_sets_os_thread_name(self):
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [RuntimeError("stop test loop")]
+        fake_ffi_lib = MagicMock()
+
+        with patch("chelper.get_ffi", return_value=(MagicMock(), fake_ffi_lib)):
+            with pytest.raises(RuntimeError, match="stop test loop"):
+                obj._var_write_worker()
+
+        fake_ffi_lib.set_thread_name.assert_called_once_with(
+            threading.current_thread().name.encode("utf-8"))
+
+    def test_survives_exception_setting_thread_name(self):
+        """A failure naming the OS thread (e.g. chelper unavailable) must not
+        stop the worker from processing queued snapshots."""
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [{"a": 1}, RuntimeError("stop test loop")]
+        obj._write_vars_snapshot = MagicMock()
+
+        with patch("chelper.get_ffi", side_effect=Exception("boom")):
+            with pytest.raises(RuntimeError, match="stop test loop"):
+                obj._var_write_worker()
 
         obj._write_vars_snapshot.assert_called_once_with({"a": 1})
