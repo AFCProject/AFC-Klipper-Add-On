@@ -670,7 +670,7 @@ class AFC_moonraker:
     def get_td1_data(self):
         """
         Synchronous fetch for TD-1 data from moonrakers `machine/td1/data` endpoint.
-        
+
         See get_td1_data_async() for the non-blocking version.
 
         :returns dict: Returns dictionary of TD-1 devices by serial numbers with their data,
@@ -689,7 +689,7 @@ class AFC_moonraker:
         Queues a query for TD-1 device data to run on the background writer
         thread. Runs asynchronously because for situations where a fetch cannot
         block on the HTTP round trip during a print (eg. during a toolchange when printing).
-        
+
         See get_td1_data() for the synchronous version.
 
         :param callback: Called with the TD-1 devices dict (or None on failure)
