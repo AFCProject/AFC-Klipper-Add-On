@@ -2749,6 +2749,17 @@ class TestGetDefaultMaterialTemps:
         _, using_min = obj._get_default_material_temps(lane)
         assert using_min is True
 
+    def test_extruder_temp_zero_ignores_low_heater_minimum(self):
+        """Zero remains unset even when the heater minimum is below zero."""
+        obj = _make_afc_for_material_temps(
+            default_material_temps=["default: 235", "PLA:210"],
+            min_extrude_temp=-1.0,
+        )
+        lane = _make_lane_for_material_temps(extruder_temp=0, material=None)
+        temp, using_min = obj._get_default_material_temps(lane)
+        assert temp == 235.0
+        assert using_min is True
+
     # ── material matching ────────────────────────────────────────────────────
 
     def test_exact_material_match_returns_material_temp(self):
