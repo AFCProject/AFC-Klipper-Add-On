@@ -853,13 +853,20 @@ class TestCmdAfcCutterCalibration:
 # AFC calibration menu and commands
 
 class TestCmdAfcCalibration:
-    def test_loaded_toolhead_offers_toolhead_calibration(self) -> None:
+    def test_loaded_toolhead_keeps_system_calibrations_visible(self) -> None:
         func, _ = _make_calibration_func()
+        calibratable_lane = MagicMock()
+        calibratable_lane.extruder_obj.is_standalone.return_value = False
+        unit = MagicMock()
+        unit.lanes = {"lane1": calibratable_lane}
+        func.afc.units = {"unit1": unit}
 
         func.cmd_AFC_CALIBRATION(_make_gcmd())
 
         raw_messages = [message for level, message in func.logger.messages if level == "raw"]
-        assert any("Toolhead must be unloaded to calibrate system" in message
+        assert any("following prompts will lead you through" in message
+                   for message in raw_messages)
+        assert any("UNIT_CALIBRATION UNIT=unit1" in message
                    for message in raw_messages)
         assert any("Toolhead Calibration|AFC_TOOLHEAD_CALIBRATION" in message
                    for message in raw_messages)
@@ -872,7 +879,7 @@ class TestCmdAfcCalibration:
         func.cmd_AFC_CALIBRATION(_make_gcmd())
 
         raw_messages = [message for level, message in func.logger.messages if level == "raw"]
-        assert any("Toolhead|AFC_TOOLHEAD_CALIBRATION" in message
+        assert any("Toolhead Calibration|AFC_TOOLHEAD_CALIBRATION" in message
                    for message in raw_messages)
         assert any("All Lanes in all units|ALL_CALIBRATION" in message
                    for message in raw_messages)
@@ -940,7 +947,8 @@ class TestCmdAfcToolheadCalibration:
         func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
 
         raw_messages = [message for level, message in func.logger.messages if level == "raw"]
-        assert any("Select the lane" in message for message in raw_messages)
+        assert any("representative lane" in message for message in raw_messages)
+        assert any("not for every lane" in message for message in raw_messages)
         assert any("LANE=lane1" in message for message in raw_messages)
         assert any("LANE=lane2" in message for message in raw_messages)
         assert any("|primary" in message for message in raw_messages)

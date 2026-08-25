@@ -1313,14 +1313,9 @@ class afcFunction:
         prompt = AFCprompt(gcmd, self.logger)
         buttons = []
         title = 'AFC Calibration'
-        if self.afc.current is not None:
-            text = "Toolhead must be unloaded to calibrate system"
-            buttons = [("Toolhead Calibration", "AFC_TOOLHEAD_CALIBRATION", "primary")]
-            prompt.create_custom_p(title, text, buttons, True, None, None)
-            return
-        text = ('The following prompts will lead you through the calibration of your AFC unit(s).'
-                ' First, select a unit to calibrate.'
-                ' *All values will be automatically updated in the appropriate config sections.')
+        text = ('The following prompts will lead you through the calibration of your AFC '
+                'unit(s). First, select a unit to calibrate. *All values will be '
+                'automatically updated in the appropriate config sections.')
         for index, (key, item) in enumerate(self.afc.units.items()):
             # Only showing calibrations for units that have lanes
             if len(self.afc.units.get(key).lanes) == 0:
@@ -1337,7 +1332,7 @@ class afcFunction:
             button_style = "primary" if index % 2 == 0 else "secondary"
             buttons.append((button_label, button_command, button_style))
 
-        bow_footer = [("Toolhead", "AFC_TOOLHEAD_CALIBRATION", "info"),
+        bow_footer = [("Toolhead Calibration", "AFC_TOOLHEAD_CALIBRATION", "info"),
                       ("All Lanes in all units", "ALL_CALIBRATION", "secondary")]
         prompt.create_custom_p(title, text, buttons,
                                True, None, bow_footer)
@@ -1471,7 +1466,8 @@ class afcFunction:
                     command = (f"AFC_TOOLHEAD_CALIBRATION EXTRUDER={extruder_name} "
                                f"LANE={lane.name}")
                     buttons.append((lane.name, command, style))
-                text = "Select the lane to use for toolhead calibration."
+                text = ("Select a representative lane for toolhead calibration. This only "
+                        "needs to be done once per toolhead/extruder, not for every lane.")
                 if not buttons:
                     text = f"No lanes are configured for extruder '{extruder_name}'."
                 prompt.create_custom_p("Toolhead Calibration", text, buttons, True, None, None)
