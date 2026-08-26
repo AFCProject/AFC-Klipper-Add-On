@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026-08-23]
 ### Added:
-- Added thread for writing vars to file so that slow disks don't have a change to block on writes which could cause timer too codes errors.
-- Added thread for communicating with moonraker, converted most of the call to moonraker to be asyncronous so that AFC does not block klippers main reactor thread. Left some calls during start up sychronous and the calls for TD-1 when calibrating.
+- Added thread for writing vars to file so that slow disks don't have a chance to block on writes which could cause timer too close errors.
+- Added thread for communicating with moonraker, converted most of the call to moonraker to be asynchronous so that AFC does not block klippers main reactor thread. Left some calls during start up sychronous and the calls for TD-1 when calibrating.
 
 ### Fixed
 - AFC no longer crashes with `AttributeError: 'GCodeMove' object has no attribute 'absolute_extrude'` during tool changes on current Klipper master builds. Klipper renamed the `absolute_extrude` attribute to `allow_absolute_extrude` (v0.13.0-741 and newer); AFC now reads and restores whichever attribute name the host provides, so it keeps working on older and newer Klipper alike.

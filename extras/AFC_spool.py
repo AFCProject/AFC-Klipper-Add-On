@@ -642,9 +642,13 @@ class AFCSpool:
             value = filament[field]
         return value
 
-    def _set_values(self, cur_lane: AFCLane) -> None:
+    def _set_values(self, cur_lane: AFCLane, on_done: Optional[Callable[[], None]] = None) -> None:
         """
         Helper function for setting lane spool values
+
+        :param on_done: Called once this lane's spool values have actually settled, called
+                        immediately if there's no next_spool_id to apply, or once set_spoolID's
+                        async fetch resolves
         """
         # Always reset debounce on spool change
         cur_lane.auto_switch_triggered = False
@@ -662,7 +666,9 @@ class AFCSpool:
             and self.next_spool_id is not None):
             spool_id = self.next_spool_id
             self.next_spool_id = None
-            self.set_spoolID(cur_lane, spool_id)
+            self.set_spoolID(cur_lane, spool_id, on_done=on_done)
+        elif on_done is not None:
+            on_done()
 
     def clear_values(self, cur_lane: AFCLane) -> None:
         """

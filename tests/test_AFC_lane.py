@@ -3918,8 +3918,25 @@ class TestPrepCallback:
         lane.afc.TOOL_LOAD.return_value = True
         lane.prep_callback(10, True)
         lane.afc.TOOL_LOAD.assert_called_once_with(lane)
-        lane.afc.spool._set_values.assert_called_once_with(lane)
+        assert lane.afc.spool._set_values.call_args.args == (lane,)
         lane.afc.afc_stats.increase_load_error_count.assert_not_called()
+
+    def test_direct_load_hub_defers_active_spool_push_to_set_values_on_done(self):
+        """TOOL_LOAD may push the active spool to Spoolman using a stale
+        spool_id before _set_values resolves a pending next_spool_id (e.g.
+        from an NFC scan). The on_done callback passed to _set_values must
+        re-push using the settled spool_id, and must not fire eagerly."""
+        lane = _make_lane_ready_to_load()
+        lane.hub = "direct_load"
+        lane.afc.TOOL_LOAD.return_value = True
+        lane.prep_callback(10, True)
+
+        lane.afc.spool.set_active_spool.assert_not_called()
+
+        on_done = lane.afc.spool._set_values.call_args.kwargs["on_done"]
+        lane.spool_id = 99
+        on_done()
+        lane.afc.spool.set_active_spool.assert_called_once_with(99)
 
     def test_direct_load_hub_tool_load_failure_increases_load_error_count(self):
         """When TOOL_LOAD fails in the direct_load prep_callback branch, the

@@ -383,17 +383,19 @@ class TestAFCMoonraker:
 
     def test_update_afc_stats_sync_logs_on_failure(self):
         mr = self._make_moonraker()
+        init_messages = list(mr.logger.messages)
         mr._get_results = MagicMock(return_value=None)
         mr._update_afc_stats_sync("some.key", 10)
-        errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
-        assert len(errors) == 1
+        assert mr.logger.messages == init_messages + [
+            ("error", "Error when trying to update some.key in moonraker, see AFC.log for more info"),
+        ]
 
     def test_update_afc_stats_sync_no_error_on_success(self):
         mr = self._make_moonraker()
+        init_messages = list(mr.logger.messages)
         mr._get_results = MagicMock(return_value={"value": "ok"})
         mr._update_afc_stats_sync("some.key", 10)
-        errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
-        assert len(errors) == 0
+        assert mr.logger.messages == init_messages
 
     def test_get_spool_queues_sync_read(self):
         mr = self._make_moonraker()

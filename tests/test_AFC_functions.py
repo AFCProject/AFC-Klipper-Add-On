@@ -1946,15 +1946,18 @@ class TestCheckTd1ErrorInData:
         func = _make_func()
         td1_data = {"SN1": {"error": "jam"}}
         func._check_td1_error_in_data(td1_data, serial_number="SN1", print_error=True)
-        errors = [m for lvl, m in func.logger.messages if lvl == "error"]
-        assert len(errors) == 1
+        assert func.logger.messages == [
+            ("error",
+             "Error with TD-1 Serial: SN1, please fix error with TD-1 and run 'AFC_RESET_TD1 SERIAL=SN1' macro.\n"
+             "Some errors can occur when first booting machine and filament is in TD-1 device\n"
+             "Reported Error: jam"),
+        ]
 
     def test_print_error_false_does_not_log(self):
         func = _make_func()
         td1_data = {"SN1": {"error": "jam"}}
         func._check_td1_error_in_data(td1_data, serial_number="SN1", print_error=False)
-        errors = [m for lvl, m in func.logger.messages if lvl == "error"]
-        assert len(errors) == 0
+        assert func.logger.messages == []
 
 
 # ── check_for_td1_id / _check_td1_id_in_data ──────────────────────────────────

@@ -4,6 +4,7 @@
 #
 from __future__ import annotations
 
+import os
 import json
 import re
 import traceback
@@ -1358,8 +1359,16 @@ class afc:
         :param data: Dictionary of lane/unit/system state to write to VarFile.unit
         """
         try:
-            with open(self.VarFile + '.unit', 'w') as f:
+            # Writing to temp directory first and them renaming to correct file so that a file
+            # does not get half written if klipper decides to crash in the middle of AFC writing
+            # to file.
+            target_file = self.VarFile + '.unit'
+            temp_path = target_file + ".tmp"
+            with open(temp_path, 'w') as f:
                 f.write(json.dumps(data, indent=4))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, target_file)
         except Exception as e:
             err = f"Error:{e}\n{traceback.format_exc()}"
             # Push back onto the reactor thread before logging: AFC_logger

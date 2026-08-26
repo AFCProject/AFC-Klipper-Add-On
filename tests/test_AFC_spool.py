@@ -1464,7 +1464,7 @@ class TestSetValues:
         spool.next_spool_id = 42
         spool.set_spoolID = MagicMock()
         spool._set_values(lane)
-        spool.set_spoolID.assert_called_once_with(lane, 42)
+        spool.set_spoolID.assert_called_once_with(lane, 42, on_done=None)
         assert spool.next_spool_id is None  # consumed after use
 
     def test_set_value_material_not_set_remember_spool(self):
@@ -1506,6 +1506,40 @@ class TestSetValues:
         spool._set_values(lane)
         assert lane.material == ""
         assert lane.weight == 0
+
+    def test_on_done_forwarded_to_set_spool_id_when_next_spool_id_set(self):
+        spool = _make_spool()
+        lane = _make_lane()
+        lane.remember_spool = False
+        spool.afc.spoolman = MagicMock()
+        spool.next_spool_id = 42
+        spool.set_spoolID = MagicMock()
+        on_done = MagicMock()
+        spool._set_values(lane, on_done=on_done)
+        spool.set_spoolID.assert_called_once_with(lane, 42, on_done=on_done)
+        on_done.assert_not_called()  # only set_spoolID's async fetch may call it
+
+    def test_on_done_called_immediately_when_no_pending_spool_id(self):
+        spool = _make_spool()
+        lane = _make_lane()
+        lane.remember_spool = False
+        spool.afc.spoolman = MagicMock()
+        spool.next_spool_id = None
+        spool.set_spoolID = MagicMock()
+        on_done = MagicMock()
+        spool._set_values(lane, on_done=on_done)
+        spool.set_spoolID.assert_not_called()
+        on_done.assert_called_once()
+
+    def test_on_done_not_required(self):
+        """Existing callers that don't pass on_done keep working unchanged."""
+        spool = _make_spool()
+        lane = _make_lane()
+        lane.remember_spool = False
+        spool.afc.spoolman = MagicMock()
+        spool.next_spool_id = None
+        spool.set_spoolID = MagicMock()
+        spool._set_values(lane)  # must not raise
 
 
 # ── set_spoolID ───────────────────────────────────────────────────────────────

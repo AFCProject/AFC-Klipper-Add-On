@@ -1174,35 +1174,55 @@ class TestApplyTd1Data:
         lane = _make_td1_lane()
         result = unit._apply_td1_data(lane, datetime.now(), None)
         assert result is False
+        assert unit.logger.messages == []
 
     def test_empty_data_returns_false(self):
         unit = _make_unit()
         lane = _make_td1_lane()
         result = unit._apply_td1_data(lane, datetime.now(), {})
         assert result is False
+        assert unit.logger.messages == []
 
     def test_device_id_not_in_data_logs_error_and_returns_false(self):
         unit = _make_unit()
-        unit.afc.error.AFC_error = MagicMock()
         lane = _make_td1_lane()
-        result = unit._apply_td1_data(lane, datetime.now(), {"OTHER": _make_td1_device()})
+        compare_time = datetime.now()
+        td1_data = {"OTHER": _make_td1_device()}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data)
+
         assert result is False
-        unit.afc.error.AFC_error.assert_called_once()
-        assert "SN1" in unit.afc.error.AFC_error.call_args[0][0]
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+            ("error", "TD-1 Device ID (SN1) supplied, but ID not found."),
+        ]
 
     def test_none_scan_time_returns_false(self):
         unit = _make_unit()
         lane = _make_td1_lane()
-        device = _make_td1_device(scan_time=None)
-        result = unit._apply_td1_data(lane, datetime.now(), {"SN1": device})
+        compare_time = datetime.now()
+        td1_data = {"SN1": _make_td1_device(scan_time=None)}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data)
+
         assert result is False
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+        ]
 
     def test_unparseable_scan_time_logs_error_and_returns_false(self):
         unit = _make_unit()
         lane = _make_td1_lane()
-        device = _make_td1_device(scan_time="not-a-timestamp")
-        result = unit._apply_td1_data(lane, datetime.now(), {"SN1": device})
+        compare_time = datetime.now()
+        td1_data = {"SN1": _make_td1_device(scan_time="not-a-timestamp")}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data)
+
         assert result is False
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+            ("error", "Error trying to format TD-1 scan time, check AFC.log for more information"),
+        ]
 
     # scan_time (from the device payload) is always parsed as a UTC instant;
     # compare_time is built the same way here (rather than a naive local
@@ -1214,10 +1234,17 @@ class TestApplyTd1Data:
         lane = _make_td1_lane()
         compare_time = datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
-        result = unit._apply_td1_data(lane, compare_time, {"SN1": device})
+        td1_data = {"SN1": device}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data)
+
         assert result is True
         assert lane.td1_data == device
         unit.afc.save_vars.assert_called_once_with()
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+            ("info", f"{lane.name} TD-1 data captured"),
+        ]
 
     def test_scan_time_shortly_before_compare_time_is_still_valid(self):
         """Covers the `(compare_time - scan_time) < t_delta` grace-period branch."""
@@ -1225,8 +1252,15 @@ class TestApplyTd1Data:
         lane = _make_td1_lane()
         compare_time = datetime(2024, 1, 1, 12, 0, 5, tzinfo=timezone.utc)
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
-        result = unit._apply_td1_data(lane, compare_time, {"SN1": device})
+        td1_data = {"SN1": device}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data)
+
         assert result is True
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+            ("info", f"{lane.name} TD-1 data captured"),
+        ]
 
     def test_scan_time_already_ending_in_offset_is_parsed(self):
         """Covers the `scan_time.endswith("+00:00Z")` True branch, distinct
@@ -1235,39 +1269,71 @@ class TestApplyTd1Data:
         lane = _make_td1_lane()
         compare_time = datetime(2024, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
         device = _make_td1_device(scan_time="2024-01-01T12:00:00+00:00Z")
-        result = unit._apply_td1_data(lane, compare_time, {"SN1": device})
+        td1_data = {"SN1": device}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data)
+
         assert result is True
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+            ("info", f"{lane.name} TD-1 data captured"),
+        ]
 
     def test_stale_scan_time_without_ignore_time_is_not_valid(self):
         unit = _make_unit()
         lane = _make_td1_lane()
         compare_time = datetime(2024, 1, 1, 13, 0, 0, tzinfo=timezone.utc)
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
-        result = unit._apply_td1_data(lane, compare_time, {"SN1": device}, ignore_time=False)
+        td1_data = {"SN1": device}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=False)
+
         assert result is False
         assert lane.td1_data is None
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+        ]
 
     def test_stale_scan_time_with_ignore_time_still_applies(self):
         unit = _make_unit()
         lane = _make_td1_lane()
         compare_time = datetime(2024, 1, 1, 13, 0, 0, tzinfo=timezone.utc)
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
-        result = unit._apply_td1_data(lane, compare_time, {"SN1": device}, ignore_time=True)
+        td1_data = {"SN1": device}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True)
+
         assert result is True
         assert lane.td1_data == device
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+            ("info", f"{lane.name} TD-1 data captured"),
+        ]
 
     def test_missing_td_skips_apply_even_when_valid(self):
         unit = _make_unit()
         lane = _make_td1_lane()
-        device = _make_td1_device(td=None)
-        result = unit._apply_td1_data(lane, datetime.now(), {"SN1": device}, ignore_time=True)
+        compare_time = datetime.now()
+        td1_data = {"SN1": _make_td1_device(td=None)}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True)
+
         assert result is False
         assert lane.td1_data is None
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+        ]
 
     def test_missing_color_skips_apply_even_when_valid(self):
         unit = _make_unit()
         lane = _make_td1_lane()
-        device = _make_td1_device(color=None)
-        result = unit._apply_td1_data(lane, datetime.now(), {"SN1": device}, ignore_time=True)
+        compare_time = datetime.now()
+        td1_data = {"SN1": _make_td1_device(color=None)}
+
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True)
+
         assert result is False
         assert lane.td1_data is None
+        assert unit.logger.messages == [
+            ("debug", f"Data: {td1_data}, Compare_time: {compare_time}"),
+        ]

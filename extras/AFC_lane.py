@@ -1323,7 +1323,14 @@ class AFCLane:
                                 self.logger.debug(f"Prep: direct load logic-{self.name}-{self.hub}")
                                 if not self.afc.TOOL_LOAD(self):
                                     self.afc.afc_stats.increase_load_error_count(self.afc)
-                                self.afc.spool._set_values(self)
+                                # TOOL_LOAD already pushed the active spool to Spoolman using
+                                # whatever spool_id was set before this point. _set_values can
+                                # still be waiting on an async Spoolman fetch (from a next_spool_id
+                                # set by e.g. an NFC scan) that updates spool_id afterward, so
+                                # re-push once that settles rather than leaving Spoolman pointed
+                                # at the stale value TOOL_LOAD saw.
+                                self.afc.spool._set_values(
+                                    self, on_done=lambda: self.afc.spool.set_active_spool(self.spool_id))
                                 self.logger.debug(f"Prep: direct load logic done-{self.name}-{self.hub}")
                                 break
 
