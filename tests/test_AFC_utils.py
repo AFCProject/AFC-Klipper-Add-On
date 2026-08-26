@@ -744,6 +744,12 @@ class TestAFCMoonrakerBackgroundWriter:
         reactor = MockReactor()
         reactor.register_async_callback = MagicMock()
         mr = AFC_moonraker("http://localhost", "7125", logger, reactor)
+        # The constructor already started a real worker parked on the real
+        # queue; stop and join it before swapping the queue for a MagicMock,
+        # otherwise it stays blocked on the orphaned real queue forever and
+        # leaks a daemon thread per test.
+        mr._write_queue.put_nowait((mr.sentinel, ()))
+        mr._write_thread.join(timeout=5)
         mr._write_queue = MagicMock()
         return mr
 
@@ -831,6 +837,44 @@ class TestAFCMoonrakerBackgroundWriter:
                 mr._write_worker()
 
         assert called == [(1, 2)]
+
+    def test_join_thread_clears_write_thread_wait_flag(self):
+        mr = self._make_moonraker_with_real_reactor_hook()
+        mr._write_thread_wait = True
+        mr.join_thread()
+        assert mr._write_thread_wait is False
+
+    def test_join_thread_puts_sentinel_on_write_queue(self):
+        mr = self._make_moonraker_with_real_reactor_hook()
+        mr.join_thread()
+        mr._write_queue.put_nowait.assert_called_once_with((mr.sentinel, ""))
+
+    def test_write_worker_returns_on_sentinel_without_calling_it(self):
+        """join_thread queues (sentinel, ""); the worker must return instead
+        of trying to call the sentinel class as a function."""
+        mr = self._make_moonraker_with_real_reactor_hook()
+        mr._write_queue.get.side_effect = [(mr.sentinel, "")]
+
+        result = mr._write_worker()
+
+        assert result is None
+
+    def test_write_worker_stops_looping_once_join_thread_clears_wait_flag(self):
+        """Simulates a real klippy:disconnect: join_thread flips the wait
+        flag and queues the sentinel, and the worker must exit its loop."""
+        mr = self._make_moonraker_with_real_reactor_hook()
+        called = []
+
+        def stop_after_call(a, b):
+            called.append((a, b))
+            mr.join_thread()
+
+        mr._write_queue.get.side_effect = [(stop_after_call, (1, 2))]
+
+        mr._write_worker()
+
+        assert called == [(1, 2)]
+        assert mr._write_thread_wait is False
 
 
 # ── AFC_PrintFileMetaData ───────────────────────────────────────────────────

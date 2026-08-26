@@ -127,6 +127,8 @@ def _make_afc():
     obj.logger = MockLogger()
     obj.reactor = inner.reactor
     obj.moonraker = None
+    obj._var_write_thread_wait = True
+    obj._var_write_thread = MagicMock()
     obj.function = MagicMock()
     obj.gcode = MagicMock()
     obj.message_queue = []
@@ -4729,3 +4731,83 @@ class TestVarWriteWorker:
                 obj._var_write_worker()
 
         obj._write_vars_snapshot.assert_called_once_with({"a": 1})
+
+    def test_returns_on_sentinel_without_processing_it(self):
+        """join_threads queues the sentinel to stop the loop; the worker must
+        return instead of treating it as a snapshot to write."""
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [obj.sentinel]
+        obj._write_vars_snapshot = MagicMock()
+
+        result = obj._var_write_worker()
+
+        assert result is None
+        obj._write_vars_snapshot.assert_not_called()
+
+    def test_stops_looping_once_join_threads_clears_wait_flag(self):
+        """Simulates a real klippy:disconnect: join_threads flips the wait
+        flag and queues the sentinel, and the worker must exit its loop."""
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [{"a": 1}]
+        obj._write_vars_snapshot = MagicMock()
+        obj.moonraker = None
+
+        def stop_after_snapshot(data):
+            obj.join_threads()
+
+        obj._write_vars_snapshot.side_effect = stop_after_snapshot
+
+        obj._var_write_worker()
+
+        obj._write_vars_snapshot.assert_called_once_with({"a": 1})
+        assert obj._var_write_thread_wait is False
+
+
+class TestJoinThreads:
+    """join_threads runs on klippy:disconnect to stop the background var
+    writer thread and, if moonraker was set up, its writer thread too."""
+
+    def _make_afc_for_join_threads(self):
+        obj = _make_afc()
+        obj._var_write_thread_wait = True
+        obj._var_write_queue = MagicMock()
+        return obj
+
+    def test_clears_var_write_thread_wait_flag(self):
+        obj = self._make_afc_for_join_threads()
+        obj.join_threads()
+        assert obj._var_write_thread_wait is False
+
+    def test_puts_sentinel_on_var_write_queue(self):
+        obj = self._make_afc_for_join_threads()
+        obj.join_threads()
+        obj._var_write_queue.put_nowait.assert_called_once_with(obj.sentinel)
+
+    def test_calls_moonraker_join_thread_when_moonraker_present(self):
+        obj = self._make_afc_for_join_threads()
+        obj.moonraker = MagicMock()
+        obj.join_threads()
+        obj.moonraker.join_thread.assert_called_once()
+
+    def test_does_not_error_when_moonraker_is_none(self):
+        obj = self._make_afc_for_join_threads()
+        obj.moonraker = None
+        obj.join_threads()  # must not raise
+
+    def test_joins_var_write_thread(self):
+        obj = self._make_afc_for_join_threads()
+        obj.join_threads()
+        obj._var_write_thread.join.assert_called_once()
+
+    def test_joins_var_write_thread_after_queuing_sentinel(self):
+        """The worker only breaks out of its loop once it dequeues the
+        sentinel, so the sentinel must be queued before join() is called or
+        this would deadlock against a real thread."""
+        obj = self._make_afc_for_join_threads()
+        order = []
+        obj._var_write_queue.put_nowait.side_effect = lambda *a: order.append("put_nowait")
+        obj._var_write_thread.join.side_effect = lambda *a, **kw: order.append("join")
+        obj.join_threads()
+        assert order == ["put_nowait", "join"]

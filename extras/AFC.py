@@ -82,6 +82,7 @@ def load_config(config):
     return afc(config)
 
 class afc:
+    class sentinel: pass
     def __init__(self, config: ConfigWrapper):
         self.config  = config
         self.printer = config.get_printer()
@@ -89,6 +90,7 @@ class afc:
         self.webhooks = self.printer.load_object(config, 'webhooks')
         self.printer.register_event_handler("klippy:connect",self.handle_connect)
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.printer.register_event_handler("klippy:disconnect", self.join_threads)
         self.logger  = AFC_logger(self.printer, self)
 
         self.function: afcFunction = self.printer.load_object(config, 'AFC_functions')
@@ -170,6 +172,7 @@ class afc:
         # save_vars() only builds the state dict on the reactor thread; the actual file
         # write happens on this background thread so a slow disk can't stall Klipper.
         # A single worker is created rather than a thread per call to keep writes ordered.
+        self._var_write_thread_wait = True
         self._var_write_queue: Queue = Queue()
         self._var_write_thread = threading.Thread(target=self._var_write_worker, daemon=True,
                                                   name="afc_save_vars")
@@ -1334,6 +1337,17 @@ class afc:
         # block the reactor; queue.put_nowait never blocks the caller here
         self._var_write_queue.put_nowait(str)
 
+    def join_threads(self) -> None:
+        """
+        Method is called when a klipper:disconnect happens so that all threads can be cleaned up
+        correctly
+        """
+        self._var_write_queue.put_nowait(self.sentinel)
+        self._var_write_thread_wait = False
+        self._var_write_thread.join()
+        if self.moonraker is not None:
+            self.moonraker.join_thread()
+
     def _var_write_worker(self) -> None:
         """
         Background thread loop that pulls queued save_vars() values and
@@ -1346,8 +1360,10 @@ class afc:
         except:
             pass
 
-        while True:
+        while self._var_write_thread_wait:
             data = self._var_write_queue.get()
+            if data is self.sentinel:
+                return
             self._write_vars_snapshot(data)
 
     def _write_vars_snapshot(self, data: dict) -> None:

@@ -397,6 +397,7 @@ class AFC_moonraker:
     """
     ERROR_STRING = "Error getting data from moonraker, check AFC.log for more information"
     REQUEST_TIMEOUT = 10
+    class sentinel: pass
     def __init__(self, host: str, port: str, logger: AFC_logger, reactor: Reactor):
         self.port           = port
         self.logger         = logger
@@ -413,6 +414,7 @@ class AFC_moonraker:
         # Fire-and-forget writes (stat updates, lane_data pushes, database
         # deletes) run on this background thread so a slow/hung moonraker
         # can't stall the reactor. A single worker keeps them ordered.
+        self._write_thread_wait = True
         self._write_queue: Queue = Queue()
         self._write_thread = threading.Thread(target=self._write_worker, daemon=True,
                                               name="afc_moonraker")
@@ -432,6 +434,14 @@ class AFC_moonraker:
         self.reactor.register_async_callback(
             lambda et, log_fn=log_fn, message=message, kwargs=kwargs: log_fn(message, **kwargs))
 
+    def join_thread(self) -> None:
+        """
+        Stops worker thread when klipper:disconnect happens
+        """
+        self._write_queue.put_nowait((self.sentinel, ""))
+        self._write_thread_wait = False
+        self._write_thread.join()
+
     def _write_worker(self) -> None:
         """
         Background thread loop that drains queued fire-and-forget moonraker
@@ -444,8 +454,10 @@ class AFC_moonraker:
             chelper.get_ffi()[1].set_thread_name(thread_name.encode("utf-8"))
         except:
             pass
-        while True:
+        while self._write_thread_wait:
             func, args = self._write_queue.get()
+            if func is self.sentinel:
+                return
             try:
                 func(*args)
             except Exception:
