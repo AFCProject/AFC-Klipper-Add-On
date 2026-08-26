@@ -350,6 +350,15 @@ class TestCmdAFCUnselectTool:
 
         extruder.estats.tool_unselected.increase_count.assert_called_once()
 
+    def test_calls_handle_activate_extruder(self):
+        extruder = _make_extruder_obj()
+        tool = _make_toolchanger_for_unselect(current_extruder=extruder)
+        gcmd = _build_gcmd()
+
+        tool.cmd_AFC_UNSELECT_TOOL(gcmd)
+
+        tool.afc.function.handle_activate_extruder.assert_called_once_with()
+
     def test_current_state_goes_tool_dock_during_unselect_then_idle(self):
         extruder = _make_extruder_obj()
         extruder.custom_unselect = None

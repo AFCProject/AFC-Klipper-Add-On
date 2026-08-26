@@ -99,11 +99,24 @@ class TestLaneLoaded:
 # ── lane_unloaded ─────────────────────────────────────────────────────────────
 
 class TestLaneUnloaded:
-    def test_calls_led_off_for_spool(self):
-        """lane_unloaded should turn off spool LEDs."""
+    def test_does_not_touch_spool_led(self):
+        """lane_unloaded no longer manages the spool illumination LED --
+        that responsibility moved to lane_not_ready."""
         unit = _make_quattro()
         lane = _make_lane()
         unit.lane_unloaded(lane)
+        for c in unit.afc.function.afc_led.call_args_list:
+            assert c[0][0] != unit.afc.led_off
+
+
+# ── lane_not_ready ────────────────────────────────────────────────────────────
+
+class TestLaneNotReady:
+    def test_calls_led_off_for_spool(self):
+        """lane_not_ready should turn off spool LEDs."""
+        unit = _make_quattro()
+        lane = _make_lane()
+        unit.lane_not_ready(lane)
         unit.afc.function.afc_led.assert_any_call(unit.afc.led_off, lane.led_spool_index)
 
 

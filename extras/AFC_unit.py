@@ -492,7 +492,7 @@ class afcUnit:
         prompt.create_custom_p(title, text, None,
                                True, buttons, back)
 
-    def set_logo_color(self, color):
+    def set_logo_color(self, color: Optional[str]=None) -> None:
         """
         Common function for setting a units logo led's
 
@@ -502,13 +502,87 @@ class afcUnit:
             led_color = self.afc.function.HexToLedString(color.replace("#", ""))
             self.afc.function.afc_led( led_color, self.led_logo_index )
 
-    def lane_not_ready(self, lane):
+    def _stop_led_effects(self , targets: Optional[list[str]]=None) -> None:
         """
-        Common function for setting a lanes led when a lane is not ready
+        Iterates through active led effects that were successfully applied by AFC and disables
+        them. When targets is supplied, only effects whose prefix matches a target name are
+        stopped.
 
-        :param lane: Lane object to set led
+        :param targets: List of names(lane or extruder) to stop
         """
-        self.afc.function.afc_led(lane.led_not_ready, lane.led_index)
+        remaining = []
+        for effect in self.afc.active_led_effects:
+            if (targets is not None
+                and not any(effect.startswith(f"{t}_") for t in targets)):
+                remaining.append(effect)
+                continue
+            try:
+                script = f'SET_LED_EFFECT EFFECT={effect} STOP=1'
+                self.gcode.run_script_from_command(script)
+            except Exception:
+                pass
+
+        self.afc.active_led_effects = remaining
+
+    def _call_led_effect(self, name: str, effect_suffix: str) -> None:
+        """
+        Common method of calling SET_LED_EFFECT with effect name, method constructs effect name as
+        <name>_<effect_suffix>, only called if the correct led_effects object exists.
+
+        :param name: Prefix name to add to effect_suffix, eg. lane/extruder name
+        :param effect_suffix: Effect name to apply, eg. loading, unloading, etc.
+        """
+        try:
+            effect_name = f"{name}_{effect_suffix}"
+            if f"led_effect {effect_name}" in self.printer.objects:
+                self.gcode.run_script_from_command(f"SET_LED_EFFECT EFFECT={effect_name}")
+                self.afc.active_led_effects.append(effect_name)
+        except Exception:
+            pass
+
+    def _trigger_led_state(self, lane: Optional[AFCLane]=None,
+                           extruder: Optional[AFCExtruder]=None,
+                           static_color: Optional[str]=None,
+                           extruder_static_color: Optional[str]=None,
+                           effect_suffix: Optional[str]=None) -> None:
+        """
+        Method to apply led effects to lane or extruder leds, gcode is only called if
+        `led_effect <lane_name/extruder_name>_<effect_suffix>` is found in printer objects
+
+        :param lane: AFCLane to apply led effect to
+        :param extruder: AFCExtruder to apply led effect to
+        :param static_color: Color to always apply to led
+        :param extruder_static_color: Extruder color to apply to extruder led, if `extruder` is
+            passed in a this is not set, then extruder led defaults to `static_color` variable
+        :param effect_suffix: Suffix to add to lane/extruder name for when calling SET_LED_EFFECT macro
+        """
+        if (lane is None
+            and extruder is None):
+            return
+        names_to_stop = []
+        if lane is not None:
+            names_to_stop.append(lane.name)
+        if extruder is not None:
+            names_to_stop.append(extruder.name)
+
+        # Clear running effects started by AFC
+        self._stop_led_effects(names_to_stop)
+
+        # Always apply the standard AFC static color first
+        if static_color is not None:
+            if lane is not None:
+                self.afc.function.afc_led(static_color, lane.led_index)
+            if extruder is not None:
+                color = extruder_static_color if extruder_static_color is not None else static_color
+                extruder.set_status_led(color)
+
+        # If an animation is requested, try to overlay it
+        if effect_suffix:
+            if lane is not None:
+                self._call_led_effect(lane.name, effect_suffix)
+
+            if extruder is not None:
+                self._call_led_effect(extruder.name, effect_suffix)
 
     def _get_lane_color(self, lane: AFCLane, fallback: str) -> str:
         """
@@ -523,69 +597,121 @@ class afcUnit:
         :return: LED color value (list of floats or config color string)
         """
         if lane.led_use_filament_color and lane.color:
+            # TODO: add ability to display TD color instead of users inputted color
             hex_str = lane.color.replace("#", "").strip().upper()
             if len(hex_str) in (6, 8) and all(c in "0123456789ABCDEF" for c in hex_str):
                 return self.afc.function.HexToLedString(hex_str)
         return fallback
 
-    def lane_loaded(self, lane: AFCLane):
+    def _check_led_state(self, lane: AFCLane, state: str) -> bool:
         """
-        Common function for setting a lanes led when lane is loaded
+        Checks if led state is already set for specified lane. If the pass in state is not set, then
+        lanes `current_led_state` is set to the passed in state.
+
+        :param lane: AFCLane to check state against
+        :param state: Led state to compare and change internal variable to
+        :return bool: Return false if current led state matches passed in state. Returns True if
+            led state does not match passed in state.
+        """
+        if lane.current_led_state == state:
+            return False
+        else:
+            lane.current_led_state = state
+            return True
+
+    def lane_not_ready(self, lane: AFCLane) -> None:
+        """
+        Common function for setting a lanes led when a lane is not ready, aka filament not loaded
+        into a lane (prep and load both False). If a lane has an illumination led defined, its turned
+        off with this call.
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(self._get_lane_color(lane, lane.led_ready), lane.led_index)
+        if not self._check_led_state(lane, "not_ready"): return
+        self._trigger_led_state(lane, static_color=lane.led_not_ready, effect_suffix="not_ready")
+        if lane.led_spool_index is not None:
+            self.afc.function.afc_led(self.afc.led_off, lane.led_spool_index)
+
+    def lane_loaded(self, lane: AFCLane, force: bool=False) -> None:
+        """
+        Common function for setting a lanes led when lane is loaded, normally this is called when
+        filament in lane is staged behind hub. If a lane has an illumination led defined, its turned
+        on with this call.
+
+        :param lane: Lane object to set led
+        :param force: Set True to re-apply the led even when the state is unchanged, used when
+            only the filament color changed
+        """
+        if not self._check_led_state(lane, "loaded") and not force: return
+        color = self._get_lane_color(lane, lane.led_ready)
+        self._trigger_led_state(lane, static_color=color, effect_suffix="loaded")
         # TODO: double check quattrobox led sets
         if lane.led_spool_index is not None:
             self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
 
-    def lane_unloading(self, lane):
+    def lane_unloading(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when lane is unloading
+        Common function for setting a lanes led when lane is unloading, this can be called when
+        unloading from toolhead and when ejecting a lane.
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_unloading, lane.led_index)
+        if not self._check_led_state(lane, "unloading"): return
+        self._trigger_led_state(lane, static_color=lane.led_unloading, effect_suffix="unloading")
 
-    def lane_unloaded(self, lane: AFCLane):
+    def lane_unloaded(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when lane is unloaded
+        Common function for setting a lanes led when lane is unloaded but prep state is still True
 
         :param lane: Lane object to set led
         """
-        self.lane_not_ready(lane)
-        if lane.led_spool_index is not None:
-            self.afc.function.afc_led(self.afc.led_off, lane.led_spool_index)
+        if not self._check_led_state(lane, "unloaded"): return
+        self._trigger_led_state(lane, static_color=lane.led_not_ready, effect_suffix="unloaded")
 
-    def lane_loading(self, lane: AFCLane):
+    def lane_loading(self, lane: AFCLane) -> None:
         """
-        Common function for setting a lanes led when lane is loading
+        Common function for setting a lanes led when lane is loading, this can be called when
+        loading to toolhead or when loading spool into lane.
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_loading, lane.led_index)
+        if not self._check_led_state(lane, "loading"): return
+        self._trigger_led_state(lane, static_color=lane.led_loading, effect_suffix="loading")
 
-    def lane_tool_loaded(self, lane: AFCLane):
+    def lane_tool_loaded_gears(self, lane: AFCLane) -> None:
+        """
+        Common function for setting a lanes led when lane is loaded before the toolhead gears
+
+        :param lane: Lane object to set led
+        """
+        if not self._check_led_state(lane, "tool_loaded_gears"): return
+        self._trigger_led_state(lane, lane.extruder_obj, effect_suffix="tool_loaded_gears")
+
+    def lane_tool_loaded(self, lane: AFCLane) -> None:
         """
         Common function for setting a lanes led when lane is tool loaded,
         also sets toolheads led status color
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_tool_loaded, lane.led_index)
-        lane.extruder_obj.set_status_led(lane.led_tool_loaded)
+        if not self._check_led_state(lane, "tool_loaded"): return
+        self._trigger_led_state(lane, lane.extruder_obj, static_color=lane.led_tool_loaded,
+                                effect_suffix="tool_loaded")
 
-    def lane_tool_unloaded(self, lane: AFCLane):
+    def lane_tool_unloaded(self, lane: AFCLane) -> None:
         """
         Common function for setting a lanes led when lane is tool unloaded,
         also sets toolheads led status color
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(self._get_lane_color(lane, lane.led_ready), lane.led_index)
-        lane.extruder_obj.set_status_led(lane.led_tool_unloaded)
+        if not self._check_led_state(lane, "tool_unloaded"): return
+        color = self._get_lane_color(lane, lane.led_ready)
+        self._trigger_led_state(lane, lane.extruder_obj, static_color=color,
+                                extruder_static_color=lane.led_tool_unloaded,
+                                effect_suffix="tool_unloaded")
 
-    def lane_tool_loaded_idle(self, lane):
+    def lane_tool_loaded_idle(self, lane: AFCLane) -> None:
         """
         Common function for setting a lanes led when its loaded into a tool
         and tool is docked(for toolchangers). Function also sets toolheads led
@@ -593,14 +719,15 @@ class afcUnit:
 
         :param lane: Lane object to set led
         """
+        if not self._check_led_state(lane, "tool_loaded_idle"): return
         color = self._get_lane_color(lane, lane.led_tool_loaded_idle)
-        self.afc.function.afc_led(color, lane.led_index)
-        # Extruder LED also shows filament color when tool is parked/idle —
+        # Extruder LED also shows filament color when tool is parked/idle,
         # gives a visual indicator of what's loaded. Reverts to config color
         # when tool becomes active (lane_tool_loaded) or unloads (lane_tool_unloaded).
-        lane.extruder_obj.set_status_led(color)
+        self._trigger_led_state(lane, static_color=color, extruder=lane.extruder_obj,
+                                effect_suffix="tool_loaded_idle")
 
-    def lane_illuminate_spool(self, lane):
+    def lane_illuminate_spool(self, lane: AFCLane) -> None:
         """
         Common function for setting lane illumination leds
 
@@ -609,13 +736,14 @@ class afcUnit:
         if lane.led_spool_index is not None:
             self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
 
-    def lane_fault(self, lane):
+    def lane_fault(self, lane: AFCLane) -> None:
         """
         Common function for setting a lanes led when a fault happens
 
         :param lane: Lane object to set led
         """
-        self.afc.function.afc_led(lane.led_fault, lane.led_index)
+        if not self._check_led_state(lane, "fault"): return
+        self._trigger_led_state(lane, static_color=lane.led_fault, effect_suffix="fault")
 
     def select_lane( self, lane: AFCLane, sel_prep:bool=False ) -> tuple[bool, float|int]:
         """

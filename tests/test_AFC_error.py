@@ -319,6 +319,14 @@ class TestHandleLaneFailure:
         err.handle_lane_failure(cur_lane, "jammed", pause=False)
         assert cur_lane.status == AFCLaneState.ERROR
 
+    def test_calls_lane_fault(self):
+        err, afc = _make_afc_error()
+        err.AFC_error = MagicMock()
+        cur_lane = MagicMock()
+        cur_lane.name = "lane1"
+        err.handle_lane_failure(cur_lane, "jammed", pause=False)
+        cur_lane.unit_obj.lane_fault.assert_called_once_with(cur_lane)
+
     def test_calls_afc_error_with_lane_name_in_message(self):
         err, afc = _make_afc_error()
         err.AFC_error = MagicMock()

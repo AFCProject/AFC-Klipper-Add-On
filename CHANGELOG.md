@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-08-22]
+### Added
+- Lane and extruder status LEDs can now overlay a `SET_LED_EFFECT` animation on top of the usual
+  static color. Define a `led_effect <lane_or_extruder_name>_<state>` object and it's triggered
+  automatically when that lane/extruder reaches the matching state. Only that lane/extruder's
+  own effect is stopped on the next state change, and re-applying an unchanged state is now a
+  no-op. Nothing changes for lanes without a matching effect defined.
+- Added `templates/led_effects_examples.cfg` with example configs for the feature above.
+
+### Fixed
+- A few status LED updates (toolchanger tool-select, ViViD calibration, lane fault) now go through
+  the same lane LED methods as everything else, so they pick up effects/colors consistently too.
+
 ## [2026-08-15]
 ### Breaking Change
 - `RESET_AFC_MAPPING` has now been renamed to `AFC_RESET_MAPPING`
