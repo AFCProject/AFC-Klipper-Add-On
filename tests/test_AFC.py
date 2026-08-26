@@ -168,6 +168,7 @@ def _make_afc():
     obj.print_data_metadata = None
     obj.disable_print_temp_check = False
     obj.enable_multiple_mapping = False
+    obj.active_led_effects = []
     return obj
 
 
@@ -252,7 +253,7 @@ class TestGetStatus:
         required = {
             "current_load", "current_state", "error_state",
             "lanes", "extruders", "hubs", "buffers", "units",
-            "message", "position_saved", "multiple_tool_mapping"
+            "message", "position_saved", "multiple_tool_mapping",
         }
         for key in required:
             assert key in status, f"Missing key: {key}"
@@ -2948,6 +2949,41 @@ class TestSavePos:
         )
         obj.function.log_toolhead_pos.assert_called_once_with(expected)
 
+    def test_does_not_save_when_not_homed(self):
+        """When function.is_homed(for_move=True) returns False, save_pos returns
+        immediately without inspecting in_toolchange/error_state/is_paused/position_saved."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.function.is_homed.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        assert obj.position_saved is False
+        assert not hasattr(obj, "last_toolhead_position")
+        obj.function.is_homed.assert_called_once_with(for_move=True)
+        obj.function.log_toolhead_pos.assert_called_once()
+
+    def test_logs_not_saving_unhomed_message(self):
+        """Verifies the exact log_toolhead_pos() call made on the not-homed branch."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.function.is_homed.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        expected = (
+            f"Not Saving unhomed position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused()}, Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+
     def test_does_not_save_when_in_toolchange(self):
         """When in_toolchange is True, the outer branch is taken regardless of
         error_state/is_paused/position_saved."""
@@ -3112,6 +3148,63 @@ class TestRestorePos:
             f"in toolchange: {in_toolchange_before}, POS: "
         )
         assert calls[2].args[0] == expected_final
+
+    def test_does_not_restore_when_position_not_saved(self):
+        """When position_saved is False, restore_pos returns immediately without
+        touching gcode_move state, moving the toolhead, or changing current_state."""
+        obj = _make_afc_for_restore_pos()
+        obj.position_saved = False
+        obj.current_state = State.IDLE
+        obj.function.is_paused.return_value = False
+        last_position_before = list(obj.gcode_move.last_position)
+        base_position_before = list(obj.gcode_move.base_position)
+
+        obj.restore_pos(move_z_first=False)
+
+        assert obj.position_saved is False
+        assert obj.current_state == State.IDLE
+        assert obj.gcode_move.last_position == last_position_before
+        assert obj.gcode_move.base_position == base_position_before
+        obj.move_z_pos.assert_not_called()
+        obj.gcode_move.move_with_transform.assert_not_called()
+
+        expected = (
+            f"Not restoring position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused.return_value}, "
+            f"Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+        debug_msgs = [m for lvl, m in obj.logger.messages if lvl == "debug"]
+        assert debug_msgs == []
+
+    def test_does_not_restore_when_position_not_saved_move_z_first_true(self):
+        """The position_saved guard applies before the move_z_first branch is
+        ever reached, regardless of which value is passed."""
+        obj = _make_afc_for_restore_pos()
+        obj.position_saved = False
+
+        obj.restore_pos(move_z_first=True)
+
+        obj.move_z_pos.assert_not_called()
+        obj.gcode_move.move_with_transform.assert_not_called()
+
+    def test_logs_not_restoring_message_when_position_not_saved(self):
+        """Verifies the exact log_toolhead_pos() call made on the not-saved branch."""
+        obj = _make_afc_for_restore_pos()
+        obj.position_saved = False
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+
+        obj.restore_pos(move_z_first=False)
+
+        expected = (
+            f"Not restoring position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused()}, Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
 
 
 # in_print_reactor_timer: moonraker None guard
@@ -3516,6 +3609,55 @@ class TestDoPoopKickWipe:
 
 
 
+class TestLoadSequenceDefaultPathSuccess:
+    """Covers the default (no unit_load_lane hook) hub/toolhead move path in
+    load_sequence all the way to its finalize step, distinct from
+    test_no_unit_load_lane_hook_falls_through_to_default_path which returns
+    early via a homing-error branch and never reaches finalization."""
+
+    def _make(self):
+        afc = _make_afc()
+        afc._check_extruder_temp = MagicMock(return_value=False)
+        afc.save_vars = MagicMock()
+        afc.homing_enabled = True
+        afc.gcode_move = MagicMock()
+        afc.gcode_move.last_position = [0.0, 0.0, 0.0, 0.0]
+        lane = _make_afc_lane()
+        lane.custom_load_cmd = None
+        lane.unit_obj = MagicMock(spec=["load_then_home", "lane_tool_loaded_gears", "lane_tool_loaded"])
+        lane.hub_obj = None
+        lane.loaded_to_hub = False
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.unit_obj.load_then_home.return_value = (None, None, AFCMoveWarning.NONE)
+        lane.get_toolhead_pre_sensor_state = MagicMock(return_value=True)
+        lane.sync_to_extruder = MagicMock()
+        lane.spool_id = None
+        lane.enable_buffer = MagicMock()
+        hub = MagicMock()
+        extruder = MagicMock()
+        extruder.tool_end = False  # skip the post-load tool_end-sensor retry loop
+        return afc, lane, hub, extruder
+
+    def test_sync_to_extruder_called(self):
+        afc, lane, hub, extruder = self._make()
+        afc.load_sequence(lane, hub, extruder)
+        lane.sync_to_extruder.assert_called_once_with()
+
+    def test_status_set_to_tool_loaded(self):
+        """status passes through TOOL_LOADED right after sync_to_extruder,
+        then set_tool_loaded() (called later in the same sequence) advances
+        it to TOOLED -- asserting the final state here."""
+        afc, lane, hub, extruder = self._make()
+        afc.load_sequence(lane, hub, extruder)
+        assert lane.status == AFCLaneState.TOOLED
+
+    def test_lane_tool_loaded_gears_called(self):
+        afc, lane, hub, extruder = self._make()
+        afc.load_sequence(lane, hub, extruder)
+        assert not hasattr(lane.unit_obj, "unit_load_lane")
+        lane.unit_obj.lane_tool_loaded_gears.assert_called_once_with(lane)
+
+
 class TestToolLoadNeedPurge:
     def _make_afc_lane_for_need_purge(self, need_purge=True, check_extruder_temp_return=True,
                                       printing=False):
@@ -3546,7 +3688,7 @@ class TestToolLoadNeedPurge:
 
         afc.capture_toolhead_temp.assert_not_called()
         afc.restore_toolhead_temp.assert_not_called()
-        afc.save_vars.assert_not_called()        
+        afc.save_vars.assert_not_called()
 
     def test_need_purge_no_purge_length(self):
         afc, lane = self._make_afc_lane_for_need_purge()
@@ -3987,6 +4129,42 @@ class TestUnloadSequenceUnitUnloadLane:
         lane.select_lane.assert_called_once_with()
         afc.error.handle_lane_failure.assert_called_once()
 
+    def test_default_path_success_calls_lane_loaded_not_lane_tool_unloaded(self):
+        """Covers the default toolhead-retract path all the way through to
+        finalization, distinct from the early-failure variant above. Also
+        locks in that this now calls lane_loaded (not the old lane_tool_unloaded)
+        once the lane is safely back at the hub."""
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj = MagicMock(
+            spec=["lane_unloading", "move_to_hub", "lane_loaded", "return_to_home"])
+        afc.tool_cut = False
+        afc.form_tip = False
+        afc.move_e_pos = MagicMock()
+        afc.homing_enabled = False
+        lane.disable_buffer = MagicMock()
+        lane.sync_to_extruder = MagicMock()
+        lane.unsync_to_extruder = MagicMock()
+        lane.select_lane = MagicMock()
+        lane.move_advanced = MagicMock()
+        lane.set_tool_unloaded = MagicMock()
+        lane.tool_max_unload_attempts = 5
+        lane.get_toolhead_pre_sensor_state.return_value = False
+        lane.is_direct_hub = MagicMock(return_value=False)
+        lane.unit_obj.move_to_hub.return_value = (None, None, AFCMoveWarning.NONE)
+        extruder.tool_start = ""
+        extruder.tool_stn_unload = 0
+        extruder.tool_end_state = False
+        extruder.tool_sensor_after_extruder = 0
+        hub.state = False
+        hub.cut = False
+
+        result = afc.unload_sequence(lane, hub, extruder)
+
+        assert result is not False
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+        assert lane.status == AFCLaneState.NONE
+        assert lane.loaded_to_hub is True
+
 
 # ── unload_sequence: custom_unload_cmd path runs post_unload_macro ─────────────
 # New branch inside the (pre-existing) custom_unload_cmd path: a configured
@@ -4305,7 +4483,8 @@ class TestLaneUnload:
         obj.LANE_UNLOAD(cur_lane)
         obj.spool.set_spoolID.assert_called_once_with(cur_lane, None)
         cur_lane.unit_obj.return_to_home.assert_called_once()
-        cur_lane.unit_obj.lane_not_ready.assert_called_once_with(cur_lane)
+        cur_lane.unit_obj.lane_unloading.assert_called_once_with(cur_lane)
+        cur_lane.unit_obj.lane_unloaded.assert_called_once_with(cur_lane)
 
     def test_eject_logs_completion_only(self):
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)

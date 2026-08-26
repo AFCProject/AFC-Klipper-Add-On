@@ -333,7 +333,7 @@ class AFC_vivid(afcBoxTurtle):
         cur_lane.loaded_to_hub = False
         cur_lane.status = AFCLaneState.NONE
         cur_lane.calibrated_lane = False
-        self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+        cur_lane.unit_obj.lane_unloaded(cur_lane)
         return True, "calibration_lane", 0
 
     def calibration_lane_message(self) -> str:

@@ -86,7 +86,7 @@ class afcBoxTurtle(afcUnit):
 
         if not cur_lane.prep_state:
             if not loaded:
-                self.afc.function.afc_led(cur_lane.led_not_ready, cur_lane.led_index)
+                cur_lane.unit_obj.lane_not_ready(cur_lane)
                 msg += 'EMPTY READY FOR SPOOL'
             else:
                 self.lane_fault(cur_lane)
@@ -605,7 +605,7 @@ class afcBoxTurtle(afcUnit):
             if x> self.MAX_NUM_MOVES:
                 msg = ' FAILED TO LOAD, CHECK FILAMENT AT TRIGGER\n||==>--||----||------||\nTRG   LOAD   HUB    TOOL'
                 self.afc.error.AFC_error(msg, False)
-                self.afc.function.afc_led(self.afc.led_fault, lane.led_index)
+                lane.unit_obj.lane_fault(lane)
                 lane.status = AFCLaneState.NONE
                 break
 

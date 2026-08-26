@@ -186,6 +186,7 @@ class AFCLane:
         self.led_spool_index      = config.get('led_spool_index', None)                 # LED index to illuminate under spool
         self.led_spool_illum      = config.get('led_spool_illuminate', None)            # LED color to illuminate under spool
         self.led_use_filament_color: bool = config.getboolean('led_use_filament_color', None)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
+        self.current_led_state: str = ""
 
         self.long_moves_speed: float   = config.getfloat("long_moves_speed", None)             # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.long_moves_accel: float   = config.getfloat("long_moves_accel", None)             # Acceleration in mm/s squared when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
@@ -1031,7 +1032,6 @@ class AFCLane:
             - Once changeover is successful print is automatically resumed
         """
         self.status = AFCLaneState.NONE
-        self.unit_obj.lane_not_ready(self)
         self.logger.info("Infinite Spool triggered for {}".format(self.name))
         empty_lane = self.afc.lanes.get(self.afc.current)
 
@@ -1308,6 +1308,7 @@ class AFCLane:
 
                             # Record PREP activity (any lane) for handle_prep_runout's guard
                             self.afc.last_prep_activity_time = eventtime
+                            self.unit_obj.lane_loading(self)
 
                             # Calling common load function
                             self.unit_obj.prep_load(self)
@@ -1633,7 +1634,7 @@ class AFCLane:
         self.td1_data = {}
         if not self.remember_spool:
             self.afc.spool.clear_values(self)
-        self.unit_obj.lane_unloaded(self)
+        self.unit_obj.lane_not_ready(self)
 
     def set_tool_loaded(self, normal_toolchange: bool=False):
         """
@@ -2351,7 +2352,7 @@ class AFCLane:
         self.td1_data = {}
         if not self.remember_spool:
             self.afc.spool.clear_values(self)
-        self.unit_obj.lane_unloaded(self)
+        self.unit_obj.lane_not_ready(self)
         self.logger.info(f"{self.name} reset")
         self.afc.save_vars()
 

@@ -440,6 +440,13 @@ class TestCalibrateLane:
         unit.calibrate_lane(lane, 5.0)
         unit.eject_lane.assert_called_once_with(lane)
 
+    def test_calls_lane_unloaded(self):
+        unit = _make_vivid()
+        lane = MagicMock()
+        unit.eject_lane = MagicMock()
+        unit.calibrate_lane(lane, 0)
+        lane.unit_obj.lane_unloaded.assert_called_once_with(lane)
+
 
 # ── _get_selector_enabled except branch ───────────────────────────────────────
 

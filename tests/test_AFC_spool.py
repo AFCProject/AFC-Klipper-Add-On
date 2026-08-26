@@ -744,7 +744,7 @@ class TestSetColor:
         spool.afc.lanes = {"lane1": lane}
         gcmd = _make_gcmd(LANE="lane1", COLOR="#FF0000")
         spool.cmd_SET_COLOR(gcmd)
-        spool.afc.function.afc_led.assert_called()
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane, force=True)
         
 
     def test_not_set_led_lane_loaded_not_lane_in_unit(self):
@@ -1584,7 +1584,7 @@ class TestSetSpoolID:
         result = _make_spool_result()
         spool.afc.moonraker.get_spool = MagicMock(return_value=result)
         spool.set_spoolID(lane, 42)
-        spool.afc.function.afc_led.assert_called()
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane, force=True)
     
     def test_valid_spool_id_lane_loaded_lane_not_in_unit(self):
         spool = self._make_spool_with_spoolman()

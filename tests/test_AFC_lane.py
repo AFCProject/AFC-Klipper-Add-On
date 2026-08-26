@@ -2334,8 +2334,136 @@ def _make_lane_for_set_loaded(
     lane.unit_obj.select_lane = MagicMock()
  
     return lane
- 
- 
+
+
+# ── set_loaded / set_unloaded ──────────────────────────────────────────────
+
+class TestSetLoaded:
+    def test_status_set_to_loaded(self):
+        lane = _make_afc_lane()
+        lane.set_loaded()
+        assert lane.status == AFCLaneState.LOADED
+
+    def test_calls_lane_loaded(self):
+        lane = _make_afc_lane()
+        lane.set_loaded()
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+
+    def test_calls_spool_set_values(self):
+        lane = _make_afc_lane()
+        lane.set_loaded()
+        lane.afc.spool._set_values.assert_called_once_with(lane)
+
+
+class TestSetUnloaded:
+    def _make_lane(self, remember_spool=False):
+        lane = _make_afc_lane()
+        lane.tool_loaded = True
+        lane.status = AFCLaneState.TOOLED
+        lane.loaded_to_hub = True
+        lane.td1_data = {"scan_time": "1.0"}
+        lane.remember_spool = remember_spool
+        return lane
+
+    def test_tool_loaded_cleared(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.tool_loaded is False
+
+    def test_status_set_to_none(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.status == AFCLaneState.NONE
+
+    def test_loaded_to_hub_cleared(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.loaded_to_hub is False
+
+    def test_td1_data_cleared(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.td1_data == {}
+
+    def test_clears_spool_values_when_not_remembering(self):
+        lane = self._make_lane(remember_spool=False)
+        lane.set_unloaded()
+        lane.afc.spool.clear_values.assert_called_once_with(lane)
+
+    def test_does_not_clear_spool_values_when_remembering(self):
+        """Covers the `not self.remember_spool` guard's False branch."""
+        lane = self._make_lane(remember_spool=True)
+        lane.set_unloaded()
+        lane.afc.spool.clear_values.assert_not_called()
+
+    def test_calls_lane_not_ready(self):
+        """set_unloaded now marks the lane not_ready (not the old
+        lane_unloaded), so a freshly-emptied lane and one that was never
+        loaded end up in the same LED state."""
+        lane = self._make_lane()
+        lane.set_unloaded()
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+
+# ── cmd_AFC_RECOVER_LANE ───────────────────────────────────────────────────
+
+class TestCmdAfcRecoverLane:
+    def _make_lane(self, remember_spool=False):
+        lane = _make_afc_lane()
+        lane.tool_loaded = True
+        lane.status = AFCLaneState.TOOLED
+        lane.loaded_to_hub = True
+        lane.td1_data = {"scan_time": "1.0"}
+        lane.remember_spool = remember_spool
+        return lane
+
+    def test_tool_loaded_cleared(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.tool_loaded is False
+
+    def test_status_set_to_none(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.status == AFCLaneState.NONE
+
+    def test_loaded_to_hub_cleared(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.loaded_to_hub is False
+
+    def test_td1_data_cleared(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.td1_data == {}
+
+    def test_clears_spool_values_when_not_remembering(self):
+        lane = self._make_lane(remember_spool=False)
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.afc.spool.clear_values.assert_called_once_with(lane)
+
+    def test_does_not_clear_spool_values_when_remembering(self):
+        """Covers the `not self.remember_spool` guard's False branch."""
+        lane = self._make_lane(remember_spool=True)
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.afc.spool.clear_values.assert_not_called()
+
+    def test_calls_lane_not_ready(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+    def test_saves_vars(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.afc.save_vars.assert_called_once_with()
+
+    def test_logs_reset_message_with_lane_name(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.logger.messages == [("info", f"{lane.name} reset")]
+
+
 class TestCmdSetLaneLoaded:
     """Tests for AFCLane.cmd_SET_LANE_LOADED."""
  
@@ -2719,7 +2847,7 @@ class TestPerformInfiniteRunout:
         info_msgs = [m for lvl, m in lane.logger.messages if lvl == "info"]
 
         assert lane.status is AFCLaneState.NONE
-        lane.unit_obj.lane_not_ready.assert_called_with(lane)
+        lane.unit_obj.lane_not_ready.assert_not_called()
         assert any(f"Infinite Spool triggered for {lane.name}" in m for m in info_msgs), info_msgs
         afc.lanes.get.assert_called_with(afc.current)
         assert afc.lanes.get.call_count == 1
@@ -3681,6 +3809,15 @@ class TestPrepCallback:
         lane = _make_lane_ready_to_load()
         lane.prep_callback(10, True)
         lane.unit_obj.prep_load.assert_called_once_with(lane)
+
+    def test_successful_load_activates_loading_led_before_prep_load(self):
+        lane = _make_lane_ready_to_load()
+        order = []
+        lane.unit_obj.lane_loading.side_effect = lambda *a, **kw: order.append("lane_loading")
+        lane.unit_obj.prep_load.side_effect = lambda *a, **kw: order.append("prep_load")
+        lane.prep_callback(10, True)
+        lane.unit_obj.lane_loading.assert_called_once_with(lane)
+        assert order == ["lane_loading", "prep_load"]
 
     def test_successful_load_resets_status_to_none(self):
         lane = _make_lane_ready_to_load()

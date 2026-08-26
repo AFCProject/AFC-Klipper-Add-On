@@ -520,6 +520,7 @@ class MockAFC:
         self.enable_runout_in_bypass = False
         self.show_macros = True
         self.message_queue: list = []
+        self.active_led_effects: list[str] = []
         self.log_frame_data = True
         self.position_saved = False
         self.in_toolchange = False
