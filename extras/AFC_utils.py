@@ -302,7 +302,8 @@ class VirtualFilamentSensor:
 
     def __init__(self, printer: Printer, name: str, logger: AFC_logger,
                 show_in_gui: bool = True, runout_cb: Optional[Callable] = None,
-                enable_runout: bool = False) -> None:
+                enable_runout: bool = False,
+                enable_cb: Optional[Callable] = None) -> None:
         """
         Register a lightweight virtual filament sensor.
 
@@ -315,10 +316,14 @@ class VirtualFilamentSensor:
         :param show_in_gui: When False, hide the sensor from the GUI.
         :param runout_cb: Optional runout callback passed to the runout helper.
         :param enable_runout: Whether runout callbacks are enabled.
+        :param enable_cb: Optional callback invoked with the new ENABLE value whenever
+                          SET_FILAMENT_SENSOR toggles this sensor, allowing callers to
+                          treat the GUI switch as the filament-presence state.
         """
         self.printer: Printer = printer
         self.name: str = name
         self.logger: AFC_logger = logger
+        self.enable_cb: Optional[Callable] = enable_cb
         self._object_name: str = f"filament_switch_sensor {name}"
         self._object_name = self._object_name if show_in_gui else "_" + self._object_name
         self.runout_helper: VirtualRunoutHelper = VirtualRunoutHelper(
@@ -378,7 +383,10 @@ class VirtualFilamentSensor:
 
         :param gcmd: The parsed G-code command.
         """
-        self.runout_helper.sensor_enabled = bool(gcmd.get_int("ENABLE", 1, minval=0, maxval=1))
+        enable = bool(gcmd.get_int("ENABLE", 1, minval=0, maxval=1))
+        self.runout_helper.sensor_enabled = enable
+        if self.enable_cb is not None:
+            self.enable_cb(enable)
 
 class AFC_moonraker:
     """

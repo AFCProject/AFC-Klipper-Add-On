@@ -1077,3 +1077,26 @@ class TestVirtualFilamentSensor:
         gcmd = MockGCodeCommand(params={"ENABLE": 0})
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
         assert sensor.runout_helper.sensor_enabled is False
+
+    def test_cmd_set_filament_sensor_invokes_enable_callback(self):
+        printer = self._make_printer_with_add_object()
+        enable_cb = MagicMock()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock(),
+                                       enable_cb=enable_cb)
+        gcmd = MockGCodeCommand(params={"ENABLE": 1})
+        sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
+        assert sensor.runout_helper.sensor_enabled is True
+        enable_cb.assert_called_once_with(True)
+
+        gcmd = MockGCodeCommand(params={"ENABLE": 0})
+        sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
+        assert sensor.runout_helper.sensor_enabled is False
+        enable_cb.assert_called_with(False)
+
+    def test_cmd_set_filament_sensor_without_callback(self):
+        """Buffers and other users pass no enable_cb -- toggling must still work."""
+        printer = self._make_printer_with_add_object()
+        sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
+        gcmd = MockGCodeCommand(params={"ENABLE": 1})
+        sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
+        assert sensor.runout_helper.sensor_enabled is True

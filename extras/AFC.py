@@ -1270,6 +1270,8 @@ class afc:
             cur_extruder = self.tools[extrude]
             str["system"]["extruders"][cur_extruder.name]={}
             str["system"]["extruders"][cur_extruder.name]['lane_loaded'] = cur_extruder.lane_loaded
+            if getattr(cur_extruder, "tool_start", None) == "virtual":
+                str["system"]["extruders"][cur_extruder.name]['virtual_tool_start'] = bool(cur_extruder.tool_start_state)
 
         try:
             with open(self.VarFile+ '.unit', 'w') as f:

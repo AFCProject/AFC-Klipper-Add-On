@@ -8,9 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - New `pin_tool_start: virtual` option for `[AFC_extruder]` sections: creates a virtual
-  toolhead sensor for standalone toolchanger toolheads that have no physical sensor.
-  Filament presence is assumed, so standalone lanes no longer fail tool loads with
-  "Please load lane before continuing" (closes #810).
+  toolhead sensor for standalone toolchanger toolheads that have no physical sensor
+  (closes #810). The sensor starts unloaded and disabled; the GUI switch
+  (`SET_FILAMENT_SENSOR ENABLE=`) toggles filament presence, mirroring the virtual bypass.
+  The state persists in the vars file and is restored during PREP, and load/unload
+  sequences sync the switch with their result, so standalone lanes no longer fail tool
+  loads with "Please load lane before continuing" once the sensor is enabled.
 
 
 ## [2026-08-15]

@@ -18,6 +18,7 @@ import types
 
 from extras.AFC_extruder import AFCExtruderStats, AFCExtruder
 from extras.AFC import State
+from tests.conftest import MockGCodeCommand
 from tests.test_AFC_lane import _make_afc_lane, AFCLaneState
 # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -292,24 +293,140 @@ def _make_afc_extruder_as_standalone(name="extruder", extruder_values=None, afc_
 # -- pin_tool_start: virtual -----------------------------------------------------
 
 class TestVirtualToolStart:
-    def test_virtual_tool_start_assumes_filament_loaded(self):
-        ext = _make_afc_extruder_as_standalone("extruder", extruder_values={"pin_tool_start": "virtual"})
-        assert ext.tool_start_state is True
-        assert ext.fila_tool_start is not None
-        assert ext.fila_tool_start.runout_helper.filament_present is True
-
-    def test_virtual_tool_start_registers_no_debounce_button(self):
-        ext = _make_afc_extruder_as_standalone("extruder", extruder_values={"pin_tool_start": "virtual"})
-        assert getattr(ext, "debounce_button_start", None) is None
-
-    def test_standalone_ready_keeps_lane_loaded_with_virtual_sensor(self):
-        ext = _make_afc_extruder_as_standalone(
+    def _make_virtual_extruder(self):
+        return _make_afc_extruder_as_standalone(
             "extruder", extruder_values={"pin_tool_start": "virtual"})
+
+    def _make_standalone_virtual(self):
+        """Virtual-sensor extruder wired like a standalone toolchanger lane."""
+        ext = self._make_virtual_extruder()
         ext.lanes.update({"extruder": ext})
+        ext.tc_unit_name = "AFC_Toolchanger tc"
         ext.tc_lane = _make_afc_lane()
+        ext.tc_lane.extruder_obj = ext
         ext.handle_ready()
         assert ext.no_lanes is True
+        return ext
+
+    def test_virtual_tool_start_starts_unloaded_and_disabled(self):
+        ext = self._make_virtual_extruder()
+        assert ext.tool_start_state is False
+        assert ext.fila_tool_start is not None
+        helper = ext.fila_tool_start.runout_helper
+        assert helper.filament_present is False
+        assert helper.sensor_enabled is False
+
+    def test_virtual_tool_start_registers_no_debounce_button(self):
+        ext = self._make_virtual_extruder()
+        assert getattr(ext, "debounce_button_start", None) is None
+
+    def test_virtual_tool_start_wires_enable_callback(self):
+        ext = self._make_virtual_extruder()
+        assert ext.fila_tool_start.enable_cb == ext._virtual_tool_start_toggle
+
+    def test_standalone_ready_keeps_lane_unloaded_with_virtual_sensor(self):
+        ext = self._make_standalone_virtual()
+        assert ext.tc_lane._load_state is False
+        assert ext.tc_lane.prep_state is False
+
+    def test_set_filament_sensor_enable_loads_lane(self):
+        ext = self._make_standalone_virtual()
+        ext.afc.prep_done = True
+        ext.afc.save_vars = MagicMock()
+
+        ext.fila_tool_start.cmd_SET_FILAMENT_SENSOR(MockGCodeCommand(params={"ENABLE": 1}))
+
+        assert ext.tool_start_state is True
+        helper = ext.fila_tool_start.runout_helper
+        assert helper.sensor_enabled is True
+        assert helper.filament_present is True
         assert ext.tc_lane._load_state is True
+        assert ext.tc_lane.prep_state is True
+        assert ext.tc_lane.extruder_obj.lane_loaded == ext.tc_lane.name
+        ext.afc.save_vars.assert_called_once()
+
+    def test_set_filament_sensor_disable_unloads_lane(self):
+        ext = self._make_standalone_virtual()
+        ext.restore_virtual_tool_start(True)
+
+        ext.fila_tool_start.cmd_SET_FILAMENT_SENSOR(MockGCodeCommand(params={"ENABLE": 0}))
+
+        assert ext.tool_start_state is False
+        helper = ext.fila_tool_start.runout_helper
+        assert helper.sensor_enabled is False
+        assert helper.filament_present is False
+        assert ext.tc_lane._load_state is False
+        assert ext.tc_lane.prep_state is False
+
+    def test_toggle_same_state_is_noop(self):
+        ext = self._make_standalone_virtual()
+        ext.afc.prep_done = True
+        ext.afc.save_vars = MagicMock()
+
+        ext.fila_tool_start.cmd_SET_FILAMENT_SENSOR(MockGCodeCommand(params={"ENABLE": 0}))
+
+        assert ext.tool_start_state is False
+        ext.afc.save_vars.assert_not_called()
+
+    def test_toggle_skips_save_vars_before_prep(self):
+        ext = self._make_standalone_virtual()
+        assert ext.afc.prep_done is False
+        ext.afc.save_vars = MagicMock()
+
+        ext.fila_tool_start.cmd_SET_FILAMENT_SENSOR(MockGCodeCommand(params={"ENABLE": 1}))
+
+        assert ext.tool_start_state is True
+        ext.afc.save_vars.assert_not_called()
+
+    def test_restore_from_vars_enables_sensor_and_lane(self):
+        ext = self._make_standalone_virtual()
+
+        ext.restore_virtual_tool_start(True)
+
+        assert ext.tool_start_state is True
+        assert ext.fila_tool_start.runout_helper.filament_present is True
+        assert ext.fila_tool_start.runout_helper.sensor_enabled is True
+        assert ext.tc_lane._load_state is True
+        assert ext.tc_lane.prep_state is True
+
+    def test_restore_defaults_to_disabled_noop(self):
+        ext = self._make_standalone_virtual()
+
+        ext.restore_virtual_tool_start(False)
+
+        assert ext.tool_start_state is False
+        assert ext.tc_lane._load_state is False
+
+    def test_temp_check_cb_load_completes_and_syncs_virtual_sensor(self):
+        ext = self._make_standalone_virtual()
+        heater = MagicMock()
+        heater.get_temp.return_value = (200.0, 200.0)
+        ext.get_heater = MagicMock(return_value=heater)
+        ext.move_extruder = MagicMock()
+        ext.current_move_distance = 72.0
+
+        ret = ext.temp_check_cb(0.0)
+
+        assert ret == ext.reactor.NEVER
+        ext.move_extruder.assert_called_once_with(72.0)
+        assert ext.tool_start_state is True
+        assert ext.fila_tool_start.runout_helper.filament_present is True
+        assert ext.tc_lane._load_state is True
+
+    def test_temp_check_cb_unload_clears_virtual_sensor(self):
+        ext = self._make_standalone_virtual()
+        ext.restore_virtual_tool_start(True)
+        heater = MagicMock()
+        heater.get_temp.return_value = (200.0, 200.0)
+        ext.get_heater = MagicMock(return_value=heater)
+        ext.move_extruder = MagicMock()
+        ext.current_move_distance = -100.0
+
+        ext.temp_check_cb(0.0)
+
+        assert ext.tool_start_state is False
+        assert ext.fila_tool_start.runout_helper.filament_present is False
+        assert ext.tc_lane._load_state is False
 
 
 class TestAFCExtruderStr:
@@ -673,7 +790,6 @@ class TestCmdUpdateToolheadSensors:
         own default (gcmd.get_float(..., self.tool_stn) etc.), so there's no
         need to duplicate that fallback here -- ext is unused now but kept
         as a parameter so existing call sites don't need to change."""
-        from tests.conftest import MockGCodeCommand
         params = {}
         if tool_stn is not None:
             params["TOOL_STN"] = tool_stn
