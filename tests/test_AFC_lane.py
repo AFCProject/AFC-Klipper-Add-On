@@ -3997,3 +3997,56 @@ class TestPrepCallback:
 
         lane_b.handle_prep_runout(20.0, False)
         lane_b.set_unloaded.assert_called_once()
+
+# ── AFCLane.move_to: virtual tool_start homing fallback ───────────────────────
+
+class TestMoveToVirtualToolStartFallback:
+    """When the extruder's tool_start is a virtual sensor there is no hardware
+    to home against, so moves targeting the tool endstop must fall back to a
+    plain distance move instead of raising "Unknown ENDSTOP 'tool'"."""
+
+    def _make_lane_with_drive_stepper(self, tool_start):
+        lane = _make_afc_lane()
+        lane.extruder_obj = MagicMock()
+        lane.extruder_obj.tool_start = tool_start
+        lane.drive_stepper = MagicMock()
+        lane.move_advanced = MagicMock()
+        lane.homing_overshoot = 10
+        lane.homing_delta = 300
+        lane.unit_obj = MagicMock()
+        lane.get_speed_accel = MagicMock(return_value=(50, 100))
+        lane.get_active_assist = MagicMock(return_value=None)
+        return lane
+
+    def test_tool_endstop_falls_back_to_plain_move_for_virtual(self):
+        lane = self._make_lane_with_drive_stepper("virtual")
+        homed, dist, warn = lane.move_to(100, SpeedMode.SHORT,
+                                         endstop=AFCHomingPoints.TOOL,
+                                         use_homing=True)
+        lane.drive_stepper.home_to.assert_not_called()
+        lane.move_advanced.assert_called_once()
+        assert homed is True
+        assert warn == AFCMoveWarning.NONE
+
+    def test_tool_start_endstop_alias_also_falls_back(self):
+        lane = self._make_lane_with_drive_stepper("virtual")
+        lane.move_to(100, SpeedMode.SHORT,
+                     endstop=AFCHomingPoints.TOOL_START, use_homing=True)
+        lane.drive_stepper.home_to.assert_not_called()
+        lane.move_advanced.assert_called_once()
+
+    def test_real_sensor_still_homes_to_tool(self):
+        lane = self._make_lane_with_drive_stepper("^PD3")
+        lane.drive_stepper.home_to.return_value = (True, 100, None)
+        lane.move_to(100, SpeedMode.SHORT, endstop=AFCHomingPoints.TOOL,
+                     use_homing=True)
+        lane.drive_stepper.home_to.assert_called_once()
+        lane.move_advanced.assert_not_called()
+
+    def test_other_endstops_unaffected_by_virtual(self):
+        lane = self._make_lane_with_drive_stepper("virtual")
+        lane.drive_stepper.home_to.return_value = (True, 100, None)
+        lane.move_to(100, SpeedMode.SHORT, endstop=AFCHomingPoints.HUB,
+                     use_homing=True)
+        lane.drive_stepper.home_to.assert_called_once()
+        lane.move_advanced.assert_not_called()

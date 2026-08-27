@@ -1775,7 +1775,9 @@ class afc:
                     return False
             # Ensure filament reaches the toolhead.
             tool_attempts = 0
-            if cur_extruder.tool_start:
+            # A virtual tool_start sensor has no hardware to confirm against,
+            # the distance move above is the whole load
+            if cur_extruder.tool_start and cur_extruder.tool_start != "virtual":
                 while (not cur_lane.get_toolhead_pre_sensor_state()
                        or warn == AFCMoveWarning.WARN):
                     tool_attempts += 1
@@ -2212,9 +2214,12 @@ class afc:
                         self.move_e_pos( cur_extruder.tool_stn_unload * -1, cur_extruder.tool_unload_speed, "Sensor move", wait_tool=True)
 
                     self.function.log_toolhead_pos("Sensor move after ")
-                    # For "standalone" toolheads, break out of the loop since sensor will always
-                    # be triggered
-                    if cur_lane.extruder_obj.is_standalone():
+                    # For "standalone" toolheads or extruders with a virtual tool_start
+                    # sensor, break out of the loop since the sensor will always stay
+                    # triggered: it is software-only state, there is nothing physical
+                    # to confirm the unload against
+                    if (cur_lane.extruder_obj.is_standalone()
+                            or cur_lane.extruder_obj.tool_start == "virtual"):
                         break
 
             self.afcDeltaTime.log_with_time("Unloaded from toolhead")

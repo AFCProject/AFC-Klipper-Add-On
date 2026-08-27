@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The state persists in the vars file and is restored during PREP, and load/unload
   sequences sync the switch with their result, so standalone lanes no longer fail tool
   loads with "Please load lane before continuing" once the sensor is enabled.
+  Feeder lanes loading into an extruder with a virtual tool_start sensor now move by
+  distance instead of homing to the nonexistent tool sensor, and TOOL_UNLOAD no longer
+  retries forever against the software-only sensor state.
 
 
 ## [2026-08-15]

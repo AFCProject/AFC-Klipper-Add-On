@@ -947,6 +947,15 @@ class AFCLane:
                   True, 0, AFCMoveWarning.NONE.
         """
         warn = AFCMoveWarning.NONE
+        # A virtual tool_start sensor has no hardware to home against; when a
+        # feeder lane targets the tool sensor, fall back to a plain distance
+        # move so the commanded distance defines the load/unload
+        if (use_homing
+                and endstop is not None
+                and str(endstop) in (AFCHomingPoints.TOOL, AFCHomingPoints.TOOL_START)
+                and self.extruder_obj is not None
+                and self.extruder_obj.tool_start == "virtual"):
+            use_homing = False
         extruder_stepper = getattr(self, "extruder_stepper", None)
         drive_stepper_assist = None
         if (self.drive_stepper
