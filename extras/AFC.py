@@ -679,7 +679,7 @@ class afc:
         # material-specific temp
         using_min_value = True
         if (cur_lane.extruder_temp is not None
-            and cur_lane.extruder_temp > 0
+            and cur_lane.extruder_temp > 0  # Keep 0 unset if min_extrude_temp is configured below zero.
             and cur_lane.extruder_temp > self.heater.min_extrude_temp):
             temp_value = cur_lane.extruder_temp
             using_min_value = False
