@@ -1,27 +1,53 @@
 # Minimal stub for Klipper's klippy/gcode.py -- only the members actually
 # used by this project's extras/*.py.
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypeVar, Union, overload
+
+_T = TypeVar("_T")
 
 class CommandError(Exception): ...
 
 class GCodeCommand:
     error: type[CommandError]
-    respond_info: Callable[[str], None]
-    respond_raw: Callable[[str], None]
+    # Bound from GCodeDispatch.respond_info/respond_raw at runtime, so the
+    # optional `log` kwarg on respond_info must remain callable.
+    respond_info: Callable[..., None]
+    respond_raw: Callable[..., None]
 
     def get_command(self) -> str: ...
     def get_commandline(self) -> str: ...
     def get_command_parameters(self) -> dict: ...
     def get_raw_command_parameters(self) -> str: ...
     def ack(self, msg: Optional[str] = None) -> bool: ...
+    # get() returns whatever `parser` produces (str by default), or `default`
+    # unchanged when the param is missing -- so its result type can't be
+    # pinned down any tighter than Any from this stub.
     def get(self, name: str, default: Any = ..., parser: Callable = str,
             minval: Any = None, maxval: Any = None, above: Any = None,
-            below: Any = None) -> str: ...
-    def get_int(self, name: str, default: Any = ..., minval: Optional[int] = None,
+            below: Any = None) -> Any: ...
+    # A generic fallback overload (as typeshed uses for dict.get) rather than
+    # `default: None` directly avoids mypy flagging the pair as
+    # overlapping-with-incompatible-return.
+    @overload
+    def get_int(self, name: str, *, minval: Optional[int] = None,
                 maxval: Optional[int] = None) -> int: ...
-    def get_float(self, name: str, default: Any = ..., minval: Optional[float] = None,
+    @overload
+    def get_int(self, name: str, default: int, minval: Optional[int] = None,
+                maxval: Optional[int] = None) -> int: ...
+    @overload
+    def get_int(self, name: str, default: _T, minval: Optional[int] = None,
+                maxval: Optional[int] = None) -> Union[int, _T]: ...
+    @overload
+    def get_float(self, name: str, *, minval: Optional[float] = None,
                   maxval: Optional[float] = None, above: Optional[float] = None,
                   below: Optional[float] = None) -> float: ...
+    @overload
+    def get_float(self, name: str, default: float, minval: Optional[float] = None,
+                  maxval: Optional[float] = None, above: Optional[float] = None,
+                  below: Optional[float] = None) -> float: ...
+    @overload
+    def get_float(self, name: str, default: _T, minval: Optional[float] = None,
+                  maxval: Optional[float] = None, above: Optional[float] = None,
+                  below: Optional[float] = None) -> Union[float, _T]: ...
 
 class GCodeDispatch:
     ready_gcode_handlers: dict
