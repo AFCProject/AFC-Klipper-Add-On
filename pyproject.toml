@@ -10,6 +10,11 @@ markers = [
 
 [tool.ruff]
 force-exclude = true  # respect exclude list even when files are passed explicitly (e.g. changed-files in CI)
+# Only lint this project's own code in extras/. `include` scopes bare/recursive
+# scans (e.g. `ruff check .`) to extras/; `exclude` + force-exclude backs that
+# up for explicit file paths (e.g. CI passing a changed-files list), which
+# `include` alone doesn't gate.
+include = ["extras/**/*.py"]
 exclude = [
     # Standard exclusions
     ".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints",
@@ -17,11 +22,10 @@ exclude = [
     ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__",
     "_build", "buck-out", "build", "dist", "node_modules", "site-packages", "venv",
 
-    # Optional: exclude Klipper source tree if just wrapping
-    "klipper",
-
-    # Test files — linting rules don't apply to the test suite
-    "tests",
+    # Everything in this repo other than extras/
+    "community_mods", "config", "coverage-report", "docs", "include",
+    "kalico", "klipper", "klipper_stubs", "templates", "tests",
+    "troubleshooting", "utilities",
 ]
 
 # Same as Black.

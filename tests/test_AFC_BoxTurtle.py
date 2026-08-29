@@ -45,6 +45,7 @@ def _make_box_turtle(name="Turtle_1"):
     unit.td1_defined = False
     unit.type = "Box_Turtle"
     unit.gcode = afc.gcode
+    unit.short_move_dis = 10
 
     return unit
 
@@ -81,11 +82,11 @@ class TestConstants:
 
 class TestSystemTestEmptyLane:
     def test_empty_lane_sets_not_ready_led(self):
-        """prep=False, load=False → LED set to led_not_ready."""
+        """prep=False, load=False → lane's own unit_obj.lane_not_ready is called."""
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=False, load_state=False)
         unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
-        unit.afc.function.afc_led.assert_any_call(lane.led_not_ready, lane.led_index)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
 
     def test_empty_lane_does_not_set_fault_led(self):
         unit = _make_box_turtle()
@@ -187,6 +188,71 @@ class Test_MoveLane:
             result = unit._move_lane(lane, delay=1, enable_movement=True)
         assert result is False
         pause_mock.assert_called()
+
+
+# ── prep_load ────────────────────────────────────────────────────────────────
+
+class TestPrepLoad:
+    def _make_lane_that_never_triggers(self):
+        """A lane that stays prepped but never reports load-sensor triggered,
+        so prep_load's retry loop always keeps going until MAX_NUM_MOVES."""
+        lane = _make_afc_lane()
+        lane.prep_state = True
+        lane.load = "PA1"
+        lane._load_state = False
+        lane.move = MagicMock()
+        lane.unit_obj = MagicMock()
+        return lane
+
+    def test_exceeding_max_num_moves_calls_lane_fault(self):
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        lane = self._make_lane_that_never_triggers()
+
+        unit.prep_load(lane)
+
+        lane.unit_obj.lane_fault.assert_called_once_with(lane)
+
+    def test_exceeding_max_num_moves_resets_status_to_none(self):
+        from extras.AFC_lane import AFCLaneState
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        lane = self._make_lane_that_never_triggers()
+
+        unit.prep_load(lane)
+
+        assert lane.status == AFCLaneState.NONE
+
+    def test_exceeding_max_num_moves_reports_afc_error(self):
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        lane = self._make_lane_that_never_triggers()
+
+        unit.prep_load(lane)
+
+        msg = unit.afc.error.AFC_error.call_args[0][0]
+        assert "FAILED TO LOAD" in msg
+
+    def test_sensor_triggering_before_max_moves_skips_fault(self):
+        """Covers the `x > MAX_NUM_MOVES` guard's False branch: the loop
+        exits normally (via raw_load_state going True) without faulting."""
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        lane = _make_afc_lane()
+        lane.prep_state = True
+        lane.load = "PA1"
+        lane._load_state = False
+        lane.unit_obj = MagicMock()
+
+        def _trigger_after_one_move(*args, **kwargs):
+            lane._load_state = True
+
+        lane.move = MagicMock(side_effect=_trigger_after_one_move)
+
+        unit.prep_load(lane)
+
+        lane.unit_obj.lane_fault.assert_not_called()
+        unit.afc.error.AFC_error.assert_not_called()
 
 
 class TestCalibrateBowdenNegativeDistance:

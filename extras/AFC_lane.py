@@ -186,6 +186,7 @@ class AFCLane:
         self.led_spool_index      = config.get('led_spool_index', None)                 # LED index to illuminate under spool
         self.led_spool_illum      = config.get('led_spool_illuminate', None)            # LED color to illuminate under spool
         self.led_use_filament_color: bool = config.getboolean('led_use_filament_color', None)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
+        self.current_led_state: str = ""
 
         self.long_moves_speed: float   = config.getfloat("long_moves_speed", None)             # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.long_moves_accel: float   = config.getfloat("long_moves_accel", None)             # Acceleration in mm/s squared when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
@@ -1031,7 +1032,6 @@ class AFCLane:
             - Once changeover is successful print is automatically resumed
         """
         self.status = AFCLaneState.NONE
-        self.unit_obj.lane_not_ready(self)
         self.logger.info("Infinite Spool triggered for {}".format(self.name))
         empty_lane = self.afc.lanes.get(self.afc.current)
 
@@ -1308,6 +1308,7 @@ class AFCLane:
 
                             # Record PREP activity (any lane) for handle_prep_runout's guard
                             self.afc.last_prep_activity_time = eventtime
+                            self.unit_obj.lane_loading(self)
 
                             # Calling common load function
                             self.unit_obj.prep_load(self)
@@ -1322,7 +1323,14 @@ class AFCLane:
                                 self.logger.debug(f"Prep: direct load logic-{self.name}-{self.hub}")
                                 if not self.afc.TOOL_LOAD(self):
                                     self.afc.afc_stats.increase_load_error_count(self.afc)
-                                self.afc.spool._set_values(self)
+                                # TOOL_LOAD already pushed the active spool to Spoolman using
+                                # whatever spool_id was set before this point. _set_values can
+                                # still be waiting on an async Spoolman fetch (from a next_spool_id
+                                # set by e.g. an NFC scan) that updates spool_id afterward, so
+                                # re-push once that settles rather than leaving Spoolman pointed
+                                # at the stale value TOOL_LOAD saw.
+                                self.afc.spool._set_values(
+                                    self, on_done=lambda: self.afc.spool.set_active_spool(self.spool_id))
                                 self.logger.debug(f"Prep: direct load logic done-{self.name}-{self.hub}")
                                 break
 
@@ -1633,7 +1641,7 @@ class AFCLane:
         self.td1_data = {}
         if not self.remember_spool:
             self.afc.spool.clear_values(self)
-        self.unit_obj.lane_unloaded(self)
+        self.unit_obj.lane_not_ready(self)
 
     def set_tool_loaded(self, normal_toolchange: bool=False):
         """
@@ -1953,18 +1961,32 @@ class AFCLane:
 
         self._sent_lane_data_keys = current_keys
 
-    def get_td1_data_load(self):
+    def get_td1_data_load(self) -> None:
         """
         Captures TD-1 data for a lane after being loaded into toolhead. When capturing
         data scan time is ignored as its assumed its scanned when loaded into toolhead.
+        Fetches TD-1 data asynchronously since this runs at the end of every TOOL_LOAD
+        and can't block on the HTTP round trip during a print.
         """
-        if self.afc.td1_present:
-            valid = False
-            if self.td1_device_id:
-                valid, _ = self.afc.function.check_for_td1_id(self.td1_device_id)
+        if not self.afc.td1_present:
+            return
+        if not self.td1_device_id:
+            return
+        if self.afc.moonraker is None:
+            return
+        self.afc.moonraker.get_td1_data_async(self._apply_td1_data_load)
 
-            if valid:
-                self.unit_obj.get_td1_data(self, datetime.now(), ignore_time=True)
+    def _apply_td1_data_load(self, devices: Optional[dict]) -> None:
+        """
+        Completion callback for get_td1_data_load()'s async TD-1 fetch. Validates
+        the configured device ID against the fetched data, then applies it to this lane.
+        Runs on the reactor thread.
+
+        :param devices: TD-1 devices dict fetched asynchronously, or None on failure
+        """
+        valid, _ = self.afc.function._check_td1_id_in_data(devices, self.td1_device_id)
+        if valid:
+            self.unit_obj._apply_td1_data(self, datetime.now(), devices, ignore_time=True)
 
     def get_td1_data(self):
         """
@@ -2351,7 +2373,7 @@ class AFCLane:
         self.td1_data = {}
         if not self.remember_spool:
             self.afc.spool.clear_values(self)
-        self.unit_obj.lane_unloaded(self)
+        self.unit_obj.lane_not_ready(self)
         self.logger.info(f"{self.name} reset")
         self.afc.save_vars()
 

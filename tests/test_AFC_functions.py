@@ -17,7 +17,7 @@ from typing import Any, Dict, Tuple
 from unittest.mock import MagicMock, patch, call
 import pytest
 
-from extras.AFC_functions import afcFunction, afcDeltaTime, round_floats
+from extras.AFC_functions import afcFunction, afcDeltaTime, round_floats, get_gcode_absolute_extrude, set_gcode_absolute_extrude
 from extras.AFC_respond import AFCprompt
 
 from tests.test_AFC import _make_afc
@@ -87,6 +87,8 @@ class TestLogToolheadPos:
         func.afc.gcode_move.extrude_factor = 1.0
         func.afc.gcode_move.absolute_coord = True
         func.afc.gcode_move.absolute_extrude = False
+        func.afc.gcode_move.allow_absolute_extrude = False
+        func.afc.gcode_move.get_status.return_value = {"absolute_extrude": False}
 
     def test_logs_expected_message_with_move_pre(self):
         func = _make_func()
@@ -131,6 +133,94 @@ def _make_gcmd(**values: Any) -> MagicMock:
     gcmd.get_int.side_effect = lambda name, default=0, **kwargs: int(values.get(name, default))
     gcmd.get.side_effect = lambda name, default=None, **kwargs: values.get(name, default)
     return gcmd
+
+
+# ── Klipper PR 7349 absolute_extrude compat ───────────────────────────────────
+
+class _OldKlipperGCodeMove:
+    def __init__(self, value, status_value=None):
+        self.absolute_extrude = value
+        self._status_value = value if status_value is None else status_value
+
+    def get_status(self, eventtime=None):
+        return {"absolute_extrude": self._status_value}
+
+
+class _NewKlipperGCodeMove:
+    def __init__(self, value, status_value=None):
+        self.allow_absolute_extrude = value
+        self._status_value = value if status_value is None else status_value
+
+    def get_status(self, eventtime=None):
+        return {"absolute_extrude": self._status_value}
+
+
+class _OldKlipperGCodeMoveAttrOnly:
+    """Legacy Klipper mock with absolute_extrude and no get_status()."""
+
+    def __init__(self, value):
+        self.absolute_extrude = value
+
+
+class _NewKlipperGCodeMoveAttrOnly:
+    """Post-PR-7349 Klipper mock with allow_absolute_extrude and no get_status()."""
+
+    def __init__(self, value):
+        self.allow_absolute_extrude = value
+
+
+class TestGcodeAbsoluteExtrudeCompat:
+    def test_reads_attr_on_old_klipper_without_get_status(self):
+        move = _OldKlipperGCodeMoveAttrOnly(False)
+        assert not hasattr(move, "get_status")
+        assert get_gcode_absolute_extrude(move) is False
+
+    def test_reads_attr_on_new_klipper_without_get_status(self):
+        move = _NewKlipperGCodeMoveAttrOnly(False)
+        assert not hasattr(move, "get_status")
+        assert get_gcode_absolute_extrude(move) is False
+
+    def test_ignores_get_status_on_new_klipper(self):
+        """get_gcode_absolute_extrude no longer consults get_status() at all
+        (Klipper PR 7349 compat fix) -- a stale/conflicting status dict must
+        not influence the result, only the allow_absolute_extrude attr does."""
+        move = _NewKlipperGCodeMove(False, status_value=True)
+        assert get_gcode_absolute_extrude(move) is False
+
+    def test_ignores_get_status_on_old_klipper(self):
+        move = _OldKlipperGCodeMove(False, status_value=True)
+        assert get_gcode_absolute_extrude(move) is False
+
+    def test_defaults_to_true_when_neither_attribute_present(self):
+        """Covers the final getattr(..., True) fallback when the gcode_move
+        object exposes neither allow_absolute_extrude nor absolute_extrude."""
+        move = object()
+        assert get_gcode_absolute_extrude(move) is True
+
+    def test_writes_allow_absolute_extrude_on_new_klipper(self):
+        move = _NewKlipperGCodeMove(False)
+        set_gcode_absolute_extrude(move, True)
+        assert move.allow_absolute_extrude is True
+        assert not hasattr(move, "absolute_extrude")
+
+    def test_writes_absolute_extrude_on_old_klipper(self):
+        move = _OldKlipperGCodeMove(False)
+        set_gcode_absolute_extrude(move, True)
+        assert move.absolute_extrude is True
+        assert not hasattr(move, "allow_absolute_extrude")
+
+    def test_check_absolute_mode_sets_new_klipper_attr(self):
+        func = _make_func()
+        func.afc.gcode_move = _NewKlipperGCodeMove(False)
+        func.afc.gcode_move.absolute_coord = True
+        func.afc.gcode_move.base_position = [0, 0, 0, 0]
+        func.afc.gcode_move.last_position = [0, 0, 0, 0]
+        func.afc.gcode_move.speed = 1.0
+        func.afc.gcode_move.speed_factor = 1.0
+        func.afc.gcode_move.extrude_factor = 1.0
+        func.afc.toolhead.get_position.return_value = [0, 0, 0, 0]
+        func.check_absolute_mode("TEST")
+        assert func.afc.gcode_move.allow_absolute_extrude is True
 
 
 # ── HexConvert ────────────────────────────────────────────────────────────────
@@ -1742,6 +1832,70 @@ class TestAfcDeltaTime:
         dt.log_with_time("safe call")
 
 
+# ── is_homed ──────────────────────────────────────────────────────────────────
+
+class TestIsHomed:
+    def _wire(self, func, homed_axes, disable_homing_check):
+        """Wire up func.afc.toolhead.get_kinematics().get_status() to report
+        `homed_axes` (a string such as "xyz", "xy", or "") and set
+        func.afc.disable_homing_check."""
+        func.afc.disable_homing_check = disable_homing_check
+        kin = MagicMock()
+        kin.get_status.return_value = {"homed_axes": homed_axes}
+        func.afc.toolhead.get_kinematics.return_value = kin
+
+    @pytest.mark.parametrize(
+        "for_move,disable_homing_check,homed_axes,expected",
+        [
+            # for_move=True: homing_check is always True, disable_homing_check
+            # is ignored entirely, and each individually-missing axis returns False.
+            (True, False, "xyz", True),
+            (True, False, "xy", False),
+            (True, False, "xz", False),
+            (True, False, "yz", False),
+            (True, False, "", False),
+            (True, True, "xyz", True),
+            (True, True, "xy", False),
+            (True, True, "xz", False),
+            (True, True, "yz", False),
+            (True, True, "", False),
+            # for_move=False, disable_homing_check=False: homing_check is True,
+            # so behavior matches the for_move=True/disable_homing_check=False case.
+            (False, False, "xyz", True),
+            (False, False, "xy", False),
+            (False, False, "xz", False),
+            (False, False, "yz", False),
+            (False, False, "", False),
+            # for_move=False, disable_homing_check=True: homing_check is False,
+            # so the result is always True regardless of which axes are homed.
+            (False, True, "xyz", True),
+            (False, True, "xy", True),
+            (False, True, "xz", True),
+            (False, True, "yz", True),
+            (False, True, "", True),
+        ],
+    )
+    def test_all_permutations(self, for_move, disable_homing_check, homed_axes, expected):
+        func = _make_func()
+        self._wire(func, homed_axes, disable_homing_check)
+        assert func.is_homed(for_move=for_move) is expected
+
+    def test_default_for_move_is_false(self):
+        """for_move defaults to False, so it should behave like the
+        for_move=False cases above when called with no argument."""
+        func = _make_func()
+        self._wire(func, homed_axes="xy", disable_homing_check=False)
+        assert func.is_homed() is False
+
+        func = _make_func()
+        self._wire(func, homed_axes="xyz", disable_homing_check=False)
+        assert func.is_homed() is True
+
+        func = _make_func()
+        self._wire(func, homed_axes="xy", disable_homing_check=True)
+        assert func.is_homed() is True
+
+
 # ── _rename ───────────────────────────────────────────────────────────────────
 
 class TestRename:
@@ -2935,3 +3089,199 @@ class TestCmdAfcLaneResetToolheadLoadedGuard:
         func.afc.error.AFC_error.assert_not_called()
         lane.unit_obj.move_to_hub.assert_called_once()
         func.afc.gcode.respond_info.assert_any_call("Resetting lane1 to hub")
+
+
+# ── handle_activate_extruder / _handle_activate_extruder ─────────────────────
+
+class TestHandleActivateExtruder:
+    def _make(self, cur_lane_loaded=None):
+        func = _make_func()
+        func.get_current_lane_obj = MagicMock(return_value=cur_lane_loaded)
+        func.afc.spool = MagicMock()
+        return func
+
+    def _make_other_lane(self, name="lane2", prep_state=False, load_state=False,
+                         tool_loaded=False):
+        lane = _make_afc_lane(f"AFC_stepper {name}")
+        lane.do_enable = MagicMock()
+        lane.disable_buffer = MagicMock()
+        lane.unsync_to_extruder = MagicMock()
+        lane.prep_state = prep_state
+        lane._load_state = load_state
+        lane.tool_loaded = tool_loaded
+        lane.unit_obj = MagicMock()
+        return lane
+
+    def test_handle_activate_extruder_delegates_to_underscore_variant(self):
+        func = self._make()
+        func._handle_activate_extruder = MagicMock()
+        func.handle_activate_extruder()
+        func._handle_activate_extruder.assert_called_once_with(0)
+
+    def test_not_ready_lane_calls_lane_not_ready(self):
+        """Covers the `prep_state and load_state` guard's False branch --
+        this now calls lane_not_ready (not the old lane_unloaded)."""
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=False, load_state=False)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        lane.unit_obj.lane_loaded.assert_not_called()
+        lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
+
+    def test_ready_prep_only_calls_lane_not_ready(self):
+        """prep_state alone must not satisfy the guard."""
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=True, load_state=False)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+    def test_ready_load_only_calls_lane_not_ready(self):
+        """load_state alone must not satisfy the guard."""
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=False, load_state=True)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+    def test_ready_not_tool_loaded_calls_lane_loaded(self):
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=False)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+        lane.unit_obj.lane_not_ready.assert_not_called()
+
+    def test_ready_and_tool_loaded_calls_lane_tool_loaded_idle(self):
+        func = self._make(cur_lane_loaded=None)
+        lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=True)
+        func.afc.lanes = {"lane2": lane}
+        func._handle_activate_extruder(0)
+        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
+        lane.unit_obj.lane_loaded.assert_not_called()
+        lane.unit_obj.lane_not_ready.assert_not_called()
+
+    def test_active_lane_is_skipped_entirely(self):
+        """The currently-loaded lane must not be touched by this loop at all."""
+        func = self._make()
+        active_lane = self._make_other_lane("lane1", prep_state=True, load_state=True)
+        active_lane.enable_buffer = MagicMock()
+        active_lane.sync_to_extruder = MagicMock()
+        active_lane.spool_id = None
+        func.get_current_lane_obj = MagicMock(return_value=active_lane)
+        func.afc.lanes = {"lane1": active_lane}
+        func._handle_activate_extruder(0)
+        # do_enable(True) is legitimately called later, outside the loop, to
+        # enable the active lane -- do_enable(False) is what the (skipped)
+        # loop body would have called, so that's the call that must be absent.
+        active_lane.do_enable.assert_called_once_with(True)
+        active_lane.unit_obj.lane_not_ready.assert_not_called()
+        active_lane.unit_obj.lane_loaded.assert_not_called()
+
+
+# ── check_for_td1_error / _check_td1_error_in_data ────────────────────────────
+
+class TestCheckForTd1Error:
+    def test_delegates_to_moonraker_fetch_then_checks_data(self):
+        func = _make_func()
+        func.afc.moonraker = MagicMock()
+        func.afc.moonraker.get_td1_data.return_value = {"SN1": {"error": None}}
+        error_occurred, msg = func.check_for_td1_error()
+        func.afc.moonraker.get_td1_data.assert_called_once_with()
+        assert error_occurred is False
+        assert msg == ""
+
+
+class TestCheckTd1ErrorInData:
+    def test_none_data_reports_no_error(self):
+        """Covers td1_data being None (a failed fetch) without crashing."""
+        func = _make_func()
+        error_occurred, msg = func._check_td1_error_in_data(None)
+        assert error_occurred is False
+        assert msg == ""
+
+    def test_no_devices_have_errors(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": None}, "SN2": {"error": None}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data)
+        assert error_occurred is False
+        assert msg == ""
+
+    def test_matching_serial_with_error_reports_it(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data, serial_number="SN1")
+        assert error_occurred is True
+        assert "SN1" in msg
+        assert "jam" in msg
+
+    def test_non_matching_serial_number_ignores_other_devices_error(self):
+        """A specific serial_number filters out errors on other devices."""
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data, serial_number="SN2")
+        assert error_occurred is False
+        assert msg == ""
+
+    def test_serial_number_none_checks_all_devices(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": None}, "SN2": {"error": "overheating"}}
+        error_occurred, msg = func._check_td1_error_in_data(td1_data, serial_number=None)
+        assert error_occurred is True
+        assert "SN2" in msg
+
+    def test_print_error_true_logs_error(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        func._check_td1_error_in_data(td1_data, serial_number="SN1", print_error=True)
+        assert func.logger.messages == [
+            ("error",
+             "Error with TD-1 Serial: SN1, please fix error with TD-1 and run 'AFC_RESET_TD1 SERIAL=SN1' macro.\n"
+             "Some errors can occur when first booting machine and filament is in TD-1 device\n"
+             "Reported Error: jam"),
+        ]
+
+    def test_print_error_false_does_not_log(self):
+        func = _make_func()
+        td1_data = {"SN1": {"error": "jam"}}
+        func._check_td1_error_in_data(td1_data, serial_number="SN1", print_error=False)
+        assert func.logger.messages == []
+
+
+# ── check_for_td1_id / _check_td1_id_in_data ──────────────────────────────────
+
+class TestCheckForTd1Id:
+    def test_delegates_to_moonraker_fetch_then_checks_data(self):
+        func = _make_func()
+        func.afc.moonraker = MagicMock()
+        func.afc.moonraker.get_td1_data.return_value = {"SN1": {"error": None}}
+        valid, msg = func.check_for_td1_id("SN1")
+        func.afc.moonraker.get_td1_data.assert_called_once_with()
+        assert valid is True
+
+
+class TestCheckTd1IdInData:
+    def test_none_data_reports_not_found(self):
+        """Covers td1_data being None (a failed fetch) without crashing."""
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data(None, "SN1")
+        assert valid is False
+        assert "SN1" in msg
+
+    def test_serial_not_in_data_reports_not_found(self):
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data({"SN2": {"error": None}}, "SN1")
+        assert valid is False
+        assert "SN1" in msg
+
+    def test_serial_present_with_no_error_is_valid(self):
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data({"SN1": {"error": None}}, "SN1")
+        assert valid is True
+
+    def test_serial_present_with_error_is_not_valid(self):
+        func = _make_func()
+        valid, msg = func._check_td1_id_in_data({"SN1": {"error": "jam"}}, "SN1")
+        assert valid is False
+        assert "jam" in msg

@@ -4,12 +4,17 @@
 #
 from __future__ import annotations
 
+import os
 import json
 import re
 import traceback
 import inspect
+import threading
+import chelper
+
 from enum import Enum
 from functools import cached_property
+from queue import Queue
 from configfile import error
 from klippy import Printer
 
@@ -18,6 +23,7 @@ from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeDispatch, GCodeCommand
+    from extras.gcode_move import GCodeMove
     from extras.AFC_lane import AFCLane
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_functions import afcFunction
@@ -37,7 +43,12 @@ except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.fo
 try: from extras.AFC_logger import AFC_logger
 except: raise error(ERROR_STR.format(import_lib="AFC_logger", trace=traceback.format_exc()))
 
-try: from extras.AFC_functions import afcDeltaTime, round_floats
+try:
+    from extras.AFC_functions import (
+        afcDeltaTime, round_floats,
+        get_gcode_absolute_extrude,
+        set_gcode_absolute_extrude
+    )
 except: raise error(ERROR_STR.format(import_lib="AFC_functions", trace=traceback.format_exc()))
 
 try: from extras.AFC_utils import add_filament_switch, AFC_moonraker, AFC_PrintFileMetaData
@@ -46,7 +57,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_stats import AFCStats
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-AFC_VERSION="1.2.5"
+AFC_VERSION="1.2.7"
 
 # Class for holding different states so its clear what all valid states are
 class State(str, Enum):
@@ -71,6 +82,7 @@ def load_config(config):
     return afc(config)
 
 class afc:
+    class sentinel: pass
     def __init__(self, config: ConfigWrapper):
         self.config  = config
         self.printer = config.get_printer()
@@ -78,6 +90,7 @@ class afc:
         self.webhooks = self.printer.load_object(config, 'webhooks')
         self.printer.register_event_handler("klippy:connect",self.handle_connect)
         self.printer.register_event_handler("klippy:ready", self.handle_ready)
+        self.printer.register_event_handler("klippy:disconnect", self.join_threads)
         self.logger  = AFC_logger(self.printer, self)
 
         self.function: afcFunction = self.printer.load_object(config, 'AFC_functions')
@@ -130,6 +143,7 @@ class afc:
         self.number_of_toolchanges  = 0
         self.current_toolchange     = 0
         self.print_tool_temperatures: List[int] = []
+        self.active_led_effects: List[str] = []
 
         # tool position when tool change was requested
         self.change_tool_pos = None
@@ -154,6 +168,15 @@ class afc:
         self.unit_order_list        = config.get('unit_order_list','')
         self.VarFile                = config.get('VarFile','../printer_data/config/AFC/AFC.var')# Path to the variables file for AFC configuration.
         self.cfgloc                 = self._remove_after_last(self.VarFile,"/")
+
+        # save_vars() only builds the state dict on the reactor thread; the actual file
+        # write happens on this background thread so a slow disk can't stall Klipper.
+        # A single worker is created rather than a thread per call to keep writes ordered.
+        self._var_write_thread_wait = True
+        self._var_write_queue: Queue = Queue()
+        self._var_write_thread = threading.Thread(target=self._var_write_worker, daemon=True,
+                                                  name="afc_save_vars")
+        self._var_write_thread.start()
         self.default_material_temps = config.getlists("default_material_temps",
                                                       ("default: 235", "PLA:210", "PETG:235", "ABS:235", "ASA:235"))# Default temperature to set extruder when loading/unloading lanes. Material needs to be either manually set or uses material from spoolman if extruder temp is not set in spoolman.
         self.default_material_temps = list(self.default_material_temps) if self.default_material_temps is not None else None
@@ -397,8 +420,10 @@ class afc:
         """
 
         try:
-            self.moonraker = AFC_moonraker( self.moonraker_host, self.moonraker_port, self.logger )
-            if not self.moonraker.wait_for_moonraker( toolhead=self.toolhead, timeout=self.moonraker_connect_to ):
+            self.moonraker = AFC_moonraker(self.moonraker_host, self.moonraker_port, self.logger,
+                                           self.reactor)
+            if not self.moonraker.wait_for_moonraker(toolhead=self.toolhead,
+                                                     timeout=self.moonraker_connect_to):
                 return False
 
             # Remove current lane_data from database before pushing data back up so that
@@ -431,7 +456,7 @@ class afc:
         """
         self.toolhead   = self.printer.lookup_object('toolhead')
         self.idle       = self.printer.lookup_object('idle_timeout')
-        self.gcode_move = self.printer.lookup_object('gcode_move')
+        self.gcode_move: GCodeMove = self.printer.lookup_object('gcode_move')
 
         # Looking up to see if manual_home has probe_pos, this is to make AFC work with klipper
         # starting with new homing update git hash(57c2e0c960f8e25f56a66ba3a1e90e124f207001)
@@ -629,7 +654,12 @@ class afc:
         """
         Print timer callback to check if printer is currently in a print. If printer is in a print,
         current filename is looked up and metadata is pulled from moonraker to get total filament change
-        count and per-tool temperatures. Once this is done timer callback is stopped and unregistered.
+        count and per-tool temperatures.
+
+        Metadata is fetched asynchronously since this reactor timer runs while printing and shouldn't
+        block on the HTTP round trip to moonraker. _finish_print_start runs once it's ready
+        (or immediately if there's no moonraker to query). Once this is done timer callback is
+        stopped and unregistered.
         """
         # Remove timer from reactor
         self.reactor.unregister_timer(self.in_print_timer)
@@ -640,20 +670,36 @@ class afc:
             self.number_of_toolchanges = 0
             if (self.moonraker is not None
                 and self.print_data_metadata):
-                self.print_data_metadata.filename = print_filename
-                self.number_of_toolchanges = self.print_data_metadata.tool_change_count
-                self.print_tool_temperatures = self.print_data_metadata.tool_temperatures
-            self.current_toolchange     = -1 # Reset
-            self.logger.info("Total number of toolchanges set to {}".format(self.number_of_toolchanges))
-
-            # Get current lane and update position to reset fault detection as sometimes
-            # purging in PRINT_START can lead to false positive detections
-            current_lane = self.function.get_current_lane_obj()
-            if current_lane:
-                if current_lane.buffer_obj is not None:
-                    current_lane.buffer_obj.update_filament_error_pos()
+                self.print_data_metadata.query_filename(print_filename,
+                                                        on_fetched=self._finish_print_start)
+            else:
+                self._finish_print_start()
 
         return self.reactor.NEVER
+
+    def _finish_print_start(self) -> None:
+        """
+        Completes print-start moonraker file metadata query: applies the toolchange count and
+        per-tool temperatures cached by print_data_metadata (if a query was made). Resets
+        current_toolchange, and resets the current lane's fault-detection position.
+
+        Runs either immediately from in_print_reactor_timer (no moonraker/print_data_metadata to
+        query) or from the completion callback once print_data_metadata.query_filename()
+        finishes fetching metadata.
+        """
+        if (self.moonraker is not None
+            and self.print_data_metadata):
+            self.number_of_toolchanges = self.print_data_metadata.tool_change_count
+            self.print_tool_temperatures = self.print_data_metadata.tool_temperatures
+        self.current_toolchange     = -1 # Reset
+        self.logger.info("Total number of toolchanges set to {}".format(self.number_of_toolchanges))
+
+        # Get current lane and update position to reset fault detection as sometimes
+        # purging in PRINT_START can lead to false positive detections
+        current_lane = self.function.get_current_lane_obj()
+        if current_lane:
+            if current_lane.buffer_obj is not None:
+                current_lane.buffer_obj.update_filament_error_pos()
 
     def _get_default_material_temps(self, cur_lane):
         """
@@ -678,7 +724,7 @@ class afc:
         # material-specific temp
         using_min_value = True
         if (cur_lane.extruder_temp is not None
-            and cur_lane.extruder_temp > 0
+            and cur_lane.extruder_temp > 0  # Keep 0 unset if min_extrude_temp is configured below zero.
             and cur_lane.extruder_temp > self.heater.min_extrude_temp):
             temp_value = cur_lane.extruder_temp
             using_min_value = False
@@ -1144,6 +1190,13 @@ class afc:
         Only save previous location on the first toolchange call to keep an error state from
         overwriting the location
         """
+        if not self.function.is_homed(for_move=True):
+            self.function.log_toolhead_pos(
+                f"Not Saving unhomed position, Error State: {self.error_state}, "
+                f"Is Paused {self.function.is_paused()}, Position_saved {self.position_saved}, "
+                f"in toolchange: {self.in_toolchange}, POS: "
+            )
+            return
         if not self.in_toolchange:
             if (not self.error_state
                 and not self.function.is_paused()
@@ -1156,7 +1209,7 @@ class afc:
                 self.speed                  = self.gcode_move.speed
                 self.speed_factor           = self.gcode_move.speed_factor
                 self.absolute_coord         = self.gcode_move.absolute_coord
-                self.absolute_extrude       = self.gcode_move.absolute_extrude
+                self.absolute_extrude       = get_gcode_absolute_extrude(self.gcode_move)
                 self.extrude_factor         = self.gcode_move.extrude_factor
                 # Only rounded for the log message below, stored position values keep full precision
                 msg = f"Saving position {round_floats(self.last_toolhead_position)}"
@@ -1189,6 +1242,15 @@ class afc:
 
         :param move_z_first: Enable to move z before moving x,y
         """
+        # Only restore position if a valid position was saved, otherwise just return
+        if not self.position_saved:
+            self.function.log_toolhead_pos(
+                f"Not restoring position, Error State: {self.error_state}, "
+                f"Is Paused {self.function.is_paused()}, Position_saved {self.position_saved}, "
+                f"in toolchange: {self.in_toolchange}, POS: "
+            )
+            return
+
         # Only rounded for the log message below, restore logic below uses full precision
         msg = f"Restoring Position {round_floats(self.last_toolhead_position)}"
         msg += f" Base position: {round_floats(self.base_position)}"
@@ -1220,7 +1282,7 @@ class afc:
 
         # Restore absolute coords
         self.gcode_move.absolute_coord      = self.absolute_coord
-        self.gcode_move.absolute_extrude    = self.absolute_extrude
+        set_gcode_absolute_extrude(self.gcode_move, self.absolute_extrude)
         self.gcode_move.extrude_factor      = self.extrude_factor
         self.gcode_move.speed               = self.speed
         self.gcode_move.speed_factor        = self.speed_factor
@@ -1272,12 +1334,74 @@ class afc:
             str["system"]["extruders"][cur_extruder.name]={}
             str["system"]["extruders"][cur_extruder.name]['lane_loaded'] = cur_extruder.lane_loaded
 
+        # Handing off to the background writer thread so a slow disk doesn't
+        # block the reactor; queue.put_nowait never blocks the caller here
+        self._var_write_queue.put_nowait(str)
+
+    def join_threads(self) -> None:
+        """
+        Method is called when a klipper:disconnect happens so that all threads can be cleaned up
+        correctly
+        """
+        self._var_write_queue.put_nowait(self.sentinel)
+        self._var_write_thread_wait = False
+        self._var_write_thread.join()
+        if self.moonraker is not None:
+            self.moonraker.join_thread()
+
+    def _var_write_worker(self) -> None:
+        """
+        Background thread loop that pulls queued save_vars() values and
+        writes them to VarFile.unit file in the order they were queued. Runs for
+        the life of the process (daemon thread) so it needs no explicit shutdown.
+        """
         try:
-            with open(self.VarFile+ '.unit', 'w') as f:
-                f.write(json.dumps(str, indent=4))
+            thread_name = threading.current_thread().name
+            chelper.get_ffi()[1].set_thread_name(thread_name.encode("utf-8"))
+        except:
+            pass
+
+        while self._var_write_thread_wait:
+            data = self._var_write_queue.get()
+            if data is self.sentinel:
+                return
+            self._write_vars_snapshot(data)
+
+    def _write_vars_snapshot(self, data: dict) -> None:
+        """
+        Writes a single save_vars() values to VarFile.unit. Called from the
+        background writer thread, so a slow disk only blocks that thread and
+        not the reactor.
+
+        :param data: Dictionary of lane/unit/system state to write to VarFile.unit
+        """
+        try:
+            # Writing to temp directory first and them renaming to correct file so that a file
+            # does not get half written if klipper decides to crash in the middle of AFC writing
+            # to file.
+            target_file = self.VarFile + '.unit'
+            temp_path = target_file + ".tmp"
+            with open(temp_path, 'w') as f:
+                f.write(json.dumps(data, indent=4))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, target_file)
         except Exception as e:
-            self.logger.error("Error happened when trying to save variables, check AFC.log for error")
-            self.logger.debug(f"Error:{e}\n{traceback.format_exc()}", only_debug=True)
+            err = f"Error:{e}\n{traceback.format_exc()}"
+            # Push back onto the reactor thread before logging: AFC_logger
+            # touches gcode/webhooks state that isn't safe to call from here
+            self.reactor.register_async_callback(
+                lambda et, err=err: self._log_save_vars_error(err))
+
+    def _log_save_vars_error(self, err: str) -> None:
+        """
+        Logs a save_vars file-write failure. Called back on the reactor thread
+        via register_async_callback since the write happens on a background thread.
+
+        :param err: Formatted error/traceback string to log
+        """
+        self.logger.error("Error happened when trying to save variables, check AFC.log for error")
+        self.logger.debug(err, only_debug=True)
 
     # HUB COMMANDS
     cmd_HUB_LOAD_help = "Load lane into hub"
@@ -1389,6 +1513,7 @@ class afc:
             # Setting status as ejecting so if filament is removed and de-activates the prep sensor while
             # extruder motors are still running it does not trigger infinite spool or pause logic
             # once user removes filament lanes status will go to None
+            cur_lane.unit_obj.lane_unloading(cur_lane)
             cur_lane.status = AFCLaneState.EJECTING
             self.save_vars()
 
@@ -1405,7 +1530,7 @@ class afc:
             # Removing spool from vars since it was ejected
             self.spool.set_spoolID(cur_lane, None)
             self.logger.info("LANE {} eject done".format(cur_lane.name))
-            cur_lane.unit_obj.lane_not_ready(cur_lane)
+            cur_lane.unit_obj.lane_unloaded(cur_lane)
         elif cur_lane.extruder_obj.is_standalone() and cur_lane.extruder_obj.lane_loaded:
             cur_lane.status = AFCLaneState.EJECTING
             cur_lane.extruder_obj.load_unload_sequence(cur_lane.extruder_obj.tool_stn_unload*-1)
@@ -1828,6 +1953,7 @@ class afc:
             cur_lane.status = AFCLaneState.TOOL_LOADED
             self.save_vars()
             cur_lane.sync_to_extruder()
+            cur_lane.unit_obj.lane_tool_loaded_gears(cur_lane)
 
             if load_to_gears:
                 cur_lane.set_tool_loaded(normal_toolchange=True)
@@ -2332,7 +2458,7 @@ class afc:
 
             # Finalize unloading and reset lane state.
             cur_lane.loaded_to_hub = True
-            cur_lane.unit_obj.lane_tool_unloaded(cur_lane)
+            cur_lane.unit_obj.lane_loaded(cur_lane)
             cur_lane.status = AFCLaneState.NONE
 
             if (cur_lane.is_direct_hub()

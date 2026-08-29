@@ -178,6 +178,8 @@ class AfcToolchanger(afcUnit):
         else:
             self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
 
+        self.afc.function.handle_activate_extruder()
+
         lane_obj = self.afc.function.get_current_lane_obj()
         if lane_obj:
             if (lane_obj.prep_state

@@ -23,7 +23,9 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+import json
+import threading
+from unittest.mock import MagicMock, call, patch
 import pytest
 
 from extras.AFC import afc, State, AFC_VERSION
@@ -125,6 +127,8 @@ def _make_afc():
     obj.logger = MockLogger()
     obj.reactor = inner.reactor
     obj.moonraker = None
+    obj._var_write_thread_wait = True
+    obj._var_write_thread = MagicMock()
     obj.function = MagicMock()
     obj.gcode = MagicMock()
     obj.message_queue = []
@@ -168,6 +172,7 @@ def _make_afc():
     obj.print_data_metadata = None
     obj.disable_print_temp_check = False
     obj.enable_multiple_mapping = False
+    obj.active_led_effects = []
     return obj
 
 
@@ -252,7 +257,7 @@ class TestGetStatus:
         required = {
             "current_load", "current_state", "error_state",
             "lanes", "extruders", "hubs", "buffers", "units",
-            "message", "position_saved", "multiple_tool_mapping"
+            "message", "position_saved", "multiple_tool_mapping",
         }
         for key in required:
             assert key in status, f"Missing key: {key}"
@@ -2841,6 +2846,8 @@ def _make_afc_for_save_pos():
     obj.gcode_move.speed_factor = 0.016666666666666666
     obj.gcode_move.absolute_coord = True
     obj.gcode_move.absolute_extrude = False
+    obj.gcode_move.allow_absolute_extrude = False
+    obj.gcode_move.get_status.return_value = {"absolute_extrude": False}
     obj.gcode_move.extrude_factor = 1.0
     obj.toolhead.get_position.return_value = [
         165.174093123, 256.300678987, 3.0715305953986847, 2882.80021999998,
@@ -2959,6 +2966,41 @@ class TestSavePos:
         )
         obj.function.log_toolhead_pos.assert_called_once_with(expected)
 
+    def test_does_not_save_when_not_homed(self):
+        """When function.is_homed(for_move=True) returns False, save_pos returns
+        immediately without inspecting in_toolchange/error_state/is_paused/position_saved."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.function.is_homed.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        assert obj.position_saved is False
+        assert not hasattr(obj, "last_toolhead_position")
+        obj.function.is_homed.assert_called_once_with(for_move=True)
+        obj.function.log_toolhead_pos.assert_called_once()
+
+    def test_logs_not_saving_unhomed_message(self):
+        """Verifies the exact log_toolhead_pos() call made on the not-homed branch."""
+        obj = _make_afc_for_save_pos()
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+        obj.function.is_homed.return_value = False
+        obj.position_saved = False
+
+        obj.save_pos()
+
+        expected = (
+            f"Not Saving unhomed position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused()}, Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+
     def test_does_not_save_when_in_toolchange(self):
         """When in_toolchange is True, the outer branch is taken regardless of
         error_state/is_paused/position_saved."""
@@ -3055,6 +3097,7 @@ class TestRestorePos:
         assert obj.gcode_move.homing_position == [0.0, 0.0, 0.0, 0.0]
         assert obj.gcode_move.absolute_coord is True
         assert obj.gcode_move.absolute_extrude is False
+        assert obj.gcode_move.allow_absolute_extrude is False
         assert obj.gcode_move.extrude_factor == 1.0
         assert obj.gcode_move.speed == 350.0
         assert obj.gcode_move.speed_factor == 0.016666666666666666
@@ -3124,6 +3167,63 @@ class TestRestorePos:
         )
         assert calls[2].args[0] == expected_final
 
+    def test_does_not_restore_when_position_not_saved(self):
+        """When position_saved is False, restore_pos returns immediately without
+        touching gcode_move state, moving the toolhead, or changing current_state."""
+        obj = _make_afc_for_restore_pos()
+        obj.position_saved = False
+        obj.current_state = State.IDLE
+        obj.function.is_paused.return_value = False
+        last_position_before = list(obj.gcode_move.last_position)
+        base_position_before = list(obj.gcode_move.base_position)
+
+        obj.restore_pos(move_z_first=False)
+
+        assert obj.position_saved is False
+        assert obj.current_state == State.IDLE
+        assert obj.gcode_move.last_position == last_position_before
+        assert obj.gcode_move.base_position == base_position_before
+        obj.move_z_pos.assert_not_called()
+        obj.gcode_move.move_with_transform.assert_not_called()
+
+        expected = (
+            f"Not restoring position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused.return_value}, "
+            f"Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+        debug_msgs = [m for lvl, m in obj.logger.messages if lvl == "debug"]
+        assert debug_msgs == []
+
+    def test_does_not_restore_when_position_not_saved_move_z_first_true(self):
+        """The position_saved guard applies before the move_z_first branch is
+        ever reached, regardless of which value is passed."""
+        obj = _make_afc_for_restore_pos()
+        obj.position_saved = False
+
+        obj.restore_pos(move_z_first=True)
+
+        obj.move_z_pos.assert_not_called()
+        obj.gcode_move.move_with_transform.assert_not_called()
+
+    def test_logs_not_restoring_message_when_position_not_saved(self):
+        """Verifies the exact log_toolhead_pos() call made on the not-saved branch."""
+        obj = _make_afc_for_restore_pos()
+        obj.position_saved = False
+        obj.in_toolchange = False
+        obj.error_state = False
+        obj.function.is_paused.return_value = False
+
+        obj.restore_pos(move_z_first=False)
+
+        expected = (
+            f"Not restoring position, Error State: {obj.error_state}, "
+            f"Is Paused {obj.function.is_paused()}, Position_saved {obj.position_saved}, "
+            f"in toolchange: {obj.in_toolchange}, POS: "
+        )
+        obj.function.log_toolhead_pos.assert_called_once_with(expected)
+
 
 # in_print_reactor_timer: moonraker None guard
 
@@ -3149,18 +3249,47 @@ class TestInPrintReactorTimer:
         assert result == obj.reactor.NEVER
 
     def test_calls_moonraker_when_in_print_and_moonraker_set(self):
-        """Happy path: print_data_metadata is queried when both in_print and moonraker are set."""
+        """Happy path: print_data_metadata is queried (async) when both
+        in_print and moonraker are set; applying the result is deferred to
+        the on_fetched callback, simulated here firing immediately."""
         obj = self._make()
         obj.moonraker = MagicMock()
         obj.print_data_metadata = MagicMock()
         obj.print_data_metadata.tool_change_count = 7
         obj.print_data_metadata.tool_temperatures = [210]
+        obj.print_data_metadata.query_filename.side_effect = (
+            lambda value, on_fetched=None: on_fetched() if on_fetched else None
+        )
         obj.function.in_print.return_value = (True, "test.gcode")
         obj.function.get_current_lane_obj.return_value = None
         obj.in_print_reactor_timer(0.0)
-        assert obj.print_data_metadata.filename == "test.gcode"
+        obj.print_data_metadata.query_filename.assert_called_once_with(
+            "test.gcode", on_fetched=obj._finish_print_start)
         assert obj.number_of_toolchanges == 7
         assert obj.print_tool_temperatures == [210]
+        assert obj.current_toolchange == -1
+
+    def test_toolchange_count_not_applied_until_on_fetched_fires(self):
+        """The metadata fetch is async: number_of_toolchanges must stay at
+        its reset-to-0 value until the on_fetched callback actually runs, not
+        just because query_filename() was called."""
+        obj = self._make()
+        obj.moonraker = MagicMock()
+        obj.print_data_metadata = MagicMock()
+        obj.print_data_metadata.tool_change_count = 7
+        captured = {}
+        obj.print_data_metadata.query_filename.side_effect = (
+            lambda value, on_fetched=None: captured.setdefault("on_fetched", on_fetched)
+        )
+        obj.function.in_print.return_value = (True, "test.gcode")
+        obj.function.get_current_lane_obj.return_value = None
+
+        obj.in_print_reactor_timer(0.0)
+        assert obj.number_of_toolchanges == 0
+        assert obj.current_toolchange != -1
+
+        captured["on_fetched"]()
+        assert obj.number_of_toolchanges == 7
         assert obj.current_toolchange == -1
 
     def test_does_not_call_moonraker_when_not_in_print(self):
@@ -3172,6 +3301,20 @@ class TestInPrintReactorTimer:
         obj.in_print_reactor_timer(0.0)
         assert not obj.print_data_metadata.method_calls
         assert obj.number_of_toolchanges == 0
+
+    def test_finish_print_start_skips_buffer_update_when_lane_has_no_buffer(self):
+        """Covers current_lane truthy but buffer_obj falsy in _finish_print_start."""
+        obj = self._make()
+        obj.moonraker = None
+        current_lane = MagicMock()
+        current_lane.buffer_obj = None
+        obj.function.get_current_lane_obj.return_value = current_lane
+        obj.function.in_print.return_value = (True, "test.gcode")
+
+        # Would raise AttributeError from None.update_filament_error_pos() if
+        # the buffer_obj-is-None guard were missing
+        obj.in_print_reactor_timer(0.0)
+        assert obj.current_toolchange == -1
 
     def test_skips_metadata_lookup_when_print_data_metadata_is_none(self):
         """Covers the `self.print_data_metadata` half of
@@ -3527,6 +3670,55 @@ class TestDoPoopKickWipe:
 
 
 
+class TestLoadSequenceDefaultPathSuccess:
+    """Covers the default (no unit_load_lane hook) hub/toolhead move path in
+    load_sequence all the way to its finalize step, distinct from
+    test_no_unit_load_lane_hook_falls_through_to_default_path which returns
+    early via a homing-error branch and never reaches finalization."""
+
+    def _make(self):
+        afc = _make_afc()
+        afc._check_extruder_temp = MagicMock(return_value=False)
+        afc.save_vars = MagicMock()
+        afc.homing_enabled = True
+        afc.gcode_move = MagicMock()
+        afc.gcode_move.last_position = [0.0, 0.0, 0.0, 0.0]
+        lane = _make_afc_lane()
+        lane.custom_load_cmd = None
+        lane.unit_obj = MagicMock(spec=["load_then_home", "lane_tool_loaded_gears", "lane_tool_loaded"])
+        lane.hub_obj = None
+        lane.loaded_to_hub = False
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.unit_obj.load_then_home.return_value = (None, None, AFCMoveWarning.NONE)
+        lane.get_toolhead_pre_sensor_state = MagicMock(return_value=True)
+        lane.sync_to_extruder = MagicMock()
+        lane.spool_id = None
+        lane.enable_buffer = MagicMock()
+        hub = MagicMock()
+        extruder = MagicMock()
+        extruder.tool_end = False  # skip the post-load tool_end-sensor retry loop
+        return afc, lane, hub, extruder
+
+    def test_sync_to_extruder_called(self):
+        afc, lane, hub, extruder = self._make()
+        afc.load_sequence(lane, hub, extruder)
+        lane.sync_to_extruder.assert_called_once_with()
+
+    def test_status_set_to_tool_loaded(self):
+        """status passes through TOOL_LOADED right after sync_to_extruder,
+        then set_tool_loaded() (called later in the same sequence) advances
+        it to TOOLED -- asserting the final state here."""
+        afc, lane, hub, extruder = self._make()
+        afc.load_sequence(lane, hub, extruder)
+        assert lane.status == AFCLaneState.TOOLED
+
+    def test_lane_tool_loaded_gears_called(self):
+        afc, lane, hub, extruder = self._make()
+        afc.load_sequence(lane, hub, extruder)
+        assert not hasattr(lane.unit_obj, "unit_load_lane")
+        lane.unit_obj.lane_tool_loaded_gears.assert_called_once_with(lane)
+
+
 class TestToolLoadNeedPurge:
     def _make_afc_lane_for_need_purge(self, need_purge=True, check_extruder_temp_return=True,
                                       printing=False):
@@ -3557,7 +3749,7 @@ class TestToolLoadNeedPurge:
 
         afc.capture_toolhead_temp.assert_not_called()
         afc.restore_toolhead_temp.assert_not_called()
-        afc.save_vars.assert_not_called()        
+        afc.save_vars.assert_not_called()
 
     def test_need_purge_no_purge_length(self):
         afc, lane = self._make_afc_lane_for_need_purge()
@@ -3998,6 +4190,42 @@ class TestUnloadSequenceUnitUnloadLane:
         lane.select_lane.assert_called_once_with()
         afc.error.handle_lane_failure.assert_called_once()
 
+    def test_default_path_success_calls_lane_loaded_not_lane_tool_unloaded(self):
+        """Covers the default toolhead-retract path all the way through to
+        finalization, distinct from the early-failure variant above. Also
+        locks in that this now calls lane_loaded (not the old lane_tool_unloaded)
+        once the lane is safely back at the hub."""
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj = MagicMock(
+            spec=["lane_unloading", "move_to_hub", "lane_loaded", "return_to_home"])
+        afc.tool_cut = False
+        afc.form_tip = False
+        afc.move_e_pos = MagicMock()
+        afc.homing_enabled = False
+        lane.disable_buffer = MagicMock()
+        lane.sync_to_extruder = MagicMock()
+        lane.unsync_to_extruder = MagicMock()
+        lane.select_lane = MagicMock()
+        lane.move_advanced = MagicMock()
+        lane.set_tool_unloaded = MagicMock()
+        lane.tool_max_unload_attempts = 5
+        lane.get_toolhead_pre_sensor_state.return_value = False
+        lane.is_direct_hub = MagicMock(return_value=False)
+        lane.unit_obj.move_to_hub.return_value = (None, None, AFCMoveWarning.NONE)
+        extruder.tool_start = ""
+        extruder.tool_stn_unload = 0
+        extruder.tool_end_state = False
+        extruder.tool_sensor_after_extruder = 0
+        hub.state = False
+        hub.cut = False
+
+        result = afc.unload_sequence(lane, hub, extruder)
+
+        assert result is not False
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+        assert lane.status == AFCLaneState.NONE
+        assert lane.loaded_to_hub is True
+
 
 # ── unload_sequence: custom_unload_cmd path runs post_unload_macro ─────────────
 # New branch inside the (pre-existing) custom_unload_cmd path: a configured
@@ -4316,7 +4544,8 @@ class TestLaneUnload:
         obj.LANE_UNLOAD(cur_lane)
         obj.spool.set_spoolID.assert_called_once_with(cur_lane, None)
         cur_lane.unit_obj.return_to_home.assert_called_once()
-        cur_lane.unit_obj.lane_not_ready.assert_called_once_with(cur_lane)
+        cur_lane.unit_obj.lane_unloading.assert_called_once_with(cur_lane)
+        cur_lane.unit_obj.lane_unloaded.assert_called_once_with(cur_lane)
 
     def test_eject_logs_completion_only(self):
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
@@ -4418,3 +4647,236 @@ class TestLaneUnload:
             side_effect=lambda _lane: seen.append(obj.current_state))
         obj.LANE_UNLOAD(cur_lane)
         assert seen == [State.EJECTING_LANE]
+
+
+# ── save_vars / background var-file writer ─────────────────────────────────────
+
+def _make_afc_for_save_vars(prep_done=True):
+    """Build an afc instance wired up for save_vars(), with the write queue
+    mocked so tests can inspect what gets enqueued without touching disk."""
+    obj = _make_afc()
+    obj.VarFile = "/tmp/AFC_test_var"
+    obj.prep_done = prep_done
+    obj.function.get_current_lane = MagicMock(return_value="lane1")
+    obj._var_write_queue = MagicMock()
+
+    lane = MagicMock()
+    lane.name = "lane1"
+    lane.get_status.return_value = {"map": ["T0"]}
+    unit = MagicMock()
+    unit.name = "Turtle_1"
+    unit.lanes = {"lane1": lane}
+    obj.units = {"Turtle_1": unit}
+    obj.lanes = {"lane1": lane}
+
+    extruder = MagicMock()
+    extruder.name = "extruder"
+    extruder.lane_loaded = "lane1"
+    obj.tools = {"extruder": extruder}
+    obj.get_bypass_state = MagicMock(return_value=False)
+    return obj
+
+
+class TestSaveVars:
+    def test_returns_early_when_prep_not_done(self):
+        obj = _make_afc_for_save_vars(prep_done=False)
+        obj.save_vars()
+        obj._var_write_queue.put_nowait.assert_not_called()
+
+    def test_enqueues_snapshot_when_prep_done(self):
+        obj = _make_afc_for_save_vars(prep_done=True)
+        obj.save_vars()
+        obj._var_write_queue.put_nowait.assert_called_once()
+
+    def test_enqueued_snapshot_has_expected_lane_and_system_data(self):
+        obj = _make_afc_for_save_vars(prep_done=True)
+        obj.save_vars()
+        data = obj._var_write_queue.put_nowait.call_args[0][0]
+        assert data["Turtle_1"]["lane1"] == {"map": ["T0"]}
+        assert data["system"]["current_load"] == "lane1"
+        assert data["system"]["num_units"] == 1
+        assert data["system"]["num_lanes"] == 1
+        assert data["system"]["num_extruders"] == 1
+        assert data["system"]["bypass"] == {"enabled": False}
+        assert data["system"]["extruders"]["extruder"]["lane_loaded"] == "lane1"
+
+    def test_does_not_touch_disk_directly(self):
+        """The actual write must happen on the background thread, not inline."""
+        obj = _make_afc_for_save_vars(prep_done=True)
+        with patch("builtins.open") as mock_open:
+            obj.save_vars()
+        mock_open.assert_not_called()
+
+
+class TestWriteVarsSnapshot:
+    def test_writes_json_to_var_file(self, tmp_path):
+        obj = _make_afc()
+        obj.VarFile = str(tmp_path / "AFC")
+        obj._write_vars_snapshot({"system": {"current_load": "lane1"}})
+        written = (tmp_path / "AFC.unit").read_text()
+        assert json.loads(written) == {"system": {"current_load": "lane1"}}
+
+    def test_write_failure_schedules_error_log_on_reactor(self):
+        obj = _make_afc()
+        obj.VarFile = "/nonexistent_dir_for_afc_tests/does/not/exist/AFC"
+        obj.reactor.register_async_callback = MagicMock()
+
+        obj._write_vars_snapshot({"a": 1})
+
+        obj.reactor.register_async_callback.assert_called_once()
+
+    def test_scheduled_callback_logs_via_log_save_vars_error(self):
+        """The callable handed to register_async_callback, once invoked with
+        an eventtime (as the reactor would), must call _log_save_vars_error
+        with a formatted error string."""
+        obj = _make_afc()
+        obj.VarFile = "/nonexistent_dir_for_afc_tests/does/not/exist/AFC"
+        obj.reactor.register_async_callback = MagicMock()
+        obj._log_save_vars_error = MagicMock()
+
+        obj._write_vars_snapshot({"a": 1})
+
+        scheduled_cb = obj.reactor.register_async_callback.call_args[0][0]
+        scheduled_cb(0.0)
+        obj._log_save_vars_error.assert_called_once()
+        err_arg = obj._log_save_vars_error.call_args[0][0]
+        assert err_arg.startswith("Error:")
+
+    def test_success_does_not_schedule_error_log(self):
+        obj = _make_afc()
+        obj.VarFile = "/tmp/AFC_test_var_success"
+        obj.reactor.register_async_callback = MagicMock()
+        obj._write_vars_snapshot({"a": 1})
+        obj.reactor.register_async_callback.assert_not_called()
+
+
+class TestLogSaveVarsError:
+    def test_logs_expected_error_and_debug_messages(self):
+        obj = _make_afc()
+        obj._log_save_vars_error("Error:boom\ntraceback here")
+        assert obj.logger.messages == [
+            ("error", "Error happened when trying to save variables, check AFC.log for error"),
+            ("debug", "Error:boom\ntraceback here"),
+        ]
+
+
+class TestVarWriteWorker:
+    def test_processes_queued_snapshot_then_loops(self):
+        """Drives exactly one loop iteration: the second queue.get() raises
+        to break out of the otherwise-infinite loop deterministically."""
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [{"a": 1}, RuntimeError("stop test loop")]
+        obj._write_vars_snapshot = MagicMock()
+
+        with pytest.raises(RuntimeError, match="stop test loop"):
+            obj._var_write_worker()
+
+        obj._write_vars_snapshot.assert_called_once_with({"a": 1})
+
+    def test_sets_os_thread_name(self):
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [RuntimeError("stop test loop")]
+        fake_ffi_lib = MagicMock()
+
+        with patch("chelper.get_ffi", return_value=(MagicMock(), fake_ffi_lib)):
+            with pytest.raises(RuntimeError, match="stop test loop"):
+                obj._var_write_worker()
+
+        fake_ffi_lib.set_thread_name.assert_called_once_with(
+            threading.current_thread().name.encode("utf-8"))
+
+    def test_survives_exception_setting_thread_name(self):
+        """A failure naming the OS thread (e.g. chelper unavailable) must not
+        stop the worker from processing queued snapshots."""
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [{"a": 1}, RuntimeError("stop test loop")]
+        obj._write_vars_snapshot = MagicMock()
+
+        with patch("chelper.get_ffi", side_effect=Exception("boom")):
+            with pytest.raises(RuntimeError, match="stop test loop"):
+                obj._var_write_worker()
+
+        obj._write_vars_snapshot.assert_called_once_with({"a": 1})
+
+    def test_returns_on_sentinel_without_processing_it(self):
+        """join_threads queues the sentinel to stop the loop; the worker must
+        return instead of treating it as a snapshot to write."""
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [obj.sentinel]
+        obj._write_vars_snapshot = MagicMock()
+
+        result = obj._var_write_worker()
+
+        assert result is None
+        obj._write_vars_snapshot.assert_not_called()
+
+    def test_stops_looping_once_join_threads_clears_wait_flag(self):
+        """Simulates a real klippy:disconnect: join_threads flips the wait
+        flag and queues the sentinel, and the worker must exit its loop."""
+        obj = _make_afc()
+        obj._var_write_queue = MagicMock()
+        obj._var_write_queue.get.side_effect = [{"a": 1}]
+        obj._write_vars_snapshot = MagicMock()
+        obj.moonraker = None
+
+        def stop_after_snapshot(data):
+            obj.join_threads()
+
+        obj._write_vars_snapshot.side_effect = stop_after_snapshot
+
+        obj._var_write_worker()
+
+        obj._write_vars_snapshot.assert_called_once_with({"a": 1})
+        assert obj._var_write_thread_wait is False
+
+
+class TestJoinThreads:
+    """join_threads runs on klippy:disconnect to stop the background var
+    writer thread and, if moonraker was set up, its writer thread too."""
+
+    def _make_afc_for_join_threads(self):
+        obj = _make_afc()
+        obj._var_write_thread_wait = True
+        obj._var_write_queue = MagicMock()
+        return obj
+
+    def test_clears_var_write_thread_wait_flag(self):
+        obj = self._make_afc_for_join_threads()
+        obj.join_threads()
+        assert obj._var_write_thread_wait is False
+
+    def test_puts_sentinel_on_var_write_queue(self):
+        obj = self._make_afc_for_join_threads()
+        obj.join_threads()
+        obj._var_write_queue.put_nowait.assert_called_once_with(obj.sentinel)
+
+    def test_calls_moonraker_join_thread_when_moonraker_present(self):
+        obj = self._make_afc_for_join_threads()
+        obj.moonraker = MagicMock()
+        obj.join_threads()
+        obj.moonraker.join_thread.assert_called_once()
+
+    def test_does_not_error_when_moonraker_is_none(self):
+        obj = self._make_afc_for_join_threads()
+        obj.moonraker = None
+        obj.join_threads()  # must not raise
+
+    def test_joins_var_write_thread(self):
+        obj = self._make_afc_for_join_threads()
+        obj.join_threads()
+        obj._var_write_thread.join.assert_called_once()
+
+    def test_joins_var_write_thread_after_queuing_sentinel(self):
+        """The worker only breaks out of its loop once it dequeues the
+        sentinel, so the sentinel must be queued before join() is called or
+        this would deadlock against a real thread."""
+        obj = self._make_afc_for_join_threads()
+        order = []
+        obj._var_write_queue.put_nowait.side_effect = lambda *a: order.append("put_nowait")
+        obj._var_write_thread.join.side_effect = lambda *a, **kw: order.append("join")
+        obj.join_threads()
+        assert order == ["put_nowait", "join"]

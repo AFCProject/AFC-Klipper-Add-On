@@ -546,6 +546,81 @@ class TestGetTd1DataUnitHook:
         assert "not loaded" in msg.lower()
 
 
+# ── get_td1_data_load / _apply_td1_data_load ──────────────────────────────────
+# Runs at the end of every TOOL_LOAD, so this fetches asynchronously (unlike
+# get_td1_data above, used by calibration/PREP capture, which stays synchronous).
+
+class TestGetTd1DataLoad:
+    def _make(self, td1_present=True, td1_device_id="SN1"):
+        lane = _make_afc_lane()
+        lane.afc.td1_present = td1_present
+        lane.td1_device_id = td1_device_id
+        lane.afc.moonraker = MagicMock()
+        return lane
+
+    def test_td1_not_present_skips_entirely(self):
+        lane = self._make(td1_present=False)
+        lane.get_td1_data_load()
+        lane.afc.moonraker.get_td1_data_async.assert_not_called()
+
+    def test_no_device_id_skips_entirely(self):
+        lane = self._make(td1_device_id=None)
+        lane.get_td1_data_load()
+        lane.afc.moonraker.get_td1_data_async.assert_not_called()
+
+    def test_no_moonraker_skips_entirely(self):
+        lane = self._make()
+        lane.afc.moonraker = None
+        lane.get_td1_data_load()  # must not raise
+
+    def test_dispatches_async_fetch_with_apply_callback(self):
+        lane = self._make()
+        lane.get_td1_data_load()
+        lane.afc.moonraker.get_td1_data_async.assert_called_once_with(
+            lane._apply_td1_data_load)
+
+
+class TestApplyTd1DataLoad:
+    def _make(self, td1_device_id="SN1"):
+        lane = _make_afc_lane()
+        lane.td1_device_id = td1_device_id
+        lane.unit_obj = MagicMock()
+        return lane
+
+    def test_invalid_device_skips_apply(self):
+        lane = self._make()
+        lane.afc.function._check_td1_id_in_data.return_value = (False, "not found")
+
+        lane._apply_td1_data_load({"OTHER": {}})
+
+        lane.afc.function._check_td1_id_in_data.assert_called_once_with({"OTHER": {}}, "SN1")
+        lane.unit_obj._apply_td1_data.assert_not_called()
+
+    def test_valid_device_applies_with_ignore_time(self):
+        lane = self._make()
+        lane.afc.function._check_td1_id_in_data.return_value = (True, "")
+        devices = {"SN1": {"td": "PLA", "color": "#FF0000", "scan_time": "2024-01-01T12:00:00Z"}}
+
+        lane._apply_td1_data_load(devices)
+
+        args = lane.unit_obj._apply_td1_data.call_args[0]
+        assert args[0] is lane
+        assert args[2] == devices
+        kwargs = lane.unit_obj._apply_td1_data.call_args[1]
+        assert kwargs.get("ignore_time") is True
+
+    def test_none_devices_from_failed_fetch_is_treated_as_invalid(self):
+        """A failed async fetch delivers None; _check_td1_id_in_data already
+        handles that (device can't be found in no data), so apply is skipped."""
+        lane = self._make()
+        lane.afc.function._check_td1_id_in_data.return_value = (False, "not found")
+
+        lane._apply_td1_data_load(None)
+
+        lane.afc.function._check_td1_id_in_data.assert_called_once_with(None, "SN1")
+        lane.unit_obj._apply_td1_data.assert_not_called()
+
+
 # ── handle_load_runout ────────────────────────────────────────────────────────
 
 class TestHandleLoadRunout:
@@ -2334,8 +2409,136 @@ def _make_lane_for_set_loaded(
     lane.unit_obj.select_lane = MagicMock()
  
     return lane
- 
- 
+
+
+# ── set_loaded / set_unloaded ──────────────────────────────────────────────
+
+class TestSetLoaded:
+    def test_status_set_to_loaded(self):
+        lane = _make_afc_lane()
+        lane.set_loaded()
+        assert lane.status == AFCLaneState.LOADED
+
+    def test_calls_lane_loaded(self):
+        lane = _make_afc_lane()
+        lane.set_loaded()
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+
+    def test_calls_spool_set_values(self):
+        lane = _make_afc_lane()
+        lane.set_loaded()
+        lane.afc.spool._set_values.assert_called_once_with(lane)
+
+
+class TestSetUnloaded:
+    def _make_lane(self, remember_spool=False):
+        lane = _make_afc_lane()
+        lane.tool_loaded = True
+        lane.status = AFCLaneState.TOOLED
+        lane.loaded_to_hub = True
+        lane.td1_data = {"scan_time": "1.0"}
+        lane.remember_spool = remember_spool
+        return lane
+
+    def test_tool_loaded_cleared(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.tool_loaded is False
+
+    def test_status_set_to_none(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.status == AFCLaneState.NONE
+
+    def test_loaded_to_hub_cleared(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.loaded_to_hub is False
+
+    def test_td1_data_cleared(self):
+        lane = self._make_lane()
+        lane.set_unloaded()
+        assert lane.td1_data == {}
+
+    def test_clears_spool_values_when_not_remembering(self):
+        lane = self._make_lane(remember_spool=False)
+        lane.set_unloaded()
+        lane.afc.spool.clear_values.assert_called_once_with(lane)
+
+    def test_does_not_clear_spool_values_when_remembering(self):
+        """Covers the `not self.remember_spool` guard's False branch."""
+        lane = self._make_lane(remember_spool=True)
+        lane.set_unloaded()
+        lane.afc.spool.clear_values.assert_not_called()
+
+    def test_calls_lane_not_ready(self):
+        """set_unloaded now marks the lane not_ready (not the old
+        lane_unloaded), so a freshly-emptied lane and one that was never
+        loaded end up in the same LED state."""
+        lane = self._make_lane()
+        lane.set_unloaded()
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+
+# ── cmd_AFC_RECOVER_LANE ───────────────────────────────────────────────────
+
+class TestCmdAfcRecoverLane:
+    def _make_lane(self, remember_spool=False):
+        lane = _make_afc_lane()
+        lane.tool_loaded = True
+        lane.status = AFCLaneState.TOOLED
+        lane.loaded_to_hub = True
+        lane.td1_data = {"scan_time": "1.0"}
+        lane.remember_spool = remember_spool
+        return lane
+
+    def test_tool_loaded_cleared(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.tool_loaded is False
+
+    def test_status_set_to_none(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.status == AFCLaneState.NONE
+
+    def test_loaded_to_hub_cleared(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.loaded_to_hub is False
+
+    def test_td1_data_cleared(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.td1_data == {}
+
+    def test_clears_spool_values_when_not_remembering(self):
+        lane = self._make_lane(remember_spool=False)
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.afc.spool.clear_values.assert_called_once_with(lane)
+
+    def test_does_not_clear_spool_values_when_remembering(self):
+        """Covers the `not self.remember_spool` guard's False branch."""
+        lane = self._make_lane(remember_spool=True)
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.afc.spool.clear_values.assert_not_called()
+
+    def test_calls_lane_not_ready(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+
+    def test_saves_vars(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        lane.afc.save_vars.assert_called_once_with()
+
+    def test_logs_reset_message_with_lane_name(self):
+        lane = self._make_lane()
+        lane.cmd_AFC_RECOVER_LANE(MagicMock())
+        assert lane.logger.messages == [("info", f"{lane.name} reset")]
+
+
 class TestCmdSetLaneLoaded:
     """Tests for AFCLane.cmd_SET_LANE_LOADED."""
  
@@ -2719,7 +2922,7 @@ class TestPerformInfiniteRunout:
         info_msgs = [m for lvl, m in lane.logger.messages if lvl == "info"]
 
         assert lane.status is AFCLaneState.NONE
-        lane.unit_obj.lane_not_ready.assert_called_with(lane)
+        lane.unit_obj.lane_not_ready.assert_not_called()
         assert any(f"Infinite Spool triggered for {lane.name}" in m for m in info_msgs), info_msgs
         afc.lanes.get.assert_called_with(afc.current)
         assert afc.lanes.get.call_count == 1
@@ -3682,6 +3885,15 @@ class TestPrepCallback:
         lane.prep_callback(10, True)
         lane.unit_obj.prep_load.assert_called_once_with(lane)
 
+    def test_successful_load_activates_loading_led_before_prep_load(self):
+        lane = _make_lane_ready_to_load()
+        order = []
+        lane.unit_obj.lane_loading.side_effect = lambda *a, **kw: order.append("lane_loading")
+        lane.unit_obj.prep_load.side_effect = lambda *a, **kw: order.append("prep_load")
+        lane.prep_callback(10, True)
+        lane.unit_obj.lane_loading.assert_called_once_with(lane)
+        assert order == ["lane_loading", "prep_load"]
+
     def test_successful_load_resets_status_to_none(self):
         lane = _make_lane_ready_to_load()
         lane.status = AFCLaneState.LOADED
@@ -3706,8 +3918,25 @@ class TestPrepCallback:
         lane.afc.TOOL_LOAD.return_value = True
         lane.prep_callback(10, True)
         lane.afc.TOOL_LOAD.assert_called_once_with(lane)
-        lane.afc.spool._set_values.assert_called_once_with(lane)
+        assert lane.afc.spool._set_values.call_args.args == (lane,)
         lane.afc.afc_stats.increase_load_error_count.assert_not_called()
+
+    def test_direct_load_hub_defers_active_spool_push_to_set_values_on_done(self):
+        """TOOL_LOAD may push the active spool to Spoolman using a stale
+        spool_id before _set_values resolves a pending next_spool_id (e.g.
+        from an NFC scan). The on_done callback passed to _set_values must
+        re-push using the settled spool_id, and must not fire eagerly."""
+        lane = _make_lane_ready_to_load()
+        lane.hub = "direct_load"
+        lane.afc.TOOL_LOAD.return_value = True
+        lane.prep_callback(10, True)
+
+        lane.afc.spool.set_active_spool.assert_not_called()
+
+        on_done = lane.afc.spool._set_values.call_args.kwargs["on_done"]
+        lane.spool_id = 99
+        on_done()
+        lane.afc.spool.set_active_spool.assert_called_once_with(99)
 
     def test_direct_load_hub_tool_load_failure_increases_load_error_count(self):
         """When TOOL_LOAD fails in the direct_load prep_callback branch, the

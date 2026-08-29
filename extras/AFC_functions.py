@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_hub import afc_hub
     from gcode import GCodeCommand
+    from extras.gcode_move import GCodeMove
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -64,6 +65,40 @@ def round_floats(value: Any, digits: int = 6) -> Any:
         return [round_floats(v, digits) for v in value]
     return value
 
+
+def get_gcode_absolute_extrude(gcode_move: GCodeMove) -> bool:
+    """
+    Read Klipper GCodeMove absolute-extrude state.
+
+    Klipper PR 7349(v0.13.0-741) renamed the internal attribute from absolute_extrude to
+    allow_absolute_extrude.
+
+    :param gcode_move: Klipper gcode_move object
+    :return bool: Current absolute-extrude flag
+    """
+    if hasattr(gcode_move, "allow_absolute_extrude"):
+        return gcode_move.allow_absolute_extrude
+    return getattr(gcode_move, "absolute_extrude", True)
+
+
+def set_gcode_absolute_extrude(gcode_move: GCodeMove, value: bool) -> None:
+    """
+    Write Klipper GCodeMove absolute-extrude state.
+
+    Sets allow_absolute_extrude on post-PR-7349 Klipper and absolute_extrude
+    on older Klipper (hasattr / getattr compatibility).
+
+    :param gcode_move: Klipper gcode_move object
+    :param value: Absolute-extrude flag to restore
+    """
+    has_new = hasattr(gcode_move, "allow_absolute_extrude")
+    has_old = hasattr(gcode_move, "absolute_extrude")
+    # New name present, or old name missing: write the post-7349 attribute.
+    if has_new or not has_old:
+        gcode_move.allow_absolute_extrude = value
+    # Old name present, or new name missing: write the legacy attribute.
+    if has_old or not has_new:
+        gcode_move.absolute_extrude = value
 
 def load_config(config):
     return afcFunction(config)
@@ -384,16 +419,22 @@ class afcFunction:
         else:
             return True
 
-    def is_homed(self):
+    def is_homed(self, for_move: bool=False) -> bool:
         """
         Helper function to determine if printer is currently homed
 
+        :param for_move: True if the check is guarding a move, always returning hardware state
         :return boolean: True if xyz is homed
         """
         curtime = self.afc.reactor.monotonic()
         kin_status = self.afc.toolhead.get_kinematics().get_status(curtime)
-        if ('x' not in kin_status['homed_axes'] or 'y' not in kin_status['homed_axes'] or 'z' not in kin_status['homed_axes']) and \
-            not self.afc.disable_homing_check:
+        # Always return real homed status if the check is explicitly guarding a move,
+        # or if homing_check is not disabled in the config
+        homing_check = for_move or not self.afc.disable_homing_check
+        if (homing_check and
+            ('x' not in kin_status['homed_axes']
+            or 'y' not in kin_status['homed_axes']
+            or 'z' not in kin_status['homed_axes'])):
             return False
         else:
             return True
@@ -641,7 +682,7 @@ class afcFunction:
                     else:
                         obj.unit_obj.lane_loaded(obj)
                 else:
-                    obj.unit_obj.lane_unloaded(obj)
+                    obj.unit_obj.lane_not_ready(obj)
 
         # Exit early if lane is None
         if cur_lane_loaded is None:
@@ -698,7 +739,7 @@ class afcFunction:
         msg += f" speed_factor: {round_floats(self.afc.gcode_move.speed_factor)}"
         msg += f" extrude_factor: {round_floats(self.afc.gcode_move.extrude_factor)}"
         msg += f" absolute_coord: {self.afc.gcode_move.absolute_coord}"
-        msg += f" absolute_extrude: {self.afc.gcode_move.absolute_extrude}\n"
+        msg += f" absolute_extrude: {get_gcode_absolute_extrude(self.afc.gcode_move)}\n"
         self.logger.debug(msg, only_debug=True)
 
     def check_absolute_mode( self, func_name:str="" ):
@@ -714,9 +755,9 @@ class afcFunction:
         if not self.afc.gcode_move.absolute_coord:
             self.logger.debug("Printer coords not in absolute mode, setting to absolute mode")
             self.afc.gcode_move.absolute_coord = True
-        if not self.afc.gcode_move.absolute_extrude:
+        if not get_gcode_absolute_extrude(self.afc.gcode_move):
             self.logger.debug("Printer extruder not in absolute mode, setting to absolute mode")
-            self.afc.gcode_move.absolute_extrude = True
+            set_gcode_absolute_extrude(self.afc.gcode_move, True)
 
     def get_extruder_pos(self, eventtime=None, past_extruder_position=None, extruder=None):
         """
@@ -780,19 +821,34 @@ class afcFunction:
         :param print_error: Prints error message to logger if set to True
         :return bool,str: Returns tuple of True/False, error message if error occurred
         '''
+        td1_data = self.afc.moonraker.get_td1_data()
+        return self._check_td1_error_in_data(td1_data, serial_number, print_error)
+
+    def _check_td1_error_in_data(self, td1_data: Optional[dict], serial_number: Optional[str] = None,
+                                 print_error: bool = True) -> tuple[bool, str]:
+        '''
+        Checks an already-fetched TD-1 devices dict for errors, without
+        fetching it itself.
+
+        :param td1_data: TD-1 devices dict already fetched, None if the fetch failed
+        :param serial_number: Specific serial number to check for error
+        :param print_error: Prints error message to logger if set to True
+        :return bool,str: Returns tuple of True/False, error message if error occurred
+        '''
         error_occurred = False
         error_message = ""
-        td1_data = self.afc.moonraker.get_td1_data()
-        for serial in td1_data:
-            error = td1_data[serial].get("error")
-            if error is not None:
-                if serial_number is None or serial == serial_number:
-                    error_message = f"Error with TD-1 Serial: {serial}, please fix error with TD-1 and run 'AFC_RESET_TD1 SERIAL={serial}' macro.\n"
-                    error_message += "Some errors can occur when first booting machine and filament is in TD-1 device\n"
-                    error_message += f"Reported Error: {td1_data[serial]['error']}"
-                    error_occurred = True
-                    if print_error:
-                        self.logger.error(error_message)
+        if td1_data is not None:
+            for serial in td1_data:
+                error = td1_data[serial].get("error")
+                if error is not None:
+                    if (serial_number is None
+                        or serial == serial_number):
+                        error_message = f"Error with TD-1 Serial: {serial}, please fix error with TD-1 and run 'AFC_RESET_TD1 SERIAL={serial}' macro.\n"
+                        error_message += "Some errors can occur when first booting machine and filament is in TD-1 device\n"
+                        error_message += f"Reported Error: {td1_data[serial]['error']}"
+                        error_occurred = True
+                        if print_error:
+                            self.logger.error(error_message)
         return error_occurred, error_message
 
     def check_for_td1_id(self, serial_number):
@@ -805,10 +861,23 @@ class afcFunction:
                           str: error message if device does not exist or an error with TD-1 device
         """
         td1_data = self.afc.moonraker.get_td1_data()
-        if serial_number not in td1_data:
+        return self._check_td1_id_in_data(td1_data, serial_number)
+
+    def _check_td1_id_in_data(self, td1_data: Optional[dict], serial_number: Optional[str]) -> tuple[bool, str]:
+        """
+        Validates a serial number against an already-fetched TD-1 devices dict,
+        without fetching it itself.
+
+        :param td1_data: TD-1 devices dict already fetched, None if the fetch failed
+        :param serial_number: Serial number to check for
+        :return bool,str: bool: True if device exists/False if device does not exist or error with device
+                          str: error message if device does not exist or an error with TD-1 device
+        """
+        if (td1_data is None
+            or serial_number not in td1_data):
             return False, f"TD-1 Device ID ({serial_number}) supplied but ID not found."
 
-        no_error, error_message = self.check_for_td1_error(serial_number, print_error=False)
+        no_error, error_message = self._check_td1_error_in_data(td1_data, serial_number, print_error=False)
         return not no_error, error_message
 
     def gcode_get_value( self, gcmd, get_attr, variable, variable_name, section_name, key_name=None, cast_to_bool=False ):

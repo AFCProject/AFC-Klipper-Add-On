@@ -11,6 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including a gear/sensor-to-nozzle `tool_stn` measurement flow, unload/reload testing, and
   per-tool cutter variables for multi-extruder setups.
 
+## [2026-08-23]
+### Added:
+- Added thread for writing vars to file so that slow disks don't have a chance to block on writes which could cause timer too close errors.
+- Added thread for communicating with moonraker, converted most of the call to moonraker to be asynchronous so that AFC does not block klippers main reactor thread. Left some calls during start up sychronous and the calls for TD-1 when calibrating.
+
+### Fixed
+- AFC no longer crashes with `AttributeError: 'GCodeMove' object has no attribute 'absolute_extrude'` during tool changes on current Klipper master builds. Klipper renamed the `absolute_extrude` attribute to `allow_absolute_extrude` (v0.13.0-741 and newer); AFC now reads and restores whichever attribute name the host provides, so it keeps working on older and newer Klipper alike.
+
+## [2026-08-22]
+### Added
+- Lane and extruder status LEDs can now overlay a `SET_LED_EFFECT` animation on top of the usual
+  static color. Define a `led_effect <lane_or_extruder_name>_<state>` object and it's triggered
+  automatically when that lane/extruder reaches the matching state. Only that lane/extruder's
+  own effect is stopped on the next state change, and re-applying an unchanged state is now a
+  no-op. Nothing changes for lanes without a matching effect defined.
+- Added `templates/led_effects_examples.cfg` with example configs for the feature above.
+
+### Fixed
+- A few status LED updates (toolchanger tool-select, ViViD calibration, lane fault) now go through
+  the same lane LED methods as everything else, so they pick up effects/colors consistently too.
+
 ## [2026-08-15]
 ### Breaking Change
 - `RESET_AFC_MAPPING` has now been renamed to `AFC_RESET_MAPPING`
