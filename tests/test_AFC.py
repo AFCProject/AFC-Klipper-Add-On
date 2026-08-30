@@ -4080,7 +4080,7 @@ class TestLoadSequenceUnitLoadLane:
         afc.homing_enabled = True
         afc.home_to_tool = True
         afc.move_e_pos = MagicMock()
-        lane.unit_obj = MagicMock(spec=["load_then_home"])
+        lane.unit_obj = MagicMock(spec=["load_then_home", "lane_tool_loaded_gears"])
         lane.unit_obj.load_then_home.return_value = (None, None, AFCMoveWarning.NONE)
         lane.loaded_to_hub = False
         lane.hub_obj = hub
@@ -4742,9 +4742,9 @@ class TestWriteVarsSnapshot:
         err_arg = obj._log_save_vars_error.call_args[0][0]
         assert err_arg.startswith("Error:")
 
-    def test_success_does_not_schedule_error_log(self):
+    def test_success_does_not_schedule_error_log(self, tmp_path):
         obj = _make_afc()
-        obj.VarFile = "/tmp/AFC_test_var_success"
+        obj.VarFile = str(tmp_path / "AFC")
         obj.reactor.register_async_callback = MagicMock()
         obj._write_vars_snapshot({"a": 1})
         obj.reactor.register_async_callback.assert_not_called()
