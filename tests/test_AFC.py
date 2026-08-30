@@ -3815,6 +3815,16 @@ class TestToolLoadNeedPurge:
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_called_once_with(afc.post_load_macro)
 
+    def test_partial_load_skips_purge_processing(self):
+        afc, lane = self._make_afc_lane_for_need_purge()
+        afc.post_load_macro = "AFC_TEST"
+
+        assert afc.TOOL_LOAD(lane, purge_length=100, load_to_gears=True)
+
+        afc.capture_toolhead_temp.assert_not_called()
+        afc.do_poop_kick_wipe.assert_not_called()
+        afc.gcode.run_script_from_command.assert_not_called()
+
     def test_need_purge_raise_error_no_printing(self):
         afc, lane = self._make_afc_lane_for_need_purge(check_extruder_temp_return=False)
         purge_length = 100

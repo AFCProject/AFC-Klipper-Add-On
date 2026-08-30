@@ -1623,7 +1623,7 @@ class afcFunction:
             self.stn_calibration_original = extruder.tool_stn
             self.stn_calibration_extruder = extruder_name
             self.stn_calibration_lane = lane.name
-            extruder._update_tool_stn(0.0)
+            extruder.tool_stn = 0.0
         else:
             lane = self.afc.lanes.get(self.stn_calibration_lane)
             if (extruder_name != self.stn_calibration_extruder
@@ -1826,6 +1826,11 @@ class afcFunction:
             return
         if cancel or complete:
             measured = self.stn_unload_calibration_distance
+            if complete and measured <= 0:
+                prompt.p_end()
+                self.afc.error.AFC_error(
+                    "Retract filament before saving tool_stn_unload.", pause=False)
+                return
             if measured:
                 self.afc.move_e_pos(measured, 1.0, "tool_stn_unload calibration restore",
                                     wait_tool=True)
@@ -1985,6 +1990,11 @@ class afcFunction:
         if complete:
             retract_length = round(max(
                 self.cutter_calibration_distance - self.cutter_calibration_margin, 0.0), 3)
+            if retract_length <= 0:
+                prompt.p_end()
+                self.afc.error.AFC_error(
+                    "Retract filament past the safety margin before saving.", pause=False)
+                return
             if self.cutter_calibration_distance:
                 self.afc.move_e_pos(self.cutter_calibration_distance, 1.0,
                                     "Cutter calibration restore", wait_tool=True)

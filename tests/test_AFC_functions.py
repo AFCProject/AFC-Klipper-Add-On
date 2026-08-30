@@ -492,9 +492,10 @@ def _make_calibration_func() -> Tuple[afcFunction, MagicMock]:
     extruder.tool_start_state = True
     extruder.tool_end = None
     extruder.tool_end_state = False
-    extruder._update_tool_stn.side_effect = lambda value: setattr(extruder, "tool_stn", value)
-    extruder._update_tool_stn_unload.side_effect = lambda value: setattr(
-        extruder, "tool_stn_unload", value)
+    extruder._update_tool_stn.side_effect = (
+        lambda value: setattr(extruder, "tool_stn", value) if value > 0 else None)
+    extruder._update_tool_stn_unload.side_effect = (
+        lambda value: setattr(extruder, "tool_stn_unload", value) if value >= 0 else None)
     afc.tools = {"extruder": extruder}
 
     loaded_lane = MagicMock()
@@ -875,15 +876,15 @@ class TestCmdAfcCutterCalibration:
             "gcode_macro _AFC_CUT_TIP_VARS_extruder",
             "variable_retract_length", 15.0, "")
 
-    def test_complete_without_retraction_saves_zero_without_restore_move(self) -> None:
+    def test_complete_without_retraction_rejects_save(self) -> None:
         func = self._make_loaded_func()
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
 
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(COMPLETE=1))
 
         func.afc.move_e_pos.assert_not_called()
-        func.ConfigRewrite.assert_called_once_with(
-            "gcode_macro _AFC_CUT_TIP_VARS", "variable_retract_length", 0.0, "")
+        func.ConfigRewrite.assert_not_called()
+        assert func.cutter_calibration_active is True
 
     def test_rejects_move_larger_than_limit(self) -> None:
         func = self._make_loaded_func()
@@ -1060,7 +1061,21 @@ class TestCmdAfcToolheadCalibration:
         func.cmd_AFC_TOOLHEAD_CALIBRATION(
             _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
 
-        assert func.afc.error.AFC_error.call_count == 0
+        assert func.logger.messages == [
+            ("raw", "// action:prompt_begin Toolhead Calibration"),
+            ("raw", "// action:prompt_text Calibrate extruder. tool_stn controls loading to the nozzle; "
+             "tool_stn_unload controls the movement after cutting that clears the toolhead "
+             "sensor or extruder gears."),
+            ("raw", "// action:prompt_button tool_stn|AFC_TOOL_STN_CALIBRATION EXTRUDER=extruder "
+             "LANE=lane1|primary"),
+            ("raw", "// action:prompt_button tool_stn_unload|AFC_TOOL_STN_UNLOAD_CALIBRATION "
+             "EXTRUDER=extruder LANE=lane1|secondary"),
+            ("raw", "// action:prompt_button Cutter Retract|AFC_CUTTER_CALIBRATION "
+             "EXTRUDER=extruder LANE=lane1|info"),
+            ("raw", "// action:prompt_footer_button Cancel|RESPOND TYPE=command "
+             "MSG=action:prompt_end|warning"),
+            ("raw", "// action:prompt_show"),
+        ]
 
     def test_toolhead_menu_rejects_unknown_explicit_lane(self) -> None:
         func, _ = _make_calibration_func()
@@ -1161,7 +1176,7 @@ class TestCmdAfcToolStnCalibration:
         assert func.stn_calibration_original == 72.0
         assert func.stn_calibration_extruder == "extruder"
         assert func.stn_calibration_lane == "lane1"
-        extruder._update_tool_stn.assert_called_once_with(0.0)
+        extruder._update_tool_stn.assert_not_called()
         assert extruder.tool_stn == 0.0
         raw_messages = [message for level, message in func.logger.messages if level == "raw"]
         assert any("Forward 1mm" in message for message in raw_messages)
@@ -1602,7 +1617,7 @@ class TestCmdAfcToolStnUnloadCalibration:
         assert func.stn_unload_calibration_extruder is None
         assert func.stn_unload_calibration_lane is None
 
-    def test_tool_stn_unload_saves_zero_without_restore_move(self) -> None:
+    def test_tool_stn_unload_rejects_zero_without_restore_move(self) -> None:
         func, extruder = _make_calibration_func()
         extruder.tool_start_state = False
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
@@ -1610,8 +1625,9 @@ class TestCmdAfcToolStnUnloadCalibration:
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
 
         func.afc.move_e_pos.assert_not_called()
-        extruder._update_tool_stn_unload.assert_called_once_with(0.0)
-        assert extruder.tool_stn_unload == 0.0
+        extruder._update_tool_stn_unload.assert_not_called()
+        func.ConfigRewrite.assert_not_called()
+        assert func.stn_unload_calibration_active is True
 
     def test_tool_stn_unload_rejects_save_while_sensor_is_triggered(self) -> None:
         func, extruder = _make_calibration_func()
@@ -1709,7 +1725,7 @@ class TestCmdAfcToolStnUnloadCalibration:
         raw_messages = [message for level, message in func.logger.messages if level == "raw"]
         assert any("Tool-start sensor: clear" in message for message in raw_messages)
 
-    def test_tool_stn_unload_buffer_sensor_does_not_block_save(self) -> None:
+    def test_tool_stn_unload_buffer_sensor_rejects_zero_save(self) -> None:
         func, extruder = _make_calibration_func()
         extruder.tool_start = "buffer"
         extruder.tool_start_state = True
@@ -1717,9 +1733,11 @@ class TestCmdAfcToolStnUnloadCalibration:
 
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
 
-        extruder._update_tool_stn_unload.assert_called_once_with(0.0)
+        extruder._update_tool_stn_unload.assert_not_called()
+        func.ConfigRewrite.assert_not_called()
+        assert func.stn_unload_calibration_active is True
 
-    def test_tool_stn_unload_clear_tool_end_sensor_does_not_block_save(self) -> None:
+    def test_tool_stn_unload_clear_tool_end_sensor_rejects_zero_save(self) -> None:
         func, extruder = _make_calibration_func()
         extruder.tool_start = None
         extruder.tool_end = "PA2"
@@ -1728,7 +1746,9 @@ class TestCmdAfcToolStnUnloadCalibration:
 
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
 
-        extruder._update_tool_stn_unload.assert_called_once_with(0.0)
+        extruder._update_tool_stn_unload.assert_not_called()
+        func.ConfigRewrite.assert_not_called()
+        assert func.stn_unload_calibration_active is True
 
 
 class TestGetFilamentStatus:

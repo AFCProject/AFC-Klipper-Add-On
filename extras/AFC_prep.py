@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import json
+import math
 
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -28,8 +29,9 @@ def _normalize_temperature(value: Any) -> Optional[float]:
     if value is None or value == "" or value == "NONE":
         return None
     try:
-        return float(value)
-    except (ValueError, TypeError):
+        normalized = float(value)
+        return normalized if math.isfinite(normalized) else None
+    except (OverflowError, ValueError, TypeError):
         return None
 
 
