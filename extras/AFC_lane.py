@@ -37,7 +37,7 @@ try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
 # Unit types that only have load switch
-ONLY_LOAD_TYPES = ["HTLF", "Claymore", "OpenAMS"]
+ONLY_LOAD_TYPES = ["HTLF", "Claymore", "OpenAMS", "ACE"]
 EXCLUDE_TYPES = ONLY_LOAD_TYPES + [ "ViViD"]
 # Class for holding different states so its clear what all valid states are
 
