@@ -1622,7 +1622,8 @@ class afc:
             # and increase load error count
             self.afc_stats.increase_load_error_count(self)
 
-    def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: Optional[float]=None, set_start_time=False):
+    def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: Optional[float]=None,
+                  set_start_time: bool=False, load_to_gears: bool=False) -> bool:
         """
         This function handles the loading of a specified lane into the tool. It performs
         several checks and movements to ensure the lane is properly loaded.
@@ -1630,7 +1631,7 @@ class afc:
         :param cur_lane: The lane object to be loaded into the tool.
         :param purge_length: Amount of filament to poop (optional).
         :param set_start_time: Set true to set a starting time for afcDeltaTime.
-
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :return bool: True if load was successful, False if an error occurred.
         """
         if not self.function.check_homed():
@@ -1705,7 +1706,8 @@ class afc:
                     # Run the load sequence, which may include custom gcode commands.
                     self._set_display_status('pushing', True)
                     try:
-                        success = self.load_sequence(cur_lane, cur_hub, cur_extruder)
+                        success = self.load_sequence(cur_lane, cur_hub, cur_extruder,
+                                                     load_to_gears)
                     finally:
                         self._set_display_status('pushing', False)
                     if not success:
@@ -1713,10 +1715,10 @@ class afc:
 
                     # Activate the tool-loaded LED and handle filament operations if enabled.
                     cur_lane.unit_obj.lane_tool_loaded( cur_lane )
-                    cur_lane.espooler.do_assist_move()
-
-                    self.do_poop_kick_wipe(cur_lane=cur_lane, cur_extruder=cur_extruder,
-                                           purge_length=purge_length)
+                    if not load_to_gears:
+                        cur_lane.espooler.do_assist_move()
+                        self.do_poop_kick_wipe(cur_lane=cur_lane, cur_extruder=cur_extruder,
+                                               purge_length=purge_length)
 
                     cur_lane.enable_fault_detection()
                     # Update lane and extruder state for tracking.
@@ -1725,18 +1727,20 @@ class afc:
                     cur_lane.unit_obj.lane_tool_loaded( cur_lane )
                     self.save_vars()
                     self.current_state = State.IDLE
-                    cur_lane.get_td1_data_load()
-                    load_time = self.afcDeltaTime.log_major_delta("{} is now loaded in toolhead".format(cur_lane.name), False)
-                    self.afc_stats.average_tool_load_time.average_time(load_time)
+                    if not load_to_gears:
+                        cur_lane.get_td1_data_load()
+                        load_time = self.afcDeltaTime.log_major_delta(
+                            f"{cur_lane.name} is now loaded in toolhead", False)
+                        self.afc_stats.average_tool_load_time.average_time(load_time)
 
-                    # Increment stat counts
-                    cur_lane.extruder_obj.estats.tc_tool_load.increase_count()
-                    cur_lane.lane_load_count.increase_count()
-                    cur_lane.espooler.stats.update_database()
+                        # Increment stat counts
+                        cur_lane.extruder_obj.estats.tc_tool_load.increase_count()
+                        cur_lane.lane_load_count.increase_count()
+                        cur_lane.espooler.stats.update_database()
 
-                    if self.post_load_macro is not None:
-                        self.gcode.run_script_from_command(self.post_load_macro)
-                        # TODO: Add afcDeltaTime log
+                        if self.post_load_macro is not None:
+                            self.gcode.run_script_from_command(self.post_load_macro)
+                            # TODO: Add afcDeltaTime log
                 finally:
                     self.restore_toolhead_temp(temp_state)
 
@@ -1759,7 +1763,7 @@ class afc:
                     return False
 
         # Check if toolhead needs to purge, this normally should only apply for standalone toolheads
-        if cur_lane.need_purge:
+        if cur_lane.need_purge and not load_to_gears:
             temp_state = self.capture_toolhead_temp()
             try:
                 self.logger.info(f"Flag set to purge for {cur_lane.extruder_obj.name}:{cur_lane.current_map}")
@@ -1786,7 +1790,8 @@ class afc:
 
         return True
 
-    def load_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub, cur_extruder: AFCExtruder):
+    def load_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub,
+                      cur_extruder: AFCExtruder, load_to_gears: bool=False) -> bool:
         """
         This function controls the loading sequence and allows for custom gcode commands to be executed
         during the loading process.
@@ -1794,6 +1799,8 @@ class afc:
         :param cur_lane: The lane object to be loaded.
         :param cur_hub: The hub object associated with the lane.
         :param cur_extruder: The extruder object associated with the lane.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
+        :return bool: True when loading succeeds, otherwise False
         """
         if (self.park_pre_load
             and self.park_pre_load_cmd):
@@ -1947,6 +1954,12 @@ class afc:
             self.save_vars()
             cur_lane.sync_to_extruder()
             cur_lane.unit_obj.lane_tool_loaded_gears(cur_lane)
+
+            if load_to_gears:
+                cur_lane.set_tool_loaded(normal_toolchange=True)
+                cur_lane.enable_buffer(disable_fault=True)
+                self.save_vars()
+                return True
 
             if cur_extruder.tool_end:
                 while not cur_extruder.tool_end_state:

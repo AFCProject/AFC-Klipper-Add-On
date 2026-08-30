@@ -17,7 +17,7 @@ import tempfile
 from unittest.mock import MagicMock, patch, call
 import pytest
 
-from extras.AFC_prep import afcPrep
+from extras.AFC_prep import _normalize_temperature, afcPrep
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -49,6 +49,33 @@ def _make_prep(values=None):
 
 
 # ── Initialization defaults ───────────────────────────────────────────────────
+
+class TestNormalizeTemperature:
+    def test_none_is_preserved_as_unset(self):
+        assert _normalize_temperature(None) is None
+
+    def test_empty_string_is_preserved_as_unset(self):
+        assert _normalize_temperature("") is None
+
+    def test_none_string_is_preserved_as_unset(self):
+        assert _normalize_temperature("NONE") is None
+
+    def test_numeric_string_is_converted_to_float(self):
+        assert _normalize_temperature("210") == 210.0
+
+    def test_numeric_value_is_converted_to_float(self):
+        assert _normalize_temperature(210) == 210.0
+
+    def test_invalid_value_is_reset_to_unset(self):
+        assert _normalize_temperature("invalid") is None
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_value_is_reset_to_unset(self, value):
+        assert _normalize_temperature(value) is None
+
+    def test_overflowing_value_is_reset_to_unset(self):
+        assert _normalize_temperature(10 ** 4000) is None
+
 
 class TestPrepInit:
     def test_rename_occurred_initially_false(self):

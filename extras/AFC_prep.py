@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import os
 import json
+import math
 
-from typing import TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -16,6 +17,23 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING:
     from extras.AFC import afc
+
+
+def _normalize_temperature(value: Any) -> Optional[float]:
+    """
+    Normalize a persisted lane temperature, preserving unset values.
+
+    :param value: Persisted lane temperature value.
+    :return: Normalized temperature or None when unset or invalid.
+    """
+    if value is None or value == "" or value == "NONE":
+        return None
+    try:
+        normalized = float(value)
+        return normalized if math.isfinite(normalized) else None
+    except (OverflowError, ValueError, TypeError):
+        return None
+
 
 class afcPrep:
     def __init__(self, config):
@@ -173,19 +191,22 @@ class afcPrep:
                         if 'extruder_temp' in units[cur_lane.unit][cur_lane.name]: cur_lane.extruder_temp = units[cur_lane.unit][cur_lane.name]['extruder_temp']
                         cur_lane.need_purge = units[cur_lane.unit][cur_lane.name].get("need_purge", False)
 
-                        for attr_name in ("bed_temp", "extruder_temp", "weight"):
+                        for attr_name in ("bed_temp", "extruder_temp"):
                             value = getattr(cur_lane, attr_name, None)
-                            if value == "" or value == "NONE":
-                                setattr(cur_lane, attr_name, None)
-                            else:
-                                try:
-                                    if not isinstance(value, float):
-                                        if value:
-                                            setattr(cur_lane, attr_name, float(value))
-                                        else:
-                                            setattr(cur_lane, attr_name, 0)
-                                except (ValueError, TypeError):
-                                    setattr(cur_lane, attr_name, 0)
+                            setattr(cur_lane, attr_name, _normalize_temperature(value))
+
+                        value = getattr(cur_lane, "weight", None)
+                        if value == "" or value == "NONE":
+                            cur_lane.weight = None
+                        else:
+                            try:
+                                if not isinstance(value, float):
+                                    if value:
+                                        cur_lane.weight = float(value)
+                                    else:
+                                        cur_lane.weight = 0
+                            except (ValueError, TypeError):
+                                cur_lane.weight = 0
 
                     if 'runout_lane' in units[cur_lane.unit][cur_lane.name]: cur_lane.runout_lane = units[cur_lane.unit][cur_lane.name]['runout_lane']
                     if cur_lane.runout_lane == '' or cur_lane.runout_lane == 'NONE': cur_lane.runout_lane = None
