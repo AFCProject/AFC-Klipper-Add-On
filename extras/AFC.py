@@ -1763,7 +1763,7 @@ class afc:
                     return False
 
         # Check if toolhead needs to purge, this normally should only apply for standalone toolheads
-        if cur_lane.need_purge:
+        if cur_lane.need_purge and not load_to_gears:
             temp_state = self.capture_toolhead_temp()
             try:
                 self.logger.info(f"Flag set to purge for {cur_lane.extruder_obj.name}:{cur_lane.current_map}")
