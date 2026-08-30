@@ -530,6 +530,10 @@ class MockAFC:
         self.position_saved = False
         self.in_toolchange = False
         self.error_timeout = 600
+        self.park = False
+        self.park_cmd = None
+        self.kick_cmd = None
+        self.post_unload_macro = None
         self.td1_defined = False
         self.td1_present = False
         self.testing = False
@@ -599,6 +603,10 @@ class MockAFC:
 class MockPrinter:
     """Mock for Klipper's printer object."""
     command_error = Exception
+
+    def is_shutdown(self):
+        return False
+
     def __init__(self, afc=None):
         self._afc = afc or MockAFC()
         self._reactor = MockReactor()
