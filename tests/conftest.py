@@ -622,6 +622,10 @@ class MockPrinter:
         self.objects: dict = self._objects
         self._event_handlers: dict = {}
     
+    def add_object(self, name, obj):
+        """Mirrors klippy Printer.add_object: registers a printer object."""
+        self._objects[name] = obj
+
     def lookup_object(self, name, default=None):
         mapping = {
             "AFC": self._afc,

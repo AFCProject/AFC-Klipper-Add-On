@@ -127,7 +127,7 @@ class AceTransport(threading.Thread):
         self.logger = logger
         self.baud = 115200
         self._ser = None
-        self._queue: "queue.Queue[Tuple[str, Optional[dict], dict, threading.Event]]" = queue.Queue()
+        self._queue: "queue.Queue[tuple]" = queue.Queue()
         self._status_lock = threading.Lock()
         self._status: Optional[Dict[str, Any]] = None
         self._status_time = 0.0
@@ -141,13 +141,17 @@ class AceTransport(threading.Thread):
 
     # ── reactor-side API ────────────────────────────────────────────
 
-    def submit(self, method: str, params: Optional[dict] = None) -> Tuple[dict, threading.Event]:
-        """Queue an RPC; returns (result-dict, event). Result is filled in
-        place before the event is set."""
+    def submit(self, method: str, params: Optional[dict] = None):
+        """Queue an RPC; returns (result-dict, done-event, cancelled-event).
+        Result is filled in place before done is set. Setting cancelled before
+        the worker picks the request up abandons it — the command is never
+        sent (a caller that timed out must not leave a motion command armed
+        in the queue to fire later)."""
         result: Dict[str, Any] = {}
         done = threading.Event()
-        self._queue.put((method, params, result, done))
-        return result, done
+        cancelled = threading.Event()
+        self._queue.put((method, params, result, done, cancelled))
+        return result, done, cancelled
 
     def cached_status(self) -> Tuple[Optional[Dict[str, Any]], float]:
         with self._status_lock:
@@ -161,9 +165,13 @@ class AceTransport(threading.Thread):
     def run(self) -> None:
         while not self._shutdown.is_set():
             try:
-                method, params, result, done = self._queue.get(timeout=HEARTBEAT_S)
+                method, params, result, done, cancelled = self._queue.get(timeout=HEARTBEAT_S)
             except queue.Empty:
                 self._heartbeat()
+                continue
+            if cancelled.is_set():
+                result.update({"ok": False, "error": "request abandoned"})
+                done.set()
                 continue
             try:
                 result.update(self._rpc(method, params))
@@ -550,19 +558,24 @@ class afcACE(afcUnit):
     def _rpc(self, method: str, params: Optional[dict] = None, timeout: float = 8.0) -> Dict[str, Any]:
         if self.transport is None:
             return {"ok": False, "error": "ACE transport not started"}
-        result, done = self.transport.submit(method, params)
+        result, done, cancelled = self.transport.submit(method, params)
         deadline = self.reactor.monotonic() + timeout
         while not done.is_set():
             if self.reactor.monotonic() > deadline:
+                # Abandon the request so a not-yet-sent motion command cannot
+                # fire from the queue after we have reported failure
+                cancelled.set()
                 return {"ok": False, "error": f"timeout waiting for ACE rpc {method}"}
             self.reactor.pause(self.reactor.monotonic() + 0.05)
         return result
 
-    def _get_status(self, max_age: float = 0.0,
-                    newer_than: float = 0.0) -> Optional[Dict[str, Any]]:
+    def _get_status(self, max_age: float = 0.0, newer_than: float = 0.0,
+                    strict: bool = False) -> Optional[Dict[str, Any]]:
         """ACE status dict, from cache when fresh enough, else via RPC.
         newer_than rejects cache entries fetched before a command was issued —
-        age alone can't tell a pre-command snapshot from a live one."""
+        age alone can't tell a pre-command snapshot from a live one. strict
+        returns None instead of falling back to a stale/pre-command snapshot
+        when a fresh read fails, for callers deciding whether motion is safe."""
         status, when = self.transport.cached_status() if self.transport else (None, 0.0)
         if (status is not None and max_age > 0 and when > newer_than
                 and (time.time() - when) <= max_age):
@@ -572,6 +585,8 @@ class afcACE(afcUnit):
             payload = res.get("response", {}).get("result")
             if isinstance(payload, dict):
                 return payload
+        if strict or (status is not None and when <= newer_than):
+            return None
         return status
 
     def _slot_info(self, slot: int, status: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -612,8 +627,13 @@ class afcACE(afcUnit):
             return res
         self.logger.info(
             f"{method} reply lost/garbled ({res.get('error')}); verifying via status")
-        status = self._get_status()  # forces a fresh RPC
-        if status is not None and self._motion_active(slot, status):
+        status = self._get_status(strict=True)  # fresh read or nothing
+        if status is None:
+            # Motion state indeterminate: the command may be executing.
+            # Resending non-idempotent motion here could double it — fail.
+            return {"ok": False,
+                    "error": f"{method} reply lost and motion state indeterminate"}
+        if self._motion_active(slot, status):
             return {"ok": True, "assumed_started": True}
         return self._rpc(method, params)
 
@@ -638,7 +658,7 @@ class afcACE(afcUnit):
         deadline = self.reactor.monotonic() + timeout
         idle_reads = 0
         while self.reactor.monotonic() < deadline:
-            status = self._get_status(max_age=HEARTBEAT_S * 2, newer_than=started)
+            status = self._get_status(max_age=HEARTBEAT_S * 2, newer_than=started, strict=True)
             if status is not None and not self._motion_active(slot, status):
                 idle_reads += 1
                 if idle_reads >= 2:
@@ -783,6 +803,8 @@ class afcACE(afcUnit):
             self.dryer_heater.temperature = float(status.get("temp") or 0.0)
             # ACE firmware reports this as "dryer_status" ("dryer" on some builds)
             dryer = status.get("dryer_status") or status.get("dryer") or {}
+            if not isinstance(dryer, dict):
+                dryer = {}
             if str(dryer.get("status", "")).lower() in ("stop", "stopped", ""):
                 self.dryer_heater.target = 0.0
             else:
@@ -920,7 +942,7 @@ class afcACE(afcUnit):
             cur_lane._load_state = False
         finally:
             self._operation_active = False
-        return True
+        return ok
 
     def eject_lane(self, lane: AFCLane) -> None:
         """Full retract back to the slot (unlike a toolchange unload, which

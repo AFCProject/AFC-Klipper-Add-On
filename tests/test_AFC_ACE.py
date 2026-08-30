@@ -138,9 +138,19 @@ def _status(slot_states, overall="ready", action=""):
 
 class TestFraming:
     def test_crc_known_value(self):
-        # Self-consistency plus a couple of algebraic properties
         assert _crc16_mcrf4xx(b"") == 0xFFFF
-        assert 0 <= _crc16_mcrf4xx(b"hello ace") <= 0xFFFF
+
+        # Independent bit-wise MCRF4XX reference (poly 0x8408, init 0xFFFF)
+        def reference(data: bytes) -> int:
+            crc = 0xFFFF
+            for byte in data:
+                crc ^= byte
+                for _ in range(8):
+                    crc = (crc >> 1) ^ 0x8408 if crc & 1 else crc >> 1
+            return crc
+
+        for sample in (b"hello ace", b'{"id":1,"method":"get_status"}'):
+            assert _crc16_mcrf4xx(sample) == reference(sample)
 
     def test_frame_layout(self):
         payload = b'{"id":1,"method":"get_status"}'
@@ -179,6 +189,24 @@ class TestFraming:
         result = transport._rpc("feed_filament", {"index": 0})
         assert result["ok"] is False
         assert "code 5" in result["error"]
+
+
+# ── request abandonment ───────────────────────────────────────────────────────
+
+class TestAbandonment:
+    def test_cancelled_request_is_never_sent(self):
+        # A caller that times out abandons its request; the worker must skip
+        # it instead of firing a stale motion command later
+        transport = AceTransport("auto", 0, MockLogger())
+        result, done, cancelled = transport.submit("feed_filament", {"index": 0, "length": 500})
+        cancelled.set()
+        transport.start()
+        try:
+            assert done.wait(3.0)
+            assert result["ok"] is False
+            assert result["error"] == "request abandoned"
+        finally:
+            transport.stop()
 
 
 # ── USB port ordering ─────────────────────────────────────────────────────────
@@ -484,6 +512,22 @@ class TestMotionRpc:
         assert res["ok"] is True
         assert calls.count("feed_filament") == 2
 
+    def test_indeterminate_state_fails_without_resend(self):
+        # Reply lost AND fresh status unavailable: resending could double the
+        # motion, so the command must fail as indeterminate
+        unit = _make_ace()
+        calls = []
+
+        def rpc(method, params=None, timeout=8.0):
+            calls.append(method)
+            return {"ok": False, "error": "timeout waiting for ACE rpc"}
+
+        unit._rpc = rpc
+        res = unit._motion_rpc(0, "feed_filament", {"index": 0, "length": 100, "speed": 50})
+        assert res["ok"] is False
+        assert "indeterminate" in res["error"]
+        assert calls.count("feed_filament") == 1  # never resent blind
+
     def test_clean_reply_passes_through(self):
         unit = _make_ace()
         unit._rpc = MagicMock(return_value={"ok": True})
@@ -771,3 +815,259 @@ class TestSystemTest:
         assert unit.system_Test(lane, 0.1, False, True) is True
         assert lane.prep_state is False
         unit.afc.spool.clear_values.assert_called_once_with(lane)
+
+
+# ── real-__init__ construction ────────────────────────────────────────────────
+
+class _HeatersStub:
+    def __init__(self):
+        self.heaters = {}
+        self.available_heaters = []
+        self.available_sensors = []
+
+
+def _make_real_ace(name="ACE_1", values=None):
+    """Construct afcACE through the real __init__ with mocked config/printer."""
+    from tests.conftest import MockConfig, MockPrinter
+
+    printer = MockPrinter()
+    heaters = _HeatersStub()
+    printer.add_object("heaters", heaters)
+    config = MockConfig(name=f"AFC_ACE {name}", printer=printer, values=values or {})
+    unit = afcACE(config)
+    return unit, printer, heaters
+
+
+class TestRealInit:
+    def test_config_defaults(self):
+        unit, _, _ = _make_real_ace()
+        assert unit.name == "ACE_1"
+        assert unit.type == "ACE"
+        assert unit.stepperless_drive is True
+        assert unit.serial_port == "auto"
+        assert unit.ace_unit_index == 0
+        assert unit.monitor_only is False
+        assert unit.feed_speed == 50
+        assert unit.retract_speed == 75
+        assert unit.hub_clear_mm == 100.0
+        assert unit.tail_purge_speed == 10.0
+        assert unit._tail_in_bowden is False
+
+    def test_config_overrides(self):
+        unit, _, _ = _make_real_ace(values={
+            "serial": "/dev/serial/by-path/x",
+            "unit_index": 1,
+            "monitor_only": True,
+            "hub_sensor_name": "filament_sensor",
+            "hub_clear_mm": 110.0,
+        })
+        assert unit.serial_port == "/dev/serial/by-path/x"
+        assert unit.ace_unit_index == 1
+        assert unit.monitor_only is True
+        assert unit.hub_sensor_name == "filament_sensor"
+        assert unit.hub_clear_mm == 110.0
+
+    def test_dryer_heater_registration(self):
+        unit, printer, heaters = _make_real_ace(name="ACE_2")
+        assert heaters.heaters["ace_dryer_ACE_2"] is unit.dryer_heater
+        assert "ace_dryer_ACE_2" in heaters.available_heaters
+        assert "ace_humidity_ACE_2" in heaters.available_sensors
+        assert printer.lookup_object("ace_dryer_ACE_2") is unit.dryer_heater
+        assert printer.lookup_object("ace_humidity_ACE_2") is unit.humidity_sensor
+        # heater duck-type surface SET_HEATER_TEMPERATURE relies on
+        assert unit.dryer_heater.get_status() == {"temperature": 0.0, "target": 0.0}
+        assert unit.dryer_heater.get_temp() == (0.0, 0.0)
+        assert unit.dryer_heater.check_busy(0.0) is False
+
+
+# ── dedicated coverage: unload retract paths ──────────────────────────────────
+
+class TestUnloadRetractExact:
+    def _wire(self, unit, sensors):
+        unit._homing_sensors = MagicMock(return_value=sensors)
+        retracts = []
+        unit._retract = lambda slot, length, speed, wait=True: (retracts.append(length), (True, ""))[1]
+        lane = MagicMock()
+        lane.hub_obj.afc_unload_bowden_length = 0
+        lane.hub_obj.afc_bowden_length = 760.0
+        return lane, retracts
+
+    def test_hub_referenced_park(self):
+        unit = _make_ace()
+        unit.hub_clear_mm = 110.0
+        hub_lit = {"v": True}
+        lane, retracts = self._wire(unit, [("hub", lambda: hub_lit["v"])])
+
+        # flip the sensor clear after the second 25mm step
+        orig_retract = unit._retract
+
+        def retract(slot, length, speed, wait=True):
+            res = orig_retract(slot, length, speed, wait)
+            if length == 25.0 and retracts.count(25.0) == 2:
+                hub_lit["v"] = False
+            return res
+
+        unit._retract = retract
+        ok, msg = unit._unload_retract_exact(lane, 0)
+        assert ok is True, msg
+        # approach (bowden-60), two 25mm steps, then the park move
+        assert retracts == [700.0, 25.0, 25.0, 110.0]
+
+    def test_toolhead_only_blind_park(self):
+        unit = _make_ace()
+        unit.hub_clear_mm = 110.0
+        lane, retracts = self._wire(unit, [("tool_start", lambda: False)])
+        ok, msg = unit._unload_retract_exact(lane, 0)
+        assert ok is True, msg
+        assert retracts == [760.0 + 110.0]  # single completed move
+
+    def test_no_sensors_blind_park(self):
+        unit = _make_ace()
+        lane, retracts = self._wire(unit, [])
+        ok, _ = unit._unload_retract_exact(lane, 0)
+        assert ok is True
+        assert retracts == [760.0 + unit.hub_clear_mm]
+
+    def test_stuck_filament_fails_after_step_budget(self):
+        unit = _make_ace()
+        lane, retracts = self._wire(unit, [("hub", lambda: True)])  # never clears
+        ok, msg = unit._unload_retract_exact(lane, 0)
+        assert ok is False
+        assert "still triggered" in msg
+        assert sum(r for r in retracts if r == 25.0) <= 300.0
+
+
+class TestRetractClearOfSensors:
+    def test_recovery_homes_then_parks(self):
+        unit = _make_ace()
+        lit = {"v": True}
+        unit._homing_sensors = MagicMock(return_value=[("hub", lambda: lit["v"])])
+        unit._motion_rpc = MagicMock(
+            side_effect=lambda *a, **k: (lit.update(v=False), {"ok": True})[1])
+        unit._stop_motion = MagicMock(return_value={"ok": True})
+        unit._wait_motion_idle = MagicMock(return_value=True)
+        parks = []
+        unit._retract = lambda slot, length, speed, wait=True: (parks.append(length), (True, ""))[1]
+        lane = MagicMock()
+        lane.hub_obj.afc_bowden_length = 760.0
+        lane.dist_hub = 1200.0
+        ok, msg = unit._retract_clear_of_sensors(lane, 0)
+        assert ok is True, msg
+        unit._stop_motion.assert_called_once_with(0, "stop_unwind_filament")
+        assert parks == [unit.hub_clear_mm]
+
+    def test_sensor_never_clears_times_out(self):
+        unit = _make_ace()
+        unit._homing_sensors = MagicMock(return_value=[("hub", lambda: True)])
+        unit._motion_rpc = MagicMock(return_value={"ok": True})
+        unit._stop_motion = MagicMock(return_value={"ok": True})
+        lane = MagicMock()
+        lane.hub_obj.afc_bowden_length = 100.0
+        lane.dist_hub = 100.0
+        ok, msg = unit._retract_clear_of_sensors(lane, 0)
+        assert ok is False
+        assert "did not clear" in msg
+
+
+# ── dedicated coverage: calibration ───────────────────────────────────────────
+
+class TestCalibrateBowden:
+    def test_monitor_only_refuses(self):
+        unit = _make_ace()
+        unit.monitor_only = True
+        unit._slot_map = {"lane0": 0}
+        unit._rpc = MagicMock()
+        lane = MagicMock()
+        lane.name = "lane0"
+        unit.calibrate_bowden(lane, 0, 0)
+        unit._rpc.assert_not_called()
+        assert any("monitor_only" in m for _, m in unit.logger.messages)
+
+    def test_no_sensor_errors(self):
+        unit = _make_ace()
+        unit._slot_map = {"lane0": 0}
+        unit._homing_sensors = MagicMock(return_value=[])
+        lane = MagicMock()
+        lane.name = "lane0"
+        unit.calibrate_bowden(lane, 0, 0)
+        assert any("needs a hub or tool_start sensor" in m for _, m in unit.logger.messages)
+
+    def test_already_triggered_errors(self):
+        unit = _make_ace()
+        unit._slot_map = {"lane0": 0}
+        unit._homing_sensors = MagicMock(return_value=[("hub", lambda: True)])
+        lane = MagicMock()
+        lane.name = "lane0"
+        unit.calibrate_bowden(lane, 0, 0)
+        assert any("already triggered" in m for _, m in unit.logger.messages)
+
+    def test_measures_and_retracts(self):
+        unit = _make_ace()
+        unit._slot_map = {"lane0": 0}
+        state = {"fed": 0.0}
+        unit._homing_sensors = MagicMock(
+            return_value=[("hub", lambda: state["fed"] >= 100.0)])
+        unit._feed_until = lambda slot, fn, length, speed: (
+            state.update(fed=state["fed"] + length), (True, ""))[1]
+        retracts = []
+        unit._retract = lambda slot, length, speed, wait=True: (retracts.append(length), (True, ""))[1]
+        lane = MagicMock()
+        lane.name = "lane0"
+        lane.hub = "ACE_1"
+        unit.calibrate_bowden(lane, 0, 0)
+        assert any("~100mm" in m for _, m in unit.logger.messages)
+        assert retracts == [100.0 + unit.hub_clear_mm]
+
+
+# ── dedicated coverage: tail push and shutdown ────────────────────────────────
+
+class TestTailPush:
+    def test_parks_chunks_and_kicks(self):
+        unit = _make_ace()
+        unit.afc.park = True
+        unit.afc.park_cmd = "MOVE_TO_TRAY"
+        unit.afc.kick_cmd = "KICK"
+        unit.gcode = MagicMock()
+        feeds = []
+        unit._motion_rpc = lambda slot, method, params: (feeds.append(params["length"]), {"ok": True})[1]
+        unit._wait_motion_idle = MagicMock(return_value=True)
+        extruder = MagicMock()
+        assert unit._tail_push(0, extruder, 250.0) is True
+        assert feeds == [100, 100, 50]
+        scripts = [c.args[0] for c in unit.gcode.run_script_from_command.call_args_list]
+        assert scripts[0] == "MOVE_TO_TRAY"
+        assert scripts.count("KICK") == 3  # one per chunk
+        assert unit.afc.move_e_pos.call_count == 3  # extruder synced per chunk
+
+    def test_feed_failure_aborts(self):
+        unit = _make_ace()
+        unit.afc.park = False
+        unit.gcode = MagicMock()
+        unit._motion_rpc = MagicMock(return_value={"ok": False, "error": "nope"})
+        assert unit._tail_push(0, MagicMock(), 200.0) is False
+        assert any("Tail push feed failed" in m for _, m in unit.logger.messages)
+
+
+class TestHandleShutdown:
+    def test_halts_all_motion_per_slot(self):
+        import threading as _threading
+        unit = _make_ace()
+        unit._slot_map = {"lane0": 0, "lane1": 1}
+        submitted = []
+
+        class _Transport:
+            def submit(self, method, params=None):
+                submitted.append((method, params["index"]))
+                return {}, _threading.Event(), _threading.Event()
+
+        unit.transport = _Transport()
+        unit._handle_shutdown()
+        for slot in (0, 1):
+            for method in ("stop_feed_filament", "stop_unwind_filament", "stop_feed_assist"):
+                assert (method, slot) in submitted
+        assert len(submitted) == 6
+
+    def test_no_transport_no_crash(self):
+        unit = _make_ace()
+        unit.transport = None
+        unit._handle_shutdown()  # must not raise

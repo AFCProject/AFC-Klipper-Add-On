@@ -1286,11 +1286,12 @@ class TestVirtualFilamentSensor:
         assert printer.objects["_filament_switch_sensor FPS1_expanded"] is sensor
 
     def test_init_falls_back_to_dict_registration_when_add_object_missing(self):
-        """MockPrinter has no add_object attribute by default -- this exercises
-        the except-Exception fallback path (direct dict registration)."""
+        """Simulate a printer whose add_object is unavailable (MockPrinter now
+        mirrors real klippy and provides one) -- this exercises the fallback
+        path (direct dict registration)."""
         from tests.conftest import MockPrinter
         printer = MockPrinter()
-        assert not hasattr(printer, "add_object")
+        printer.add_object = None  # not callable -> code must fall back
         sensor = VirtualFilamentSensor(printer, "FPS1_expanded", logger=MagicMock())
         assert printer.objects.get("filament_switch_sensor FPS1_expanded") is sensor
 
