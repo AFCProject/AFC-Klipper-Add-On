@@ -884,6 +884,8 @@ class TestCmdAfcCutterCalibration:
 
         func.afc.move_e_pos.assert_not_called()
         func.ConfigRewrite.assert_not_called()
+        func.afc.error.AFC_error.assert_called_once_with(
+            "Retract filament past the safety margin before saving.", pause=False)
         assert func.cutter_calibration_active is True
 
     def test_rejects_move_larger_than_limit(self) -> None:
@@ -1627,6 +1629,8 @@ class TestCmdAfcToolStnUnloadCalibration:
         func.afc.move_e_pos.assert_not_called()
         extruder._update_tool_stn_unload.assert_not_called()
         func.ConfigRewrite.assert_not_called()
+        func.afc.error.AFC_error.assert_called_once_with(
+            "Retract filament before saving tool_stn_unload.", pause=False)
         assert func.stn_unload_calibration_active is True
 
     def test_tool_stn_unload_rejects_save_while_sensor_is_triggered(self) -> None:
@@ -1735,6 +1739,8 @@ class TestCmdAfcToolStnUnloadCalibration:
 
         extruder._update_tool_stn_unload.assert_not_called()
         func.ConfigRewrite.assert_not_called()
+        func.afc.error.AFC_error.assert_called_once_with(
+            "Retract filament before saving tool_stn_unload.", pause=False)
         assert func.stn_unload_calibration_active is True
 
     def test_tool_stn_unload_clear_tool_end_sensor_rejects_zero_save(self) -> None:
@@ -1748,6 +1754,8 @@ class TestCmdAfcToolStnUnloadCalibration:
 
         extruder._update_tool_stn_unload.assert_not_called()
         func.ConfigRewrite.assert_not_called()
+        func.afc.error.AFC_error.assert_called_once_with(
+            "Retract filament before saving tool_stn_unload.", pause=False)
         assert func.stn_unload_calibration_active is True
 
 

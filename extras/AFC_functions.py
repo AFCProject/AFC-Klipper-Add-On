@@ -1826,7 +1826,8 @@ class afcFunction:
             return
         if cancel or complete:
             measured = self.stn_unload_calibration_distance
-            if complete and measured <= 0:
+            if (complete
+                and measured <= 0):
                 prompt.p_end()
                 self.afc.error.AFC_error(
                     "Retract filament before saving tool_stn_unload.", pause=False)
