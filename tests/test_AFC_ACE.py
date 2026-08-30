@@ -198,6 +198,9 @@ class TestAbandonment:
         # A caller that times out abandons its request; the worker must skip
         # it instead of firing a stale motion command later
         transport = AceTransport("auto", 0, MockLogger())
+        fake = FakeSerial()
+        transport._ser = fake
+        transport.connected = True  # keeps the worker off the host's real ports
         result, done, cancelled = transport.submit("feed_filament", {"index": 0, "length": 500})
         cancelled.set()
         transport.start()
@@ -205,6 +208,7 @@ class TestAbandonment:
             assert done.wait(3.0)
             assert result["ok"] is False
             assert result["error"] == "request abandoned"
+            assert fake.tx == bytearray()  # the frame was never written
         finally:
             transport.stop()
 
@@ -981,7 +985,7 @@ class TestCalibrateBowden:
         lane.name = "lane0"
         unit.calibrate_bowden(lane, 0, 0)
         unit._rpc.assert_not_called()
-        assert any("monitor_only" in m for _, m in unit.logger.messages)
+        assert unit.logger.messages == [("error", "ACE_1 is monitor_only — refusing bowden calibration. Remove monitor_only from its config once its filament path feeds this printer.")]
 
     def test_no_sensor_errors(self):
         unit = _make_ace()
@@ -990,7 +994,8 @@ class TestCalibrateBowden:
         lane = MagicMock()
         lane.name = "lane0"
         unit.calibrate_bowden(lane, 0, 0)
-        assert any("needs a hub or tool_start sensor" in m for _, m in unit.logger.messages)
+        assert unit.logger.messages == [
+            ("error", "Bowden calibration needs a hub or tool_start sensor")]
 
     def test_already_triggered_errors(self):
         unit = _make_ace()
@@ -999,7 +1004,8 @@ class TestCalibrateBowden:
         lane = MagicMock()
         lane.name = "lane0"
         unit.calibrate_bowden(lane, 0, 0)
-        assert any("already triggered" in m for _, m in unit.logger.messages)
+        assert unit.logger.messages == [
+            ("error", "hub sensor already triggered — unload first")]
 
     def test_measures_and_retracts(self):
         unit = _make_ace()
@@ -1015,7 +1021,9 @@ class TestCalibrateBowden:
         lane.name = "lane0"
         lane.hub = "ACE_1"
         unit.calibrate_bowden(lane, 0, 0)
-        assert any("~100mm" in m for _, m in unit.logger.messages)
+        assert unit.logger.messages == [
+            ("info", "ACE fed ~100mm (±50) to the hub sensor. "
+                     "Set dist_hub: 100 under [AFC_lane lane0]")]
         assert retracts == [100.0 + unit.hub_clear_mm]
 
 
@@ -1045,7 +1053,7 @@ class TestTailPush:
         unit.gcode = MagicMock()
         unit._motion_rpc = MagicMock(return_value={"ok": False, "error": "nope"})
         assert unit._tail_push(0, MagicMock(), 200.0) is False
-        assert any("Tail push feed failed" in m for _, m in unit.logger.messages)
+        assert unit.logger.messages == [("error", "Tail push feed failed: nope")]
 
 
 class TestHandleShutdown:
