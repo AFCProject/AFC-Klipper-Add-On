@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 import logging
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import ANY, MagicMock, patch, call
 import pytest
 
 from extras.AFC_logger import AFC_logger
@@ -109,6 +109,48 @@ class TestAddMonotonic:
         result = lg._add_monotonic("hello")
         assert "123.456" in result
         assert "hello" in result
+
+
+# ── _format ───────────────────────────────────────────────────────────────────
+
+class TestFormat:
+    def _make_code(self, co_filename="afc_test.py", co_name="some_func", co_firstlineno=42):
+        code = MagicMock()
+        code.co_filename = co_filename
+        code.co_name = co_name
+        code.co_firstlineno = co_firstlineno
+        return code
+
+    def test_no_code_skips_frame_prefix(self):
+        """When code is None there's nothing to build a prefix from, so the
+        message is formatted with no file/function/line prefix at all."""
+        logger, afc, _ = _make_logger()
+        result = logger._format("hello", code=None)
+        assert result.endswith("- hello")
+        assert "afc_test.py" not in result
+
+    def test_code_given_adds_frame_prefix(self):
+        logger, afc, _ = _make_logger()
+        code = self._make_code()
+        result = logger._format("hello", code=code)
+        assert "afc_test.py:some_func():42" in result
+
+    def test_code_given_but_log_frame_data_false_skips_prefix(self):
+        """log_frame_data=False on the afc object suppresses the file/
+        function/line prefix even though a code object was given."""
+        logger, afc, _ = _make_logger()
+        afc.log_frame_data = False
+        code = self._make_code()
+        result = logger._format("hello", code=code)
+        assert "afc_test.py" not in result
+        assert result.endswith("- hello")
+
+    def test_adaptive_padding_grows_with_longer_prefix(self):
+        logger, afc, _ = _make_logger()
+        assert logger.adaptive_padding == 0
+        code = self._make_code(co_filename="afc_test.py", co_name="some_func")
+        logger._format("hello", code=code)
+        assert logger.adaptive_padding == len("[afc_test.py:some_func():42] ")
 
 
 # ── send_callback ──────────────────────────────────────────────────────────────
@@ -268,6 +310,48 @@ class TestAFCQueueListener:
             ql = AFC_QueueListener(filename)
         assert hasattr(ql, "bg_queue")
         assert isinstance(ql.bg_queue, _queue.Queue)
+
+    def test_uses_single_arg_super_init_when_file_size_present(self, tmp_path):
+        """When queuelogger has FILE_SIZE (upstream Klipper), the parent is
+        constructed with just the filename, no Kalico-style extra arg."""
+        import queuelogger as _queuelogger
+        from extras.AFC_logger import AFC_QueueListener
+        filename = str(tmp_path / "afc_test.log")
+        with patch.object(_queuelogger, "FILE_SIZE", 100, create=True):
+            with patch("queuelogger.QueueListener.__init__", return_value=None) as mock_init:
+                AFC_QueueListener(filename)
+        mock_init.assert_called_once_with(filename)
+
+    def test_falls_back_to_single_arg_when_kalico_style_init_raises(self, tmp_path):
+        """When queuelogger has no FILE_SIZE (Kalico), the extra rollover arg
+        is tried first; if the parent rejects it, retry with just filename."""
+        from extras.AFC_logger import AFC_QueueListener
+
+        def fake_init(self, *args, **kwargs):
+            if len(args) >= 2:
+                raise TypeError("no extra arg accepted")
+
+        filename = str(tmp_path / "afc_test.log")
+        with patch("queuelogger.QueueListener.__init__", fake_init):
+            ql = AFC_QueueListener(filename)
+        assert ql is not None
+
+    def test_calls_timed_rotating_file_handler_init_when_queuelistener_is_subclass(self, tmp_path):
+        """When queuelogger.QueueListener is itself a TimedRotatingFileHandler
+        subclass, that handler's own __init__ must also run so rollover works."""
+        from extras.AFC_logger import AFC_QueueListener
+
+        class FakeSubclass(logging.handlers.TimedRotatingFileHandler):
+            def __init__(self, *args, **kwargs):
+                pass
+
+        filename = str(tmp_path / "afc_test.log")
+        with patch("extras.AFC_logger.QueueListener", FakeSubclass):
+            with patch("logging.handlers.TimedRotatingFileHandler.__init__",
+                       return_value=None) as mock_trfh_init:
+                AFC_QueueListener(filename)
+        mock_trfh_init.assert_called_once_with(
+            ANY, filename, when="S", interval=60 * 60 * 24, backupCount=5)
 
 
 # ── AFC_logger init with log_file ─────────────────────────────────────────────
