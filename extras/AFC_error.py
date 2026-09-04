@@ -1,6 +1,7 @@
-# Armored Turtle Automated Filament Changer
+# AFCProject Automated Filament Changer Software
 #
 # Copyright (C) 2024-2026 Armored Turtle
+# Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 from __future__ import annotations
@@ -14,19 +15,28 @@ from configparser import Error as error
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    from klippy import Printer
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
+    from extras.pause_resume import PauseResume
+    from extras.idle_timeout import IdleTimeout
 
 try: from extras.AFC_utils import ERROR_STR
-except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
+except:
+    err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{traceback.format_exc()}"
+    raise error(err_str)
 
 try: from extras.AFC import State
-except: raise error(ERROR_STR.format(import_lib="AFC", trace=traceback.format_exc()))
+except:
+    err_str = ERROR_STR.format(import_lib="AFC", trace=traceback.format_exc())
+    raise error(err_str)
 
 try: from extras.AFC_lane import AFCLaneState, MoveDirection, SpeedMode
-except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
+except:
+    err_str = ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc())
+    raise error(err_str)
 
 class afcError:
     def __init__(self, config: ConfigWrapper) -> None:
@@ -36,7 +46,7 @@ class afcError:
 
         :param config: Klipper config wrapper for the AFC_error section
         """
-        self.printer = config.get_printer()
+        self.printer: Printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect", self.handle_connect)
         self.errorLog: dict[str, Any] = {}
         self.pause= False
@@ -48,10 +58,10 @@ class afcError:
         and assigns it to the instance variable `self.AFC`.
         """
         self.afc: afc       = self.printer.lookup_object('AFC')
-        self.pause_resume   = self.printer.lookup_object("pause_resume")
+        self.pause_resume: PauseResume = self.printer.lookup_object("pause_resume")
         self.logger         = self.afc.logger
         self.error_timeout  = self.afc.error_timeout
-        self.idle_timeout_obj = self.printer.lookup_object("idle_timeout")
+        self.idle_timeout_obj: IdleTimeout = self.printer.lookup_object("idle_timeout")
         self.idle_timeout_val = self.idle_timeout_obj.idle_timeout
 
         # Constant variable for renaming RESUME macro
@@ -162,7 +172,7 @@ class afcError:
                 return True
         return False
 
-    def PauseUserIntervention(self, message: Optional[str]) -> None:
+    def PauseUserIntervention(self, message: str) -> None:
         """
         Log an error message and pause the print for user intervention if the
         printer is homed, not already paused, and a pause has been requested.

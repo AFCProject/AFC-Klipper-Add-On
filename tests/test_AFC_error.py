@@ -56,6 +56,19 @@ def _make_afc_error():
     return err, afc
 
 
+def _make_real_unit_obj(afc):
+    """Build a real afcUnit via its actual __init__, reusing the given afc
+    object so lane.unit_obj.afc is the same instance the test already
+    wired up, for tests that need lane_fault()'s LED logic to run for
+    real rather than as a mocked call."""
+    from extras.AFC_unit import afcUnit
+    from tests.conftest import MockConfig, MockPrinter
+
+    printer = MockPrinter(afc=afc)
+    config = MockConfig(name="afcUnit test_unit", printer=printer)
+    return afcUnit(config)
+
+
 # ── load_config ───────────────────────────────────────────────────────────────
 
 class TestLoadConfig:
@@ -489,14 +502,12 @@ class TestFix:
         afc.function.afc_led.assert_not_called()
 
     def test_fix_toolhead_failure_calls_led_fault(self):
-        from extras.AFC_unit import afcUnit
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=False)
         lane = MagicMock()
         lane.led_index = "1"
-        lane.unit_obj = afcUnit.__new__(afcUnit)
-        lane.unit_obj.afc = afc
+        lane.unit_obj = _make_real_unit_obj(afc)
         result = err.fix("toolhead", lane)
         assert result is False
         afc.function.afc_led.assert_called_with(lane.led_fault, lane.led_index)
@@ -544,14 +555,12 @@ class TestFix:
 
     def test_fix_resolves_lane_name_string_via_afc_lanes(self):
         """A string LANE argument is looked up in afc.lanes before dispatch."""
-        from extras.AFC_unit import afcUnit
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=False)
         lane = MagicMock()
         lane.led_index = "1"
-        lane.unit_obj = afcUnit.__new__(afcUnit)
-        lane.unit_obj.afc = afc
+        lane.unit_obj = _make_real_unit_obj(afc)
         afc.lanes = {"lane1": lane}
         err.fix("toolhead", "lane1")
         err.ToolHeadFix.assert_called_once_with(lane)
@@ -1017,6 +1026,27 @@ class TestCmdAfcResume:
         afc.restore_pos.assert_not_called()
         err.set_error_state.assert_not_called()
         assert err.pause is True
+
+    def test_paused_with_error_state_but_not_homed_skips_restore_pos(self):
+        """Entering the resume block (error_state True) but not homed must
+        still clear set_error_state/pause, just without restoring position."""
+        err, afc = _make_afc_error()
+        afc.function.is_paused.return_value = True
+        afc.function.is_homed.return_value = False
+        afc.error_state = True
+        afc.position_saved = False
+        afc.last_gcode_position = [0.0, 0.0, 0.0, 0.0]
+        afc.gcode_move.last_position = [0.0, 0.0, 0.0]
+        afc.move_z_pos = MagicMock()
+        afc.restore_pos = MagicMock()
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
+        err.set_error_state = MagicMock()
+        err.pause = True
+        err.cmd_AFC_RESUME(gcmd)
+        afc.restore_pos.assert_not_called()
+        err.set_error_state.assert_called_once_with(False)
+        assert err.pause is False
 
 
 # ── cmd_AFC_PAUSE ─────────────────────────────────────────────────────────────
