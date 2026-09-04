@@ -19,8 +19,8 @@ import pytest
 
 # conftest installs Klipper mocks; extras is on sys.path via REPO_ROOT
 from extras.AFC_utils import (
-    check_and_return, section_in_config, DebounceButton, AFC_moonraker,
-    VirtualRunoutHelper, VirtualFilamentSensor, AFC_PrintFileMetaData,
+    add_filament_switch, check_and_return, section_in_config, DebounceButton,
+    AFC_moonraker, VirtualRunoutHelper, VirtualFilamentSensor, AFC_PrintFileMetaData,
     natural_sort_key,
 )
 from tests.conftest import MockGCodeCommand
@@ -108,6 +108,72 @@ class TestSectionInConfig:
         assert section_in_config(cfg, "lane2") is False
 
 
+# ── add_filament_switch ──────────────────────────────────────────────────────
+
+def _make_printer_for_filament_switch():
+    """MockPrinter/MockAFC pair for add_filament_switch: it builds a real
+    configfile.ConfigWrapper and calls printer.load_object with it, which
+    resolves to a fresh MagicMock since no real filament_switch_sensor
+    module is registered under that name in tests."""
+    from tests.conftest import MockAFC, MockPrinter
+    afc = MockAFC()
+    return MockPrinter(afc=afc)
+
+
+class TestAddFilamentSwitch:
+    def test_registers_switch_under_full_sensor_name_when_shown(self):
+        printer = _make_printer_for_filament_switch()
+        fila, _ = add_filament_switch("test_switch", "PA0", printer, show_sensor=True)
+        assert printer._objects["filament_switch_sensor test_switch"] is fila
+
+    def test_hides_sensor_by_prefixing_object_name_when_not_shown(self):
+        printer = _make_printer_for_filament_switch()
+        add_filament_switch("test_switch", "PA0", printer, show_sensor=False)
+        assert "_filament_switch_sensor test_switch" in printer._objects
+        assert "filament_switch_sensor test_switch" not in printer._objects
+
+    def test_returns_debounce_button_instance(self):
+        printer = _make_printer_for_filament_switch()
+        _, debounce = add_filament_switch("test_switch", "PA0", printer)
+        assert isinstance(debounce, DebounceButton)
+
+    def test_sets_sensor_enabled_from_enable_runout(self):
+        printer = _make_printer_for_filament_switch()
+        fila, _ = add_filament_switch("test_switch", "PA0", printer, enable_runout=True)
+        assert fila.runout_helper.sensor_enabled is True
+
+    def test_sensor_enabled_false_when_enable_runout_false(self):
+        printer = _make_printer_for_filament_switch()
+        fila, _ = add_filament_switch("test_switch", "PA0", printer, enable_runout=False)
+        assert fila.runout_helper.sensor_enabled is False
+
+    def test_disables_runout_pause_always(self):
+        """AFC handles its own pausing; runout_pause must always end up
+        False regardless of what the underlying sensor defaults to."""
+        printer = _make_printer_for_filament_switch()
+        fila, _ = add_filament_switch("test_switch", "PA0", printer)
+        assert fila.runout_helper.runout_pause is False
+
+    def test_runout_callback_overrides_runout_event_handler(self):
+        """When a runout_callback is supplied, it must replace the sensor's
+        internal runout event handler and clear insert_gcode, and set
+        runout_gcode to 1."""
+        printer = _make_printer_for_filament_switch()
+        callback = MagicMock()
+        fila, _ = add_filament_switch("test_switch", "PA0", printer, runout_callback=callback)
+        assert fila.runout_helper.insert_gcode is None
+        assert fila.runout_helper.runout_gcode == 1
+        assert fila.runout_helper._runout_event_handler is callback
+
+    def test_no_runout_callback_leaves_runout_event_handler_untouched(self):
+        """Proves the runout_callback branch is conditional: without one,
+        insert_gcode must stay whatever the underlying sensor object already
+        had, not be reset to None the way the callback branch would."""
+        printer = _make_printer_for_filament_switch()
+        fila, _ = add_filament_switch("test_switch", "PA0", printer)
+        assert fila.runout_helper.insert_gcode is not None
+
+
 # ── DebounceButton ────────────────────────────────────────────────────────────
 class TestDebounceButton:
     """DebounceButton wraps a filament sensor's note_filament_present method."""
@@ -151,7 +217,7 @@ class TestDebounceButton:
         btn = DebounceButton(cfg, sensor)
         assert btn.logical_state is None
         assert btn.physical_state is None
-        assert btn.latest_eventtime is None
+        assert btn.latest_eventtime == 0.0
 
     def test_button_handler_records_state(self):
         cfg = self._make_config()
@@ -221,6 +287,14 @@ class TestDebounceButton:
         btn = DebounceButton(cfg, sensor)
         # Should still set button_action
         assert btn.button_action is not None
+
+    def test_init_snapmaker_signature_uses_button_handler(self):
+        """An exact match on the snapmaker signature (is_filament_present,
+        force) must assign button_handler, not _button_handler."""
+        cfg = self._make_config()
+        sensor = self._make_filament_sensor(["is_filament_present", "force"])
+        btn = DebounceButton(cfg, sensor)
+        assert sensor.runout_helper.note_filament_present == btn.button_handler
 
     def test_button_handler_delegates_to_internal_handler(self):
         """Covers line 146: button_handler calls _button_handler with reactor time."""
@@ -353,9 +427,18 @@ class TestAFCMoonraker:
         mock_resp = MagicMock()
         mock_resp.status = 500
         mock_resp.reason = "Internal Server Error"
+        # __enter__ must return mock_resp itself, otherwise `with urlopen(...) as resp`
+        # binds resp to an unrelated auto-generated mock whose .status is never really
+        # 500, and the code falls into the broad except: branch instead of the
+        # intended non-2xx-status else: branch.
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
         with patch("extras.AFC_utils.urlopen", return_value=mock_resp):
             result = mr._get_results("http://localhost:7125/server/info", print_error=False)
         assert result is None
+        debug_msgs = [m for lvl, m in mr.logger.messages if lvl == "debug"]
+        assert mr.ERROR_STRING in debug_msgs
+        assert "Response: 500 Reason: Internal Server Error" in debug_msgs
 
     def test_get_results_success_returns_data(self):
         mr = self._make_moonraker()
@@ -680,6 +763,27 @@ class TestAFCMoonraker:
         mr._get_results = MagicMock(return_value={"orig": {"lane_data": True}})
         _, _, lane_data = mr.check_for_td1()
         assert lane_data is True
+
+    def test_check_for_td1_no_response_returns_all_false(self):
+        """When the server/config query itself fails (_get_results returns
+        None), both nested checks must be skipped entirely."""
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value=None)
+        td1_defined, td1, lane_data = mr.check_for_td1()
+        assert td1_defined is False
+        assert td1 is False
+        assert lane_data is False
+
+    def test_check_for_td1_defined_but_no_devices_found(self):
+        """td1 is defined in moonraker.conf but get_td1_data() finds no
+        connected devices -- td1_defined must still be True, but td1 (device
+        found) must stay False."""
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"orig": {"td1": True}})
+        mr.get_td1_data = MagicMock(return_value=None)
+        td1_defined, td1, lane_data = mr.check_for_td1()
+        assert td1_defined is True
+        assert td1 is False
 
     def test_get_afc_stats_second_call_uses_cache_path(self):
         """Covers lines 294-296: second call enters the last_stats_time is not None branch."""
