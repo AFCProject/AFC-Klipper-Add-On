@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import configparser
 from unittest.mock import MagicMock, patch, PropertyMock
 import pytest
 
@@ -22,47 +23,46 @@ from tests.test_AFC_lane import _make_afc_lane
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_vivid(name="ViViD_1"):
-    """Build an AFC_vivid bypassing the complex __init__."""
-    unit = AFC_vivid.__new__(AFC_vivid)
+def _make_vivid_config(name="ViViD_1", values=None, drive_stepper="drive",
+                       selector_stepper="selector", add_stepper_sections=True):
+    """Build the MockConfig/MockPrinter/MockAFC trio needed to construct an
+    AFC_vivid via its real __init__ (chained through afcBoxTurtle.__init__
+    and afcUnit.__init__), without constructing it -- lets a test drive
+    AFC_vivid(config) itself.
 
-    from tests.conftest import MockAFC, MockPrinter, MockLogger, MockReactor
+    Registers [AFC_stepper <drive_stepper>]/[AFC_stepper <selector_stepper>]
+    config sections and matching MagicMock stepper objects in the printer's
+    object cache so afcUnit._lookup_objects resolves drive_stepper_obj/
+    selector_stepper_obj successfully.
+    """
+    from tests.conftest import MockAFC, MockConfig, MockPrinter
 
     afc = MockAFC()
-    reactor = MockReactor()
-    afc.reactor = reactor
-    afc.logger = MockLogger()
     printer = MockPrinter(afc=afc)
 
-    unit.printer = printer
-    unit.afc = afc
-    unit.logger = afc.logger
-    unit.reactor = reactor
-    unit.name = name
-    unit.full_name = ["AFC_vivid", name]
-    unit.lanes = {}
-    unit.hub_obj = None
-    unit.extruder_obj = None
-    unit.buffer_obj = None
-    unit.hub = None
-    unit.extruder = None
-    unit.buffer_name = None
-    unit.td1_defined = False
-    unit.type = "ViViD"
-    unit.gcode = afc.gcode
-    unit.drive_stepper = "drive_stepper"
-    unit.selector_stepper = "selector_stepper"
-    unit.drive_stepper_obj = MagicMock()
-    unit.selector_stepper_obj = MagicMock()
-    unit.current_selected_lane = None
-    unit.home_state = False
-    unit.prep_homed = False
-    unit.failed_to_home = False
-    unit.selector_homing_speed = 150
-    unit.selector_homing_accel = 150
-    unit.max_selector_movement = 800
+    all_values = {
+        "drive_stepper": drive_stepper,
+        "selector_stepper": selector_stepper,
+    }
+    if values:
+        all_values.update(values)
 
-    return unit
+    config = MockConfig(name=f"AFC_vivid {name}", printer=printer, values=all_values)
+
+    if add_stepper_sections:
+        config.fileconfig.add_section(f"AFC_stepper {drive_stepper}")
+        config.fileconfig.add_section(f"AFC_stepper {selector_stepper}")
+        printer._objects[f"AFC_stepper {drive_stepper}"] = MagicMock()
+        printer._objects[f"AFC_stepper {selector_stepper}"] = MagicMock()
+
+    return config, printer, afc
+
+
+def _make_vivid(name="ViViD_1", values=None, **kwargs):
+    """Build an AFC_vivid instance via its real __init__ (chained through
+    afcBoxTurtle.__init__ and afcUnit.__init__)."""
+    config, printer, afc = _make_vivid_config(name=name, values=values, **kwargs)
+    return AFC_vivid(config)
 
 
 def _make_lane(name="lane1", has_selector=True):
@@ -82,6 +82,16 @@ def _make_lane(name="lane1", has_selector=True):
     return lane
 
 
+def _make_real_spool():
+    """Build a real AFCSpool via its actual __init__, for tests that need
+    clear_values() to run for real rather than as a mocked call."""
+    from extras.AFC_spool import AFCSpool
+    from tests.conftest import MockConfig, MockPrinter
+
+    config = MockConfig(printer=MockPrinter())
+    return AFCSpool(config)
+
+
 # ── Class constants ───────────────────────────────────────────────────────────
 
 class TestVivdConstants:
@@ -97,6 +107,122 @@ class TestVivdConstants:
     def test_is_subclass_of_box_turtle(self):
         assert issubclass(AFC_vivid, afcBoxTurtle)
 
+
+# ── __init__ ──────────────────────────────────────────────────────────────────
+
+class TestVividInit:
+    """Covers AFC_vivid's own __init__ logic: reading its config variables
+    and registering AFC_UNSELECT_LANE. afcUnit/afcBoxTurtle's own __init__
+    bodies are pre-existing behavior out of scope here."""
+
+    def test_defaults_when_not_set_in_config(self):
+        unit = _make_vivid()
+        assert unit.type == "ViViD"
+        assert unit.current_selected_lane is None
+        assert unit.home_state is False
+        assert unit.prep_homed is False
+        assert unit.failed_to_home is False
+        assert unit.selector_homing_speed == 150
+        assert unit.selector_homing_accel == 150
+        assert unit.max_selector_movement == 800
+        assert unit._eject_to_calibrate is True
+
+    def test_reads_overridden_values_from_config(self):
+        unit = _make_vivid(
+            drive_stepper="drive_a",
+            selector_stepper="selector_b",
+            values={
+                "type": "CustomViViD",
+                "selector_homing_speed": 200.0,
+                "selector_homing_accel": 175.0,
+                "max_selector_movement": 900.0,
+                "enable_sensors_in_gui": True,
+            },
+        )
+        assert unit.type == "CustomViViD"
+        assert unit.drive_stepper == "drive_a"
+        assert unit.selector_stepper == "selector_b"
+        assert unit.selector_homing_speed == 200.0
+        assert unit.selector_homing_accel == 175.0
+        assert unit.max_selector_movement == 900.0
+        assert unit.enable_sensors_in_gui is True
+
+    def test_enable_sensors_in_gui_falls_back_to_afc_value(self):
+        """When not set in this unit's own config, enable_sensors_in_gui
+        falls back to afc.enable_sensors_in_gui rather than a fixed
+        default."""
+        config, printer, afc = _make_vivid_config()
+        afc.enable_sensors_in_gui = True
+        unit = AFC_vivid(config)
+        assert unit.enable_sensors_in_gui is True
+
+    def test_registers_afc_unselect_lane_mux_command(self):
+        config, printer, afc = _make_vivid_config()
+        afc.function.register_mux_command = MagicMock()
+        unit = AFC_vivid(config)
+        afc.function.register_mux_command.assert_called_once_with(
+            afc.show_macros, 'AFC_UNSELECT_LANE', 'UNIT', unit.name,
+            unit.cmd_AFC_UNSELECT_LANE, unit.cmd_AFC_UNSELECT_LANE_help,
+            unit.cmd_AFC_UNSELECT_LANE_options,
+        )
+
+
+# ── module import guards ────────────────────────────────────────────────────
+
+class TestModuleImportGuards:
+    """Covers the module-level try/except import guards at the top of
+    AFC_vivid.py, each of which raises a config_error built from a
+    formatted message when the corresponding import fails."""
+
+    def _reload_with_failing_import(self, monkeypatch, blocked_module):
+        """Loads a throwaway copy of AFC_vivid.py under a separate module
+        name with one import made to fail, without mutating the real
+        extras.AFC_vivid module object shared by the rest of the suite."""
+        import builtins
+        import importlib.util
+        import sys as _sys
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == blocked_module:
+                raise ImportError(f"blocked {blocked_module} for test")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        spec = importlib.util.spec_from_file_location(
+            "extras.AFC_vivid_import_guard_test", "extras/AFC_vivid.py")
+        module = importlib.util.module_from_spec(spec)
+        _sys.modules["extras.AFC_vivid_import_guard_test"] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            del _sys.modules["extras.AFC_vivid_import_guard_test"]
+
+    def test_error_str_import_failure_raises_config_error(self, monkeypatch):
+        with pytest.raises(configparser.Error, match="ERROR_STR"):
+            self._reload_with_failing_import(monkeypatch, "extras.AFC_utils")
+
+    def test_box_turtle_import_failure_raises_config_error(self, monkeypatch):
+        with pytest.raises(configparser.Error, match="AFC_BoxTurtle"):
+            self._reload_with_failing_import(monkeypatch, "extras.AFC_BoxTurtle")
+
+    def test_afc_lane_import_failure_raises_config_error(self, monkeypatch):
+        with pytest.raises(configparser.Error, match="AFC_lane"):
+            self._reload_with_failing_import(monkeypatch, "extras.AFC_lane")
+
+
+# ── load_config_prefix ───────────────────────────────────────────────────────
+
+class TestLoadConfigPrefix:
+    def test_returns_afc_vivid_instance(self):
+        from extras.AFC_vivid import load_config_prefix
+        config, printer, afc = _make_vivid_config()
+        result = load_config_prefix(config)
+        assert isinstance(result, AFC_vivid)
+
+
 # ── _move_lane ──────────────────────────────────────────────────
 class Test_MoveLane:
     def test_returns_prep_true_filament_loaded(self):
@@ -111,6 +237,17 @@ class Test_MoveLane:
         assert result is True
         assert lane.spool_id == 10
     
+    def test_homed_but_already_tool_loaded_skips_hub_retract(self):
+        """When homing succeeds but the lane is already tool_loaded, the
+        clearance retract off the hub must not run."""
+        unit = _make_vivid()
+        lane = _make_lane(has_selector=True)
+        lane.prep_state = True
+        lane.tool_loaded = True
+        lane.move_to.return_value = (True, 100.0, False)
+        unit._move_lane(lane, 1, True)
+        lane.move_to.assert_called_once()  # only the load-sensor move, no retract
+
     def test_returns_prep_true_filament_not_loaded(self):
         unit = _make_vivid()
         lane = _make_lane(has_selector=True)
@@ -127,10 +264,9 @@ class Test_MoveLane:
         assert lane.spool_id == 10
     
     def test_returns_prep_false_filament_not_loaded(self):
-        from extras.AFC_spool import AFCSpool
         unit = _make_vivid()
         lane = _make_lane(has_selector=True)
-        lane.afc.spool = AFCSpool.__new__(AFCSpool)
+        lane.afc.spool = _make_real_spool()
         lane.prep_state = False
         lane.loaded_to_hub = True
         lane.spool_id = 10
@@ -144,10 +280,9 @@ class Test_MoveLane:
         assert lane.spool_id == 10
     
     def test_returns_prep_false_filament_not_loaded_not_remember_spool(self):
-        from extras.AFC_spool import AFCSpool
         unit = _make_vivid()
         lane = _make_lane(has_selector=True)
-        lane.afc.spool = AFCSpool.__new__(AFCSpool)
+        lane.afc.spool = _make_real_spool()
         lane.prep_state = False
         lane.loaded_to_hub = True
         lane.spool_id = 10
@@ -352,12 +487,14 @@ class TestMoveToHub:
 # ── select_lane ───────────────────────────────────────────────────────────────
 
 class TestSelectLane:
-    def test_returns_none_when_no_selector_endstop(self):
+    def test_returns_false_and_zero_when_no_selector_endstop(self):
+        """Matches the declared tuple[bool, float|int] return type instead of
+        falling off the end and implicitly returning None."""
         unit = _make_vivid()
         lane = _make_lane("lane1", has_selector=False)
         lane.selector_endstop_name = None
         result = unit.select_lane(lane)
-        assert result is None
+        assert result == (False, 0)
 
     def test_returns_true_and_zero_when_already_selected_and_enabled(self):
         unit = _make_vivid()
@@ -576,6 +713,29 @@ class TestPrepLoad:
 
         assert lane.calibrated_lane is False
 
+    def test_homed_with_no_hub_obj_skips_retract_move(self):
+        """When lane.hub_obj is None, the retract-past-load-sensor move must
+        be skipped rather than raising, but lane_loaded still runs."""
+        unit = _make_vivid()
+        lane = _make_afc_lane()
+        lane.calibrated_lane = True
+        lane.dist_hub = 200.0
+        lane.hub_obj = None
+        move_to_mock = MagicMock(return_value=(True, 200.0, False))
+        lane.move_to = move_to_mock
+        lane.prep_state = True
+        lane.loaded_to_hub = False
+        unit.lane_loading = MagicMock()
+        unit.select_lane = MagicMock()
+        unit.lane_loaded = MagicMock()
+        with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
+            mock_prop.side_effect = [False, True]
+            unit.prep_load(lane)
+
+        # Only the one move_to call from the homing loop, no extra retract call
+        assert move_to_mock.call_count == 1
+        unit.lane_loaded.assert_called_once_with(lane)
+
     def test_not_homed_skips_lane_loaded(self):
         unit = _make_vivid()
         lane = MagicMock()
@@ -648,5 +808,23 @@ class TestEjectLane:
         unit.eject_lane(lane)
 
         expected_dist = 300.0 * MoveDirection.NEG
+        call_args = lane.move_to.call_args[0]
+        assert call_args[0] == expected_dist
+
+    def test_treats_hub_clear_move_dis_as_zero_when_no_hub_obj(self):
+        """The hub_clear_move_dis ternary takes its False branch (0) when
+        lane.hub_obj is None, rather than raising on hub_obj.hub_clear_move_dis."""
+        from extras.AFC_lane import MoveDirection
+        unit = _make_vivid()
+        lane = MagicMock()
+        lane.hub_obj = None
+        lane.dist_hub = 600.0  # > 400 → should subtract LANE_OVERSHOOT+100 only
+        unit.select_lane = MagicMock()
+        unit.unselect_lane = MagicMock()
+
+        unit.eject_lane(lane)
+
+        expected_dist = (600.0 - (AFC_vivid.LANE_OVERSHOOT + 100) - \
+                         lane.homing_overshoot) * MoveDirection.NEG
         call_args = lane.move_to.call_args[0]
         assert call_args[0] == expected_dist

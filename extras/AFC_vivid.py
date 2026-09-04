@@ -1,6 +1,7 @@
-# Armored Turtle Automated Filament Changer
+# AFCProject Automated Filament Changer Software
 #
 # Copyright (C) 2024-2026 Armored Turtle
+# Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 from __future__ import annotations
@@ -9,11 +10,13 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC_lane import AFCLane, AFCMoveWarning
+    from extras.AFC_stepper import AFCExtruderStepper
+    from extras.stepper_enable import PrinterStepperEnable
 
 try: from extras.AFC_utils import ERROR_STR
 except:
@@ -51,15 +54,20 @@ class AFC_vivid(afcBoxTurtle):
     VALID_CAM_ANGLES = [30,45,60]
     CALIBRATION_DISTANCE = 5000
     LANE_OVERSHOOT = 200
-    def __init__(self, config: ConfigWrapper):
+
+    # Redeclaring these here so mypy does not complain about these being None since for
+    # ViViD, drive stepper and selector stepper are not optional: handle_connect validates
+    # both and raises if either is still unset.
+    drive_stepper_obj: AFCExtruderStepper
+    selector_stepper_obj: AFCExtruderStepper
+
+    def __init__(self, config: ConfigWrapper) -> None:
         """
         Initialize a ViViD style AFC unit.
 
-        Parameters
-        ----------
-        config : ConfigWrapper
-            Configuration for this unit, including stepper names, homing
-            parameters, GUI sensor settings, and other AFC specific options.
+        :param config: Configuration for this unit, including stepper names,
+                       homing parameters, GUI sensor settings, and other AFC
+                       specific options.
         """
         super().__init__(config)
         self.type:str               = config.get('type', 'ViViD')
@@ -82,13 +90,17 @@ class AFC_vivid(afcBoxTurtle):
                                            self.cmd_AFC_UNSELECT_LANE, self.cmd_AFC_UNSELECT_LANE_help,
                                            self.cmd_AFC_UNSELECT_LANE_options )
 
-    def handle_connect(self):
+    def handle_connect(self) -> None:
+        """
+        Handle the connection event.
+        This function is called during the klipper connect phase. It looks up AFC info
+        and assigns it to the instance variable `self.AFC`.
+        """
         super().handle_connect()
         self.logo = '<span class=success--text>ViViD Ready\n</span>'
         self.logo_error = '<span class=error--text>ViViD Not Ready</span>\n'
 
-    def _move_lane(self, lane: AFCLane, delay: float=1,
-                enable_movement: bool=True) -> bool:
+    def _move_lane(self, lane: AFCLane, delay: float=1, enable_movement: bool=True) -> bool:
         """
         Method to check and see if filament is loaded into lane. This method tries to move filament
         to load sensor, once successful lane is retracted by hubs `hub_clear_move_dis`. If homing
@@ -107,7 +119,8 @@ class AFC_vivid(afcBoxTurtle):
             if homed:
                 loaded = True
                 lane.loaded_to_hub = True
-                if not lane.tool_loaded:
+                if (not lane.tool_loaded
+                    and lane.hub_obj):
                     lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
                                  SpeedMode.SHORT, use_homing=False)
         # Resetting internal states when prep sensor is not triggered but loaded to hub is still
@@ -124,7 +137,18 @@ class AFC_vivid(afcBoxTurtle):
                 lane.afc.spool.clear_values(lane)
         return loaded
 
-    def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
+    def system_Test(self, cur_lane: AFCLane, delay: float,
+                    assignTcmd: bool, enable_movement: bool) -> bool:
+        """
+        Runs the standard system test. ViViD units don't support movement
+        during the test, so enable_movement is always forced to False.
+
+        :param cur_lane: Lane to run the system test against
+        :param delay: Delay amount to wait between forward/backward movements
+        :param assignTcmd: When True assigns a tool number to cur_lane
+        :param enable_movement: Ignored, ViViD units always run with movement disabled
+        :return: True if the system test succeeded
+        """
         return super().system_Test( cur_lane, delay, assignTcmd, enable_movement=False)
 
     def _get_lane_selector_state(self, lane: AFCLane) -> bool:
@@ -146,7 +170,7 @@ class AFC_vivid(afcBoxTurtle):
 
         :return bool: Returns True if lanes selector is enabled.
         """
-        stepper_enable = self.printer.lookup_object("stepper_enable", None)
+        stepper_enable: Optional[PrinterStepperEnable] = self.printer.lookup_object("stepper_enable", None)
         enabled = False
         if stepper_enable:
             status = stepper_enable.get_status(0)
@@ -194,8 +218,11 @@ class AFC_vivid(afcBoxTurtle):
 
                 self.logger.debug(f"{self.type}: Homing done, success:{homed}, distance:{distance}")
                 return homed, round(distance, 2)
+        # No selector endstop configured for this lane: nothing to home, so
+        # there's no distance moved to report.
+        return False, 0
 
-    def prep_load(self, lane: AFCLane):
+    def prep_load(self, lane: AFCLane) -> None:
         """
         Helper method for initially loading spools when prep sensor is triggered.
         Upon first load, if lanes do not have calibrated_lanes variable set, filament
@@ -216,6 +243,7 @@ class AFC_vivid(afcBoxTurtle):
         self.lane_loading(lane)
         self.select_lane(lane, sel_prep=True)
         num_tries = 0
+        distance: float
         if not lane.calibrated_lane:
             distance = self.CALIBRATION_DISTANCE
             move_speed = SpeedMode.SHORT
@@ -239,8 +267,9 @@ class AFC_vivid(afcBoxTurtle):
                 self.afc.function.ConfigRewrite(lane.fullname, "calibrated_lane",
                                                 lane.calibrated_lane, "")
             # Retract so load sensor is not triggered
-            lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
-                         SpeedMode.SHORT, use_homing=False)
+            if lane.hub_obj is not None:
+                lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
+                             SpeedMode.SHORT, use_homing=False)
             self.lane_loaded(lane)
         else:
             self.logger.error(f"Failed to move {lane.name} to load sensor.")
@@ -249,14 +278,16 @@ class AFC_vivid(afcBoxTurtle):
         self.drive_stepper_obj.do_enable(False)
         self.afc.function.select_loaded_lane()
 
-    def prep_post_load(self, lane: AFCLane):
+    def prep_post_load(self, lane: AFCLane) -> None:
         """
         This method does nothing and just returns for ViViD units
+
+        :param lane: Unused
         """
         # Do nothing and return
         return
 
-    def unselect_lane(self, move_distance: float=50):
+    def unselect_lane(self, move_distance: float=50) -> None:
         """
         Move the selector by a configurable distance to free filament in a lane, e.g. when
         ejecting filament.
@@ -266,7 +297,7 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_stepper_obj.move(move_distance, self.selector_homing_speed,
                                        self.selector_homing_accel, False)
 
-    def eject_lane(self, lane: AFCLane):
+    def eject_lane(self, lane: AFCLane) -> None:
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
         will stop once prep sensor is no longer triggered if movement has not already stopped.
@@ -279,8 +310,12 @@ class AFC_vivid(afcBoxTurtle):
         self.select_lane(lane)
         move_dis = lane.dist_hub
         if move_dis > 400:
-            move_dis = lane.dist_hub - (self.LANE_OVERSHOOT+100) - \
-                       lane.hub_obj.hub_clear_move_dis - lane.homing_overshoot
+            hub_clear_move_dis = 0.0
+            if lane.hub_obj is not None:
+                hub_clear_move_dis = lane.hub_obj.hub_clear_move_dis
+
+            move_dis = (lane.dist_hub - (self.LANE_OVERSHOOT+100) -
+                        hub_clear_move_dis - lane.homing_overshoot)
         lane.move_to(move_dis * MoveDirection.NEG, SpeedMode.LONG,
                      endstop=lane.prep_endstop_name,
                      assist_active=AssistActive.NO, use_homing=True)
@@ -317,9 +352,7 @@ class AFC_vivid(afcBoxTurtle):
                                              endstop=lane.load_es, use_homing=use_homing)
         return homed, distance, warn
 
-    def calibrate_lane(
-            self, cur_lane: AFCLane, tol: Union[float|int]
-        ) -> tuple[bool, str, Union[float|int]]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float) -> tuple[bool, str, float]:
         """
         Method to calibrate lane for ViViD units. Since ViViD units are unique, this method ejects
         filament and sets calibration flag to False. Once user reinserts filament lane will be
@@ -334,7 +367,7 @@ class AFC_vivid(afcBoxTurtle):
         cur_lane.status = AFCLaneState.NONE
         cur_lane.calibrated_lane = False
         cur_lane.unit_obj.lane_unloaded(cur_lane)
-        return True, "calibration_lane", 0
+        return True, "calibration_lane", 0.0
 
     def calibration_lane_message(self) -> str:
         """
@@ -347,5 +380,13 @@ class AFC_vivid(afcBoxTurtle):
         msg += "Please reinsert filament into ViViD to automatically calibrate distance.\n"
         return msg
 
-def load_config_prefix(config):
+def load_config_prefix(config: ConfigWrapper) -> AFC_vivid:
+    """
+    Klipper config entry point for the AFC_vivid module. Uses a config
+    prefix since each ViViD unit gets its own named `[AFC_vivid <name>]`
+    config section.
+
+    :param config: Klipper config wrapper for the AFC_vivid section
+    :return type: AFC_vivid instance to register with the printer
+    """
     return AFC_vivid(config)
