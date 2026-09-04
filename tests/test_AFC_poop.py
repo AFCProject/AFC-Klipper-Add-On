@@ -2,55 +2,52 @@
 Unit tests for extras/AFC_poop.py
 
 Covers:
-  - afc_poop attribute initialization from config
-  - poop(): movement sequence, fan commands, iteration logic
+  - afc_poop.__init__: attribute initialization from config
+  - afc_poop.poop(): movement sequence, fan commands, iteration logic
+  - load_config(): module-level Klipper config entry point
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 import pytest
 
-from extras.AFC_poop import afc_poop
+from extras.AFC_poop import afc_poop, load_config
+from tests.conftest import MockAFC, MockConfig, MockPrinter
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_DEFAULT_VALUES = {
+    "purge_loc_xy": "10,10",
+    "purge_start": 20.0,
+    "purge_spd": 6.5,
+    "fast_z": 200.0,
+    "z_lift": 20.0,
+    "restore_position": False,
+    "full_fan": False,
+    "purge_length": 70.111,
+    "purge_length_min": 60.999,
+    "max_iteration_length": 40.0,
+    "iteration_z_raise": 6.0,
+    "iteration_z_change": 0.6,
+    # self.verbose is effectively controlled by "comment", not "verbose" --
+    # __init__ reads "verbose" first, then unconditionally overwrites it
+    # with getboolean("comment", False). Pre-existing behavior, left as-is.
+    "comment": False,
+}
+
+
 def _make_poop(values=None):
-    """Build an afc_poop instance bypassing __init__."""
-    poop = afc_poop.__new__(afc_poop)
-
-    from tests.conftest import MockAFC, MockLogger
-
+    """Build a real afc_poop via its __init__, using a MockConfig seeded
+    with the given (or default) option values."""
     afc = MockAFC()
-    afc.logger = MockLogger()
-
-    poop.printer = MagicMock()
-    poop.reactor = MagicMock()
-    poop.afc = afc
-    poop.gcode = afc.gcode
-    poop.logger = afc.logger
-
-    # Config defaults
-    poop.verbose = False
-    poop.purge_loc_xy = "10,10"
-    poop.purge_start = 20.0
-    poop.purge_spd = 6.5
-    poop.fast_z = 200.0
-    poop.z_lift = 20.0
-    poop.restore_position = False
-    poop.full_fan = False
-    poop.purge_length = 70.111
-    poop.purge_length_min = 60.999
-    poop.max_iteration_length = 40.0
-    poop.iteration_z_raise = 6.0
-    poop.iteration_z_change = 0.6
-
+    printer = MockPrinter(afc=afc)
+    merged = dict(_DEFAULT_VALUES)
     if values:
-        for k, v in values.items():
-            setattr(poop, k, v)
-
-    return poop
+        merged.update(values)
+    config = MockConfig(printer=printer, values=merged)
+    return afc_poop(config)
 
 
 def _make_toolhead_pos(x=0.0, y=0.0, z=0.0, e=0.0):
@@ -58,7 +55,7 @@ def _make_toolhead_pos(x=0.0, y=0.0, z=0.0, e=0.0):
     return [x, y, z, e]
 
 
-# ── Initialization ────────────────────────────────────────────────────────────
+# ── __init__ ──────────────────────────────────────────────────────────────────
 
 class TestPoopInit:
     def test_default_purge_spd(self):
@@ -77,21 +74,80 @@ class TestPoopInit:
         p = _make_poop()
         assert p.verbose is False
 
+    def test_verbose_follows_comment_key_not_verbose_key(self):
+        """Documents the current (pre-existing) behavior: "comment" is what
+        actually ends up controlling self.verbose, since it's read after
+        "verbose" and always wins."""
+        p = _make_poop({"verbose": True, "comment": False})
+        assert p.verbose is False
+
+    def test_reads_config_values(self):
+        p = _make_poop({
+            "purge_loc_xy": "50,75",
+            "purge_start": 5.0,
+            "purge_spd": 8.0,
+            "fast_z": 150.0,
+            "z_lift": 30.0,
+            "restore_position": True,
+            "full_fan": True,
+            "purge_length": 80.0,
+            "purge_length_min": 60.0,
+            "max_iteration_length": 35.0,
+            "iteration_z_raise": 5.0,
+            "iteration_z_change": 0.5,
+            "comment": True,
+        })
+        assert p.purge_loc_xy == "50,75"
+        assert p.purge_start == 5.0
+        assert p.fast_z == 150.0
+        assert p.z_lift == 30.0
+        assert p.restore_position is True
+        assert p.full_fan is True
+        assert p.purge_length == 80.0
+        assert p.purge_length_min == 60.0
+        assert p.max_iteration_length == 35.0
+        assert p.iteration_z_raise == 5.0
+        assert p.iteration_z_change == 0.5
+        assert p.verbose is True
+
+    def test_afc_and_gcode_and_logger_wired_up(self):
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(printer=printer, values=dict(_DEFAULT_VALUES))
+        p = afc_poop(config)
+        assert p.afc is afc
+        assert p.logger is afc.logger
+        assert p.gcode is printer._gcode
+
 
 # ── poop() ────────────────────────────────────────────────────────────────────
 
 class TestPoopMethod:
     def _run_poop(self, poop_obj):
-        """Wire up toolhead and gcode_move mocks then call poop()."""
-        toolhead = MagicMock()
-        poop_obj.printer.lookup_object.return_value = toolhead
+        """Wire up gcode_move mocks then call poop()."""
         pos = _make_toolhead_pos(5.0, 5.0, 0.0, 0.0)
         poop_obj.afc.gcode_move = MagicMock()
         poop_obj.afc.gcode_move.last_position = pos
-        # move_with_transform should just update the pos we gave it
         poop_obj.afc.gcode_move.move_with_transform = MagicMock()
         poop_obj.poop()
         return poop_obj.afc.gcode_move
+
+    def test_sets_toolhead_from_lookup_object(self):
+        p = _make_poop()
+        toolhead = MagicMock()
+        p.printer._objects["toolhead"] = toolhead
+        self._run_poop(p)
+        assert p.toolhead is toolhead
+
+    def test_returns_early_when_move_with_transform_unset(self):
+        """Before klippy:connect wires up gcode_move, move_with_transform is
+        None; poop() must bail out rather than raise."""
+        p = _make_poop()
+        p.afc.gcode_move = MagicMock()
+        p.afc.gcode_move.last_position = _make_toolhead_pos()
+        p.afc.gcode_move.move_with_transform = None
+        p.poop()
+        assert p.logger.messages == []
 
     def test_moves_to_purge_xy(self):
         p = _make_poop({"purge_loc_xy": "100,50"})
@@ -127,10 +183,48 @@ class TestPoopMethod:
         assert gm.move_with_transform.call_count > 0
 
     def test_verbose_logs_info(self):
-        p = _make_poop({"verbose": True, "purge_length": 40.0, "max_iteration_length": 40.0})
+        p = _make_poop({"comment": True, "purge_length": 40.0, "max_iteration_length": 40.0})
         self._run_poop(p)
         info_msgs = [m for lvl, m in p.logger.messages if lvl == "info"]
         assert len(info_msgs) > 0
+
+    def test_not_verbose_logs_nothing(self):
+        p = _make_poop({"comment": False, "purge_length": 40.0, "max_iteration_length": 40.0})
+        self._run_poop(p)
+        assert p.logger.messages == []
+
+    def _run_poop_recording_positions(self, poop_obj):
+        """Like _run_poop, but snapshots the position list at the moment of
+        each move_with_transform call, since poop() mutates and reuses the
+        same list object for every move -- reading call_args after the fact
+        would only ever see its final state."""
+        pos = _make_toolhead_pos(5.0, 5.0, 0.0, 0.0)
+        poop_obj.afc.gcode_move = MagicMock()
+        poop_obj.afc.gcode_move.last_position = pos
+        recorded = []
+        poop_obj.afc.gcode_move.move_with_transform = MagicMock(
+            side_effect=lambda p, speed: recorded.append((list(p), speed))
+        )
+        poop_obj.poop()
+        return recorded
+
+    def test_iteration_zero_uses_purge_start_for_z_raise(self):
+        """The z_raise_substract ternary takes its True branch (self.purge_start)
+        on the first iteration."""
+        p = _make_poop({"purge_length": 40.0, "max_iteration_length": 40.0})
+        recorded = self._run_poop_recording_positions(p)
+        pos, speed = recorded[2]
+        assert pos[2] == pytest.approx(19.65)
+        assert speed == pytest.approx(-2.275)
+
+    def test_iteration_nonzero_uses_step_triangular_for_z_raise(self):
+        """The z_raise_substract ternary takes its False branch
+        (step_triangular * iteration_z_change) on later iterations."""
+        p = _make_poop({"purge_length": 80.0, "max_iteration_length": 40.0})
+        recorded = self._run_poop_recording_positions(p)
+        pos, speed = recorded[3]
+        assert pos[2] == pytest.approx(19.435)
+        assert speed == pytest.approx(0.8775)
 
     def test_iteration_count_matches_purge_length(self):
         """Number of extrude iterations equals floor(purge_length / max_iter)."""
@@ -151,47 +245,29 @@ class TestPoopMethod:
         assert speed == p.fast_z
 
     def test_verbose_fan_messages_logged_when_full_fan_and_verbose(self):
-        """verbose=True + full_fan=True should log fan-related info messages."""
+        """comment=True (effective verbose) + full_fan=True should log
+        fan-related info messages."""
         p = _make_poop({
-            "verbose": True,
+            "comment": True,
             "full_fan": True,
             "purge_length": 40.0,
             "max_iteration_length": 40.0,
         })
         self._run_poop(p)
         info_msgs = [m for lvl, m in p.logger.messages if lvl == "info"]
-        fan_msgs = [m for m in info_msgs if "fan" in m.lower() or "Fan" in m]
+        fan_msgs = [m for m in info_msgs if "fan" in m.lower()]
         assert len(fan_msgs) >= 2  # "Set Cooling Fan" + "Restore fan speed"
+        assert fan_msgs[0] == "AFC_Poop: 2 Set Cooling Fan to Full Speed"
+        assert fan_msgs[1] == "AFC_Poop: 5 Restore fan speed and feedrate"
 
 
-# ── __init__ via MockConfig ───────────────────────────────────────────────────
+# ── load_config() ─────────────────────────────────────────────────────────────
 
-class TestPoopInitFromConfig:
-    def test_init_reads_config_values(self):
-        from tests.conftest import MockConfig, MockPrinter, MockAFC
+class TestLoadConfig:
+    def test_returns_afc_poop_instance(self):
         afc = MockAFC()
         printer = MockPrinter(afc=afc)
-        config = MockConfig(
-            printer=printer,
-            values={
-                "purge_loc_xy": "50,75",
-                "purge_start": 5.0,
-                "purge_spd": 8.0,
-                "fast_z": 150.0,
-                "z_lift": 30.0,
-                "restore_position": False,
-                "full_fan": True,
-                "purge_length": 80.0,
-                "purge_length_min": 60.0,
-                "max_iteration_length": 35.0,
-                "iteration_z_raise": 5.0,
-                "iteration_z_change": 0.5,
-                "verbose": False,
-                "comment": False,
-            },
-        )
-        p = afc_poop(config)
-        assert p.purge_loc_xy == "50,75"
-        assert p.fast_z == 150.0
-        assert p.full_fan is True
-        assert p.purge_length == 80.0
+        config = MockConfig(printer=printer, values=dict(_DEFAULT_VALUES))
+        result = load_config(config)
+        assert isinstance(result, afc_poop)
+        assert result.afc is afc
