@@ -9,7 +9,7 @@ import traceback
 
 from configparser import Error as error
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane, MoveDirection
@@ -76,7 +76,7 @@ class afcBoxTurtle(afcUnit):
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.7)
         return lane.load_state
 
-    def system_Test(self, cur_lane: AFCLane|AFCExtruderStepper, delay, assignTcmd, enable_movement):
+    def system_Test(self, cur_lane: AFCLane|AFCExtruderStepper, delay, assignTcmd, enable_movement) -> bool:
         msg = ''
         succeeded = True
 
@@ -500,7 +500,7 @@ class afcBoxTurtle(afcUnit):
 
         return pos, checkpoint, True
 
-    def calibrate_lane(self, cur_lane, tol):
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float) -> tuple[bool, str, float]:
         # function to calibrate distance from secondary extruder to hub
         cur_hub = cur_lane.hub_obj
         if cur_hub.state:

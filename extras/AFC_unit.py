@@ -787,8 +787,8 @@ class afcUnit:
         self.afc.logger.error("{} function not defined for {}".format(name, self.name))
 
     # Function that other units can create so that they are specific to the unit
-    def system_Test(self, cur_lane, delay, assignTcmd, enable_movement):
-        self._print_function_not_defined(self.system_test.__name__)
+    def system_Test(self, cur_lane, delay, assignTcmd, enable_movement) -> bool:
+        self._print_function_not_defined(self.system_Test.__name__)
 
     def calibrate_bowden(self, cur_lane, dis, tol):
         self._print_function_not_defined(self.calibrate_bowden.__name__)

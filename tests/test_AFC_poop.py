@@ -139,13 +139,13 @@ class TestPoopMethod:
         self._run_poop(p)
         assert p.toolhead is toolhead
 
-    def test_returns_early_when_move_with_transform_unset(self):
-        """Before klippy:connect wires up gcode_move, move_with_transform is
-        None; poop() must bail out rather than raise."""
+    def test_returns_early_when_gcode_move_unset(self):
+        """Before klippy:connect wires up gcode_move, it's None; poop() must
+        bail out rather than raise. move_with_transform itself is not
+        Optional since by the time gcode_move exists at all, it's always
+        set (during the ready phase)."""
         p = _make_poop()
-        p.afc.gcode_move = MagicMock()
-        p.afc.gcode_move.last_position = _make_toolhead_pos()
-        p.afc.gcode_move.move_with_transform = None
+        p.afc.gcode_move = None
         p.poop()
         assert p.logger.messages == []
 
