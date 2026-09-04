@@ -1,0 +1,19 @@
+# Minimal stub for Klipper's klippy/extras/led.py -- only the members
+# actually used by this project's extras/AFC_led.py.
+from typing import Any, Callable, Optional, TypedDict
+
+class _LEDStatus(TypedDict):
+    color_data: list
+
+class LEDHelper:
+    led_count: int
+
+    def __init__(self, config: Any, update_func: Callable[..., None],
+                 led_count: int = 1) -> None: ...
+    def get_status(self, eventtime: Optional[float] = None) -> _LEDStatus: ...
+    # Older Klipper names these without a leading underscore; AFC_led.py
+    # picks whichever pair exists via hasattr(), so both are declared here.
+    def _set_color(self, index: Optional[int], color: tuple) -> None: ...
+    def _check_transmit(self, print_time: Optional[float] = None) -> None: ...
+    def set_color(self, index: Optional[int], color: tuple) -> None: ...
+    def check_transmit(self, print_time: Optional[float] = None) -> None: ...
