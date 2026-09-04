@@ -1,16 +1,33 @@
-# Armored Turtle Automated Filament Changer
+# AFCProject Automated Filament Changer Software
 #
 # Copyright (C) 2024-2026 Armored Turtle
+# Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from configfile import ConfigWrapper
+    from gcode import GCodeCommand, GCodeDispatch
+    from extras.AFC import afc
+    from extras.AFC_logger import AFC_logger
+    from extras.heaters import PrinterHeaters
 
 class afc_tip_form:
-    def __init__(self, config):
+    def __init__(self, config: ConfigWrapper) -> None:
+        """
+        Load tip forming settings from the config and register the tip
+        forming gcode commands.
+
+        :param config: Klipper config wrapper for the AFC_form_tip section
+        """
         self.printer        = config.get_printer()
         self.reactor        = self.printer.get_reactor()
-        self.afc            = self.printer.load_object(config, 'AFC')
-        self.gcode          = self.printer.load_object(config, 'gcode')
-        self.logger         = self.afc.logger
+        self.afc: afc       = self.printer.load_object(config, 'AFC')
+        self.gcode: GCodeDispatch = self.printer.load_object(config, 'gcode')
+        self.logger: AFC_logger = self.afc.logger
 
          # TIP FORMING
         self.ramming_volume         = config.getfloat("ramming_volume", 0)
@@ -33,11 +50,17 @@ class afc_tip_form:
         self.gcode.register_command("SET_TIP_FORMING", self.cmd_SET_TIP_FORMING, desc=self.cmd_SET_TIP_FORMING_help)
 
 
-    def afc_extrude(self, distance, speed):
+    def afc_extrude(self, distance: float, speed: float) -> None:
+        """
+        Extrude/retract filament at the extruder by the given distance and speed.
+
+        :param distance: Distance in mm to move, negative retracts
+        :param speed: Speed in mm/s to move at
+        """
         self.afc.move_e_pos( distance, speed, "form tip")
 
     cmd_TEST_AFC_TIP_FORMING_help = "Gives ability to test AFC tip forming without doing a tool change"
-    def cmd_TEST_AFC_TIP_FORMING(self, gcmd):
+    def cmd_TEST_AFC_TIP_FORMING(self, gcmd: GCodeCommand) -> None:
         """
         Gives ability to test AFC tip forming without doing a tool change.
 
@@ -55,7 +78,7 @@ class afc_tip_form:
 
 
     cmd_GET_TIP_FORMING_help = "Shows the tip forming configuration"
-    def cmd_GET_TIP_FORMING(self, gcmd):
+    def cmd_GET_TIP_FORMING(self, gcmd: GCodeCommand) -> None:
         """
         Shows the tip forming configuration
 
@@ -70,27 +93,27 @@ class afc_tip_form:
         ```
         """
         status_msg = "Tip Forming Configuration:\n"
-        status_msg += "ramming_volume:        {}\n".format(self.ramming_volume)
-        status_msg += "toolchange_temp:       {}\n".format(self.toolchange_temp)
-        status_msg += "unloading_speed_start: {}\n".format(self.unloading_speed_start)
-        status_msg += "unloading_speed:       {}\n".format(self.unloading_speed)
-        status_msg += "cooling_tube_position: {}\n".format(self.cooling_tube_position)
-        status_msg += "cooling_tube_length:   {}\n".format(self.cooling_tube_length)
-        status_msg += "initial_cooling_speed: {}\n".format(self.initial_cooling_speed)
-        status_msg += "final_cooling_speed:   {}\n".format(self.final_cooling_speed)
-        status_msg += "cooling_moves:         {}\n".format(self.cooling_moves)
-        status_msg += "use_skinnydip:         {}\n".format(self.use_skinnydip)
-        status_msg += "skinnydip_distance:    {}\n".format(self.skinnydip_distance)
-        status_msg += "dip_insertion_speed:   {}\n".format(self.dip_insertion_speed)
-        status_msg += "dip_extraction_speed:  {}\n".format(self.dip_extraction_speed)
-        status_msg += "melt_zone_pause:       {}\n".format(self.melt_zone_pause)
-        status_msg += "cooling_zone_pause:    {}\n".format(self.cooling_zone_pause)
+        status_msg += f"ramming_volume:        {self.ramming_volume}\n"
+        status_msg += f"toolchange_temp:       {self.toolchange_temp}\n"
+        status_msg += f"unloading_speed_start: {self.unloading_speed_start}\n"
+        status_msg += f"unloading_speed:       {self.unloading_speed}\n"
+        status_msg += f"cooling_tube_position: {self.cooling_tube_position}\n"
+        status_msg += f"cooling_tube_length:   {self.cooling_tube_length}\n"
+        status_msg += f"initial_cooling_speed: {self.initial_cooling_speed}\n"
+        status_msg += f"final_cooling_speed:   {self.final_cooling_speed}\n"
+        status_msg += f"cooling_moves:         {self.cooling_moves}\n"
+        status_msg += f"use_skinnydip:         {self.use_skinnydip}\n"
+        status_msg += f"skinnydip_distance:    {self.skinnydip_distance}\n"
+        status_msg += f"dip_insertion_speed:   {self.dip_insertion_speed}\n"
+        status_msg += f"dip_extraction_speed:  {self.dip_extraction_speed}\n"
+        status_msg += f"melt_zone_pause:       {self.melt_zone_pause}\n"
+        status_msg += f"cooling_zone_pause:    {self.cooling_zone_pause}\n"
 
         self.logger.raw(status_msg)
 
 
     cmd_SET_TIP_FORMING_help = "Sets tip forming configuration"
-    def cmd_SET_TIP_FORMING(self, gcmd):
+    def cmd_SET_TIP_FORMING(self, gcmd: GCodeCommand) -> None:
         """
         Sets the tip forming configuration.
 
@@ -128,13 +151,18 @@ class afc_tip_form:
         self.cooling_zone_pause = gcmd.get_float("COOLING_ZONE_PAUSE", self.cooling_zone_pause)
 
 
-    def tip_form(self):
+    def tip_form(self) -> None:
+        """
+        Runs the full tip forming sequence: ramming, retraction/nozzle separation,
+        cooling moves, and an optional skinny dip, waiting on the toolchange
+        temperature and restoring the original extruder temperature when done.
+        """
         step = 1
         extruder = self.afc.toolhead.get_extruder()
-        pheaters = self.printer.lookup_object('heaters')
+        pheaters: PrinterHeaters = self.printer.lookup_object('heaters')
         current_temp = extruder.get_heater().target_temp     # Saving current temp so it can be set back when done if toolchange_temp is not zero
         if self.ramming_volume > 0:
-            self.logger.info('AFC-TIP-FORM: Step {}: Ramming'.format(step))
+            self.logger.info(f'AFC-TIP-FORM: Step {step}: Ramming')
             ratio = self.ramming_volume / 23
             self.afc_extrude(0.5784 * ratio, 299 / 60)
             self.afc_extrude(0.5834 * ratio, 302 / 60)
@@ -151,7 +179,7 @@ class afc_tip_form:
             self.afc_extrude(0.5956 * ratio, 544 / 60)
             self.afc_extrude(1.0662 * ratio, 552 / 60)
             step +=1
-        self.logger.info('AFC-TIP-FORM: Step {}: Retraction & Nozzle Separation'.format(step))
+        self.logger.info(f'AFC-TIP-FORM: Step {step}: Retraction & Nozzle Separation')
         total_retraction_distance = self.cooling_tube_position + self.cooling_tube_length - 15
         self.afc_extrude(-15, self.unloading_speed_start)
         if total_retraction_distance > 0:
@@ -164,10 +192,10 @@ class afc_tip_form:
             else:
                 wait =  True
 
-            self.logger.info("AFC-TIP-FORM: Waiting for temperature to get to {}".format(self.toolchange_temp))
+            self.logger.info(f"AFC-TIP-FORM: Waiting for temperature to get to {self.toolchange_temp}")
             pheaters.set_temperature(extruder.get_heater(), self.toolchange_temp, wait)
         step +=1
-        self.logger.info('AFC-TIP-FORM: Step {}: Cooling Moves'.format(step))
+        self.logger.info(f'AFC-TIP-FORM: Step {step}: Cooling Moves')
         speed_inc = (self.final_cooling_speed - self.initial_cooling_speed) / (2 * self.cooling_moves - 1)
         for move in range(self.cooling_moves):
             speed = self.initial_cooling_speed + speed_inc * move * 2
@@ -175,17 +203,23 @@ class afc_tip_form:
             self.afc_extrude(self.cooling_tube_length * -1, (speed + speed_inc))
         step += 1
         if self.use_skinnydip:
-            self.logger.info('AFC-TIP-FORM: Step {}: Skinny Dipping'.format(step))
+            self.logger.info(f'AFC-TIP-FORM: Step {step}: Skinny Dipping')
             self.afc_extrude(self.skinnydip_distance, self.dip_insertion_speed)
             self.reactor.pause(self.reactor.monotonic() + self.melt_zone_pause)
             self.afc_extrude(self.skinnydip_distance * -1, self.dip_extraction_speed)
             self.reactor.pause(self.reactor.monotonic() + self.cooling_zone_pause)
 
         if extruder.get_heater().target_temp != current_temp:
-            self.logger.info('AFC-TIP-FORM: Setting temperature back to {}'.format(current_temp))
+            self.logger.info(f'AFC-TIP-FORM: Setting temperature back to {current_temp}')
             pheaters.set_temperature(extruder.get_heater(), current_temp)
 
         self.logger.info('AFC-TIP-FORM: Done')
 
-def load_config(config):
+def load_config(config: ConfigWrapper) -> afc_tip_form:
+    """
+    Klipper config entry point for the AFC_form_tip module.
+
+    :param config: Klipper config wrapper for the AFC_form_tip section
+    :return type: afc_tip_form instance to register with the printer
+    """
     return afc_tip_form(config)

@@ -20,43 +20,18 @@ from extras.AFC_form_tip import afc_tip_form
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_tip_form(values=None):
-    """Build an afc_tip_form instance by bypassing __init__."""
-    tip = afc_tip_form.__new__(afc_tip_form)
-
-    from tests.conftest import MockAFC, MockLogger
+    """Build an afc_tip_form instance via its real __init__, reading the
+    given config values (or the same defaults __init__ itself falls back
+    to when a key is absent)."""
+    from tests.conftest import MockAFC, MockConfig, MockLogger, MockPrinter
 
     afc = MockAFC()
     afc.logger = MockLogger()
     afc.move_e_pos = MagicMock()
+    printer = MockPrinter(afc=afc)
+    config = MockConfig(printer=printer, values=values or {})
 
-    tip.printer = MagicMock()
-    tip.reactor = MagicMock()
-    tip.afc = afc
-    tip.gcode = afc.gcode
-    tip.logger = afc.logger
-
-    # Defaults matching the config defaults in afc_tip_form.__init__
-    tip.ramming_volume = 0.0
-    tip.toolchange_temp = 0.0
-    tip.unloading_speed_start = 80.0
-    tip.unloading_speed = 18.0
-    tip.cooling_tube_position = 35.0
-    tip.cooling_tube_length = 10.0
-    tip.initial_cooling_speed = 10.0
-    tip.final_cooling_speed = 50.0
-    tip.cooling_moves = 4
-    tip.use_skinnydip = False
-    tip.skinnydip_distance = 4.0
-    tip.dip_insertion_speed = 4.0
-    tip.dip_extraction_speed = 4.0
-    tip.melt_zone_pause = 4.0
-    tip.cooling_zone_pause = 4.0
-
-    if values:
-        for k, v in values.items():
-            setattr(tip, k, v)
-
-    return tip
+    return afc_tip_form(config)
 
 
 def _make_gcmd(**kwargs):
@@ -205,6 +180,17 @@ class TestTipForm:
         calls = tip.afc_extrude.call_count
         assert calls > 0
 
+    def test_skips_bulk_retraction_when_total_retraction_distance_not_positive(self):
+        """When cooling_tube_position + cooling_tube_length - 15 <= 0, only the
+        fixed -15mm retraction runs; the three extra retraction moves must not."""
+        tip = _make_tip_form({"cooling_tube_position": 0.0, "cooling_tube_length": 0.0})
+        tip.afc_extrude = MagicMock()
+        self._setup_toolhead(tip)
+        tip.tip_form()
+        # -15mm fixed retraction, then straight to cooling moves (4 * 2 = 8 calls)
+        assert tip.afc_extrude.call_args_list[0].args == (-15, tip.unloading_speed_start)
+        assert tip.afc_extrude.call_count == 1 + tip.cooling_moves * 2
+
     def test_ramming_steps_called_when_volume_set(self):
         tip = _make_tip_form({"ramming_volume": 23.0})
         tip.afc_extrude = MagicMock()
@@ -317,3 +303,16 @@ class TestFormTipInit:
         tip = afc_tip_form(config)
         assert tip.ramming_volume == 15.0
         assert tip.cooling_moves == 6
+
+
+# ── load_config ────────────────────────────────────────────────────────────────
+
+class TestLoadConfig:
+    def test_returns_afc_tip_form_instance(self):
+        from extras.AFC_form_tip import load_config
+        from tests.conftest import MockConfig, MockPrinter, MockAFC
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(printer=printer)
+        result = load_config(config)
+        assert isinstance(result, afc_tip_form)
