@@ -99,6 +99,7 @@ class TestPoopInit:
         })
         assert p.purge_loc_xy == "50,75"
         assert p.purge_start == 5.0
+        assert p.purge_spd == 8.0
         assert p.fast_z == 150.0
         assert p.z_lift == 30.0
         assert p.restore_position is True
@@ -185,8 +186,11 @@ class TestPoopMethod:
     def test_verbose_logs_info(self):
         p = _make_poop({"comment": True, "purge_length": 40.0, "max_iteration_length": 40.0})
         self._run_poop(p)
-        info_msgs = [m for lvl, m in p.logger.messages if lvl == "info"]
-        assert len(info_msgs) > 0
+        assert p.logger.messages == [
+            ("info", "AFC_Poop: 1 Move To Purge Location"),
+            ("info", "AFC_Poop: 2 Purge Iteration 0"),
+            ("info", "AFC_Poop: 3 Fast Z Lift to keep poop from sticking"),
+        ]
 
     def test_not_verbose_logs_nothing(self):
         p = _make_poop({"comment": False, "purge_length": 40.0, "max_iteration_length": 40.0})
@@ -254,11 +258,13 @@ class TestPoopMethod:
             "max_iteration_length": 40.0,
         })
         self._run_poop(p)
-        info_msgs = [m for lvl, m in p.logger.messages if lvl == "info"]
-        fan_msgs = [m for m in info_msgs if "fan" in m.lower()]
-        assert len(fan_msgs) >= 2  # "Set Cooling Fan" + "Restore fan speed"
-        assert fan_msgs[0] == "AFC_Poop: 2 Set Cooling Fan to Full Speed"
-        assert fan_msgs[1] == "AFC_Poop: 5 Restore fan speed and feedrate"
+        assert p.logger.messages == [
+            ("info", "AFC_Poop: 1 Move To Purge Location"),
+            ("info", "AFC_Poop: 2 Set Cooling Fan to Full Speed"),
+            ("info", "AFC_Poop: 3 Purge Iteration 0"),
+            ("info", "AFC_Poop: 4 Fast Z Lift to keep poop from sticking"),
+            ("info", "AFC_Poop: 5 Restore fan speed and feedrate"),
+        ]
 
 
 # ── load_config() ─────────────────────────────────────────────────────────────

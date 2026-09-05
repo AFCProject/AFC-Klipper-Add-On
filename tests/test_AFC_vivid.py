@@ -248,6 +248,20 @@ class Test_MoveLane:
         unit._move_lane(lane, 1, True)
         lane.move_to.assert_called_once()  # only the load-sensor move, no retract
 
+    def test_homed_but_no_hub_obj_skips_hub_retract(self):
+        """When homing succeeds and tool_loaded is False (so the hub retract
+        would otherwise run), a None hub_obj must still skip it rather than
+        raising -- independent coverage of the `and lane.hub_obj` operand,
+        separate from the tool_loaded operand covered above."""
+        unit = _make_vivid()
+        lane = _make_lane(has_selector=True)
+        lane.prep_state = True
+        lane.tool_loaded = False
+        lane.hub_obj = None
+        lane.move_to.return_value = (True, 100.0, False)
+        unit._move_lane(lane, 1, True)
+        lane.move_to.assert_called_once()  # only the load-sensor move, no retract
+
     def test_returns_prep_true_filament_not_loaded(self):
         unit = _make_vivid()
         lane = _make_lane(has_selector=True)

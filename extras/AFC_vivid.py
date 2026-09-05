@@ -10,7 +10,7 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper

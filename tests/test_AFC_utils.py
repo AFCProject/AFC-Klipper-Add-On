@@ -433,12 +433,17 @@ class TestAFCMoonraker:
         # intended non-2xx-status else: branch.
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
+        # __init__ already logged its own "Moonraker url: ..." debug message,
+        # so compare only what _get_results appends from here on -- an exact
+        # list, in order, not just membership, per the repository test contract.
+        messages_before = len(mr.logger.messages)
         with patch("extras.AFC_utils.urlopen", return_value=mock_resp):
             result = mr._get_results("http://localhost:7125/server/info", print_error=False)
         assert result is None
-        debug_msgs = [m for lvl, m in mr.logger.messages if lvl == "debug"]
-        assert mr.ERROR_STRING in debug_msgs
-        assert "Response: 500 Reason: Internal Server Error" in debug_msgs
+        assert mr.logger.messages[messages_before:] == [
+            ("debug", mr.ERROR_STRING),
+            ("debug", "Response: 500 Reason: Internal Server Error"),
+        ]
 
     def test_get_results_success_returns_data(self):
         mr = self._make_moonraker()
@@ -784,6 +789,7 @@ class TestAFCMoonraker:
         td1_defined, td1, lane_data = mr.check_for_td1()
         assert td1_defined is True
         assert td1 is False
+        assert lane_data is False
 
     def test_get_afc_stats_second_call_uses_cache_path(self):
         """Covers lines 294-296: second call enters the last_stats_time is not None branch."""

@@ -136,13 +136,14 @@ class TestAFCLaneState:
         assert AFCLaneState.CALIBRATING == "Calibrating"
 
     def test_all_constants_are_strings(self):
-        attrs = [a for a in dir(AFCLaneState) if not a.startswith("_")]
-        for attr in attrs:
-            assert isinstance(getattr(AFCLaneState, attr), str)
+        # Iterate enum members directly rather than dir(), since dir() on a
+        # (str, Enum) class also picks up inherited str methods like
+        # "capitalize" which aren't members of the enum at all.
+        for member in AFCLaneState:
+            assert isinstance(member.value, str)
 
     def test_all_constants_unique(self):
-        attrs = [a for a in dir(AFCLaneState) if not a.startswith("_")]
-        values = [getattr(AFCLaneState, a) for a in attrs]
+        values = [member.value for member in AFCLaneState]
         assert len(values) == len(set(values))
 
 
@@ -150,7 +151,9 @@ class TestAFCLaneState:
 
 class TestAFCHomingPoints:
     def test_none_constant(self):
-        assert AFCHomingPoints.NONE is None
+        # AFCHomingPoints is a (str, Enum), so NONE can't literally be the
+        # value None -- it's the empty string, used as the "no endstop" marker.
+        assert AFCHomingPoints.NONE == None
 
     def test_hub_constant(self):
         assert AFCHomingPoints.HUB == "hub"
