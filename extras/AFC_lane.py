@@ -50,6 +50,7 @@ class AssistActive(Enum):
     YES = 1
     NO = 2
     DYNAMIC = 3
+
 class SpeedMode(Enum):
     NONE = None
     LONG = 1
@@ -59,11 +60,11 @@ class SpeedMode(Enum):
     CALIBRATION = 5
     DIST_HUB = 6
 
-class MoveDirection(float):
-    POS = 1.
-    NEG = -1.
+class MoveDirection(float, Enum):
+    POS = 1.0
+    NEG = -1.0
 
-class AFCLaneState:
+class AFCLaneState(str, Enum):
     NONE             = "None"
     ERROR            = "Error"
     LOADED           = "Loaded"
@@ -384,19 +385,19 @@ class AFCLane:
         return self._format_map(self._map, "NONE")
 
     @property
-    def load_es(self) -> str:
+    def load_es(self) -> AFCHomingPoints|str:
         """
         Returns endstop name to use for homing.
 
-        :return str: Returns 'load' if lane has stepper, returns unique lane load name if lane is
-                     part of a selector based system.
+        :return AFCHomingPoints: Returns 'load' if lane has stepper, returns unique lane load name
+                    if lane is part of a selector based system.
         """
         if self.only_lane:
             return self.load_endstop_name
         else:
             return AFCHomingPoints.LOAD
 
-    def _lookup_endstop(self, name: str) -> Optional[str]:
+    def _lookup_endstop(self, name: AFCHomingPoints|str) -> AFCHomingPoints|str:
         """
         Helper method for looking up endstops from dictionary
 
@@ -412,27 +413,27 @@ class AFCLane:
     The following properties lookup specific endstop name
     """
     @property
-    def prep_endstop_name(self) -> str:
+    def prep_endstop_name(self) -> AFCHomingPoints|str:
         return self._lookup_endstop(AFCHomingPoints.PREP)
 
     @property
-    def load_endstop_name(self) -> str:
+    def load_endstop_name(self) -> AFCHomingPoints|str:
         return self._lookup_endstop(AFCHomingPoints.LOAD)
 
     @property
-    def selector_endstop_name(self) -> str:
+    def selector_endstop_name(self) -> AFCHomingPoints|str:
         return self._lookup_endstop(AFCHomingPoints.SELECTOR)
 
     @property
-    def hub_endstop_name(self) -> str:
+    def hub_endstop_name(self) -> AFCHomingPoints|str:
         return self._lookup_endstop(AFCHomingPoints.HUB)
 
     @property
-    def buffer_endstop_name(self) -> str:
+    def buffer_endstop_name(self) -> AFCHomingPoints|str:
         return self._lookup_endstop(AFCHomingPoints.BUFFER)
 
     @property
-    def tool_endstop_name(self) -> str:
+    def tool_endstop_name(self) -> AFCHomingPoints|str:
         return self._lookup_endstop(AFCHomingPoints.TOOL)
 
     @property
@@ -926,7 +927,7 @@ class AFCLane:
                 self.drive_stepper.move(distance, speed, accel, assist_active)
 
     def move_to(self, distance: float, speed_mode: SpeedMode,
-                endstop:AFCHomingPoints=AFCHomingPoints.NONE,
+                endstop:AFCHomingPoints|str=AFCHomingPoints.NONE,
                 assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling stepper move_advance or home_to functions based

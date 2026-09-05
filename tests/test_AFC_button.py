@@ -12,7 +12,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import pytest
 
-from extras.AFC_button import AFCButton
+from extras.AFC_button import AFCButton, load_config_prefix
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -44,19 +44,34 @@ def _make_button(lane_id="lane1", long_press_duration=1.2):
     return btn
 
 
+# ── lane_obj property ─────────────────────────────────────────────────────────
+
+class TestLaneObjProperty:
+    def test_returns_resolved_lane(self):
+        btn = _make_button("lane1")
+        assert btn.lane_obj is btn.afc.lanes["lane1"]
+
+    def test_raises_when_not_yet_resolved(self):
+        btn = _make_button("lane1")
+        btn._lane_obj = None
+        from configfile import error as KlipperError
+        with pytest.raises(KlipperError):
+            btn.lane_obj
+
+
 # ── _handle_ready ─────────────────────────────────────────────────────────────
 
 class TestHandleReady:
     def test_handle_ready_sets_lane_obj_when_found(self):
         btn = _make_button("lane1")
-        btn.lane_obj = None
+        btn._lane_obj = None
         btn._handle_ready()
         assert btn.lane_obj is btn.afc.lanes["lane1"]
 
     def test_handle_ready_raises_when_lane_not_found(self):
         btn = _make_button("missing_lane")
         btn.afc.lanes = {}  # No lanes defined
-        btn.lane_obj = None
+        btn._lane_obj = None
         from configfile import error as KlipperError
         with pytest.raises(KlipperError):
             btn._handle_ready()
@@ -94,6 +109,20 @@ class TestButtonCallbackStateTracking:
         btn.afc.CHANGE_TOOL = MagicMock()
         btn._button_callback(100.2, False)
         assert btn._press_time is None
+
+    def test_raises_when_lane_obj_unresolved(self):
+        """If somehow called before klippy:ready resolves lane_obj (it
+        never is in practice -- _handle_ready always runs first), the
+        lane_obj property raises rather than silently handing back None."""
+        btn = _make_button()
+        btn._press_time = 100.0
+        btn._lane_obj = None
+        btn.afc.function.is_printing.return_value = False
+        btn.afc.CHANGE_TOOL = MagicMock()
+        from configfile import error as KlipperError
+        with pytest.raises(KlipperError):
+            btn._button_callback(100.3, False)
+        btn.afc.CHANGE_TOOL.assert_not_called()
 
 
 # ── _button_callback – printing guard ────────────────────────────────────────
@@ -258,3 +287,17 @@ class TestAFCButtonInit:
         buttons_mock.register_buttons.assert_called_once()
         call_args = buttons_mock.register_buttons.call_args[0]
         assert "PC2" in call_args[0]
+
+
+# ── load_config_prefix() ──────────────────────────────────────────────────────
+
+class TestLoadConfigPrefix:
+    def test_returns_afc_button_instance(self):
+        from tests.conftest import MockConfig, MockPrinter, MockAFC
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(name="AFC_button lane1", printer=printer,
+                            values={"pin": "PA0", "long_press_duration": 1.2})
+        result = load_config_prefix(config)
+        assert isinstance(result, AFCButton)
+        assert result.afc is afc

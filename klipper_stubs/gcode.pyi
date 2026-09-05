@@ -52,6 +52,7 @@ class GCodeCommand:
 class GCodeDispatch:
     ready_gcode_handlers: dict
     base_gcode_handlers: dict
+    output_callbacks: list
 
     def register_command(self, cmd: str, func: Optional[Callable], when_not_ready: bool = False,
                           desc: Optional[str] = None) -> Optional[Callable]: ...

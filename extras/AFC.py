@@ -271,7 +271,7 @@ class afc:
         self.z_hop                  = config.getfloat("z_hop", 0)                   # Height to move up before and after a tool change completes
         self.xy_resume              = config.getboolean("xy_resume", False)         # Need description or remove as this is currently an unused variable
         self.resume_speed           = config.getfloat("resume_speed", self.speed)   # Speed mm/s of resume move. Set to 0 to use gcode speed
-        self.error_timeout          = config.getfloat("error_timeout", 36000)      # Timeout in seconds to pause before erroring out when AFC is in error state
+        self.error_timeout: float   = config.getfloat("error_timeout", 36000)      # Timeout in seconds to pause before erroring out when AFC is in error state
         self.resume_z_speed         = config.getfloat("resume_z_speed", self.speed) # Speed mm/s of resume move in Z. Set to 0 to use gcode speed
 
         self.global_print_current   = config.getfloat("global_print_current", None) # Global variable to set steppers current to a specified current when printing. Going lower than 0.6 may result in TurtleNeck buffer's not working correctly
@@ -861,7 +861,7 @@ class afc:
             pheaters.set_temperature(temp_state["extruder"].get_heater(), temp_state["target_temp"], wait=False)
             self.logger.info(f"Restoring extruder temperature to {temp_state['target_temp']} for {temp_state['extruder'].name}")
         except Exception:
-            self.logger.debug("Unable to restore extruder temperature", exc_info=True)
+            self.logger.debug("Unable to restore extruder temperature")
 
     def _set_display_status(self, variable: str, value: bool) -> None:
         """
@@ -881,7 +881,7 @@ class afc:
                 self.gcode.run_script_from_command(
                     f"_AFC_DISPLAY_STATUS VARIABLE={variable} VALUE={value}")
             except Exception:
-                self.logger.debug("_AFC_DISPLAY_STATUS macro raised an error", exc_info=True)
+                self.logger.debug("_AFC_DISPLAY_STATUS macro raised an error")
 
     def _set_quiet_mode(self, val):
         """
