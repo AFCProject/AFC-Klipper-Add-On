@@ -206,7 +206,8 @@ class afcError:
         """
         logging.warning(f"AFC debug: setting error state {state}")
         # Only save position on first error state call
-        if state and not self.afc.error_state:
+        if (state
+            and not self.afc.error_state):
             self.afc.save_pos()
         self.afc.error_state = state
         self.afc.current_state = State.ERROR if state else State.IDLE
@@ -300,7 +301,9 @@ class afcError:
         )
 
         # The only time our resume should restore position is if there was an error that caused the pause
-        if self.afc.error_state or temp_is_paused or self.afc.position_saved:
+        if (self.afc.error_state
+            or temp_is_paused
+            or self.afc.position_saved):
             self.set_error_state(False)
             # Restore position if the printer is homed, otherwise leave it where it is
             if self.afc.function.is_homed(for_move=True):

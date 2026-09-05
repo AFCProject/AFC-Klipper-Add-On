@@ -908,6 +908,9 @@ class TestCmdAfcResume:
         assert err.AFC_RENAME_RESUME_NAME in call_arg
 
     def test_paused_z_below_threshold_calls_move_z_pos(self):
+        """Independent coverage of the `last_position[2] <= move_z_pos`
+        operand of `is_homed(for_move=True) and last_position[2] <= move_z_pos`
+        (is_homed defaults to True via _make_afc_error)."""
         err, afc = _make_afc_error()
         afc.function.is_paused.return_value = True
         afc.last_gcode_position = [0.0, 0.0, 0.0, 0.0]
@@ -922,6 +925,8 @@ class TestCmdAfcResume:
         afc.move_z_pos.assert_called_once()
 
     def test_paused_z_above_threshold_skips_move_z_pos(self):
+        """Independent coverage of the `last_position[2] <= move_z_pos`
+        operand failing while is_homed stays True (default)."""
         err, afc = _make_afc_error()
         afc.function.is_paused.return_value = True
         afc.last_gcode_position = [0.0, 0.0, 0.0, 0.0]
@@ -940,6 +945,25 @@ class TestCmdAfcResume:
             ("debug", "RESUME-Error State: False, Is Paused True, "
                       "Position_saved False, in toolchange: False"),
         ]
+
+    def test_paused_not_homed_skips_move_z_pos_even_when_z_below_threshold(self):
+        """Independent coverage of the `is_homed(for_move=True)` operand of
+        `is_homed(for_move=True) and last_position[2] <= move_z_pos`: the z
+        condition alone (held True, as in the "below threshold" test above)
+        is not enough when the printer isn't homed."""
+        err, afc = _make_afc_error()
+        afc.function.is_paused.return_value = True
+        afc.function.is_homed.return_value = False
+        afc.last_gcode_position = [0.0, 0.0, 0.0, 0.0]
+        afc.z_hop = 0.5
+        afc.gcode_move.last_position = [0.0, 0.0, 0.0]  # z=0 ≤ 0+0.5, same as the "below threshold" case
+        afc.move_z_pos = MagicMock()
+        afc.restore_pos = MagicMock()
+        from tests.conftest import MockGCodeCommand
+        gcmd = MockGCodeCommand()
+        err.set_error_state = MagicMock()
+        err.cmd_AFC_RESUME(gcmd)
+        afc.move_z_pos.assert_not_called()
 
     def test_paused_with_error_state_calls_restore_pos(self):
         """error_state alone, independent of temp_is_paused, is sufficient to
@@ -1104,6 +1128,9 @@ class TestCmdAfcPause:
         err.pause_resume.send_pause_command.assert_not_called()
 
     def test_not_paused_z_below_threshold_calls_move_z_pos(self):
+        """Independent coverage of the `last_position[2] <= move_z_pos`
+        operand of `is_homed(for_move=True) and last_position[2] <= move_z_pos`
+        (is_homed defaults to True via _make_afc_error)."""
         err, afc = _make_afc_error()
         afc.function.is_paused.return_value = False
         afc.save_pos = MagicMock()
@@ -1113,6 +1140,21 @@ class TestCmdAfcPause:
         afc.move_z_pos = MagicMock()
         err.cmd_AFC_PAUSE(MagicMock())
         afc.move_z_pos.assert_called_once()
+
+    def test_not_paused_not_homed_skips_move_z_pos_even_when_z_below_threshold(self):
+        """Independent coverage of the `is_homed(for_move=True)` operand: the
+        z condition alone (held True, as above) is not enough when the
+        printer isn't homed."""
+        err, afc = _make_afc_error()
+        afc.function.is_paused.return_value = False
+        afc.function.is_homed.return_value = False
+        afc.save_pos = MagicMock()
+        afc.last_gcode_position = [0.0, 0.0, 0.0, 0.0]
+        afc.z_hop = 0.5
+        afc.gcode_move.last_position = [0.0, 0.0, 0.0]  # z=0 ≤ 0+0.5, same as above
+        afc.move_z_pos = MagicMock()
+        err.cmd_AFC_PAUSE(MagicMock())
+        afc.move_z_pos.assert_not_called()
 
     def test_not_paused_z_above_threshold_skips_move_z_pos(self):
         """Current z already above the z-hop target -> log debug, skip move_z_pos."""

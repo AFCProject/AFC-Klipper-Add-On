@@ -105,7 +105,8 @@ class AFCButton:
         # Long Press
         if held_time >= self.long_press_duration:
             self.afc.logger.info(f"{self.lane_id}: Long press detected.")
-            if cur_lane is not None and cur_lane.name == self.lane_id:
+            if (cur_lane is not None
+                and cur_lane.name == self.lane_id):
                 self.afc.logger.info(f"Unloading {self.lane_id} before ejecting.")
                 if self.afc.TOOL_UNLOAD(self.lane_obj):
                     self.afc.LANE_UNLOAD(self.lane_obj)
@@ -118,7 +119,8 @@ class AFCButton:
         # Short Press
         else:
             self.afc.logger.info(f"{self.lane_id}: Short press detected.")
-            if cur_lane is not None and cur_lane.name == self.lane_id:
+            if (cur_lane is not None
+                and cur_lane.name == self.lane_id):
                 self.afc.logger.info(f"Unloading tool from {self.lane_id}.")
                 if not self.afc.TOOL_UNLOAD(cur_lane):
                     self.afc.afc_stats.increase_unload_error_count(self.afc)

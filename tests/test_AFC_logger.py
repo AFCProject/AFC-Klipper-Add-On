@@ -258,11 +258,33 @@ class TestLoggingMethods:
         assert lg.logger.error.call_count >= 3
 
     def test_debug_with_print_debug_sends_callback(self):
+        """Independent coverage of the `not only_debug` operand of
+        `self.print_debug_console and not only_debug`: only_debug defaults
+        to False here, so print_debug_console alone drives the callback."""
         lg, afc = self._make_lg_with_mocked_logger()
         lg.print_debug_console = True
         lg.send_callback = MagicMock()
         lg.debug("debug message")
         lg.send_callback.assert_called()
+
+    def test_debug_without_print_debug_skips_callback(self):
+        """Independent coverage of the `self.print_debug_console` operand:
+        only_debug is False (would allow the callback), but
+        print_debug_console defaults to False from __init__."""
+        lg, afc = self._make_lg_with_mocked_logger()
+        lg.send_callback = MagicMock()
+        lg.debug("debug message", only_debug=False)
+        lg.send_callback.assert_not_called()
+
+    def test_debug_with_only_debug_skips_callback_even_when_print_debug_enabled(self):
+        """Independent coverage of the `not only_debug` operand failing:
+        print_debug_console is True (would otherwise allow the callback),
+        but only_debug=True suppresses it."""
+        lg, afc = self._make_lg_with_mocked_logger()
+        lg.print_debug_console = True
+        lg.send_callback = MagicMock()
+        lg.debug("debug message", only_debug=True)
+        lg.send_callback.assert_not_called()
 
     def test_raw_sends_callback(self):
         lg, _ = self._make_lg_with_mocked_logger()

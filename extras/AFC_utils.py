@@ -98,7 +98,7 @@ def add_filament_switch(switch_name: str, switch_pin: str, printer: Printer,
 
     cfg_wrap = configfile.ConfigWrapper( printer, filament_switch_config, {}, new_switch_name)
 
-    fila = printer.load_object(cfg_wrap, new_switch_name)
+    fila: SwitchSensor = printer.load_object(cfg_wrap, new_switch_name)
 
     # Commence the hacky stuff for delayed runout
     if not show_sensor:
@@ -185,7 +185,8 @@ class DebounceButton:
             filament_sensor.runout_helper.note_filament_present = self._button_handler  # type: ignore[method-assign,assignment]
         elif param_keys == snapmaker_expected:
             filament_sensor.runout_helper.note_filament_present = self.button_handler  # type: ignore[method-assign,assignment]
-        elif len(sig.parameters) > 2 or len(sig.parameters) == 1:
+        elif (len(sig.parameters) > 2
+              or len(sig.parameters) == 1):
             filament_sensor.runout_helper.note_filament_present = self.button_handler  # type: ignore[method-assign,assignment]
         else:
             filament_sensor.runout_helper.note_filament_present = self._button_handler  # type: ignore[method-assign,assignment]
@@ -537,7 +538,8 @@ class AFC_moonraker:
 
         try:
             with urlopen(url_string, timeout=self.REQUEST_TIMEOUT) as resp:
-                if resp.status >= 200 and resp.status <= 300:
+                if (resp.status >= 200
+                    and resp.status <= 300):
                     data = json.load(resp)
                 else:
                     self._log_async(logger, self.ERROR_STRING)
@@ -577,7 +579,9 @@ class AFC_moonraker:
         """
         resp = self._get_results(urljoin(self.host, 'server/config'))
         # Check to make sure response is valid and spoolman exists in dictionary
-        if resp is not None and 'orig' in resp and 'spoolman' in resp['orig']:
+        if (resp is not None
+            and 'orig' in resp
+            and 'spoolman' in resp['orig']):
             return str(resp['orig']['spoolman']['server'])     # check for spoolman and grab url
         else:
             self.logger.debug("Spoolman server is not defined")
@@ -631,7 +635,8 @@ class AFC_moonraker:
             self.last_stats_time = datetime.now()
 
         # Cache results to keep queries to moonraker down
-        if self.afc_stats is None or refetch_data:
+        if (self.afc_stats is None
+            or refetch_data):
             resp = self._get_results(urljoin(self.database_url, f"?namespace={self.afc_stats_key}"))
             if resp is not None:
                 self.afc_stats = resp
@@ -744,7 +749,8 @@ class AFC_moonraker:
         url = urljoin(self.host, "machine/td1/data")
         req = Request(url=url)
         resp = self._get_results(req)
-        if resp is not None and "devices" in resp:
+        if (resp is not None
+            and resp.get("devices")):
             return dict(resp["devices"])
         else:
             return None

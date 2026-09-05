@@ -269,24 +269,42 @@ class TestDebounceButton:
         assert btn.logical_state is True
 
     def test_init_kalico_signature_uses_button_handler(self):
-        """Covers line 135: Kalico exact-match signature assigns _button_handler."""
+        """Exact Kalico-match signature (4 params) assigns _button_handler."""
         cfg = self._make_config()
         # Exact Kalico params (no 'self' since inspect works on function signature)
         sensor = self._make_filament_sensor(
             ["eventtime", "is_filament_present", "force", "immediate"]
         )
         btn = DebounceButton(cfg, sensor)
-        # The assignment to _button_handler was made; button_action should be set
-        assert btn.button_action is not None
+        assert sensor.runout_helper.note_filament_present == btn._button_handler
 
     def test_init_two_param_signature_uses_button_handler_else(self):
-        """Covers line 139: exactly 2 params → else branch assigns _button_handler."""
+        """Exactly 2 params that don't match the snapmaker names → falls
+        through every if/elif to the final else, which assigns _button_handler."""
         cfg = self._make_config()
-        # Only 2 parameters: eventtime, state (not > 2, not == 1)
+        # Only 2 parameters: eventtime, state (not > 2, not == 1, and not a
+        # snapmaker-shaped 2-param match either)
         sensor = self._make_filament_sensor(["eventtime", "state"])
         btn = DebounceButton(cfg, sensor)
-        # Should still set button_action
-        assert btn.button_action is not None
+        assert sensor.runout_helper.note_filament_present == btn._button_handler
+
+    def test_init_three_param_signature_uses_button_handler(self):
+        """Independent coverage of the `len(sig.parameters) > 2` operand of
+        the `> 2 or == 1` elif: a 3-param signature that isn't an exact
+        match for either named signature must still route to button_handler."""
+        cfg = self._make_config()
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        assert sensor.runout_helper.note_filament_present == btn.button_handler
+
+    def test_init_one_param_signature_uses_button_handler(self):
+        """Independent coverage of the `len(sig.parameters) == 1` operand of
+        the `> 2 or == 1` elif: a single-param signature must route to
+        button_handler even though `1 > 2` is False."""
+        cfg = self._make_config()
+        sensor = self._make_filament_sensor(["state"])
+        btn = DebounceButton(cfg, sensor)
+        assert sensor.runout_helper.note_filament_present == btn.button_handler
 
     def test_init_snapmaker_signature_uses_button_handler(self):
         """An exact match on the snapmaker signature (is_filament_present,
@@ -422,7 +440,10 @@ class TestAFCMoonraker:
             result = mr._get_results("http://localhost:7125/server/info", print_error=False)
         assert result is None
 
-    def test_get_results_bad_status_returns_none(self):
+    def test_get_results_status_above_300_returns_none(self):
+        """Independent coverage of the `resp.status <= 300` operand of
+        `resp.status >= 200 and resp.status <= 300`: a status of 500 keeps
+        the >=200 operand True while failing <=300."""
         mr = self._make_moonraker()
         mock_resp = MagicMock()
         mock_resp.status = 500
@@ -443,6 +464,24 @@ class TestAFCMoonraker:
         assert mr.logger.messages[messages_before:] == [
             ("debug", mr.ERROR_STRING),
             ("debug", "Response: 500 Reason: Internal Server Error"),
+        ]
+
+    def test_get_results_status_below_200_returns_none(self):
+        """Independent coverage of the `resp.status >= 200` operand: a
+        status of 100 keeps the <=300 operand True while failing >=200."""
+        mr = self._make_moonraker()
+        mock_resp = MagicMock()
+        mock_resp.status = 100
+        mock_resp.reason = "Continue"
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen", return_value=mock_resp):
+            result = mr._get_results("http://localhost:7125/server/info", print_error=False)
+        assert result is None
+        assert mr.logger.messages[messages_before:] == [
+            ("debug", mr.ERROR_STRING),
+            ("debug", "Response: 100 Reason: Continue"),
         ]
 
     def test_get_results_success_returns_data(self):
@@ -535,8 +574,27 @@ class TestAFCMoonraker:
         assert queried_url == expected_url
 
     def test_get_spoolman_server_returns_none_when_missing(self):
+        """Independent coverage of the `'spoolman' in resp['orig']` operand:
+        resp and 'orig' are both present, only 'spoolman' is absent."""
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value={"orig": {}})
+        result = mr.get_spoolman_server()
+        assert result is None
+
+    def test_get_spoolman_server_returns_none_when_resp_is_none(self):
+        """Independent coverage of the `resp is not None` operand: the
+        server/config query itself fails, so the other operands are never
+        reached at all."""
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value=None)
+        result = mr.get_spoolman_server()
+        assert result is None
+
+    def test_get_spoolman_server_returns_none_when_orig_key_missing(self):
+        """Independent coverage of the `'orig' in resp` operand: resp is
+        present but has no 'orig' key at all."""
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"other": {}})
         result = mr.get_spoolman_server()
         assert result is None
 
@@ -609,6 +667,15 @@ class TestAFCMoonraker:
     def test_get_td1_data_returns_none_when_no_devices_key(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value={"other": "data"})
+        result = mr.get_td1_data()
+        assert result is None
+
+    def test_get_td1_data_returns_none_when_devices_key_is_null(self):
+        """The "devices" key can be present but null (e.g. no TD-1 devices
+        configured yet); this must return None gracefully rather than
+        raising TypeError from dict(None)."""
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"devices": None})
         result = mr.get_td1_data()
         assert result is None
 
@@ -780,8 +847,9 @@ class TestAFCMoonraker:
         assert lane_data is False
 
     def test_check_for_td1_defined_but_no_devices_found(self):
-        """td1 is defined in moonraker.conf but get_td1_data() finds no
-        connected devices -- td1_defined must still be True, but td1 (device
+        """Independent coverage of the `td1_data is not None` operand of
+        `td1_data is not None and len(td1_data) > 0`: get_td1_data() returns
+        None outright -- td1_defined must still be True, but td1 (device
         found) must stay False."""
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value={"orig": {"td1": True}})
@@ -791,15 +859,39 @@ class TestAFCMoonraker:
         assert td1 is False
         assert lane_data is False
 
+    def test_check_for_td1_defined_but_devices_dict_empty(self):
+        """Independent coverage of the `len(td1_data) > 0` operand:
+        get_td1_data() returns a non-None but empty dict (no devices),
+        keeping td1_data is not None True while len(...) > 0 is False."""
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value={"orig": {"td1": True}})
+        mr.get_td1_data = MagicMock(return_value={})
+        td1_defined, td1, lane_data = mr.check_for_td1()
+        assert td1_defined is True
+        assert td1 is False
+        assert lane_data is False
+
     def test_get_afc_stats_second_call_uses_cache_path(self):
-        """Covers lines 294-296: second call enters the last_stats_time is not None branch."""
+        """Independent coverage of both operands of `self.afc_stats is None
+        or refetch_data` being False together: once afc_stats is already
+        populated and less than 60s have passed, the second call must not
+        refetch at all."""
         mr = self._make_moonraker()
         payload = {"value": {"tc": 5}}
         mr._get_results = MagicMock(return_value=payload)
-        mr.get_afc_stats()        # first call: sets last_stats_time
-        mr.get_afc_stats()        # second call: last_stats_time is not None → cached path
-        # At least first call was made; second call may skip _get_results if cached
-        assert mr._get_results.call_count >= 1
+        mr.get_afc_stats()        # first call: populates afc_stats, sets last_stats_time
+        mr.get_afc_stats()        # second call: afc_stats set + <60s elapsed -> cached, no refetch
+        assert mr._get_results.call_count == 1
+
+    def test_get_afc_stats_none_cached_refetches_even_within_60_seconds(self):
+        """Independent coverage of the `self.afc_stats is None` operand:
+        even with refetch_data False (well under 60s), a still-empty cache
+        from a previously failed fetch must trigger a refetch on its own."""
+        mr = self._make_moonraker()
+        mr._get_results = MagicMock(return_value=None)  # every fetch "fails"
+        mr.get_afc_stats()  # first call: fetch fails, afc_stats stays None
+        mr.get_afc_stats()  # second call: refetch_data is False, but afc_stats is still None
+        assert mr._get_results.call_count == 2
 
     def test_get_afc_stats_refetches_after_60_seconds(self):
         """Covers lines 297-298: delta > 60s → refetch_data=True, update last_stats_time."""
@@ -1240,26 +1332,56 @@ class TestVirtualRunoutHelper:
         assert helper.filament_present is False
 
     def test_note_filament_present_transition_to_present_never_fires_callback(self):
-        """Callback only fires on transition to absent, never on transition to present."""
+        """Independent coverage of the `not new_state` operand of
+        `not new_state and self.sensor_enabled and callable(self.runout_callback)
+        and is_printing`: sensor_enabled, a callable callback, and is_printing
+        are all held True here, so only the transition-to-present (not
+        new_state is False) direction is what prevents the callback firing."""
         cb = MagicMock()
         helper, _ = self._make_helper(runout_cb=cb, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Printing"}
         helper.note_filament_present(100.0, True)  # absent -> present
         cb.assert_not_called()
         assert helper.filament_present is True
 
     def test_note_filament_present_no_callback_when_runout_disabled(self):
+        """Independent coverage of the `self.sensor_enabled` operand: the
+        transition is to absent, the callback is callable, and is_printing
+        is True -- only sensor_enabled=False prevents the callback firing."""
         cb = MagicMock()
         helper, _ = self._make_helper(runout_cb=cb, enable_runout=False)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Printing"}
         helper.note_filament_present(100.0, True)
         helper.note_filament_present(101.0, False)
         cb.assert_not_called()
         assert helper.filament_present is False
 
     def test_note_filament_present_no_callback_when_none(self):
-        """runout_callback is None -> callable() check prevents a crash."""
+        """Independent coverage of the `callable(self.runout_callback)`
+        operand: the transition is to absent, sensor_enabled and is_printing
+        are both True -- only runout_callback being None prevents the
+        callback firing (and prevents a crash from calling None)."""
         helper, _ = self._make_helper(runout_cb=None, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Printing"}
         helper.note_filament_present(100.0, True)
         helper.note_filament_present(101.0, False)  # should not raise
+        assert helper.filament_present is False
+
+    def test_note_filament_present_no_callback_when_not_printing(self):
+        """Independent coverage of the `is_printing` operand: the transition
+        is to absent, sensor_enabled is True, and the callback is callable --
+        only the printer not being in the "Printing" state prevents the
+        callback firing."""
+        cb = MagicMock()
+        helper, _ = self._make_helper(runout_cb=cb, enable_runout=True)
+        idle_to = helper.printer.lookup_object("idle_timeout")
+        idle_to.get_status.return_value = {"state": "Ready"}
+        helper.note_filament_present(100.0, True)
+        helper.note_filament_present(101.0, False)
+        cb.assert_not_called()
         assert helper.filament_present is False
 
     def test_note_filament_present_exception_fallback_uses_kwarg(self):

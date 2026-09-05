@@ -213,7 +213,8 @@ class AFC_logger:
         for line in message.lstrip().rstrip().split("\n"):
             self.logger.debug(self._format(f"{'DEBUG:':^6}{line}", code))
 
-        if self.print_debug_console and not only_debug:
+        if (self.print_debug_console
+            and not only_debug):
             self.send_callback(message)
 
         if traceback is not None:
