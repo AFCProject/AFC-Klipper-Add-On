@@ -789,6 +789,7 @@ class afcUnit:
     # Function that other units can create so that they are specific to the unit
     def system_Test(self, cur_lane, delay, assignTcmd, enable_movement) -> bool:
         self._print_function_not_defined(self.system_Test.__name__)
+        return False
 
     def calibrate_bowden(self, cur_lane, dis, tol):
         self._print_function_not_defined(self.calibrate_bowden.__name__)
