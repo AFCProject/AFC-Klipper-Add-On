@@ -154,15 +154,19 @@ class AFCExtruderStepper(AFCLane):
 
     def _handle_ready(self) -> None:
         """
-        Handles klippy:ready callback, check to see if buffer_obj is a FPS_PSF buffer. If buffer is
-        a FPS_PSF buffer then endstops are registered for tool_start, buffer_adv, and buffer_trailing
+        Register FPS buffer endstops after the buffer object is available.
+
+        An FPS buffer supplies the advance and trailing software endstops. It
+        supplies tool_start only when the associated extruder explicitly uses
+        ``pin_tool_start: buffer``.
         """
         super()._handle_ready()
 
         if (self.buffer_obj
             and self.buffer_obj.type == "FPS_PSF"):
-            self._add_endstop('tool_start', None, f'{self.name}_tool_start',
-                              mcu_endstop=self.buffer_obj.fps_endstop)
+            if self.extruder_obj.tool_start == "buffer":
+                self._add_endstop('tool_start', None, f'{self.name}_tool_start',
+                                  mcu_endstop=self.buffer_obj.fps_endstop)
             self._add_endstop('buffer_advance', None, f'{self.name}_buffer_adv',
                               mcu_endstop=self.buffer_obj.fps_endstop)
             self._add_endstop('buffer_trailing', None, f'{self.name}_buffer_trailing',

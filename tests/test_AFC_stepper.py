@@ -646,9 +646,10 @@ from extras.AFC_lane import AFCLane
 
 
 class TestHandleReadyFpsEndstops:
-    def test_registers_fps_endstops_when_buffer_is_fps_psf(self):
+    def test_registers_fps_tool_start_when_extruder_uses_buffer(self):
         s = _make_stepper()
         s._add_endstop = MagicMock()
+        s.extruder_obj.tool_start = "buffer"
         s.buffer_obj = MagicMock()
         s.buffer_obj.type = "FPS_PSF"
         s.buffer_obj.fps_endstop = "SENTINEL_ADVANCE_ENDSTOP"
@@ -667,6 +668,26 @@ class TestHandleReadyFpsEndstops:
         # pin (args[1]) should always be None -- the FPS endstop is pre-built,
         # not created from a pin
         assert all(call.args[1] is None for call in s._add_endstop.call_args_list)
+
+    def test_preserves_hardware_tool_start_when_extruder_uses_a_pin(self):
+        s = _make_stepper()
+        s._add_endstop = MagicMock()
+        s.extruder_obj.tool_start = "^ME36CAN:PB12"
+        s.buffer_obj = MagicMock()
+        s.buffer_obj.type = "FPS_PSF"
+        s.buffer_obj.fps_endstop = "SENTINEL_ADVANCE_ENDSTOP"
+        s.buffer_obj.fps_trailing_endstop = "SENTINEL_TRAILING_ENDSTOP"
+
+        with patch.object(AFCLane, "_handle_ready", return_value=None):
+            s._handle_ready()
+
+        registered = {call.args[0]: (call.args[2], call.kwargs["mcu_endstop"])
+                      for call in s._add_endstop.call_args_list}
+        assert "tool_start" not in registered
+        assert registered == {
+            "buffer_advance": ("lane1_buffer_adv", "SENTINEL_ADVANCE_ENDSTOP"),
+            "buffer_trailing": ("lane1_buffer_trailing", "SENTINEL_TRAILING_ENDSTOP"),
+        }
 
     def test_skips_fps_endstops_when_buffer_is_switched(self):
         s = _make_stepper()
