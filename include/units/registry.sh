@@ -89,6 +89,67 @@ declare -A UNIT_ADDITIONAL_DEFAULT_NAME=(
   ["EMU"]="EMU_1"
 )
 
+# Keys the "add additional unit" menu offers a buffer toggle for.
+UNIT_ADDITIONAL_BUFFER_SAFE=(
+  "BoxTurtle_4Lane"
+  "BoxTurtle_8Lane"
+  "Claymore"
+  "EMU"
+  "NightOwl"
+  "HTLF"
+  "QuattroBox"
+  "OpenAMS"
+)
+
+unit_additional_buffer_supported() {
+  # True (0) if $1 (a registry key, e.g. from unit_key_for_type) can safely
+  # get a buffer attached via the "add additional unit" menu.
+  local key="$1" k
+  for k in "${UNIT_ADDITIONAL_BUFFER_SAFE[@]}"; do
+    [ "$k" == "$key" ] && return 0
+  done
+  return 1
+}
+
+unit_additional_buffer_options() {
+  case "$1" in
+    "OpenAMS") printf 'None FPS_PSF' ;;
+    *) printf 'None TurtleNeck TurtleNeckV2 FPS_PSF' ;;
+  esac
+}
+
+unit_additional_buffer_default() {
+  # Echoes the buffer_type the additional-unit menu should default a unit
+  # of type $1 to "own buffer" as (see unit_additional_buffer_options).
+  case "$1" in
+    "OpenAMS") printf 'FPS_PSF' ;;
+    *) printf 'TurtleNeck' ;;
+  esac
+}
+
+unit_additional_buffer_type_valid() {
+  # True (0) if $2 is one of $1's unit_additional_buffer_options.
+  local installation_type="$1" buffer_type="$2" opt
+  for opt in $(unit_additional_buffer_options "$installation_type"); do
+    [ "$opt" == "$buffer_type" ] && return 0
+  done
+  return 1
+}
+
+unit_additional_buffer_type_after_transition() {
+  local old_type="$1" new_type="$2" current="$3"
+  if ! unit_additional_buffer_supported "$(unit_key_for_type "$new_type")"; then
+    printf 'None'
+    return
+  fi
+  if ! unit_additional_buffer_supported "$(unit_key_for_type "$old_type")" \
+    || ! unit_additional_buffer_type_valid "$new_type" "$current"; then
+    unit_additional_buffer_default "$new_type"
+    return
+  fi
+  printf '%s' "$current"
+}
+
 unit_key_for_type() {
   # Echoes the registry key for a given installation_type, or nothing if
   # the type is unknown.
@@ -96,8 +157,23 @@ unit_key_for_type() {
 }
 
 unit_additional_default_name() {
-  # Echoes the default unit name for the "add additional unit" prompt.
-  printf '%s' "${UNIT_ADDITIONAL_DEFAULT_NAME[$1]:-Unit_1}"
+  # Echoes the default unit name for the "add additional unit" prompt: the
+  # lowest free "<prefix>_N" for type $1, probed against what's already in
+  # $afc_config_dir.
+  local template prefix n probe
+  template="${UNIT_ADDITIONAL_DEFAULT_NAME[$1]:-Unit_1}"
+  prefix="${template%_*}"
+  n=1
+  while true; do
+    if [ "$1" == "HTLF" ]; then
+      probe="${afc_config_dir}/AFC_$(htlf_normalize_board_type "$htlf_board_type")_${prefix}_${n}.cfg"
+    else
+      probe="${afc_config_dir}/AFC_${prefix}_${n}.cfg"
+    fi
+    [ -f "$probe" ] || break
+    n=$((n + 1))
+  done
+  printf '%s_%s' "$prefix" "$n"
 }
 
 # NOTE on these dispatchers: install-afc.sh runs under `set -e`, and each of
@@ -220,7 +296,7 @@ unit_install_menu_options_BoxTurtle_4Lane() { unit_install_menu_options_boxturtl
 
 unit_additional_menu_row_boxturtle_common() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="Turtle_2"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. BoxTurtle Name: %s \n" "$boxturtle_name"
 }
@@ -260,14 +336,24 @@ unit_copy_files_NightOwl() {
 unit_install_additional_NightOwl() {
   safe_copy "${afc_path}/templates/AFC_NightOwl_1.cfg" "${afc_config_dir}/AFC_${boxturtle_name}.cfg"
   safe_copy "${afc_path}/config/mcu/ERB_2.0.cfg" "${afc_config_dir}/mcu/"
-  find "$afc_config_dir/AFC_${boxturtle_name}.cfg" -type f -exec sed -i "s/NightOwl/$boxturtle_name/g" {} +
+  sed -i \
+    -e "s/AFC_NightOwl/AFC_NIGHTOWL_CLASS_PLACEHOLDER/g" \
+    -e "s/NightOwl/$boxturtle_name/g" \
+    -e "s/AFC_NIGHTOWL_CLASS_PLACEHOLDER/AFC_NightOwl/g" \
+    "$afc_config_dir/AFC_${boxturtle_name}.cfg"
 }
 
 unit_buffer_target_NightOwl() {
-  buffer_unit_name="NightOwl"
   buffer_unit_section_prefix="AFC_NightOwl"
-  buffer_extruder_file="${afc_config_dir}/AFC_NightOwl_1.cfg"
-  buffer_section_name="NightOwl"
+  if [ "$is_additional_unit" == "True" ]; then
+    buffer_unit_name="$boxturtle_name"
+    buffer_extruder_file="${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    buffer_section_name="$boxturtle_name"
+  else
+    buffer_unit_name="NightOwl"
+    buffer_extruder_file="${afc_config_dir}/AFC_NightOwl_1.cfg"
+    buffer_section_name="NightOwl"
+  fi
 }
 
 unit_message_NightOwl() {
@@ -278,7 +364,7 @@ unit_message_NightOwl() {
 
 unit_additional_menu_row_NightOwl() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="NightOwl_1"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. NightOwl Name: %s \n" "$boxturtle_name"
 }
@@ -318,10 +404,15 @@ unit_install_additional_HTLF() {
 unit_buffer_target_HTLF() {
   local board_type
   board_type="$(htlf_normalize_board_type "$htlf_board_type")"
-  buffer_unit_name="HTLF_1"
   buffer_unit_section_prefix="AFC_HTLF"
   buffer_extruder_file="${afc_config_dir}/AFC_${board_type}_${boxturtle_name}.cfg"
-  buffer_section_name="HTLF_1"
+  if [ "$is_additional_unit" == "True" ]; then
+    buffer_unit_name="$boxturtle_name"
+    buffer_section_name="$boxturtle_name"
+  else
+    buffer_unit_name="HTLF_1"
+    buffer_section_name="HTLF_1"
+  fi
 }
 
 unit_message_HTLF() {
@@ -349,7 +440,7 @@ unit_install_menu_options_HTLF() {
 
 unit_additional_menu_row_HTLF() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="HTLF_1"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. HTLF Name: %s \n" "$boxturtle_name"
   printf "D. HTLF Board Type : %s \n" "$htlf_board_type"
@@ -407,7 +498,7 @@ unit_install_menu_options_Claymore() {
 
 unit_additional_menu_row_Claymore() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="Claymore_1"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. Claymore Name: %s \n" "$boxturtle_name"
   printf "H. Claymore Board Type : %s \n" "$htlf2_board_type"
@@ -485,11 +576,18 @@ unit_install_additional_QuattroBox() {
 }
 
 unit_buffer_target_QuattroBox() {
-  buffer_unit_name="QuattroBox_1"
   buffer_unit_section_prefix="AFC_QuattroBox"
-  buffer_extruder_file="${afc_config_dir}/AFC_QuattroBox_1.cfg"
-  buffer_prebaked_header="[AFC_buffer QuattroBox_1]"
-  buffer_section_name="QuattroBox_1"
+  if [ "$is_additional_unit" == "True" ]; then
+    buffer_unit_name="$boxturtle_name"
+    buffer_extruder_file="${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    buffer_prebaked_header="[AFC_buffer ${boxturtle_name}]"
+    buffer_section_name="$boxturtle_name"
+  else
+    buffer_unit_name="QuattroBox_1"
+    buffer_extruder_file="${afc_config_dir}/AFC_QuattroBox_1.cfg"
+    buffer_prebaked_header="[AFC_buffer QuattroBox_1]"
+    buffer_section_name="QuattroBox_1"
+  fi
 }
 
 unit_message_QuattroBox() {
@@ -507,7 +605,7 @@ unit_install_menu_options_QuattroBox() {
 
 unit_additional_menu_row_QuattroBox() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="QuattroBox_1"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. QuattroBox Name: %s \n" "$boxturtle_name"
   printf "E. QuattroBox Board Type : %s \n" "$qb_board_type"
@@ -528,10 +626,16 @@ unit_install_additional_OpenAMS() {
 }
 
 unit_buffer_target_OpenAMS() {
-  buffer_unit_name="AMS_1"
   buffer_unit_section_prefix="AFC_OpenAMS"
-  buffer_extruder_file="${afc_config_dir}/AFC_AMS_1.cfg"
-  buffer_section_name="AMS_1"
+  if [ "$is_additional_unit" == "True" ]; then
+    buffer_unit_name="$boxturtle_name"
+    buffer_extruder_file="${afc_config_dir}/AFC_${boxturtle_name}.cfg"
+    buffer_section_name="$boxturtle_name"
+  else
+    buffer_unit_name="AMS_1"
+    buffer_extruder_file="${afc_config_dir}/AFC_AMS_1.cfg"
+    buffer_section_name="AMS_1"
+  fi
 }
 
 unit_message_OpenAMS() {
@@ -544,7 +648,7 @@ unit_message_OpenAMS() {
 
 unit_additional_menu_row_OpenAMS() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="AMS_1"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. OpenAMS Name: %s \n" "$boxturtle_name"
 }
@@ -579,7 +683,7 @@ unit_message_ViViD() {
 
 unit_additional_menu_row_ViViD() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="Vivid_1"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. ViViD Name: %s \n" "$boxturtle_name"
 }
@@ -626,7 +730,7 @@ unit_install_menu_options_EMU() {
 
 unit_additional_menu_row_EMU() {
   if [ "$turtle_renamed" != "True" ]; then
-    boxturtle_name="EMU_1"
+    boxturtle_name="$(unit_additional_default_name "$installation_type")"
   fi
   printf "1. EMU Name: %s \n" "$boxturtle_name"
   printf "G. EMU Lane Count : %s \n" "$emu_num_lanes"

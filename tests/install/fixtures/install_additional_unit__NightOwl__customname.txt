@@ -13,7 +13,7 @@
 sensor_type: temperature_mcu
 sensor_mcu: CustomName2
 
-[AFC_CustomName2 CustomName2]
+[AFC_NightOwl CustomName2]
 hub: CustomName2_Hub
 extruder: extruder
 buffer: TN                  #Turtleneck as standard Buffer

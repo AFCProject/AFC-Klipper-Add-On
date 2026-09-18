@@ -1,4 +1,4 @@
 === OUTPUT ===
-1. BoxTurtle Name: Turtle_2 
+1. BoxTurtle Name: Turtle_1 
 === VARS ===
-boxturtle_name=Turtle_2
+boxturtle_name=Turtle_1

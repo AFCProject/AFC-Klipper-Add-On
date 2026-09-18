@@ -138,9 +138,11 @@ query_printer_status() {
   
   # Needed for Snapmaker U1 since jq is not installed on this machine
   if ! command -v jq &> /dev/null; then
-    tmp="${response#*\"idle_timeout\":}"
-    tmp="${tmp#*\"state\": \"}"
-    state="${tmp%%\"*}"
+    if [[ "$response" =~ \"idle_timeout\"[[:space:]]*:[[:space:]]*\{[^}]*\"state\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+      state="${BASH_REMATCH[1]}"
+    else
+      state=""
+    fi
   else
     state=$(echo "$response" | jq -r '.result.status.idle_timeout.state' 2>/dev/null)
   fi

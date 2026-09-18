@@ -1,0 +1,6 @@
+=== VARS ===
+buffer_unit_name=
+buffer_unit_section_prefix=
+buffer_extruder_file=
+buffer_section_name=
+buffer_prebaked_header=

@@ -55,6 +55,7 @@ toolhead_sensor="Ramming"
 toolhead_sensor_pin="Unknown"
 buffer_type="TurtleNeck"
 boxturtle_name="Turtle_1"
+is_additional_unit="False"
 htlf_board_types=("ERB" "MMB_1.1" "MMB_1.0")
 htlf_board_type="ERB"
 htlf2_board_types=("AFC_Lite")

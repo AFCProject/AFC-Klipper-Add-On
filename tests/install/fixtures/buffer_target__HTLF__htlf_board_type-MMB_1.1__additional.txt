@@ -1,0 +1,6 @@
+=== VARS ===
+buffer_unit_name=CustomName2
+buffer_unit_section_prefix=AFC_HTLF
+buffer_extruder_file=AFC_MMB_CustomName2.cfg
+buffer_section_name=CustomName2
+buffer_prebaked_header=

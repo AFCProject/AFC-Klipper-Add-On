@@ -114,6 +114,21 @@ def iter_cases():
             overrides = {"installation_type": itype, "boxturtle_name": "Turtle_1", **variant}
             yield f"buffer_target__{base_name}", "buffer_target", overrides
 
+            # get_unit_buffer_target for an *additional* unit (is_additional_unit
+            # set). NightOwl/HTLF/QuattroBox/OpenAMS used to hardcode a "_1"
+            # target here that only matched the first unit -- a second unit's
+            # buffer would silently target (or collide with) the first one's
+            # file/section. BoxTurtle/Claymore/EMU already derived the target
+            # from $boxturtle_name and are included for symmetry/regression
+            # coverage.
+            overrides = {
+                "installation_type": itype,
+                "boxturtle_name": "CustomName2",
+                "is_additional_unit": "True",
+                **variant,
+            }
+            yield f"buffer_target__{base_name}__additional", "buffer_target", overrides
+
             # install_menu.sh's type-specific option rows: doesn't depend on
             # turtle_renamed (that only matters for the additional-unit menu).
             overrides = {"installation_type": itype, "boxturtle_name": "Foo_1", **variant}
@@ -147,6 +162,52 @@ def iter_cases():
 
         # name_additional_unit: only depends on installation_type.
         yield f"name_additional_unit__{slug(itype)}", "name_additional_unit", {"installation_type": itype}
+
+    # unit_additional_default_name: the "add additional unit" menu's default
+    # name is the lowest free "<prefix>_N" for the type, based on what's
+    # already in $afc_config_dir -- not a hardcoded "_2" that assumes a
+    # first unit of that type already exists (the reported bug: a first
+    # BoxTurtle added via this menu, e.g. after installing a Claymore first,
+    # used to default to "Turtle_2" even though no BoxTurtle existed yet).
+    default_name_cases = [
+        ("none-existing", []),
+        ("first-existing", ["AFC_Turtle_1.cfg"]),
+        ("first-and-second-existing", ["AFC_Turtle_1.cfg", "AFC_Turtle_2.cfg"]),
+        ("gap-only-second-existing", ["AFC_Turtle_2.cfg"]),
+    ]
+    for case_label, seed_files in default_name_cases:
+        overrides = {
+            "installation_type": "BoxTurtle (4-Lane)",
+            "seed_files": ",".join(seed_files),
+        }
+        yield f"additional_default_name__BoxTurtle_4Lane__{case_label}", "additional_default_name", overrides
+
+    # HTLF's filename also carries its (normalized) board type --
+    # AFC_<board>_<name>.cfg, e.g. AFC_ERB_HTLF_1.cfg -- unlike every other
+    # type's plain AFC_<prefix>_<n>.cfg. Probing the generic pattern here
+    # would never find an existing HTLF unit and would keep offering
+    # "HTLF_1" as the default even when it's already taken.
+    yield (
+        "additional_default_name__HTLF__board-ERB__first-existing",
+        "additional_default_name",
+        {
+            "installation_type": "HTLF",
+            "htlf_board_type": "ERB",
+            "seed_files": "AFC_ERB_HTLF_1.cfg",
+        },
+    )
+    # MMB_1.0/MMB_1.1 both normalize to the "MMB" filename segment (see
+    # htlf_normalize_board_type) -- confirm the probe uses that normalized
+    # form, not the raw htlf_board_type value.
+    yield (
+        "additional_default_name__HTLF__board-MMB_1.0__first-existing",
+        "additional_default_name",
+        {
+            "installation_type": "HTLF",
+            "htlf_board_type": "MMB_1.0",
+            "seed_files": "AFC_MMB_HTLF_1.cfg",
+        },
+    )
 
 
 def all_cases():
@@ -211,6 +272,91 @@ try:
         # registry.sh's "how to add a new unit type" steps 3-4).
         actual = run_case("no_adapter_survival", {})
         assert actual == "still alive\n"
+
+    def test_openams_offers_additional_unit_buffer():
+        # CodeRabbit flagged that OpenAMS was left out of
+        # UNIT_ADDITIONAL_BUFFER_SAFE despite having a working
+        # unit_buffer_target_OpenAMS and FPS_PSF pin handling in
+        # apply_unit_buffer -- confirm it's supported, and that its cycle
+        # is restricted to None/FPS_PSF (it has no TurtleNeck/TurtleNeckV2
+        # hardware path, unlike every other supported type).
+        actual = run_case("additional_buffer_options", {"installation_type": "OpenAMS"})
+        assert actual == (
+            "=== VARS ===\n"
+            "supported=True\n"
+            "options=None FPS_PSF\n"
+            "default=FPS_PSF\n"
+        )
+
+    def test_generic_type_offers_full_additional_unit_buffer_cycle():
+        actual = run_case(
+            "additional_buffer_options", {"installation_type": "BoxTurtle (4-Lane)"}
+        )
+        assert actual == (
+            "=== VARS ===\n"
+            "supported=True\n"
+            "options=None TurtleNeck TurtleNeckV2 FPS_PSF\n"
+            "default=TurtleNeck\n"
+        )
+
+    def test_vivid_has_no_additional_unit_buffer():
+        # ViViD has no unit_buffer_target_ViViD adapter at all.
+        actual = run_case("additional_buffer_options", {"installation_type": "ViViD"})
+        assert actual.splitlines()[1] == "supported=False"
+
+    def test_additional_buffer_forced_none_does_not_survive_unsupported_type():
+        # CodeRabbit: cycling "T" through an unsupported type (e.g. ViViD)
+        # forces additional_buffer_type to "None". That forced "None" used
+        # to be indistinguishable from an intentional shared-buffer choice,
+        # so cycling on to the next *supported* type kept "None" instead of
+        # resetting to that type's own-buffer default.
+        actual = run_case(
+            "additional_buffer_transition",
+            {
+                "old_installation_type": "ViViD",
+                "installation_type": "HTLF",
+                "current_buffer_type": "None",
+            },
+        )
+        assert actual == "=== VARS ===\nresult=TurtleNeck\n"
+
+    def test_additional_buffer_none_survives_between_supported_types():
+        # An explicit "None" (shared buffer) chosen on a *supported* type
+        # must survive switching to another supported type -- only a
+        # forced "None" from an unsupported type gets overwritten.
+        actual = run_case(
+            "additional_buffer_transition",
+            {
+                "old_installation_type": "BoxTurtle (4-Lane)",
+                "installation_type": "HTLF",
+                "current_buffer_type": "None",
+            },
+        )
+        assert actual == "=== VARS ===\nresult=None\n"
+
+    def test_additional_buffer_resets_for_unsupported_type():
+        actual = run_case(
+            "additional_buffer_transition",
+            {
+                "old_installation_type": "BoxTurtle (4-Lane)",
+                "installation_type": "ViViD",
+                "current_buffer_type": "TurtleNeck",
+            },
+        )
+        assert actual == "=== VARS ===\nresult=None\n"
+
+    def test_additional_buffer_resets_when_invalid_for_new_type():
+        # TurtleNeck isn't in OpenAMS's cycle (None/FPS_PSF only) -- must
+        # fall back to OpenAMS's own default, not carry TurtleNeck over.
+        actual = run_case(
+            "additional_buffer_transition",
+            {
+                "old_installation_type": "BoxTurtle (4-Lane)",
+                "installation_type": "OpenAMS",
+                "current_buffer_type": "TurtleNeck",
+            },
+        )
+        assert actual == "=== VARS ===\nresult=FPS_PSF\n"
 
 except ImportError:
     pass
