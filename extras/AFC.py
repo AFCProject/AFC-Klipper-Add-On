@@ -777,7 +777,13 @@ class afc:
                 idx = int(str(cur_lane.current_map).lstrip("T"))
                 if idx < 0: raise ValueError("Negative tool index")
                 target_temp = self.print_tool_temperatures[idx]
-            except (ValueError, IndexError, TypeError, AttributeError) as e:
+            except IndexError as e:
+                self.logger.info(
+                    f"Could not resolve print_tool_temperatures index for lane {cur_lane.name}: "
+                    f"{e}. Falling back to AFC lane temperature"
+                )
+                target_temp, using_min_value = self._get_default_material_temps(cur_lane)
+            except (ValueError, TypeError, AttributeError) as e:
                 # Logging lane.name/e rather than cur_lane.current_map here: if the error came from
                 # resolving cur_lane.current_map itself, referencing it again would raise the same error.
                 self.logger.info(

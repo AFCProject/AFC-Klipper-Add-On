@@ -635,24 +635,34 @@ class TestCheckExtruderTemp:
         infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("custom_lane" in m for m in infos)
 
-    def test_lane_map_index_out_of_range_returns_without_setting_temp(self):
-        """lane.current_map index beyond print_tool_temperatures' length (IndexError)
-        logs and returns without touching the heater."""
+    def test_lane_map_index_out_of_range_uses_afc_temperature(self):
+        """An outgoing T2 lane uses its AFC temperature when metadata only has T0/T1."""
         obj, heater, extruder, pheaters, lane = _make_afc_for_check_extruder_temp(
-            heater_target_temp=150, actual_temp=148, target_material_temp=210
+            heater_target_temp=150, actual_temp=148, target_material_temp=235
         )
         obj.function.is_printing.return_value = True
-        obj.print_tool_temperatures = [230]
-        lane.current_map = "T5"
+        obj.print_tool_temperatures = [245, 245]
+        lane.map = "T2"
         result = obj._check_extruder_temp(lane)
-        pheaters.set_temperature.assert_not_called()
-        obj._wait_for_temp_within_tolerance.assert_not_called()
-        obj._get_default_material_temps.assert_not_called()
-        assert result is None
-        infos = [m for lvl, m in obj.logger.messages if lvl == "info"]
-        # Message logs lane.name + the caught exception, not cur_lane.current_map directly
-        # (see test_lane_map_attribute_error_returns_without_setting_temp for why).
-        assert any(lane.name in m and "index out of range" in m for m in infos)
+        obj._get_default_material_temps.assert_called_once_with(lane)
+        pheaters.set_temperature.assert_called_once_with(heater, 235.0)
+        obj._wait_for_temp_within_tolerance.assert_called_once_with(
+            heater, 235.0, obj.temp_wait_tolerance * 2
+        )
+        assert obj.heater is heater
+        assert result is True
+        assert obj.logger.messages == [
+            (
+                "info",
+                "Could not resolve print_tool_temperatures index for lane lane1: list index "
+                "out of range. Falling back to AFC lane temperature",
+            ),
+            (
+                "info",
+                "Setting extruder temperature to 235.0 and waiting for extruder to reach "
+                "temperature",
+            ),
+        ]
 
     def test_negative_lane_map_index_returns_without_setting_temp(self):
         """lane.current_map that parses to a negative index (e.g. "T-1") is explicitly
