@@ -1144,21 +1144,47 @@ class TestCmdSetBufferMultiplier:
         buf, lane = self._ready_buf()
         buf.cmd_SET_BUFFER_MULTIPLIER(_make_gcmd({"MULTIPLIER": "HIGH"}, {"FACTOR": 0.9}))
         assert any(
-            "multiplier_high must be greater than 1" in c.args[0]
+            "multiplier_high must be greater than or equal to 1" in c.args[0]
             for c in buf.logger.info.call_args_list)
 
     def test_low_with_factor_not_under_one_falls_to_else(self):
         buf, lane = self._ready_buf()
         buf.cmd_SET_BUFFER_MULTIPLIER(_make_gcmd({"MULTIPLIER": "LOW"}, {"FACTOR": 1.1}))
         assert any(
-            "multiplier_high must be greater than 1" in c.args[0]
+            "multiplier_high must be greater than or equal to 1" in c.args[0]
             for c in buf.logger.info.call_args_list)
 
     def test_unrecognized_multiplier_falls_to_else(self):
         buf, lane = self._ready_buf()
         buf.cmd_SET_BUFFER_MULTIPLIER(_make_gcmd({"MULTIPLIER": "SIDEWAYS"}, {"FACTOR": 1.1}))
         assert any(
-            "multiplier_high must be greater than 1" in c.args[0]
+            "multiplier_high must be greater than or equal to 1" in c.args[0]
+            for c in buf.logger.info.call_args_list)
+
+    def test_high_with_factor_one_sets_multiplier_high(self):
+        buf, lane = self._ready_buf()
+        buf.type = "switched"
+        buf.cmd_SET_BUFFER_MULTIPLIER(_make_gcmd({"MULTIPLIER": "high"}, {"FACTOR": 1.0}))
+        assert buf.multiplier_high == 1.0
+        assert lane.update_rotation_distance.call_args[0][0] == 1.0
+        assert any(
+            c.args == ("multiplier_high set to 1.0",)
+            for c in buf.logger.info.call_args_list)
+        assert any(
+            "multiplier_high: 1.0 MUST be updated under buffer config" in c.args[0]
+            for c in buf.logger.info.call_args_list)
+
+    def test_low_with_factor_one_sets_multiplier_low(self):
+        buf, lane = self._ready_buf()
+        buf.type = "switched"
+        buf.cmd_SET_BUFFER_MULTIPLIER(_make_gcmd({"MULTIPLIER": "low"}, {"FACTOR": 1.0}))
+        assert buf.multiplier_low == 1.0
+        assert lane.update_rotation_distance.call_args[0][0] == 1.0
+        assert any(
+            c.args == ("multiplier_low set to 1.0",)
+            for c in buf.logger.info.call_args_list)
+        assert any(
+            "multiplier_low: 1.0 MUST be updated under buffer config" in c.args[0]
             for c in buf.logger.info.call_args_list)
 
 

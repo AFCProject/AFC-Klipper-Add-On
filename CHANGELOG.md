@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [09-26-2026]
+### Fixed
+- The factor parameter for the SET_BUFFER_MULTIPLIER now allows setting both the High and Low factors to 1.0 instead of strictly greater than or less than respectively.
+
 ## [2026-09-12]
 ### Added
 - New `pin_tool_start: virtual` option for `[AFC_extruder]` sections: creates a virtual toolhead sensor for standalone toolchanger toolheads that have no physical sensor (closes #810).
