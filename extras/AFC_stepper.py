@@ -669,7 +669,7 @@ class AFCExtruderStepper(AFCLane):
                 return
             # Normalize and create endstop
             try:
-                self._ppins.allow_multi_use_pin(pin.strip("!^"))
+                self._ppins.allow_multi_use_pin(pin.strip("!^~"))
                 self._ppins.parse_pin(pin, True, True)
                 mcu_endstop = self._ppins.setup_pin('endstop', pin)
             except Exception as e:

@@ -173,6 +173,29 @@ class TestAddFilamentSwitch:
         fila, _ = add_filament_switch("test_switch", "PA0", printer)
         assert fila.runout_helper.insert_gcode is not None
 
+    def test_strips_pulldown_prefix_for_allow_multi_use_pin(self):
+        printer = _make_printer_for_filament_switch()
+        add_filament_switch("test_switch", "~PA0", printer)
+        ppins = printer._objects["pins"]
+        ppins.allow_multi_use_pin.assert_called_once_with("PA0")
+
+    def test_strips_combined_pulldown_and_invert_prefixes(self):
+        printer = _make_printer_for_filament_switch()
+        add_filament_switch("test_switch", "!~PA0", printer)
+        ppins = printer._objects["pins"]
+        ppins.allow_multi_use_pin.assert_called_once_with("PA0")
+
+    def test_pulldown_prefix_kept_in_sensor_switch_pin_config(self):
+        """Only the multi-use registration is stripped; the sensor itself must
+        still get `~` so Klipper enables the pulldown."""
+        printer = _make_printer_for_filament_switch()
+        load_object = MagicMock(wraps=printer.load_object)
+        printer.load_object = load_object
+        add_filament_switch("test_switch", "~PA0", printer)
+        cfg_wrap, name = load_object.call_args.args
+        assert name == "filament_switch_sensor test_switch"
+        assert cfg_wrap.fileconfig.get(name, "switch_pin") == "~PA0"
+
 
 # ── DebounceButton ────────────────────────────────────────────────────────────
 class TestDebounceButton:

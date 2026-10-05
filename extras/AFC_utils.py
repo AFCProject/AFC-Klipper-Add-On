@@ -85,7 +85,7 @@ def add_filament_switch(switch_name: str, switch_pin: str, printer: Printer,
     import configfile
     new_switch_name = f"filament_switch_sensor {switch_name}"
     ppins: PrinterPins = printer.lookup_object('pins')
-    ppins.allow_multi_use_pin(switch_pin.strip("!^"))
+    ppins.allow_multi_use_pin(switch_pin.strip("!^~"))
     filament_switch_config = configparser.RawConfigParser()
     filament_switch_config.add_section( new_switch_name )
     filament_switch_config.set( new_switch_name, 'switch_pin', switch_pin)

@@ -984,6 +984,39 @@ class TestAddEndstopMcuEndstopParam:
             ("debug", "lane1 adding endstop hub:hub:PC5"),
         ]
 
+    def test_pulldown_pin_strips_prefix_for_allow_multi_use_pin(self):
+        s = self._make_add_endstop_stepper()
+        pin_based_endstop = MagicMock(name="pin_based_endstop")
+        s._ppins.setup_pin.return_value = pin_based_endstop
+
+        s._add_endstop("hub", "~PC5", "hub")
+
+        s._ppins.allow_multi_use_pin.assert_called_once_with("PC5")
+        s._ppins.parse_pin.assert_called_once_with("~PC5", True, True)
+        s._ppins.setup_pin.assert_called_once_with("endstop", "~PC5")
+        s._qes.register_endstop.assert_called_once_with(pin_based_endstop, "hub")
+        assert s._endstops["hub"] == (pin_based_endstop, "hub")
+        assert s.logger.messages == [
+            ("debug", "lane1 adding endstop hub:hub:~PC5"),
+        ]
+
+    def test_tool_end_pulldown_and_invert_pin_registers_endstop(self):
+        s = self._make_add_endstop_stepper()
+        pin_based_endstop = MagicMock(name="pin_based_endstop")
+        s._ppins.setup_pin.return_value = pin_based_endstop
+
+        s._add_endstop("tool_end", "!~PA15", "tool_end")
+
+        s._ppins.allow_multi_use_pin.assert_called_once_with("PA15")
+        s._ppins.parse_pin.assert_called_once_with("!~PA15", True, True)
+        s._ppins.setup_pin.assert_called_once_with("endstop", "!~PA15")
+        s._qes.register_endstop.assert_called_once_with(pin_based_endstop, "tool_end")
+        pin_based_endstop.add_stepper.assert_called_once_with(s.extruder_stepper.stepper)
+        assert s._endstops["tool_end"] == (pin_based_endstop, "tool_end")
+        assert s.logger.messages == [
+            ("debug", "lane1 adding endstop tool_end:tool_end:!~PA15"),
+        ]
+
     def test_pin_and_mcu_endstop_both_provided_pin_wins(self):
         """Proves `pin is None` is required for the mcu_endstop bypass, not
         just `mcu_endstop is not None` alone: when both are supplied, the
