@@ -114,7 +114,7 @@ unit_additional_buffer_supported() {
 unit_additional_buffer_options() {
   case "$1" in
     "OpenAMS") printf 'None FPS_PSF' ;;
-    *) printf 'None TurtleNeck TurtleNeckV2 FPS_PSF' ;;
+    *) printf 'None TurtleNeck TurtleNeckV2 TurtleNeck2Remastered FPS_PSF' ;;
   esac
 }
 

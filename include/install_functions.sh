@@ -107,7 +107,7 @@ apply_boxturtle_rename() {
 
 apply_unit_buffer() {
   local buffer_type="$1"
-  if [ "$buffer_type" != "TurtleNeck" ] && [ "$buffer_type" != "TurtleNeckV2" ] && [ "$buffer_type" != "FPS_PSF" ]; then
+  if [ "$buffer_type" != "TurtleNeck" ] && [ "$buffer_type" != "TurtleNeckV2" ] && [ "$buffer_type" != "TurtleNeck2Remastered" ] && [ "$buffer_type" != "FPS_PSF" ]; then
     return 0
   fi
   get_unit_buffer_target
@@ -122,6 +122,9 @@ apply_unit_buffer() {
       ;;
     TurtleNeckV2)
       append_buffer_config "TurtleNeckV2" "" "" "$buffer_section_name" "$buffer_extruder_file"
+      ;;
+    TurtleNeck2Remastered)
+      append_buffer_config "TurtleNeck2Remastered" "" "" "$buffer_section_name" "$buffer_extruder_file"
       ;;
     FPS_PSF)
       if [ "$installation_type" == "EMU" ]; then
@@ -236,6 +239,12 @@ unit_append_message "$installation_type"
 if [ "$buffer_type" == "TurtleNeckV2" ]; then
   message+="""
 - Ensure you add the correct serial information to the ${afc_config_dir}/mcu/TurtleNeckv2.cfg file
+  """
+fi
+
+if [ "$buffer_type" == "TurtleNeck2Remastered" ]; then
+  message+="""
+- Ensure you add the correct serial information to the ${afc_config_dir}/mcu/TN2.cfg file
   """
 fi
 

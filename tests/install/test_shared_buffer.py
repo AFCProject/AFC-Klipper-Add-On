@@ -279,8 +279,8 @@ def run_menu(keys: List[str]) -> str:
 
 class TestAdditionalMenuSharedBuffer:
     def test_shared_choice_prompts_and_applies_selected_buffer(self) -> None:
-        # Default is TurtleNeck; B, B, B cycles to None. Then I, pick buffer 1.
-        out = run_menu(["B", "B", "B", "I", "1", "Q"])
+        # Default is TurtleNeck; B x4 cycles to None. Then I, pick buffer 1.
+        out = run_menu(["B", "B", "B", "B", "I", "1", "Q"])
         assert "Existing buffers:\n  1. Claymore_buffer\n" in out
         assert "is set to share the existing buffer 'Claymore_buffer'." in out
         assert "FINAL shared=[Claymore_buffer]" in out

@@ -113,14 +113,14 @@ class TestInstallMenuInstallRequiresBuffer:
 
 class TestInstallMenuCycleBuffer:
     def test_ramming_cycle_skips_none(self) -> None:
-        # Unknown -> TurtleNeck -> TurtleNeckV2 -> FPS_PSF -> TurtleNeck
-        out = run_menu(["B", "B", "B", "B"])
+        # Unknown -> TurtleNeck -> TurtleNeckV2 -> TurtleNeck2Remastered -> FPS_PSF -> TurtleNeck
+        out = run_menu(["B", "B", "B", "B", "B"])
         assert "FINAL buffer_type=TurtleNeck" in out
         assert "Buffer Type: Proportional Sync-Feedback(PSF)" in out
         assert "Buffer Type: None" not in out
 
     def test_sensor_cycle_reaches_none(self) -> None:
-        out = run_menu(["B", "B", "B", "B"], toolhead_sensor="Sensor")
+        out = run_menu(["B", "B", "B", "B", "B"], toolhead_sensor="Sensor")
         assert "FINAL buffer_type=None" in out
 
 

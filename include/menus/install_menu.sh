@@ -17,6 +17,7 @@ cycle_array() {
 buffer_type_label() {
   # Maps the internal buffer_type token to a user-facing display label.
   case "$1" in
+    "TurtleNeck2Remastered") echo "TurtleNeck 2 Remastered" ;;
     "FPS_PSF") echo "Proportional Sync-Feedback(PSF)" ;;
     *) echo "$1" ;;
   esac
@@ -149,7 +150,7 @@ install_menu() {
           # Buffer type isn't a user choice for these currently.
           message="Buffer type is not selectable for $installation_type"
         else
-          buffer_type=$(case "$buffer_type" in "TurtleNeck") echo "TurtleNeckV2";; "TurtleNeckV2") echo "FPS_PSF";; "FPS_PSF") [ "$toolhead_sensor" == "Ramming" ] && echo "TurtleNeck" || echo "None";; "None"|*) echo "TurtleNeck";; esac)
+          buffer_type=$(case "$buffer_type" in "TurtleNeck") echo "TurtleNeckV2";; "TurtleNeckV2") echo "TurtleNeck2Remastered";; "TurtleNeck2Remastered") echo "FPS_PSF";; "FPS_PSF") [ "$toolhead_sensor" == "Ramming" ] && echo "TurtleNeck" || echo "None";; "None"|*) echo "TurtleNeck";; esac)
           message="Buffer Type: $(buffer_type_label "$buffer_type")"
         fi ;;
       C)
