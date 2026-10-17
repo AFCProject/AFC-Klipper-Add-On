@@ -590,7 +590,10 @@ class MockAFC:
         self.save_pos = MagicMock()
         self.move_z_pos = MagicMock()
         self.CHANGE_TOOL = MagicMock()
+        self.TOOL_LOAD = MagicMock(return_value=True)
+        self.TOOL_UNLOAD = MagicMock(return_value=True)
         self.restore_pos = MagicMock()
+        self._check_extruder_temp = MagicMock(return_value=False)
 
         self.snapmaker_printer = False
         self.enable_multiple_mapping = False

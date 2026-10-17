@@ -3853,6 +3853,16 @@ class TestToolLoadNeedPurge:
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_called_once_with(afc.post_load_macro)
 
+    def test_partial_load_skips_purge_processing(self):
+        afc, lane = self._make_afc_lane_for_need_purge()
+        afc.post_load_macro = "AFC_TEST"
+
+        assert afc.TOOL_LOAD(lane, purge_length=100, load_to_gears=True)
+
+        afc.capture_toolhead_temp.assert_not_called()
+        afc.do_poop_kick_wipe.assert_not_called()
+        afc.gcode.run_script_from_command.assert_not_called()
+
     def test_need_purge_raise_error_no_printing(self):
         afc, lane = self._make_afc_lane_for_need_purge(check_extruder_temp_return=False)
         purge_length = 100
@@ -4112,6 +4122,29 @@ class TestLoadSequenceUnitLoadLane:
         afc.load_sequence(lane, hub, extruder)
 
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
+
+    def test_load_to_gears_stops_before_tool_stn_move(self):
+        afc, lane, hub, extruder = self._make()
+        afc.homing_enabled = True
+        afc.home_to_tool = True
+        afc.move_e_pos = MagicMock()
+        lane.unit_obj = MagicMock(spec=["load_then_home", "lane_tool_loaded_gears"])
+        lane.unit_obj.load_then_home.return_value = (None, None, AFCMoveWarning.NONE)
+        lane.loaded_to_hub = False
+        lane.hub_obj = hub
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.get_toolhead_endstop = MagicMock(return_value="tool_start")
+        lane.sync_to_extruder = MagicMock()
+        extruder.tool_start = None
+
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=True)
+
+        assert result is True
+        lane.sync_to_extruder.assert_called_once_with()
+        afc.move_e_pos.assert_not_called()
+        lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True)
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert afc.save_vars.call_count == 2
 
 
 # ── unload_sequence: unit_unload_lane delegation ────────────────────────────────
@@ -4392,6 +4425,62 @@ class TestToolLoadDisplayStatusLifecycle:
         assert events == [
             ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
 
+    def test_load_to_gears_skips_purge_post_load_and_statistics(self):
+        afc, lane, events = self._make()
+        afc.post_load_macro = "POST_LOAD"
+        afc.load_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_LOAD(lane, load_to_gears=True)
+
+        afc.load_sequence.assert_called_once_with(
+            lane, lane.hub_obj, lane.extruder_obj, True)
+        lane.espooler.do_assist_move.assert_not_called()
+        afc.do_poop_kick_wipe.assert_not_called()
+        lane.get_td1_data_load.assert_not_called()
+        lane.extruder_obj.estats.tc_tool_load.increase_count.assert_not_called()
+        lane.lane_load_count.increase_count.assert_not_called()
+        lane.espooler.stats.update_database.assert_not_called()
+        afc.gcode.run_script_from_command.assert_not_called()
+
+    def test_normal_load_keeps_purge_post_load_and_statistics(self):
+        afc, lane, events = self._make()
+        afc.post_load_macro = "POST_LOAD"
+        afc.load_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_LOAD(lane)
+
+        afc.load_sequence.assert_called_once_with(
+            lane, lane.hub_obj, lane.extruder_obj, False)
+        lane.espooler.do_assist_move.assert_called_once_with()
+        afc.do_poop_kick_wipe.assert_called_once_with(
+            cur_lane=lane, cur_extruder=lane.extruder_obj, purge_length=None)
+        lane.get_td1_data_load.assert_called_once_with()
+        lane.extruder_obj.estats.tc_tool_load.increase_count.assert_called_once_with()
+        lane.lane_load_count.increase_count.assert_called_once_with()
+        lane.espooler.stats.update_database.assert_called_once_with()
+        afc.gcode.run_script_from_command.assert_called_once_with("POST_LOAD")
+
+    def test_restore_temp_default_restores_toolhead_temp(self) -> None:
+        """Independent coverage of the `if restore_temp:` True side (the
+        default) of the finally block wrapping load_sequence."""
+        afc, lane, events = self._make()
+        afc.load_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_LOAD(lane)
+
+        afc.restore_toolhead_temp.assert_called_once_with(100)
+
+    def test_restore_temp_false_skips_restoring_toolhead_temp(self) -> None:
+        """Independent coverage of the `if restore_temp:` False side: the
+        calibration macros pass restore_temp=False since they (or the
+        caller doing the restore) manage temperature separately."""
+        afc, lane, events = self._make()
+        afc.load_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_LOAD(lane, restore_temp=False)
+
+        afc.restore_toolhead_temp.assert_not_called()
+
 
 class TestToolUnloadDisplayStatusLifecycle:
     def _make(self):
@@ -4442,6 +4531,26 @@ class TestToolUnloadDisplayStatusLifecycle:
 
         assert events == [
             ('display', 'retraction', True), 'unload_sequence', ('display', 'retraction', False)]
+
+    def test_restore_temp_default_restores_toolhead_temp(self) -> None:
+        """Independent coverage of the `if restore_temp:` True side (the
+        default) of the finally block wrapping unload_sequence."""
+        afc, lane, events = self._make()
+        afc.unload_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_UNLOAD(lane, force_unload=True)
+
+        afc.restore_toolhead_temp.assert_called_once_with(100)
+
+    def test_restore_temp_false_skips_restoring_toolhead_temp(self) -> None:
+        """Independent coverage of the `if restore_temp:` False side: the
+        calibration macros pass restore_temp=False."""
+        afc, lane, events = self._make()
+        afc.unload_sequence = MagicMock(return_value=True)
+
+        assert afc.TOOL_UNLOAD(lane, force_unload=True, restore_temp=False)
+
+        afc.restore_toolhead_temp.assert_not_called()
 
 
 class TestBypassUnloadDisplayStatus:
@@ -4769,9 +4878,9 @@ class TestWriteVarsSnapshot:
         err_arg = obj._log_save_vars_error.call_args[0][0]
         assert err_arg.startswith("Error:")
 
-    def test_success_does_not_schedule_error_log(self):
+    def test_success_does_not_schedule_error_log(self, tmp_path):
         obj = _make_afc()
-        obj.VarFile = "/tmp/AFC_test_var_success"
+        obj.VarFile = str(tmp_path / "AFC")
         obj.reactor.register_async_callback = MagicMock()
         obj._write_vars_snapshot({"a": 1})
         obj.reactor.register_async_callback.assert_not_called()
