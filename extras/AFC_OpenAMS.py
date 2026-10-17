@@ -1225,6 +1225,11 @@ class afcAMS(afcUnit):
                 f"Stuck spool recovery: lane '{lane_name}' not found, pausing")
             self._stuck_spool_recovery_fallback(fps_name, lane_name, "lane not found")
             return
+        owner = getattr(lane, "unit_obj", None)
+        if (owner is not None
+            and owner is not self):
+            owner._cmd_stuck_spool_recovery(gcmd)
+            return
 
         self.logger.info(
             f"Stuck spool auto-recovery starting: unload then reload for {lane_name}")
@@ -2971,12 +2976,17 @@ class afcAMS(afcUnit):
         """
         Return numeric OAMS index for gcode commands.
 
-        :return int: the numeric suffix of ``oams_name`` (1 on parse failure).
+        Uses the resolved controller's configured oams_idx rather than parsing
+        digits from oams_name, since the two can mismatch (e.g. a section named
+        [AFC_OAMS oams_a] with oams_idx: 2). This is the same integer value
+        AFC_OAMS.register_commands uses to mux-register OAMS_CALIBRATE_* etc.
+
+        :return int: the resolved controller's oams_idx, or 1 if the controller
+            hasn't been resolved yet.
         """
-        try:
-            return int(self.oams_name.replace("oams", ""))
-        except (ValueError, AttributeError):
-            return 1
+        if self.oams is not None:
+            return self.oams.oams_idx
+        return 1
 
     def _get_openams_spool_index(self, lane: AFCLane) -> int:
         """

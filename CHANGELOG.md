@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10-16-2026]
+### Added
+- Added support for Isik Techs new OWLFC MCU board for NightOwl units
+### Fixed
+- `OAMS_CURRENT_PID_SET` now sends its gains to a dedicated current-loop MCU command instead of the pressure/FPS PID command, so setting the current PID no longer overwrites the pressure PID (closes #772).
+- `OAMS_CALIBRATE_PTFE_LENGTH` no longer marks the unit as calibrating before validating that `SPOOL` was provided, so a missing `SPOOL` argument no longer leaves the unit stuck (closes #789).
+- OpenAMS gcode commands (`OAMS_CALIBRATE_PTFE_LENGTH`, `OAMS_CALIBRATE_HUB_HES`, etc.) now dispatch using the resolved OAMS controller's configured `oams_idx` instead of a number parsed from the `oams` name, fixing mismatches when the two don't line up (closes #790).
+- `AFC_OAMS` MCU command handles are now always initialized (`None` by default) and validated before use, so a failed `klippy:connect` lookup raises a clear error instead of an `AttributeError` later (closes #791).
+
 ## [09-12-2026]
 ### Fixed
 - The `install-afc.sh` script will now properly enumerate additional unit installs.

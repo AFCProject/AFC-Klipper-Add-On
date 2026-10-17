@@ -57,7 +57,7 @@ from tests.conftest import MockAFC, MockPrinter, MockReactor, MockLogger, MockCo
 def _make_oams(oams_idx=0, config_values=None):
     """Build an AFC_OAMS instance via its real constructor.
 
-    The nine hardware command objects are normally created later, in
+    The ten hardware command objects are normally created later, in
     ``handle_connect()``; since most tests exercise methods that assume
     that has already happened, they're attached as test doubles here, the
     same way ``handle_connect()`` would populate them from the MCU.
@@ -100,6 +100,7 @@ def _make_oams(oams_idx=0, config_values=None):
     oams.oams_calibrate_ptfe_length_cmd = MagicMock()
     oams.oams_calibrate_hub_hes_cmd = MagicMock()
     oams.oams_pid_cmd = MagicMock()
+    oams.oams_current_pid_cmd = MagicMock()
     oams.oams_set_led_error_cmd = MagicMock()
     oams.oams_load_spool_cancel_cmd = MagicMock()
     oams.oams_spool_query_spool_cmd = MagicMock()
@@ -466,7 +467,35 @@ class TestHandleConnect:
         assert oams.oams_load_spool_cmd is cmd_obj
         assert oams.oams_unload_spool_cmd is cmd_obj
         assert oams.oams_load_spool_cancel_cmd is cmd_obj
+        assert oams.oams_current_pid_cmd is cmd_obj
         assert oams.oams_spool_query_spool_cmd is query_cmd_obj
+        oams.clear_errors.assert_called_once()
+
+    def test_current_pid_command_missing_sets_current_pid_cmd_none(self):
+        """Regression test for issue #772/#791: an older firmware missing the
+        dedicated current-PID command must not crash handle_connect, and
+        must leave oams_current_pid_cmd as None rather than undefined."""
+        oams = _make_oams()
+
+        def lookup_command(cmd_string):
+            if cmd_string.startswith("oams_cmd_current_pid"):
+                raise Exception("not supported")
+            return MagicMock()
+
+        oams.mcu.lookup_command = MagicMock(side_effect=lookup_command)
+        oams.mcu.alloc_command_queue = MagicMock(return_value=MagicMock())
+        oams.mcu.lookup_query_command = MagicMock(return_value=MagicMock())
+        oams.clear_errors = MagicMock()
+
+        oams.handle_connect()
+
+        assert oams.oams_current_pid_cmd is None
+        warning_msgs = [m for lvl, m in oams.logger.messages if lvl == "warning"]
+        msg = (
+            "Failed to initialize OAMS current PID command: not supported\n"
+            "Most likely the firmware needs to be updated to support this command."
+        )
+        assert warning_msgs == [msg]
         oams.clear_errors.assert_called_once()
 
     def test_cancel_command_missing_sets_cancel_cmd_none(self):
@@ -583,6 +612,31 @@ class TestClearErrors:
         assert oams.action_status_value is None
 
 
+class TestRequireMcuCmd:
+    """_require_mcu_cmd guards every non-optional MCU command handle against
+    handle_connect() never having initialized it (issue #791)."""
+
+    def test_returns_cmd_unchanged_when_present(self):
+        oams = _make_oams()
+        sentinel = MagicMock()
+        assert oams._require_mcu_cmd(sentinel, "some_cmd") is sentinel
+
+    def test_raises_when_cmd_is_none(self):
+        """Covers the `cmd is None` guard's True branch."""
+        oams = _make_oams()
+        with pytest.raises(Exception, match="some_cmd command not initialized"):
+            oams._require_mcu_cmd(None, "some_cmd")
+
+    def test_error_message_includes_oams_idx_and_name(self):
+        oams = _make_oams(oams_idx=2)
+        with pytest.raises(Exception) as exc_info:
+            oams._require_mcu_cmd(None, "set_led_error")
+        assert str(exc_info.value) == (
+            "OAMS[2]: set_led_error command not initialized, "
+            "MCU connection may have failed"
+        )
+
+
 class TestSetLedError:
     def test_sends_led_command(self):
         oams = _make_oams()
@@ -590,8 +644,22 @@ class TestSetLedError:
         oams.oams_set_led_error_cmd.send.assert_called_once_with([2, 1])
         assert ("debug", "Setting LED 2 to 1") in oams.logger.messages
 
+    def test_raises_when_led_error_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command specifically."""
+        oams = _make_oams()
+        oams.oams_set_led_error_cmd = None
+        with pytest.raises(Exception):
+            oams.set_led_error(2, 1)
+
 
 class TestDetermineCurrentSpool:
+    def test_raises_when_spool_query_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command specifically."""
+        oams = _make_oams()
+        oams.oams_spool_query_spool_cmd = None
+        with pytest.raises(Exception):
+            oams.determine_current_spool()
+
     def test_no_response_returns_none(self):
         oams = _make_oams()
         oams.oams_spool_query_spool_cmd.send = MagicMock(return_value=None)
@@ -1079,10 +1147,36 @@ class TestCurrentPidSetCommand:
         gcmd = _make_gcmd({"P": 1.0, "I": 2.0, "D": 3.0, "TARGET": 0.2})
         oams.cmd_OAMS_CURRENT_PID_SET(gcmd)
         assert oams.current_target == 0.2
-        oams.oams_pid_cmd.send.assert_called_once()
+        oams.oams_current_pid_cmd.send.assert_called_once()
+
+    def test_sends_via_current_pid_cmd_not_pressure_pid_cmd(self):
+        """Regression test for issue #772: the current-loop PID gains must go
+        to the dedicated current-PID command, never the pressure/FPS one."""
+        oams = _make_oams()
+        gcmd = _make_gcmd({"P": 1.0, "I": 2.0, "D": 3.0, "TARGET": 0.2})
+        oams.cmd_OAMS_CURRENT_PID_SET(gcmd)
+        oams.oams_current_pid_cmd.send.assert_called_once()
+        oams.oams_pid_cmd.send.assert_not_called()
+
+    def test_raises_when_current_pid_cmd_unavailable(self):
+        """Covers the `self.oams_current_pid_cmd is None` guard's True branch
+        (firmware too old to support the current-PID command)."""
+        oams = _make_oams()
+        oams.oams_current_pid_cmd = None
+        gcmd = _make_gcmd({"P": 1.0, "I": 2.0, "D": 3.0})
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_CURRENT_PID_SET(gcmd)
 
 
 class TestPidSetCommand:
+    def test_raises_when_pid_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command specifically."""
+        oams = _make_oams()
+        oams.oams_pid_cmd = None
+        gcmd = _make_gcmd({"P": 4.0, "I": 0.1, "D": 0.2})
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_PID_SET(gcmd)
+
     def test_missing_p_raises(self):
         oams = _make_oams()
         gcmd = _make_gcmd({})
@@ -1113,6 +1207,14 @@ class TestPidSetCommand:
         oams.oams_pid_cmd.send.assert_called_once()
         gcmd.respond_info.assert_called_once_with(
             "PID values set to P=4.000000 I=0.100000 D=0.200000 TARGET=0.600000")
+
+    def test_does_not_touch_current_pid_cmd(self):
+        """Regression test for issue #772: the pressure/FPS PID gains must
+        never go to the dedicated current-PID command."""
+        oams = _make_oams()
+        gcmd = _make_gcmd({"P": 4.0, "I": 0.1, "D": 0.2})
+        oams.cmd_OAMS_PID_SET(gcmd)
+        oams.oams_current_pid_cmd.send.assert_not_called()
 
     def test_explicit_target_used(self):
         oams = _make_oams()
@@ -1148,6 +1250,17 @@ class TestPidAutotuneCommand:
 # ── cmd_OAMS_CALIBRATE_HUB_HES / cmd_OAMS_CALIBRATE_PTFE_LENGTH ─────────────
 
 class TestCalibrateHubHesCommand:
+    def test_raises_when_calibrate_hub_hes_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command specifically, and
+        that the guard runs before action_status latches (same wedging risk
+        as issue #789)."""
+        oams = _make_oams()
+        oams.oams_calibrate_hub_hes_cmd = None
+        gcmd = _make_gcmd({"SPOOL": 0})
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_CALIBRATE_HUB_HES(gcmd)
+        assert oams.action_status is None
+
     def test_missing_spool_raises(self):
         oams = _make_oams()
         gcmd = _make_gcmd({})
@@ -1217,6 +1330,29 @@ class TestCalibratePtfeLengthCommand:
         with pytest.raises(Exception):
             oams.cmd_OAMS_CALIBRATE_PTFE_LENGTH(gcmd)
 
+    def test_missing_spool_does_not_latch_action_status(self):
+        """Regression test for issue #789: action_status must not be set
+        until after SPOOL validation succeeds, or a bad command wedges the
+        unit as permanently CALIBRATING."""
+        oams = _make_oams()
+        oams.action_status = None
+        gcmd = _make_gcmd({})
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_CALIBRATE_PTFE_LENGTH(gcmd)
+        assert oams.action_status is None
+        oams.oams_calibrate_ptfe_length_cmd.send.assert_not_called()
+
+    def test_raises_when_calibrate_ptfe_length_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command specifically, and
+        that the guard runs before action_status latches."""
+        oams = _make_oams()
+        oams.oams_calibrate_ptfe_length_cmd = None
+        gcmd = _make_gcmd({"SPOOL": 0})
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_CALIBRATE_PTFE_LENGTH(gcmd)
+        assert oams.action_status is None
+
+
     def test_success_saves_calibration(self):
         oams = _make_oams()
         oams.action_status = OAMSStatus.CALIBRATING
@@ -1265,6 +1401,15 @@ class TestCalibratePtfeLengthCommand:
 # ── load_spool ────────────────────────────────────────────────────────────────
 
 class TestLoadSpool:
+    def test_raises_when_load_spool_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command, and that the
+        guard runs before action_status latches."""
+        oams = _make_oams()
+        oams.oams_load_spool_cmd = None
+        with pytest.raises(Exception):
+            oams.load_spool(0)
+        assert oams.action_status is None
+
     def test_success_sets_current_spool(self):
         oams = _make_oams()
         oams.reactor._monotonic = 100.0
@@ -1484,6 +1629,15 @@ class TestLoadSpoolCommand:
 # ── unload_spool ──────────────────────────────────────────────────────────────
 
 class TestUnloadSpool:
+    def test_raises_when_unload_spool_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command, and that the
+        guard runs before action_status latches."""
+        oams = _make_oams()
+        oams.oams_unload_spool_cmd = None
+        with pytest.raises(Exception):
+            oams.unload_spool()
+        assert oams.action_status is None
+
     def test_success_clears_current_spool(self):
         oams = _make_oams()
         oams.current_spool = 1
@@ -1649,6 +1803,13 @@ class TestSetOamsFollower:
         oams = _make_oams()
         oams.set_oams_follower(1, 0)
         oams.oams_follower_cmd.send.assert_called_once_with([1, 0])
+
+    def test_raises_when_follower_cmd_unavailable(self):
+        """Covers _require_mcu_cmd's guard for this command specifically."""
+        oams = _make_oams()
+        oams.oams_follower_cmd = None
+        with pytest.raises(Exception):
+            oams.set_oams_follower(1, 0)
 
 
 class TestAbortCurrentAction:

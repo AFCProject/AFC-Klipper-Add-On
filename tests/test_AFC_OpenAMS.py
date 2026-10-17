@@ -2497,14 +2497,29 @@ class TestIsVirtualHub:
 
 
 class TestGetOamsIndex:
-    def test_parses_numeric_suffix(self):
+    def test_returns_resolved_controllers_oams_idx(self):
+        """Regression test for issue #790: must use the resolved controller's
+        configured oams_idx, not a digit parsed from oams_name -- the two can
+        mismatch (e.g. section [AFC_OAMS oams_a] with oams_idx: 2)."""
         ams, afc, printer, reactor = _make_ams()
         ams.oams_name = "oams3"
-        assert ams._get_oams_index() == 3
+        ams.oams = MagicMock()
+        ams.oams.oams_idx = 2
+        assert ams._get_oams_index() == 2
 
-    def test_unparseable_name_defaults_to_1(self):
+    def test_ignores_oams_name_even_when_it_would_parse(self):
+        """Covers the case where oams_name happens to contain a digit that
+        differs from the real oams_idx -- the name must never be consulted."""
         ams, afc, printer, reactor = _make_ams()
-        ams.oams_name = "not-numeric-suffix-xyz"
+        ams.oams_name = "oams3"
+        ams.oams = MagicMock()
+        ams.oams.oams_idx = 7
+        assert ams._get_oams_index() == 7
+
+    def test_unresolved_controller_defaults_to_1(self):
+        """Covers the `self.oams is not None` guard's False branch."""
+        ams, afc, printer, reactor = _make_ams()
+        ams.oams = None
         assert ams._get_oams_index() == 1
 
 
@@ -4062,6 +4077,7 @@ class TestCmdStuckSpoolRecovery:
     def test_success_path_resumes_print(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = False
@@ -4094,9 +4110,65 @@ class TestCmdStuckSpoolRecovery:
             "Stuck spool auto-recovery SUCCEEDED for lane1, resuming print",
         ) in ams.logger.messages
 
+    def test_delegates_to_lane_owner_when_not_the_owning_instance(self):
+        """Regression test: a non-owning afcAMS instance must hand off the
+        whole recovery (and cleanup) to the lane's real owner rather than
+        running TOOL_UNLOAD/TOOL_LOAD against the wrong unit's state."""
+        ams, afc, printer, reactor = _make_ams()
+        owner = MagicMock()
+        lane = _make_lane("lane1")
+        lane.unit_obj = owner
+        afc.lanes = {"lane1": lane}
+        afc.TOOL_UNLOAD = MagicMock()
+        afc.TOOL_LOAD = MagicMock()
+        ams._stuck_spool_recovery_clear_oams_state = MagicMock()
+
+        gcmd = self._gcmd()
+        ams._cmd_stuck_spool_recovery(gcmd)
+
+        owner._cmd_stuck_spool_recovery.assert_called_once_with(gcmd)
+        afc.TOOL_UNLOAD.assert_not_called()
+        afc.TOOL_LOAD.assert_not_called()
+        ams._stuck_spool_recovery_clear_oams_state.assert_not_called()
+
+    def test_proceeds_normally_when_lane_has_no_unit_obj(self):
+        """Covers the `owner is not None` guard's False branch: a lane with
+        no unit_obj (e.g. a bare test double) must not be treated as owned
+        by another instance, and recovery must run to completion rather
+        than stopping early or taking some other branch."""
+        ams, afc, printer, reactor = _make_ams()
+        lane = _make_lane("lane1", unit_obj=None, hub_obj=None)
+        afc.lanes = {"lane1": lane}
+        afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
+        afc.function.is_paused.return_value = False
+        afc.TOOL_UNLOAD = MagicMock(return_value=True)
+        afc.TOOL_LOAD = MagicMock(return_value=True)
+        ams._stuck_spool_recovery_clear_oams_state = MagicMock()
+        ams.gcode = MagicMock()
+
+        ams._cmd_stuck_spool_recovery(self._gcmd())
+
+        afc.TOOL_UNLOAD.assert_called_once_with(lane, set_start_time=True)
+        afc.TOOL_LOAD.assert_called_once_with(lane, set_start_time=True)
+        ams._stuck_spool_recovery_clear_oams_state.assert_called_once()
+        ams.gcode.run_script_from_command.assert_any_call("AFC_RESUME")
+        assert ams.logger.messages == [
+            (
+                "info",
+                "Stuck spool auto-recovery starting: unload then reload for lane1",
+            ),
+            ("info", "Stuck spool recovery: unloading lane1"),
+            ("info", "Stuck spool recovery: reloading lane1"),
+            (
+                "info",
+                "Stuck spool auto-recovery SUCCEEDED for lane1, resuming print",
+            ),
+        ]
+
     def test_already_paused_skips_pause_resume_send(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4114,6 +4186,7 @@ class TestCmdStuckSpoolRecovery:
     def test_not_paused_sends_pause_command(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = False
@@ -4131,6 +4204,7 @@ class TestCmdStuckSpoolRecovery:
     def test_zhop_failure_is_logged_as_warning_and_continues(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.function.is_paused.return_value = True
         type(afc.gcode_move).last_position = property(
@@ -4150,6 +4224,7 @@ class TestCmdStuckSpoolRecovery:
     def test_tool_unload_returns_false_triggers_fallback(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4164,6 +4239,7 @@ class TestCmdStuckSpoolRecovery:
     def test_tool_load_returns_false_triggers_fallback(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4180,6 +4256,7 @@ class TestCmdStuckSpoolRecovery:
         hub = MagicMock()
         hub.state = True
         lane = _make_lane("lane1", hub_obj=hub)
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4205,6 +4282,7 @@ class TestCmdStuckSpoolRecovery:
         hub = MagicMock()
         hub.state = True  # never clears
         lane = _make_lane("lane1", hub_obj=hub)
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4224,6 +4302,7 @@ class TestCmdStuckSpoolRecovery:
     def test_no_hub_obj_skips_polling(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", hub_obj=None)
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4241,6 +4320,7 @@ class TestCmdStuckSpoolRecovery:
     def test_unexpected_exception_during_unload_triggers_fallback(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4258,6 +4338,7 @@ class TestCmdStuckSpoolRecovery:
     def test_afc_resume_failure_is_logged(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = True
@@ -4276,6 +4357,7 @@ class TestCmdStuckSpoolRecovery:
     def test_forces_is_paused_true_before_resume_when_not_paused(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = False
@@ -4296,6 +4378,7 @@ class TestCmdStuckSpoolRecovery:
         real-world case where the pause_resume module isn't loaded."""
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
+        lane.unit_obj = ams
         afc.lanes = {"lane1": lane}
         afc.gcode_move.last_position = [0.0, 0.0, 5.0, 0.0]
         afc.function.is_paused.return_value = False

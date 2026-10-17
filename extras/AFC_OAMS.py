@@ -228,16 +228,20 @@ class AFC_OAMS:
         self._last_unload_failure_time = None
         self.hardware_service = None
 
-        # MCU command handles, resolved and set dynamically in handle_connect()
-        self.oams_load_spool_cmd: mcu.CommandWrapper
-        self.oams_unload_spool_cmd: mcu.CommandWrapper
-        self.oams_follower_cmd: mcu.CommandWrapper
-        self.oams_calibrate_ptfe_length_cmd: mcu.CommandWrapper
-        self.oams_calibrate_hub_hes_cmd: mcu.CommandWrapper
-        self.oams_pid_cmd: mcu.CommandWrapper
-        self.oams_set_led_error_cmd: mcu.CommandWrapper
-        self.oams_load_spool_cancel_cmd: Optional[mcu.CommandWrapper]
-        self.oams_spool_query_spool_cmd: mcu.CommandQueryWrapper
+        # MCU command handles, resolved and set dynamically in handle_connect().
+        # Explicitly initialized to None (not just annotated) so a handle_connect
+        # failure leaves these as None rather than undefined, letting call sites
+        # check for a missing command instead of raising AttributeError.
+        self.oams_load_spool_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_unload_spool_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_follower_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_calibrate_ptfe_length_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_calibrate_hub_hes_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_pid_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_current_pid_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_set_led_error_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_load_spool_cancel_cmd: Optional[mcu.CommandWrapper] = None
+        self.oams_spool_query_spool_cmd: Optional[mcu.CommandQueryWrapper] = None
 
         # Expose the underlying hardware controller to AFC when available
         if AMSHardwareService is not None:
@@ -375,10 +379,10 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
     def handle_connect(self) -> None:
         """
         Look up and cache OAMS MCU command objects on ``klippy:connect``.
-        Resolves the load/unload/follower/calibration/PID/LED command handles,
-        the optional cancel command (warning if the firmware lacks it), and the
-        spool-query command, then clears any latched LED error state. Lookup
-        failures are logged rather than raised.
+        Resolves the load/unload/follower/calibration/pressure-PID/LED command
+        handles, the optional cancel and current-PID commands (warning if the
+        firmware lacks either), and the spool-query command, then clears any
+        latched LED error state. Lookup failures are logged rather than raised.
         """
         command_defs = {
             'load_spool': "oams_cmd_load_spool spool=%c",
@@ -403,6 +407,17 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 self.oams_load_spool_cancel_cmd = None
                 self.logger.warning(
                     f"Failed to initialize OAMS load filament cancel command: {e}\n"
+                    "Most likely the firmware needs to be updated to support this command."
+                )
+
+            try:
+                self.oams_current_pid_cmd = self.mcu.lookup_command(
+                    "oams_cmd_current_pid kp=%u ki=%u kd=%u target=%u"
+                )
+            except Exception as e:
+                self.oams_current_pid_cmd = None
+                self.logger.warning(
+                    f"Failed to initialize OAMS current PID command: {e}\n"
                     "Most likely the firmware needs to be updated to support this command."
                 )
 
@@ -463,6 +478,22 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         except Exception as e:
             self.logger.error(f"Failed to determine current spool during clear_errors on {getattr(self, 'name', 'unknown')}: {e}")
 
+    def _require_mcu_cmd(self, cmd: Optional[Any], name: str) -> Any:
+        """
+        Validate an MCU command handle was resolved by handle_connect() before use.
+
+        :param cmd: the command handle to check.
+        :param name: human-readable command name, used in the error message.
+        :return Any: the same command handle, unchanged.
+        """
+        if cmd is None:
+            error_str = (
+                f"OAMS[{self.oams_idx}]: {name} command not initialized, "
+                "MCU connection may have failed"
+            )
+            raise self.printer.command_error(error_str)
+        return cmd
+
     def set_led_error(self, idx: int, value: int) -> None:
         """
         Set the error LED state for one bay via the MCU.
@@ -471,7 +502,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         :param value: LED state to send (non-zero lights the error LED).
         """
         self.logger.debug(f"Setting LED {idx} to {value}")
-        self.oams_set_led_error_cmd.send([idx, value])
+        self._require_mcu_cmd(self.oams_set_led_error_cmd, "set_led_error").send(
+            [idx, value])
 
     def determine_current_spool(self) -> Optional[int]:
         """
@@ -481,7 +513,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             loaded (firmware returns 255), the response is missing, or the
             value is unexpected.
         """
-        params = self.oams_spool_query_spool_cmd.send()
+        params = self._require_mcu_cmd(
+            self.oams_spool_query_spool_cmd, "spool_query_spool").send()
         if params is None:
             self.logger.warning(f"OAMS[{self.oams_idx}]: Failed to query current spool - no response from MCU")
             return None
@@ -858,11 +891,16 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             raise gcmd.error("D value is required")
         if t is None:
             t = self.current_target
+        if self.oams_current_pid_cmd is None:
+            raise gcmd.error(
+                "Current PID command not available on this firmware. "
+                "Most likely the firmware needs to be updated to support this command."
+            )
         kp = self.float_to_u32(p)
         ki = self.float_to_u32(i)
         kd = self.float_to_u32(d)
         kt = self.float_to_u32(t)
-        self.oams_pid_cmd.send([kp, ki, kd, kt])
+        self.oams_current_pid_cmd.send([kp, ki, kd, kt])
         self.current_kp = p
         self.current_ki = i
         self.current_kd = d
@@ -904,7 +942,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         ki = self.float_to_u32(i)
         kd = self.float_to_u32(d)
         kt = self.float_to_u32(t)
-        self.oams_pid_cmd.send([kp, ki, kd, kt])
+        self._require_mcu_cmd(self.oams_pid_cmd, "pid").send([kp, ki, kd, kt])
         self.kp = p
         self.ki = i
         self.kd = d
@@ -966,9 +1004,10 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             raise gcmd.error("SPOOL index is required")
         if spool_idx < 0 or spool_idx > 3:
             raise gcmd.error("Invalid SPOOL index")
+        cmd = self._require_mcu_cmd(self.oams_calibrate_hub_hes_cmd, "calibrate_hub_hes")
         self.action_status = OAMSStatus.CALIBRATING
 
-        self.oams_calibrate_hub_hes_cmd.send([spool_idx])
+        cmd.send([spool_idx])
         while self.action_status is not None:
             self.reactor.pause(self.reactor.monotonic() + 0.5)
         if self.action_status_code == OAMSOpCode.SUCCESS:
@@ -1000,12 +1039,14 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         OAMS_CALIBRATE_PTFE_LENGTH OAMS=oams1 SPOOL=0
         ```
         """
-        self.action_status = OAMSStatus.CALIBRATING
         spool = gcmd.get_int("SPOOL", None)
         if spool is None:
             raise gcmd.error("SPOOL index is required")
+        cmd = self._require_mcu_cmd(
+            self.oams_calibrate_ptfe_length_cmd, "calibrate_ptfe_length")
+        self.action_status = OAMSStatus.CALIBRATING
 
-        self.oams_calibrate_ptfe_length_cmd.send([spool])
+        cmd.send([spool])
         while self.action_status is not None:
             self.reactor.pause(self.reactor.monotonic() + 0.5)
         if self.action_status_code == OAMSOpCode.SUCCESS:
@@ -1028,8 +1069,9 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         :return tuple: ``(code, message)`` where ``code`` is an
             :class:`OAMSOpCode` and ``message`` describes the outcome.
         """
+        cmd = self._require_mcu_cmd(self.oams_load_spool_cmd, "load_spool")
         self.action_status = OAMSStatus.LOADING
-        self.oams_load_spool_cmd.send([spool_idx])
+        cmd.send([spool_idx])
         start          = self.reactor.monotonic()
         timeout        = start + 45.0
         stall_enabled  = self.load_stall_dwell > 0.0
@@ -1134,8 +1176,9 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         :return tuple: ``(success, message)`` where ``success`` is ``True`` when
             the bay ends up empty and ``message`` describes the outcome.
         """
+        cmd = self._require_mcu_cmd(self.oams_unload_spool_cmd, "unload_spool")
         self.action_status = OAMSStatus.UNLOADING
-        self.oams_unload_spool_cmd.send()
+        cmd.send()
         timeout = self.reactor.monotonic() + 40.0
 
         while self.action_status is not None:
@@ -1216,7 +1259,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         :param enable: 1 to enable the follower, 0 to disable.
         :param direction: 1 for forward, 0 for reverse.
         """
-        self.oams_follower_cmd.send([enable, direction])
+        self._require_mcu_cmd(self.oams_follower_cmd, "follower").send(
+            [enable, direction])
 
     def abort_current_action(
         self, code: OAMSOpCode = OAMSOpCode.ERROR_KLIPPER_CALL, wait: bool = True
