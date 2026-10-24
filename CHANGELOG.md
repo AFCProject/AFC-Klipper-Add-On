@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10-24-2026]
+### Added
+- Added support for ACE Pro(1/2) series filament changes, work originally done by J0eb0l
+- Changed FPSEndstopWrapper class to be PollingEndstopWrapper since this is common enough and can now be used for filament_motion_sensor homing like what is on U1's printer as toolhead sensor.
+
 ## [10-16-2026]
 ### Added
 - Added support for Isik Techs new OWLFC MCU board for NightOwl units
