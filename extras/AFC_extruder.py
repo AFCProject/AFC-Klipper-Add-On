@@ -296,6 +296,12 @@ class AFCExtruder:
         # Software MCU endstop for a U1-style motion sensor (set below when one
         # is configured), so it can be homed against like a pin_tool_start switch.
         self.tool_start_endstop: Optional[PollingEndstopWrapper] = None
+        
+        # Per-lane clones of tool_start_endstop, keyed by lane name, so lanes
+        # sharing this extruder's U1 sensor each home against their own
+        # endstop instead of piling every lane's stepper onto one shared
+        # get_steppers() list. See get_tool_start_endstop_for_lane.
+        self._lane_tool_start_endstops: Dict[str, PollingEndstopWrapper] = {}
         if self.tool_start is not None:
             if "unknown" == self.tool_start.lower():
                 raise error(f"Unknown is not valid for pin_tool_start in [{self.fullname}] config.")
@@ -404,6 +410,27 @@ class AFCExtruder:
 
     def __str__(self):
         return self.name
+
+    def get_tool_start_endstop_for_lane(self, lane_name: str) -> Optional[PollingEndstopWrapper]:
+        """
+        Return a per-lane PollingEndstopWrapper that polls this extruder's U1
+        tool_start sensor, creating and registering one on first use. Lanes
+        sharing this extruder must each call this instead of adding their
+        stepper directly to tool_start_endstop, so one lane's homing move
+        doesn't pull in other lanes' steppers via a shared stepper list.
+
+        :param lane_name: Name of the lane requesting its own endstop.
+        :return Optional[PollingEndstopWrapper]: Per-lane endstop, or None if
+            this extruder has no U1-style software tool_start endstop.
+        """
+        if self.tool_start_endstop is None:
+            return None
+        if lane_name not in self._lane_tool_start_endstops:
+            query_endstops = self.printer.lookup_object('query_endstops')
+            endstop_name = f"{lane_name}_tool_start"
+            self._lane_tool_start_endstops[lane_name] = self.tool_start_endstop.for_stepper(
+                endstop_name, query_endstops)
+        return self._lane_tool_start_endstops[lane_name]
 
     def _check_extruder_name(self):
         """

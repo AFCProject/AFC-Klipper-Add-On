@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.filament_switch_sensor import SwitchSensor
     from klippy import Printer
+    from query_endstops import QueryEndstops
     from reactor import SelectReactor as Reactor
     from gcode import GCodeCommand, GCodeDispatch
     from extras.pause_resume import PauseResume
@@ -483,6 +484,23 @@ class PollingEndstopWrapper:
         :return: A new list of the associated stepper objects.
         """
         return list(self._steppers)
+
+    def for_stepper(self, name: str, query_endstops: QueryEndstops) -> PollingEndstopWrapper:
+        """
+        Build and register a new PollingEndstopWrapper that polls the same
+        trigger_func as this one but keeps its own stepper list. Lets several
+        homing steppers share one underlying sensor (e.g. several lanes
+        sharing a unit's U1 motion sensor) without one lane's homing move
+        pulling in the others' steppers via a shared get_steppers() list.
+
+        :param name: Name to register the new endstop under.
+        :param query_endstops: Klipper's query_endstops object to register with.
+        :return PollingEndstopWrapper: A new wrapper scoped to its own steppers.
+        """
+        clone = PollingEndstopWrapper(self._reactor, self._get_mcu,
+                                      self._trigger_func, self._poll_time)
+        query_endstops.register_endstop(clone, name)
+        return clone
 
     def home_start(self, print_time: float, sample_time: float, sample_count: int,
                    rest_time: float, triggered: bool = True) -> Any:

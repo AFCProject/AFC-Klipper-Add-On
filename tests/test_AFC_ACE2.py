@@ -1760,6 +1760,9 @@ class TestACE2ConnectionResolveConnectPort:
                             lambda *a, **k: "/dev/ttyACM8")
 
         assert conn._resolve_connect_port() == "/dev/ttyACM8"
+        # Binding happens later from the discover_device handshake once
+        # connected (see TestACE2ConnectionPreInfoHandshake), not here.
+        assert conn._bound_uid is None
 
     def test_cached_port_probe_exception_falls_through_to_resolve(self, monkeypatch):
         printer, conn = ace2_link()
@@ -1793,11 +1796,16 @@ class TestACE2ConnectionResolveConnectPort:
 
         assert conn._resolve_connect_port() == "/dev/ttyACM9"
 
-    def test_cached_port_uid_found_with_no_pin_reuses_cached_port(self, monkeypatch):
+    def test_cached_port_with_bound_uid_and_no_pin_reuses_cached_port(self, monkeypatch):
+        """With no ace_uid configured, the cache hit needs a uid bound from a
+        previous successful connect (_bound_uid) to trust against -- simulated
+        here directly, since it's normally set from the discover_device
+        handshake reply once connected (see TestACE2ConnectionPreInfoHandshake)."""
         printer, conn = ace2_link()
         conn._auto = True
         conn._resolved_port = "/dev/ttyACM2"
         conn._ace_uid = None
+        conn._bound_uid = (1, 2, 3)
         monkeypatch.setattr(afc_ace2_module, "probe_ace2_uid", lambda port, baud: (1, 2, 3))
         resolve_calls = []
         monkeypatch.setattr(afc_ace2_module, "resolve_ace2_port",
@@ -1806,6 +1814,22 @@ class TestACE2ConnectionResolveConnectPort:
         assert conn._resolve_connect_port() == "/dev/ttyACM2"
         # The cheap cache hit short-circuits before the full scan ever runs.
         assert resolve_calls == []
+        assert conn._bound_uid == (1, 2, 3)
+
+    def test_cached_port_with_no_pin_and_no_bound_uid_falls_through_to_resolve(self, monkeypatch):
+        """Nothing to validate the cached port against yet (no ace_uid, no
+        prior bind), so even a successful probe must not short-circuit the
+        full scan."""
+        printer, conn = ace2_link()
+        conn._auto = True
+        conn._resolved_port = "/dev/ttyACM2"
+        conn._ace_uid = None
+        assert conn._bound_uid is None
+        monkeypatch.setattr(afc_ace2_module, "probe_ace2_uid", lambda port, baud: (1, 2, 3))
+        monkeypatch.setattr(afc_ace2_module, "resolve_ace2_port",
+                            lambda *a, **k: "/dev/ttyACM9")
+
+        assert conn._resolve_connect_port() == "/dev/ttyACM9"
 
     def test_cached_port_uid_matches_pin_reuses_cached_port(self, monkeypatch):
         printer, conn = ace2_link()
@@ -1819,6 +1843,7 @@ class TestACE2ConnectionResolveConnectPort:
 
         assert conn._resolve_connect_port() == "/dev/ttyACM2"
         assert resolve_calls == []
+        assert conn._bound_uid == (1, 2, 3)
 
     def test_cached_port_uid_mismatch_falls_through_to_resolve(self, monkeypatch):
         printer, conn = ace2_link()
@@ -1844,6 +1869,9 @@ class TestACE2ConnectionPreInfoHandshake:
         assert conn._pending == {}
         assert conn._timeout_timestamps == []
         assert printer.logger.messages == [("debug", "ACE2 TX: id=0 discover_device {}")]
+        # The discover reply's uid is bound for later cache-hit checks in
+        # _resolve_connect_port, at no extra serial-open cost.
+        assert conn._bound_uid == (1, 2, 3)
 
     def test_exception_is_swallowed_and_logged(self):
         # The unit never answers: the discover times out after its 3s, and
@@ -1858,6 +1886,28 @@ class TestACE2ConnectionPreInfoHandshake:
             ("debug", "ACE2 TX: id=0 discover_device {}"),
             ("debug", "ACE2 discover_device failed (non-fatal): ACE2 command "
                       "'discover_device' (id=0) timed out after 3.0s")]
+        assert conn._bound_uid is None
+
+    def test_reply_missing_a_uid_field_does_not_bind(self):
+        """Covers the all-present guard: a reply with only some of
+        uid1/uid2/uid3 must not bind a partial uid."""
+        printer, conn = ace2_link()
+        ace2_link_answers(conn, _cmd=0, code=0, msg="success",
+                          result={"uid1": 1, "uid2": 2})
+
+        conn._pre_info_handshake()
+
+        assert conn._bound_uid is None
+
+    def test_non_dict_reply_does_not_bind(self, monkeypatch):
+        """Covers the isinstance guard: some other command's decode shape
+        (not a dict) must not be treated as a uid-bearing reply."""
+        printer, conn = ace2_link()
+        monkeypatch.setattr(conn, "send_command", lambda *a, **k: None)
+
+        conn._pre_info_handshake()
+
+        assert conn._bound_uid is None
 
 
 class TestACE2ConnectionPollExtras:

@@ -929,6 +929,10 @@ class ACE2Connection(ACEConnection):
     get_filament_info, …) are inherited verbatim, they just call send_command,
     which here speaks V2 and returns the same V1-shaped result dicts."""
 
+    # UID bound on the first successful resolve, so a later reconnect can
+    # still validate the cached port even when no ace_uid is configured.
+    _bound_uid: Optional[Tuple[int, int, int]] = None
+
     def _resolve_connect_port(self, logger: Optional[Any] = None) -> str:
         """
         ACE2 override: resolve serial_port: auto with the V2 discover probe
@@ -944,9 +948,11 @@ class ACE2Connection(ACEConnection):
         if self._resolved_port:
             with contextlib.suppress(Exception):
                 uid = probe_ace2_uid(self._resolved_port, self._baud_rate)
+                want = self._ace_uid or self._bound_uid
                 if (uid is not None
-                    and (self._ace_uid is None
-                         or uid == tuple(self._ace_uid))):
+                    and want is not None
+                    and uid == tuple(want)):
+                    self._bound_uid = uid
                     return self._resolved_port
         port = resolve_ace2_port(self._ace_index, self._baud_rate, ace_uid=self._ace_uid,
                                  logger=logger or self._logger)
@@ -955,6 +961,9 @@ class ACE2Connection(ACEConnection):
                          + (f" / ace_uid {self._ace_uid}" if self._ace_uid else "")
                          + " (serial_port: auto). Is it plugged in / powered?")
             raise ACESerialError(error_str)
+        # _bound_uid gets (re)set from this port's own discover_device reply
+        # in _pre_info_handshake once connected, not probed again here, so
+        # resolving doesn't open a second throwaway serial connection.
         return port
 
     def _pre_info_handshake(self) -> None:
@@ -962,11 +971,20 @@ class ACE2Connection(ACEConnection):
         ACE 2 Pro must be discovered before it answers other commands. The V2
         initial handshake sends discover_device first (then get_info); without it
         the unit ignores get_status/get_info and never replies.
+
+        Also binds this connection's uid from the discover reply, so a later
+        reconnect with no ace_uid configured can still trust the cached-port
+        fast path in _resolve_connect_port.
         """
         try:
-            self.send_command("discover_device", timeout=3.0)
+            result = self.send_command("discover_device", timeout=3.0)
         except Exception as e:
             self._logger.debug(f"ACE2 discover_device failed (non-fatal): {e}")
+            return
+        if isinstance(result, dict):
+            uid = (result.get("uid1"), result.get("uid2"), result.get("uid3"))
+            if all(v is not None for v in uid):
+                self._bound_uid = uid
 
     def _poll_extras(self) -> None:
         """

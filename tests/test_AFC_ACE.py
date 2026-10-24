@@ -1498,6 +1498,55 @@ class TestAfcACEOnHwStatusCallback:
         assert unit._stuck_tripped is False
         assert unit.logger.messages == []
 
+    def test_v1_async_ack_reply_does_not_wipe_cached_status(self):
+        """An ack to a fire-and-forget async command (stop_feed_filament,
+        stop_feed_assist, ...) has no 'slots' key at all on V1. It must be
+        ignored rather than overwriting the real cached status/age/action."""
+        unit = self._unit()
+        prev_status = {"status": "ready", "slots": [{"index": 0, "status": "ready"}]}
+        unit._cached_hw_status = prev_status
+        unit._hw_status_time = 100.0
+        unit._current_action = "feeding(slot 0)"
+        unit.printer.reactor.now = 200.0
+
+        unit._on_hw_status_callback({"result": {}})
+
+        assert unit._cached_hw_status is prev_status
+        assert unit._hw_status_time == 100.0
+        assert unit._current_action == "feeding(slot 0)"
+        assert unit._slot_inventory[0] == {}
+        assert unit._stuck_tripped is True
+        assert unit.logger.messages == []
+
+    def test_ace2_async_ack_reply_does_not_wipe_cached_status(self):
+        """ACE2 acks the same async commands with {'raw_fields': {...}},
+        also lacking 'slots'; must be ignored for the same reason."""
+        unit = self._unit()
+        prev_status = {"status": "ready", "slots": [{"index": 0, "status": "ready"}]}
+        unit._cached_hw_status = prev_status
+        unit._hw_status_time = 100.0
+
+        unit._on_hw_status_callback({"result": {"raw_fields": {"opcode": 7}}})
+
+        assert unit._cached_hw_status is prev_status
+        assert unit._hw_status_time == 100.0
+        assert unit._slot_inventory[0] == {}
+        assert unit._stuck_tripped is True
+        assert unit.logger.messages == []
+
+    def test_non_list_slots_value_does_not_wipe_cached_status(self):
+        """Covers the isinstance check itself, not just key absence: a
+        'slots' key present but not a list must also be ignored."""
+        unit = self._unit()
+        prev_status = {"status": "ready", "slots": [{"index": 0, "status": "ready"}]}
+        unit._cached_hw_status = prev_status
+
+        unit._on_hw_status_callback({"result": {"slots": "not a list"}})
+
+        assert unit._cached_hw_status is prev_status
+        assert unit._stuck_tripped is True
+        assert unit.logger.messages == []
+
     def test_a_clock_error_leaves_the_stamp_but_still_syncs(self):
         unit = self._unit()
 

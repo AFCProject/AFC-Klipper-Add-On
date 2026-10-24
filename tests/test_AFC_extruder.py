@@ -519,6 +519,61 @@ class TestU1ToolStartEndstop:
             self._make_u1_extruder_with_query_endstops(query_endstops)
 
 
+class TestGetToolStartEndstopForLane:
+    """Covers get_tool_start_endstop_for_lane, the fix for lanes sharing one
+    extruder's U1 sensor piling every lane's stepper onto one shared
+    PollingEndstopWrapper: each lane name must get its own clone."""
+
+    def _make_extruder_with_endstop(self, query_endstops=None):
+        ext = _make_afc_extruder()
+        ext.tool_start_endstop = PollingEndstopWrapper(
+            ext.reactor, lambda: MagicMock(), lambda: False)
+        ext._lane_tool_start_endstops = {}
+        ext.printer.objects["query_endstops"] = query_endstops or MagicMock()
+        return ext
+
+    def test_returns_none_when_extruder_has_no_u1_endstop(self):
+        ext = _make_afc_extruder()
+        ext.tool_start_endstop = None
+        ext._lane_tool_start_endstops = {}
+
+        assert ext.get_tool_start_endstop_for_lane("lane1") is None
+
+    def test_creates_and_registers_a_per_lane_clone(self):
+        query_endstops = MagicMock()
+        ext = self._make_extruder_with_endstop(query_endstops)
+
+        result = ext.get_tool_start_endstop_for_lane("lane1")
+
+        assert isinstance(result, PollingEndstopWrapper)
+        assert result is not ext.tool_start_endstop
+        query_endstops.register_endstop.assert_called_once_with(result, "lane1_tool_start")
+
+    def test_caches_the_clone_per_lane_name(self):
+        query_endstops = MagicMock()
+        ext = self._make_extruder_with_endstop(query_endstops)
+
+        first = ext.get_tool_start_endstop_for_lane("lane1")
+        second = ext.get_tool_start_endstop_for_lane("lane1")
+
+        assert first is second
+        query_endstops.register_endstop.assert_called_once_with(first, "lane1_tool_start")
+
+    def test_different_lanes_get_distinct_clones_with_isolated_steppers(self):
+        """The actual bug this fixes: two lanes sharing one extruder's U1
+        sensor must not end up with each other's stepper in get_steppers()."""
+        ext = self._make_extruder_with_endstop()
+
+        lane1_endstop = ext.get_tool_start_endstop_for_lane("lane1")
+        lane2_endstop = ext.get_tool_start_endstop_for_lane("lane2")
+        lane1_stepper = MagicMock()
+        lane1_endstop.add_stepper(lane1_stepper)
+
+        assert lane1_endstop is not lane2_endstop
+        assert lane1_endstop.get_steppers() == [lane1_stepper]
+        assert lane2_endstop.get_steppers() == []
+
+
 class TestHasToolheadSensor:
     def test_plain_switch_pin_is_true(self):
         ext = _make_afc_extruder()

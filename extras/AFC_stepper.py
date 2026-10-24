@@ -579,10 +579,13 @@ class AFCExtruderStepper(AFCLane):
         elif (tool_start_pin is None
               and getattr(getattr(self, "extruder_obj", None),
                          "tool_start_endstop", None) is not None):
-            # A U1 motion sensor has no MCU pin to resolve; home against its
-            # software endstop (AFCExtruder.tool_start_endstop) instead.
+            # A U1 motion sensor has no MCU pin to resolve; home against a
+            # per-lane clone of the extruder's software endstop instead, so
+            # other lanes sharing this extruder don't end up in this lane's
+            # homing move (see AFCExtruder.get_tool_start_endstop_for_lane).
             self._add_endstop('tool_start', None, 'tool_start',
-                              mcu_endstop=self.extruder_obj.tool_start_endstop)
+                              mcu_endstop=self.extruder_obj.get_tool_start_endstop_for_lane(
+                                  self.name))
         elif tool_start_pin != 'buffer':
             self._add_endstop('tool_start', tool_start_pin, 'tool_start')
         else:

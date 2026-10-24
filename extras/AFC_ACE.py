@@ -837,6 +837,11 @@ class afcACE(afcUnit):
             and "sensor_bitmask" in result):
             self._cached_sensor_state = result
             return
+        if not isinstance(result.get("slots"), list):
+            # Ack/raw-fields reply to an async command (stop_feed_filament,
+            # stop_feed_assist, update_feeding_speed, ...), not a status
+            # frame. Ignore it rather than wiping the real cached status.
+            return
         self._cached_hw_status = result
         # Stamp the update so a wedged callback shows up as a stale cache.
         try:
@@ -2672,7 +2677,7 @@ class afcACE(afcUnit):
             and cur_lane.hub_obj.is_virtual_pin()):
             gcmd.respond_info("Hub calibration requires a physical hub sensor, not virtual")
             return
-        success, msg, dist = self._calibrate_hub_inner(cur_lane)
+        success, msg, dist = self.calibrate_lane(cur_lane, 1.0)
         gcmd.respond_info(msg)
 
     cmd_AFC_ACE_STATUS_help = "Query ACE hardware status"

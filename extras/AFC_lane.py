@@ -626,22 +626,26 @@ class AFCLane:
 
     def _attach_tool_start_endstop_to_stepper(self) -> None:
         """
-        Attach self.extruder_obj's pre-built tool_start_endstop (already
-        registered with query_endstops by AFCExtruder.__init__) to whichever
+        Attach a per-stepper clone of self.extruder_obj's tool_start_endstop
+        (see AFCExtruder.get_tool_start_endstop_for_lane) to whichever
         stepper this lane homes through.
 
         Needed for lanes with no extruder config of their own, which never
         ran _setup_tool_start_endstop in __init__. No-op when a pin-based
         endstop is already registered, there's no software endstop to
         attach, or this lane has no stepper to home through.
+        
+        Cloning (rather than sharing one endstop across every lane on this extruder)
+        keeps each homing stepper's get_steppers() scoped to itself, so homing one
+        lane doesn't pull in other lanes sharing the same U1 sensor.
         """
         homing_stepper = self.drive_stepper or (self if hasattr(self, "_endstops") else None)
         if (homing_stepper is None
             or "tool_start" in homing_stepper._endstops
             or getattr(self.extruder_obj, "tool_start_endstop", None) is None):
             return
-        endstop = self.extruder_obj.tool_start_endstop
-        endstop_name = f"{self.extruder_obj.name}_tool_start"
+        endstop = self.extruder_obj.get_tool_start_endstop_for_lane(homing_stepper.name)
+        endstop_name = f"{homing_stepper.name}_tool_start"
         endstop.add_stepper(homing_stepper.extruder_stepper.stepper)
         homing_stepper._endstops["tool_start"] = (endstop, endstop_name)
 

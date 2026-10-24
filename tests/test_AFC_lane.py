@@ -562,31 +562,41 @@ class TestAttachToolStartEndstopToStepper:
         lane = _make_afc_lane()
         drive_stepper = MagicMock()
         drive_stepper._endstops = {}
+        drive_stepper.name = "toolchanger_stepper"
         lane.drive_stepper = drive_stepper
-        endstop = MagicMock()
-        lane.extruder_obj = MagicMock(tool_start_endstop=endstop)
-        lane.extruder_obj.name = "extruder"
+        per_lane_endstop = MagicMock()
+        lane.extruder_obj = MagicMock(tool_start_endstop=MagicMock())
+        lane.extruder_obj.get_tool_start_endstop_for_lane = MagicMock(
+            return_value=per_lane_endstop)
 
         lane._attach_tool_start_endstop_to_stepper()
 
-        assert drive_stepper._endstops["tool_start"] == (endstop, "extruder_tool_start")
-        endstop.add_stepper.assert_called_once_with(drive_stepper.extruder_stepper.stepper)
+        lane.extruder_obj.get_tool_start_endstop_for_lane.assert_called_once_with(
+            "toolchanger_stepper")
+        assert drive_stepper._endstops["tool_start"] == (
+            per_lane_endstop, "toolchanger_stepper_tool_start")
+        per_lane_endstop.add_stepper.assert_called_once_with(
+            drive_stepper.extruder_stepper.stepper)
 
     def test_attaches_to_its_own_stepper_when_not_shared(self):
         """A lane with its own real stepper (self.drive_stepper is None) and
         a U1 sensor instead of its own AFC_extruder resolution attaches onto
-        itself."""
+        itself, asking for a clone keyed on its own name rather than reusing
+        the extruder's shared endstop object directly."""
         lane = _make_afc_lane()
         lane.drive_stepper = None
         lane._endstops = {}
+        lane.name = "lane1"
         lane.extruder_stepper = MagicMock()
-        endstop = MagicMock()
-        lane.extruder_obj = MagicMock(tool_start_endstop=endstop)
-        lane.extruder_obj.name = "extruder"
+        per_lane_endstop = MagicMock()
+        lane.extruder_obj = MagicMock(tool_start_endstop=MagicMock())
+        lane.extruder_obj.get_tool_start_endstop_for_lane = MagicMock(
+            return_value=per_lane_endstop)
 
         lane._attach_tool_start_endstop_to_stepper()
 
-        assert lane._endstops["tool_start"] == (endstop, "extruder_tool_start")
+        lane.extruder_obj.get_tool_start_endstop_for_lane.assert_called_once_with("lane1")
+        assert lane._endstops["tool_start"] == (per_lane_endstop, "lane1_tool_start")
 
     def test_noop_when_real_pin_tool_start_already_registered(self):
         """A real pin_tool_start endstop already resolved correctly (via the

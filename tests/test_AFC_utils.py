@@ -1706,6 +1706,36 @@ class TestPollingEndstopWrapperSteppers:
         assert len(endstop.get_steppers()) == 1
 
 
+class TestPollingEndstopWrapperForStepper:
+    def test_returns_a_new_wrapper_registered_under_given_name(self):
+        endstop, reactor, mcu, triggered = _make_polling_endstop()
+        query_endstops = MagicMock()
+
+        clone = endstop.for_stepper("lane1_tool_start", query_endstops)
+
+        assert clone is not endstop
+        assert isinstance(clone, PollingEndstopWrapper)
+        query_endstops.register_endstop.assert_called_once_with(clone, "lane1_tool_start")
+
+    def test_clone_shares_trigger_state_but_not_steppers(self):
+        """The clone must poll the exact same trigger_func/get_mcu/poll_time
+        as the source, but start with its own empty stepper list so adding a
+        stepper to one doesn't affect the other."""
+        endstop, reactor, mcu, triggered = _make_polling_endstop(poll_time=0.05)
+        source_stepper = MagicMock()
+        endstop.add_stepper(source_stepper)
+
+        clone = endstop.for_stepper("lane1_tool_start", MagicMock())
+        clone_stepper = MagicMock()
+        clone.add_stepper(clone_stepper)
+
+        assert clone.get_mcu() is mcu
+        assert clone._poll_time == 0.05
+        assert clone._trigger_func is endstop._trigger_func
+        assert clone.get_steppers() == [clone_stepper]
+        assert endstop.get_steppers() == [source_stepper]
+
+
 class TestPollingEndstopWrapperHomeStart:
     def test_already_triggered_completes_immediately(self):
         endstop, reactor, mcu, triggered = _make_polling_endstop(trigger_value=True)
