@@ -421,6 +421,13 @@ class TestMethodToV2:
     def test_stop_feed_filament(self):
         assert self._map("stop_feed_filament", {"index": 2}) == ((9, bytes([0x08, 0x02])), [])
 
+    def test_stop_unwind_filament(self):
+        """Must map to STOP_FEED_OR_ROLLBACK like the other stop methods, not
+        fall through to the unknown-method GET_STATUS fallback -- that would
+        silently turn ACEConnection.stop_unwind_filament into a no-op query
+        and never actually stop the rollback."""
+        assert self._map("stop_unwind_filament", {"index": 2}) == ((9, bytes([0x08, 0x02])), [])
+
     def test_update_feeding_speed(self):
         assert self._map("update_feeding_speed", {"index": 1, "speed": 70}) == (
             (10, bytes([0x08, 0x01, 0x10, 0x46])), [])

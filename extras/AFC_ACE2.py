@@ -366,7 +366,7 @@ def method_to_v2(method: str, params: Optional[Dict[str, Any]]) -> Tuple[int, by
         speed = int(params.get('speed', 50))
         return Cmd.FEED_OR_ROLLBACK, (pb_uint32(1, slot) + pb_uint32(2, speed)
                                       + pb_uint32(3, length) + pb_uint32(4, FEED_MODE_ROLLBACK))
-    if method == 'stop_feed_filament':
+    if method in ('stop_feed_filament', 'stop_unwind_filament'):
         return Cmd.STOP_FEED_OR_ROLLBACK, pb_uint32(1, int(params.get('index', 0)))
     if method == 'update_feeding_speed':
         slot = int(params.get('index', 0))

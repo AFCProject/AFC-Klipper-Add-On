@@ -622,7 +622,9 @@ def wait_for_version(transport: ACE2Transport, expected: str) -> bool:
 # MAIN
 # ═══════════════════════════════════════════════════════════════════
 
-def main():
+def main() -> int:
+    """Returns 0 on success (including an intentional dry-run/skip/abort),
+    1 if the flash itself failed."""
     global CHUNK_SIZE
 
     parser = argparse.ArgumentParser(
@@ -681,12 +683,12 @@ def main():
 
         if args.dry_run:
             print("\n[dry-run] Exiting without flashing.")
-            return
+            return 0
 
         # ── Version check ───────────────────────────────────────────
         if current and _norm_ver(current[0]) == _norm_ver(fw.version) and not args.force:
             print(f"\n[skip] ACE already reports version {current[0]}. Use --force to flash anyway.")
-            return
+            return 0
 
         # ── Confirm ─────────────────────────────────────────────────
         current_ver = current[0] if current else "unknown"
@@ -704,7 +706,7 @@ def main():
                 confirm = 'n'
         if confirm not in ('y', 'yes'):
             print("Aborted.")
-            return
+            return 0
 
         # ── Flash ───────────────────────────────────────────────────
         print()
@@ -717,13 +719,16 @@ def main():
             wait_for_version(transport, fw.version)
         else:
             print("\n[FAILED] Firmware update did not complete successfully.")
+            return 1
 
     except KeyboardInterrupt:
         print("\n[interrupted]")
+        return 1
     finally:
         transport.close()
         print("[serial] Disconnected.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

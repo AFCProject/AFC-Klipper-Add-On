@@ -54,6 +54,13 @@ mid-recovery.
 
 ## Flash it
 
+The commands below assume you are in `firmwares/ACE2/`, next to
+`ace2-ota-update.py` and your firmware file:
+
+```bash
+cd firmwares/ACE2
+```
+
 **1. Dry run first.** This talks to the unit, reads its current version and
 parses the image, then exits without writing anything. If this does not work,
 nothing else will:
@@ -138,5 +145,6 @@ the whole point of the IAP design.
 `[AFC_ACE2_rfid]` configured for the unit; see the RFID section of
 `templates/AFC_ACE2_1.cfg` and `extras/AFC_ACE2_rfid.py`.
 
-**Back to stock.** Flash the stock image the same way, with `--force`.
-Keep one archived; this is the reason to.
+**Back to stock.** Flash the stock image the same way, with `--force`. Keep a
+copy of the stock image archived somewhere safe so it's ready whenever you
+need to revert.
