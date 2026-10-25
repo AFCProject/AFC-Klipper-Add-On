@@ -888,7 +888,7 @@ def resolve_ace2_port(ace_index: int, baud: int, ace_uid: Optional[Tuple[int, in
     settle window (rides the watchdog re-enumeration). With ace_uid, binds to
     the box reporting that UID; otherwise binds ace_index (1-based) by
     USB-topology (cable) order.
-    
+
     A claimed port is never re-probed (another unit's connection already has it open),
     but still occupies its topology position so other units' indices don't shift;
     resolving to a claimed port itself returns None rather than handing out a port in use.
