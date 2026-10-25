@@ -634,7 +634,7 @@ class AFCLane:
         ran _setup_tool_start_endstop in __init__. No-op when a pin-based
         endstop is already registered, there's no software endstop to
         attach, or this lane has no stepper to home through.
-        
+
         Cloning (rather than sharing one endstop across every lane on this extruder)
         keeps each homing stepper's get_steppers() scoped to itself, so homing one
         lane doesn't pull in other lanes sharing the same U1 sensor.

@@ -23,8 +23,8 @@ exclude = [
     "_build", "buck-out", "build", "dist", "node_modules", "site-packages", "venv",
 
     # Everything in this repo other than extras/
-    "community_mods", "config", "coverage-report", "docs", "include",
-    "kalico", "klipper", "klipper_stubs", "templates", "tests",
+    "community_mods", "config", "coverage-report", "docs", "firmwares",
+    "include", "kalico", "klipper", "klipper_stubs", "templates", "tests",
     "troubleshooting", "utilities",
 ]
 

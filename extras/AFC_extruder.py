@@ -296,7 +296,7 @@ class AFCExtruder:
         # Software MCU endstop for a U1-style motion sensor (set below when one
         # is configured), so it can be homed against like a pin_tool_start switch.
         self.tool_start_endstop: Optional[PollingEndstopWrapper] = None
-        
+
         # Per-lane clones of tool_start_endstop, keyed by lane name, so lanes
         # sharing this extruder's U1 sensor each home against their own
         # endstop instead of piling every lane's stepper onto one shared
