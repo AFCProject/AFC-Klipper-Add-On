@@ -4,6 +4,10 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 #
+# This file includes an implementation of ACE2 commands adapted from the multiACE project. https://github.com/decay71/multiace
+# Originally authored by decay71 and licensed under the GNU General Public License v3.0.
+# Full license text available at: https://www.gnu.org/licenses/gpl-3.0.html
+#
 # AFC unit driver for the Anycubic ACE PRO 2 filament changer.
 #
 # The Pro 2 speaks a completely different wire protocol from the original ACE

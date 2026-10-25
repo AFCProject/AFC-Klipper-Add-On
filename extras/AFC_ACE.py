@@ -3,6 +3,10 @@
 # Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
+#
+# This file includes an implementation of ACE commands adapted from the Kobra-S1/ACEPRO project. https://github.com/Kobra-S1/ACEPRO
+# Originally authored by Kobra-S1 and licensed under the GNU General Public License v3.0.
+# Full license text available at: https://www.gnu.org/licenses/gpl-3.0.html
 
 """AFC unit driver for Anycubic ACE PRO filament changers."""
 

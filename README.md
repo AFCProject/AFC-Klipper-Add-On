@@ -78,3 +78,13 @@ Armored Turtle Configuration / Build Manuals [here](https://armoredturtle.xyz/)
 AFC-Klipper-Add-On plugin is fully open source and comes at not cost to the user. If you feel that you would like to contribute by donating, please use the following links below.
 
 <a href="https://www.buymeacoffee.com/afcproject" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
+
+## Attributions
+
+AFC builds on top of, and includes code adapted from, several other open source projects:
+
+- [Klipper](https://github.com/Klipper3d/klipper) and [Kalico](https://github.com/KalicoCrew/kalico) - the firmware AFC is an add-on for, and the base this project is built on.
+- [Kobra-S1/ACEPRO](https://github.com/Kobra-S1/ACEPRO) - implementation of ACE commands used in `extras/AFC_ACE.py`.
+- [decay71/multiace](https://github.com/decay71/multiace) - implementation of ACE2 commands used in `extras/AFC_ACE2.py`.
+- [OpenAMSOrg/klipper_openams](https://github.com/OpenAMSOrg/klipper_openams) - code inspiration for `extras/AFC_OpenAMS.py`.
+- [Frix-x/klippain-shaketune](https://github.com/Frix-x/klippain-shaketune) - code modified for use in `extras/AFC_functions.py`.
