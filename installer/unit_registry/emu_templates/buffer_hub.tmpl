@@ -1,0 +1,16 @@
+[AFC_buffer ${unit_name}_buffer]
+advance_pin: ^${unit_name}_lane1:BUFFER_ADV
+trailing_pin: ^${unit_name}_lane1:BUFFER_TRL
+multiplier_high: 1.15
+multiplier_low: 0.90
+
+# EMU hub defaults to virtual (no sensor). To use a physical hub sensor:
+#  - Replace "virtual" with the actual sensor pin
+#  - Update dist_hub in each AFC_stepper section to the PTFE length between
+#    the load sensor and hub sensor
+#  - Remove/comment out the `use_dist_hub: True` line
+[AFC_hub ${unit_name}_HUB]
+afc_bowden_length: 2000
+hub_clear_move_dis: 5
+switch_pin: virtual
+use_dist_hub: True

@@ -1,0 +1,5 @@
+[a]
+x: 1
+
+[gcode_macro T0]
+gcode: x

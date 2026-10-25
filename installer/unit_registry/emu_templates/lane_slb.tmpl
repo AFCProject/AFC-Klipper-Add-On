@@ -1,0 +1,98 @@
+[AFC_stepper lane${i}]
+unit: ${unit_name}:${i}
+step_pin: ${unit_name}_lane${i}:MOT_STEP
+dir_pin: ${unit_name}_lane${i}:MOT_DIR
+enable_pin: !${unit_name}_lane${i}:MOT_EN
+microsteps: 4
+rotation_distance: 22.7574
+gear_ratio: 1:1
+dist_hub: 2000
+led_index: ${unit_name}_Indicator_Button_${i}:1-4
+led_spool_index: ${unit_name}_Indicator_Box_${i}:1
+# If using EBB board comment out the above led_index and led_spool_index and
+# uncomment the indexes below. Then comment out both [AFC_led ${unit_name}_Indicator_Button_${i}]
+# and [AFC_led ${unit_name}_Indicator_Box_${i}] configuration sections and uncomment
+# [AFC_led ${unit_name}_Indicator_${i}].
+#led_index: ${unit_name}_Indicator_${i}:1
+#led_spool_index: ${unit_name}_Indicator_${i}:2
+prep: ^!${unit_name}_lane${i}:TRG
+load: ^${unit_name}_lane${i}:LOAD
+print_current: 0.4
+
+[tmc2209 AFC_stepper lane${i}]
+uart_pin: ${unit_name}_lane${i}:MOT_UART
+uart_address: 0
+run_current: 0.8
+sense_resistor: 0.110
+
+[AFC_button lane${i}]
+pin: ^!${unit_name}_lane${i}:BUTTON
+
+[temperature_sensor lane${i}]
+sensor_type: BME280
+i2c_address: 118
+# If using AHT20 sensor, comment out sensor_type and i2c_address above and uncomment
+# the lines below
+#sensor_type: AHT2X
+#i2c_address: 56
+i2c_mcu: ${unit_name}_lane${i}
+i2c_software_scl_pin: ${unit_name}_lane${i}:TEMP_SW_SCL
+i2c_software_sda_pin: ${unit_name}_lane${i}:TEMP_SW_SCA
+# If using hardware I2C instead of software I2C, comment out software SCL/SDA pins
+# and uncomment i2c_bus below
+#i2c_bus: i2c2_PB10_PB11
+
+[temperature_sensor ${unit_name}_mcu_lane${i}]
+sensor_type: temperature_mcu
+sensor_mcu: ${unit_name}_lane${i}
+
+[controller_fan ${unit_name}_fan_lane${i}]
+pin: ${unit_name}_lane${i}:FAN
+max_power: 1
+kick_start_time: 0.5
+stepper: AFC_stepper lane${i}
+
+# Based on your configuration, LED configuration must be selected from the below:
+
+############### EBB + LED PCB ###############
+
+#[AFC_led ${unit_name}_Indicator_${i}]
+#pin: ${unit_name}_lane${i}:RGB
+#chain_count: 5
+#color_order: GRBW
+#initial_RED: 0.0
+#initial_GREEN: 0.0
+#initial_BLUE: 0.0
+#initial_WHITE: 0.0
+
+############### EBB + neopixel eject buttons ###############
+
+#[AFC_led ${unit_name}_Indicator_${i}]
+#pin: ${unit_name}_lane${i}:RGB
+#chain_count: 2
+#color_order: GRBW
+#initial_RED: 0.0
+#initial_GREEN: 0.0
+#initial_BLUE: 0.0
+#initial_WHITE: 0.0
+
+############### SLB + LED PCB ###############
+
+[AFC_led ${unit_name}_Indicator_Button_${i}]
+pin: ${unit_name}_lane${i}:RGB_button
+chain_count: 4
+color_order: GRBW
+initial_RED: 0.0
+initial_GREEN: 0.0
+initial_BLUE: 0.0
+initial_WHITE: 0.0
+
+[AFC_led ${unit_name}_Indicator_Box_${i}]
+pin: ${unit_name}_lane${i}:RGB_box
+chain_count: 1
+color_order: GRBW
+initial_RED: 0.0
+initial_GREEN: 0.0
+initial_BLUE: 0.0
+initial_WHITE: 0.0
+

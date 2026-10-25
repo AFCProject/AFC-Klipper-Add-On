@@ -21,13 +21,7 @@ To install this plugin, you should have the following pre-requisites installed:
 1. Klipper
 2. Moonraker
 3. WebUI (Mainsail or Fluidd)
-4. Both `jq` and `crudini` should be installed on your RaspPi (or equivalent). This can typically be accomplished with
-    the following commands:
-    
-    ```bash
-    sudo apt-get install jq crudini
-    ```
-5. Python >= 3.8
+4. Python >= 3.8
    
 
 To install this plugin, you can use the following commands from the users home directory:

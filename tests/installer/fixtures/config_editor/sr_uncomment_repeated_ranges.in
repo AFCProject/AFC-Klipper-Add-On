@@ -1,0 +1,5 @@
+# [gcode_macro T0]
+#     SWITCH_OF_EXTENDED_EXTRUDER INDEX=0
+# stays? no
+# [gcode_macro T1]
+#     SWITCH_OF_EXTENDED_EXTRUDER INDEX=1

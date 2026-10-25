@@ -1,0 +1,4 @@
+# [gcode_macro T0]  
+# gcode:
+#     SWITCH_OF_EXTENDED_EXTRUDER INDEX=0
+after

@@ -1,0 +1,4 @@
+[AFC_buffer B]
+advance_pin: ^x
+velocity: 1  # old
+multiplier_high: 1.1

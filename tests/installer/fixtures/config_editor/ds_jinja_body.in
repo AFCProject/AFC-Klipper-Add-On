@@ -1,0 +1,7 @@
+[gcode_macro T0]
+gcode:
+  {% if 1 %}
+  # c
+  {% endif %}
+[x]
+y: 1

@@ -1,0 +1,3 @@
+# [gcode_macro T0]
+# # inner
+#     SWITCH_OF_EXTENDED_EXTRUDER INDEX=0

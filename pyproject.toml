@@ -10,11 +10,11 @@ markers = [
 
 [tool.ruff]
 force-exclude = true  # respect exclude list even when files are passed explicitly (e.g. changed-files in CI)
-# Only lint this project's own code in extras/. `include` scopes bare/recursive
-# scans (e.g. `ruff check .`) to extras/; `exclude` + force-exclude backs that
-# up for explicit file paths (e.g. CI passing a changed-files list), which
-# `include` alone doesn't gate.
-include = ["extras/**/*.py"]
+# Only lint this project's own code in extras/ and installer/. `include` scopes
+# bare/recursive scans (e.g. `ruff check .`) to those directories; `exclude` +
+# force-exclude backs that up for explicit file paths (e.g. CI passing a
+# changed-files list), which `include` alone doesn't gate.
+include = ["extras/**/*.py", "installer/**/*.py"]
 exclude = [
     # Standard exclusions
     ".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".ipynb_checkpoints",
@@ -22,7 +22,7 @@ exclude = [
     ".ruff_cache", ".svn", ".tox", ".venv", ".vscode", "__pypackages__",
     "_build", "buck-out", "build", "dist", "node_modules", "site-packages", "venv",
 
-    # Everything in this repo other than extras/
+    # Everything in this repo other than extras/ and installer/
     "community_mods", "config", "coverage-report", "docs", "firmwares",
     "include", "kalico", "klipper", "klipper_stubs", "templates", "tests",
     "troubleshooting", "utilities",

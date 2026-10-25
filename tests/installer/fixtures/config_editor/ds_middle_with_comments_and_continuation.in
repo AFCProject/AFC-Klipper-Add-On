@@ -1,0 +1,13 @@
+# top
+[a]
+x: 1
+
+# about b
+[gcode_macro T0]
+gcode:
+    M117 hi
+    # inner comment
+
+# about c
+[c]
+y: 2

@@ -1,0 +1,4 @@
+[gcode_macro T0] ; note
+a: 1
+[b]
+c: 2

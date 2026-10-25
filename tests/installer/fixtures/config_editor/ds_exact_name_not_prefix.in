@@ -1,0 +1,4 @@
+[gcode_macro T1]
+a: 1
+[gcode_macro T10]
+b: 2

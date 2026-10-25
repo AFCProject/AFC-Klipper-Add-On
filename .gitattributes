@@ -1,0 +1,2 @@
+# Fixtures are byte-exact captures (some contain CRLF); never convert line endings.
+tests/installer/fixtures/** -text

@@ -1,0 +1,11 @@
+[gcode_macro T0]
+gcode:
+    T0_DO
+
+[gcode_macro T10]
+gcode:
+    T10_DO
+
+[gcode_macro AFC_PARK]
+gcode:
+    PARK

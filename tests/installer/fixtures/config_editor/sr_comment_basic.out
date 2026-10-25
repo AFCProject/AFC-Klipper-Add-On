@@ -1,0 +1,11 @@
+# [gcode_macro T0]
+# gcode:
+#     SWITCH_OF_EXTENDED_EXTRUDER INDEX=0
+
+# [gcode_macro T1]
+# gcode:
+#     SWITCH_OF_EXTENDED_EXTRUDER INDEX=1
+
+[gcode_macro KEEP_ME]
+gcode:
+    M117 untouched
