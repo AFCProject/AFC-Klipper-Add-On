@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from mcu import MCU
 
 ACE_REPORT_TIME = 1.0  # seconds between samples
-_REGISTERED = False
 
 # Fallback logger for early init before AFC logger is available
 _fallback_logger = logging.getLogger("temperature_ace")
@@ -299,9 +298,6 @@ def _register_sensor_factory(config: "ConfigWrapper") -> None:
         ``load_object`` needs the config itself to load heaters if they are
         not loaded yet.
     """
-    global _REGISTERED
-    if _REGISTERED:
-        return
     printer = config.get_printer()
     heaters: PrinterHeaters
     try:
@@ -313,8 +309,10 @@ def _register_sensor_factory(config: "ConfigWrapper") -> None:
             _fallback_logger.warning(f"temperature_ace: failed to load heaters: {e}")
             return
 
+    if getattr(heaters, "_temperature_ace_registered", False):
+        return
     heaters.add_sensor_factory("temperature_ace", TemperatureACE)
     # Register the Fluidd alias early too: sensor_type aht2x is resolved in the main
     # config pass, before AFC_ACE loads, so registering only there fails at boot.
     heaters.add_sensor_factory("aht2x", TemperatureACE)
-    _REGISTERED = True
+    heaters._temperature_ace_registered = True

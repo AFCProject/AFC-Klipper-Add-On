@@ -460,6 +460,7 @@ class PollingEndstopWrapper:
         self._trigger_time: float = 0.
         self._completion: Optional[Any] = None
         self._poll_timer: Optional[object] = None
+        self._home_triggered: bool = True
 
     def get_mcu(self) -> Any:
         """
@@ -519,6 +520,7 @@ class PollingEndstopWrapper:
         """
         self._trigger_time = 0.
         self._completion = self._reactor.completion()
+        self._home_triggered = triggered
         # Check if already triggered before starting poll timer
         if self._trigger_func() == triggered:
             mcu = self.get_mcu()
@@ -537,7 +539,7 @@ class PollingEndstopWrapper:
         :param eventtime: Reactor event time of the poll.
         :return: `reactor.NEVER` once triggered, otherwise the next poll time.
         """
-        if self._trigger_func():
+        if self._trigger_func() == self._home_triggered:
             mcu = self.get_mcu()
             self._trigger_time = mcu.estimated_print_time(eventtime)
             self._completion.complete(True)

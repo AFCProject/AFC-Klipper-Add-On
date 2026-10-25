@@ -105,6 +105,17 @@
    method names are already descriptive enough on their own
    (`test_success_after_one_retry_uses_resolved_lane_name`), so don't add
    one just to satisfy this rule.
+- **New files need a standard header** — any new `extras/*.py` (or similar
+   project source) file starts with this exact header before any other code,
+   docstring, or import:
+
+   ```python
+   # AFCProject Automated Filament Changer
+   #
+   # Copyright (C) 2026 AFCProject
+   #
+   # This file may be distributed under the terms of the GNU GPLv3 license.
+   ```
 - **All new code needs unit tests** — any code added must come with unit
    tests that follow the Unit Test Rules below.
 

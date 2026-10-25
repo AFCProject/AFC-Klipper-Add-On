@@ -1675,6 +1675,7 @@ class TestPollingEndstopWrapperInit:
         assert endstop._poll_timer is None
         assert endstop._reactor is reactor
         assert endstop._poll_time == 0.01
+        assert endstop._home_triggered is True
 
 
 class TestPollingEndstopWrapperGetMcu:
@@ -1772,6 +1773,20 @@ class TestPollingEndstopWrapperHomeStart:
         assert completion.result is True
         reactor.register_timer.assert_not_called()
 
+    def test_triggered_false_target_starts_poll_timer_and_stores_target(self):
+        """With the sensor still triggered, homing toward untriggered must
+        poll (not complete immediately), and must remember that target so
+        _poll_sensor checks for untriggered rather than triggered."""
+        endstop, reactor, mcu, triggered = _make_polling_endstop(trigger_value=True)
+        reactor.register_timer = MagicMock(return_value="timer1")
+
+        endstop.home_start(0, 0, 0, 0, triggered=False)
+
+        reactor.register_timer.assert_called_once_with(
+            endstop._poll_sensor, reactor.NOW)
+        assert endstop._poll_timer == "timer1"
+        assert endstop._home_triggered is False
+
 
 class TestPollingEndstopWrapperPollSensor:
     def test_triggered_completes_and_returns_never(self):
@@ -1789,6 +1804,32 @@ class TestPollingEndstopWrapperPollSensor:
         endstop, reactor, mcu, triggered = _make_polling_endstop(
             trigger_value=False, poll_time=0.01)
         endstop._completion = reactor.completion()
+
+        result = endstop._poll_sensor(100.0)
+
+        assert result == 100.01
+        assert endstop._completion.result is None
+
+    def test_reverse_target_completes_once_untriggered(self):
+        """Covers _home_triggered=False: a reverse-homing poll (e.g. backing
+        off an endstop) must complete once the sensor goes untriggered, not
+        wait for it to go triggered."""
+        endstop, reactor, mcu, triggered = _make_polling_endstop(trigger_value=False)
+        endstop._completion = reactor.completion()
+        endstop._home_triggered = False
+        mcu.estimated_print_time.return_value = 9.0
+
+        result = endstop._poll_sensor(100.0)
+
+        assert result == reactor.NEVER
+        assert endstop._trigger_time == 9.0
+        assert endstop._completion.result is True
+
+    def test_reverse_target_reschedules_while_still_triggered(self):
+        endstop, reactor, mcu, triggered = _make_polling_endstop(
+            trigger_value=True, poll_time=0.01)
+        endstop._completion = reactor.completion()
+        endstop._home_triggered = False
 
         result = endstop._poll_sensor(100.0)
 

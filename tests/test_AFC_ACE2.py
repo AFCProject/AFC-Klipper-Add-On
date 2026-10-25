@@ -1622,13 +1622,25 @@ class TestResolveAce2Port:
         assert resolve_ace2_port(1, 230400, ace_uid=(1, 2, 3), settle=0.0) is None
         assert bus.clock.sleeps == [0.5]
 
-    def test_resolve_skips_claimed(self, monkeypatch):
+    def test_resolve_skips_claimed_but_keeps_its_topology_slot(self, monkeypatch):
         bus = self._bus(monkeypatch, {"/dev/ttyACM2": (11, 0, 0), "/dev/ttyACM9": (22, 0, 0)},
                         topology={"/dev/ttyACM2": "a", "/dev/ttyACM9": "b"})
         afc_ace2_module._ACE_CLAIMED_PORTS.add("/dev/ttyACM2")
 
-        # The claimed port is never probed; index 1 is the only free unit.
-        assert resolve_ace2_port(1, 230400, settle=0.0) == "/dev/ttyACM9"
+        # The claimed port is never re-probed, but it still holds position 1
+        # by topology, so the free unit stays at its real index 2 -- not
+        # reassigned to index 1 just because the other unit is unavailable.
+        assert resolve_ace2_port(2, 230400, settle=0.0) == "/dev/ttyACM9"
+        assert bus.probes == [("/dev/ttyACM9", 230400)]
+
+    def test_resolve_to_a_claimed_slot_returns_none(self, monkeypatch):
+        """Asking for the index that maps to an already-claimed port must not
+        hand back a port another unit's connection already has open."""
+        bus = self._bus(monkeypatch, {"/dev/ttyACM2": (11, 0, 0), "/dev/ttyACM9": (22, 0, 0)},
+                        topology={"/dev/ttyACM2": "a", "/dev/ttyACM9": "b"})
+        afc_ace2_module._ACE_CLAIMED_PORTS.add("/dev/ttyACM2")
+
+        assert resolve_ace2_port(1, 230400, settle=0.0) is None
         assert bus.probes == [("/dev/ttyACM9", 230400)]
 
     def test_resolve_ignores_non_ace2(self, monkeypatch):

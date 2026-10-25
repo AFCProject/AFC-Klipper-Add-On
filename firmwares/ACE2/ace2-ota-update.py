@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# AFCProject Automated Filament Changer
+#
+# Copyright (C) 2026 AFCProject
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
 """
 Anycubic ACE 2 Pro — OTA Firmware Updater
 
@@ -55,6 +60,8 @@ Usage examples:
   # Linux example:
   python ace2-ota-update.py /dev/ttyCH343USB0 firmware.bin --version 1.1.31
 """
+
+from __future__ import annotations
 
 import serial
 import struct
@@ -191,7 +198,8 @@ def parse_response(buf: bytearray):
 def decode_varint(data: bytes, pos: int):
     result, shift = 0, 0
     while pos < len(data):
-        b = data[pos]; pos += 1
+        b = data[pos]
+        pos += 1
         result |= (b & 0x7F) << shift
         if not (b & 0x80):
             return result, pos
@@ -207,11 +215,14 @@ def pb_decode(data: bytes) -> dict:
             val, pos = decode_varint(data, pos)
         elif wtype == 2:
             ln, pos = decode_varint(data, pos)
-            val = data[pos:pos + ln]; pos += ln
+            val = data[pos:pos + ln]
+            pos += ln
         elif wtype == 5:
-            val = struct.unpack_from('<f', data, pos)[0]; pos += 4
+            val = struct.unpack_from('<f', data, pos)[0]
+            pos += 4
         elif wtype == 1:
-            val = struct.unpack_from('<d', data, pos)[0]; pos += 8
+            val = struct.unpack_from('<d', data, pos)[0]
+            pos += 8
         else:
             break
         fields.setdefault(fnum, []).append((wtype, val))
@@ -498,7 +509,7 @@ def iap_upgrade(transport: ACE2Transport, fw: FirmwareImage, verbose: bool) -> b
     print("  All chunks transferred.")
 
     # ── Step 3: IAP_UPGRADE_FINISH ───────────────────────────────────
-    print(f"\n[step 3/3] IAP_UPGRADE_FINISH")
+    print("\n[step 3/3] IAP_UPGRADE_FINISH")
     results = transport.send_recv(CMD_IAP_FINISH, b'', timeout=T_FINISH)
     if not results:
         # No response here is normal — the ACE commits and stops answering until
@@ -507,6 +518,9 @@ def iap_upgrade(transport: ACE2Transport, fw: FirmwareImage, verbose: bool) -> b
     else:
         code = get_field(pb_decode(results[0]["payload"]), 1, 0)
         print(f"  Response code: {code}")
+        if code != 0:
+            print(f"[ERROR] IAP_UPGRADE_FINISH reported an error (code={code}).")
+            return False
     return True
 
 # ═══════════════════════════════════════════════════════════════════
@@ -544,8 +558,13 @@ def _poll_version(transport: ACE2Transport, expected: str, seconds: float) -> bo
 def _port_present(port: str) -> bool:
     """True if the serial device exists AND can be opened. The ACE's USB-serial
     bridge is powered by the ACE, so the device node vanishes when the ACE is off
-    and reappears when it powers on."""
-    if not os.path.exists(port):
+    and reappears when it powers on.
+
+    Windows COM names (e.g. "COM3") aren't filesystem paths, so os.path.exists
+    would always report them missing; the open attempt below is the only
+    presence check that works there, so it's skipped on that platform."""
+    if (sys.platform != "win32"
+        and not os.path.exists(port)):
         return False
     try:
         serial.Serial(port, BAUD, timeout=0.1).close()
@@ -626,6 +645,8 @@ def main():
                         help=f"Firmware bytes per chunk (default: {CHUNK_SIZE}; max safe: ~90)")
     parser.add_argument("--verbose", action="store_true",
                         help="Print raw payload hex for each command")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="Skip the interactive confirmation prompt and flash immediately")
     args = parser.parse_args()
 
     CHUNK_SIZE = args.chunk_size
@@ -671,10 +692,16 @@ def main():
         current_ver = current[0] if current else "unknown"
         print(f"\n  About to flash: {current_ver}  →  {fw.version}")
         print(f"  Image: {len(fw.data)} bytes  CRC16=0x{fw.image_crc:04X}")
-        try:
-            confirm = input("  Proceed? [y/N] ").strip().lower()
-        except EOFError:
+        if args.yes:
             confirm = 'y'
+        else:
+            try:
+                confirm = input("  Proceed? [y/N] ").strip().lower()
+            except EOFError:
+                # No stdin to prompt on (e.g. a non-interactive/scripted run):
+                # abort rather than silently flashing. Pass --yes to skip
+                # this prompt intentionally.
+                confirm = 'n'
         if confirm not in ('y', 'yes'):
             print("Aborted.")
             return

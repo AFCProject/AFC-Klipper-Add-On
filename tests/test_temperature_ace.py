@@ -10,7 +10,6 @@ import pytest
 
 from extras.AFC_ACE import afcACE
 from extras.temperature_ace import _register_sensor_factory, load_config, TemperatureACE
-import extras.temperature_ace as temperature_ace_module
 from tests.ace_helpers import (
     ace_isolation,
     AceConfig,
@@ -598,7 +597,7 @@ class TestLoadConfig:
                              (("aht2x", TemperatureACE), {})]
         assert printer.heaters.factories == {"temperature_ace": TemperatureACE,
                                              "aht2x": TemperatureACE}
-        assert temperature_ace_module._REGISTERED is True
+        assert printer.heaters._temperature_ace_registered is True
         assert fallback.messages == []
 
 
@@ -612,16 +611,19 @@ class TestRegisterSensorFactory:
                              (("aht2x", TemperatureACE), {})]
         assert printer.heaters.factories == {"temperature_ace": TemperatureACE,
                                              "aht2x": TemperatureACE}
-        assert temperature_ace_module._REGISTERED is True
+        assert printer.heaters._temperature_ace_registered is True
         assert fallback.messages == []
 
     def test_already_registered_returns_early(self):
+        """Tracked on the heaters object (not a module flag) so a fresh
+        heaters object after a Klipper RESTART is never mistaken for an
+        already-registered one; see _register_sensor_factory's docstring."""
         printer = make_ace_printer()
-        temperature_ace_module._REGISTERED = True
+        printer.heaters._temperature_ace_registered = True
         with capture_log("temperature_ace") as fallback:
             _register_sensor_factory(AceConfig("temperature_ace", printer))
         assert printer.heaters.factories == {}
-        assert temperature_ace_module._REGISTERED is True
+        assert printer.heaters._temperature_ace_registered is True
         assert fallback.messages == []
 
     def test_load_object_fallback_when_lookup_fails(self):
@@ -638,7 +640,7 @@ class TestRegisterSensorFactory:
                              (("aht2x", TemperatureACE), {})]
         assert heaters.factories == {"temperature_ace": TemperatureACE,
                                      "aht2x": TemperatureACE}
-        assert temperature_ace_module._REGISTERED is True
+        assert heaters._temperature_ace_registered is True
         assert fallback.messages == []
 
     def test_load_object_failure_logs_warning(self):
@@ -650,4 +652,4 @@ class TestRegisterSensorFactory:
             ("warning", "temperature_ace: failed to load heaters: "
                         "Unable to load module 'heaters'")]
         assert printer.heaters.factories == {}
-        assert temperature_ace_module._REGISTERED is False
+        assert not getattr(printer.heaters, "_temperature_ace_registered", False)

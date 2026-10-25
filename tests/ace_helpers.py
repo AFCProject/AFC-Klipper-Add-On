@@ -32,7 +32,6 @@ import pytest
 from gcode import CommandError
 
 import extras.AFC_ACE as afc_ace_module
-import extras.temperature_ace as temperature_ace_module
 from extras.AFC_ACE import (MAX_PAYLOAD_SIZE, REQUEST_TIMEOUT, ACEConnection, ACESerialError,
                             ACETimeoutError, afcACE)
 from extras.AFC_ACE2 import ACE2Connection, afcACE2
@@ -3180,8 +3179,10 @@ def reset_ace_globals() -> None:
     removed and closed, propagate and level restored; with a handler left,
     every later _deferred_ace_connect logs to the earlier test's file), the
     serial-log queue listener of every unit on a printer these builders made
-    (stopped and taken off atexit), AFC_ACE._ACE_CLAIMED_PORTS (cleared in
-    place, so AFC_ACE2's reference sees it) and temperature_ace._REGISTERED.
+    (stopped and taken off atexit), and AFC_ACE._ACE_CLAIMED_PORTS (cleared in
+    place, so AFC_ACE2's reference sees it). temperature_ace's sensor-factory
+    registration is tracked per-heaters-object now, not a module flag, so it
+    needs no reset here -- each test's own fresh heaters starts unmarked.
     """
     for printer in list(_BUILT_PRINTERS):
         for obj in list(printer.objects.values()):
@@ -3200,7 +3201,6 @@ def reset_ace_globals() -> None:
     logger.propagate = True
     logger.setLevel(logging.NOTSET)
     afc_ace_module._ACE_CLAIMED_PORTS.clear()
-    temperature_ace_module._REGISTERED = False
 
 
 @pytest.fixture

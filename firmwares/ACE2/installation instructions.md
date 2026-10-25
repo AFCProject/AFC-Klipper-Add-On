@@ -9,8 +9,8 @@ additions:
   reader power) lets AFC drive the tag reader itself, so `[AFC_ACE2_rfid]`
   reads, decodes and writes every tag format AFC knows on the printer.
 
-The ACE's own tag reading is left as stock. AFC turns its identify off on
-each connect, so the unit skips its slow factory autoload and AFC stages
+The ACE's own tag reading is left as stock. AFC turns its identification off
+on each connect, so the unit skips its slow factory autoload and AFC stages
 each insert itself.
 
 The passthrough is appended after the stock code, before the 8-byte IAP
@@ -29,7 +29,7 @@ The ACE 2 protocol, this updater and the firmware map the work builds on are
 hakimio's: <https://gist.github.com/hakimio/4916ff69add458fdc51aeea76f21efb9>.
 
 Flashing is done over the ACE's own serial link with
-`Firmwares/ACE2/ace2-ota-update.py`, which drives the same IAP sequence the
+`firmwares/ACE2/ace2-ota-update.py`, which drives the same IAP sequence the
 Kobra S1 uses. **No printer, no SD card, no disassembly.**
 
 
@@ -98,8 +98,11 @@ line, and the updater prints it when it reconnects.
 | `AFCACE2PRO` | this build |
 | `V1.1.31` | stock |
 
-The updater skips the flash when `--version` already matches what the unit
-reports. If you are re-flashing the same build, add `--force`.
+The updater skips the flash when the `--version` you pass already matches
+the version the unit reports via GET_INFO (the same value shown in the table
+above). If you are re-flashing the exact same build on purpose, e.g. after an
+interrupted flash, or to reapply it over itself, add `--force` to flash
+anyway.
 
 ---
 
