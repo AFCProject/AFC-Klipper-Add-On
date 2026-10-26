@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10-25-2026]
+### Fixed
+- Brought in fix from suchmememanyskill which fixes issue 828 where AFC would throw an error during printing if lanes T(n) index was not found in the gcode file metadata.
+
 ## [10-24-2026]
 ### Added
 - Added support for ACE Pro(1/2) series filament changes, work originally done by J0eb0l
