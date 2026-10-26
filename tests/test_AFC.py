@@ -642,7 +642,7 @@ class TestCheckExtruderTemp:
         )
         obj.function.is_printing.return_value = True
         obj.print_tool_temperatures = [245, 245]
-        lane.map = "T2"
+        lane.current_map = "T2"
         result = obj._check_extruder_temp(lane)
         obj._get_default_material_temps.assert_called_once_with(lane)
         pheaters.set_temperature.assert_called_once_with(heater, 235.0)
