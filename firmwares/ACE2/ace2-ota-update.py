@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-# AFCProject Automated Filament Changer
 #
-# Copyright (C) 2026 AFCProject
-#
-# This file may be distributed under the terms of the GNU GPLv3 license.
+# This file is adapted from hakimio's Anycubic ACE 2 Pro OTA updater gist.
+# https://gist.github.com/hakimio/39c71fa7174e699c6470b7c79323b189
+# The gist carries no license; hakimio gave permission in the gist's comments
+# for the code to be reused without attribution.
+# 
+# Changed here: dropped the deliberate 15ms post-chunk delay (~17s over a full flash) to speed up
+# flashing; fixed IAP_UPGRADE_FINISH to report failure on a nonzero response code; rewrote
+# wait_for_version to watch for the ACE's required physical power cycle instead of polling
+# GET_INFO (the ACE does not self-reboot); and changed an EOFError on the confirm prompt to abort
+# by default, with a new --yes flag to skip it intentionally. One bootloader reply-matching fix is
+# separately credited inline to ACE2-Open (Simon-CR).
 """
 Anycubic ACE 2 Pro — OTA Firmware Updater
 
