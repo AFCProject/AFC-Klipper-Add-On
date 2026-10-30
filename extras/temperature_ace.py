@@ -262,7 +262,8 @@ class TemperatureACE:
         :param cache_time: reactor monotonic time of the last cache update, or
             None if no update has ever been received.
         """
-        if cache_time is None or self._stale_logged:
+        if (cache_time is None
+            or self._stale_logged):
             return
         self._stale_logged = True
         error_str = f"ACE temperature data is stale (no update for over {ACE_STALE_AFTER:.0f}s)"
