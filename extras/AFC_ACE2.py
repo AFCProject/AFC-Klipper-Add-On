@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger("AFC_ACE2")
 
 
-# ── V2 wire protocol (adapted from multiACE, decay71/multiace, GPL-3.0) ──────
+# V2 wire protocol (adapted from multiACE, decay71/multiace, GPL-3.0)
 # Frame: PREAMBLE(2) | flags(1) | seq(2 LE) | cmd(1) | payLen(1) | payload |
 #        CRC16(2 LE) | END_MARKER(1)
 PREAMBLE = b'\xFF\xAA'
@@ -110,7 +110,6 @@ class Cmd:
     # reader_index is the physical slot >> 1 (2 readers cover 4 slots).
     MFRC522_READER_POWER = 0x52
 
-
 SLOT_STATES = {0: 'ready', 1: 'feeding', 2: 'rollback', 3: 'assisting', 4: 'rollback_assisting',
                5: 'preloading', 6: 'upgrading', 129: 'feed_error', 130: 'rollback_error',
                131: 'assist_error', 132: 'preload_error', 133: 'stuck_error', 134: 'tangled_error',
@@ -138,7 +137,6 @@ FEED_MODE_ROLLBACK_ASSIST = 3
 # refusal is relied on by _start_feed_assist and the load sequence.
 _ERROR_CODE_OPCODES = frozenset({Cmd.FEED_OR_ROLLBACK, Cmd.STOP_FEED_OR_ROLLBACK, Cmd.UPDATE_SPEED})
 
-
 def crc16_kermit(data: Union[bytes, bytearray]) -> int:
     """
     Compute the Kermit-style CRC16 used by the ACE 2 Pro framing.
@@ -153,8 +151,7 @@ def crc16_kermit(data: Union[bytes, bytearray]) -> int:
             crc = (crc >> 1) ^ 0x8408 if crc & 1 else crc >> 1
     return crc & 0xFFFF
 
-
-# ---- protobuf encode helpers ----
+# protobuf encode helpers
 def pb_varint(value: int) -> bytes:
     """
     Encode an unsigned integer as a protobuf base-128 varint.
@@ -176,7 +173,6 @@ def pb_varint(value: int) -> bytes:
     r.append(value & 0x7F)
     return bytes(r)
 
-
 def pb_uint32(field: int, value: int) -> bytes:
     """
     Encode a protobuf varint field (wire type 0) with a uint32 value.
@@ -187,7 +183,6 @@ def pb_uint32(field: int, value: int) -> bytes:
     """
     return pb_varint((field << 3) | 0) + pb_varint(int(value))
 
-
 def pb_bool(field: int, value: Any) -> bytes:
     """
     Encode a protobuf varint field (wire type 0) with a boolean value.
@@ -197,7 +192,6 @@ def pb_bool(field: int, value: Any) -> bytes:
     :return bytes: Bytes containing the tag and varint-encoded boolean.
     """
     return pb_varint((field << 3) | 0) + pb_varint(1 if value else 0)
-
 
 def pb_string(field: int, text: Union[str, bytes]) -> bytes:
     """
@@ -210,8 +204,7 @@ def pb_string(field: int, text: Union[str, bytes]) -> bytes:
     data = text.encode('utf-8') if isinstance(text, str) else bytes(text)
     return pb_varint((field << 3) | 2) + pb_varint(len(data)) + data
 
-
-# ---- protobuf decode helpers ----
+# protobuf decode helpers
 def pb_decode_varint(data: Union[bytes, bytearray], pos: int) -> Tuple[int, int]:
     """
     Decode a single base-128 varint from a buffer at a given offset.
@@ -230,7 +223,6 @@ def pb_decode_varint(data: Union[bytes, bytearray], pos: int) -> Tuple[int, int]
         shift += 7
     return result, pos
 
-
 def pb_decode(data: Union[bytes, bytearray]) -> Dict[int, List[Tuple[int, Any]]]:
     """
     Decode a protobuf message into a mapping of field number to entries.
@@ -240,7 +232,7 @@ def pb_decode(data: Union[bytes, bytearray]) -> Dict[int, List[Tuple[int, Any]]]
 
     :param data: Raw protobuf-encoded bytes.
     :return dict: Dict mapping each field number to a list of
-                  ``(wire_type, value)`` tuples in the order they appeared.
+                  `(wire_type, value)` tuples in the order they appeared.
     """
     fields: Dict[int, Any] = {}
     pos = 0
@@ -269,7 +261,6 @@ def pb_decode(data: Union[bytes, bytearray]) -> Dict[int, List[Tuple[int, Any]]]
         fields.setdefault(fnum, []).append((wtype, val))
     return fields
 
-
 def _fval(fields: Dict[int, List[Tuple[int, Any]]], num: int, default: Any = 0) -> Any:
     """
     Return the value of the first entry for a protobuf field.
@@ -277,10 +268,9 @@ def _fval(fields: Dict[int, List[Tuple[int, Any]]], num: int, default: Any = 0) 
     :param fields: Decoded fields mapping from :func:`pb_decode`.
     :param num: Field number to look up.
     :param default: Value returned when the field is absent.
-    :return Any: The field's first value, or ``default`` if not present.
+    :return Any: The field's first value, or `default` if not present.
     """
     return fields.get(num, [(0, default)])[0][1]
-
 
 def _fstr(fields: Dict[int, List[Tuple[int, Any]]], num: int, default: str = '') -> str:
     """
@@ -290,7 +280,7 @@ def _fstr(fields: Dict[int, List[Tuple[int, Any]]], num: int, default: str = '')
     :param num: Field number to look up.
     :param default: Value returned when the field is not bytes.
     :return str: UTF-8 decoded string, a hex string if decoding fails, or
-             ``default`` when the field value is not bytes.
+             `default` when the field value is not bytes.
     """
     val = fields.get(num, [(2, b'')])[0][1]
     if isinstance(val, bytes):
@@ -299,7 +289,6 @@ def _fstr(fields: Dict[int, List[Tuple[int, Any]]], num: int, default: str = '')
         except UnicodeDecodeError:
             return val.hex()
     return default
-
 
 def dump_fields(fields: Dict[int, List[Tuple[int, Any]]]) -> Dict[int, Any]:
     """
@@ -329,14 +318,13 @@ def dump_fields(fields: Dict[int, List[Tuple[int, Any]]]) -> Dict[int, Any]:
         out[fnum] = entries if len(entries) > 1 else entries[0]
     return out
 
-
 def method_to_v2(method: str, params: Optional[Dict[str, Any]]) -> Tuple[int, bytes]:
     """
     Map a V1 method name + params to a (cmd_opcode, protobuf_payload) tuple.
 
-    Unknown methods fall back to a harmless ``GET_STATUS`` query.
+    Unknown methods fall back to a harmless `GET_STATUS` query.
 
-    :param method: V1 method name (e.g. ``feed_filament``, ``get_status``).
+    :param method: V1 method name (e.g. `feed_filament`, `get_status`).
     :param params: Optional dict of method parameters; treated as empty if None.
     :return Tuple[int, bytes]: Tuple of (V2 command opcode, protobuf-encoded payload bytes).
     """
@@ -436,7 +424,6 @@ def method_to_v2(method: str, params: Optional[Dict[str, Any]]) -> Tuple[int, by
     _logger.debug(f"ACE2: unknown method {method!r} -> GET_STATUS")
     return Cmd.GET_STATUS, b''
 
-
 def encode_frame(request_id: int, cmd: int, payload: bytes = b'') -> bytes:
     """
     Build a complete V2 request frame from an explicit opcode and payload.
@@ -449,7 +436,7 @@ def encode_frame(request_id: int, cmd: int, payload: bytes = b'') -> bytes:
     :param payload: Raw protobuf payload bytes (default empty).
     :return bytes: Complete framed request as bytes (preamble, header, payload, CRC,
              end marker).
-    :raises ValueError: When the payload exceeds ``MAX_PAYLOAD_LEN``.
+    :raises ValueError: When the payload exceeds `MAX_PAYLOAD_LEN`.
     """
     seq = int(request_id) & 0xFFFF
     payload = bytes(payload)
@@ -462,7 +449,6 @@ def encode_frame(request_id: int, cmd: int, payload: bytes = b'') -> bytes:
     crc = crc16_kermit(bytes(inner))
     return (bytes(PREAMBLE) + bytes(inner) + bytes([crc & 0xFF, (crc >> 8) & 0xFF, END_MARKER]))
 
-
 def encode_request(request_id: int, method: str, params: Optional[Dict[str, Any]]) -> bytes:
     """
     Build a complete V2 request frame for a method/params.
@@ -472,11 +458,10 @@ def encode_request(request_id: int, method: str, params: Optional[Dict[str, Any]
     :param params: Optional dict of method parameters.
     :return bytes: Complete framed request as bytes (preamble, header, payload, CRC,
              end marker).
-    :raises ValueError: When the encoded payload exceeds ``MAX_PAYLOAD_LEN``.
+    :raises ValueError: When the encoded payload exceeds `MAX_PAYLOAD_LEN`.
     """
     cmd, payload = method_to_v2(method, params)
     return encode_frame(request_id, cmd, payload)
-
 
 def _decode_status(fields: Dict[int, List[Tuple[int, Any]]]) -> Dict[str, Any]:
     """
@@ -486,8 +471,8 @@ def _decode_status(fields: Dict[int, List[Tuple[int, Any]]]) -> Dict[str, Any]:
     the dryer sub-message, and derives an overall busy/ready status.
 
     :param fields: Decoded protobuf fields from :func:`pb_decode`.
-    :return Dict[str, Any]: V1-shaped status dict with ``slots``, ``dryer_status``, ``temp``,
-             ``humidity`` and related keys.
+    :return Dict[str, Any]: V1-shaped status dict with `slots`, `dryer_status`, `temp`,
+             `humidity` and related keys.
     """
     slots: List[Dict[str, Any]] = []
     for wtype, slot_payload in fields.get(9, []):
@@ -541,7 +526,6 @@ def _decode_status(fields: Dict[int, List[Tuple[int, Any]]]) -> Dict[str, Any]:
         'slots': slots,
     }
 
-
 def v2_response_to_v1(cmd: int, seq: int, payload: bytes,
                       logger: Optional[logging.Logger] = None) -> Dict[str, Any]:
     """
@@ -551,7 +535,7 @@ def v2_response_to_v1(cmd: int, seq: int, payload: bytes,
     :param seq: Sequence number echoed from the request.
     :param payload: Raw protobuf payload bytes from the response frame.
     :param logger: Optional logger for decode failures; module logger if None.
-    :return Dict[str, Any]: V1-shaped dict with ``id``, ``code``, ``msg`` and ``result`` keys.
+    :return Dict[str, Any]: V1-shaped dict with `id`, `code`, `msg` and `result` keys.
     """
     # '_cmd' lets the transport verify a reply's opcode matches the pending
     # request (id-reuse guard in ACE2Connection._response_matches_pending). It's
@@ -709,7 +693,6 @@ def v2_response_to_v1(cmd: int, seq: int, payload: bytes,
         ret['result'] = {'raw_fields': dump_fields(fields)}
     return ret
 
-
 def decode_frames(buffer: bytearray,
                   logger: Optional[logging.Logger] = None) -> List[Dict[str, Any]]:
     """
@@ -719,7 +702,7 @@ def decode_frames(buffer: bytearray,
     Resyncs on the preamble, validates payload length, end marker and CRC,
     dropping malformed or partial frames as needed.
 
-    :param buffer: Mutable ``bytearray`` of received bytes; consumed in place.
+    :param buffer: Mutable `bytearray` of received bytes; consumed in place.
     :param logger: Optional logger for diagnostics; module logger if None.
     :return List[Dict[str, Any]]: List of V1-shaped response dicts decoded from complete frames.
     """
@@ -764,14 +747,11 @@ def decode_frames(buffer: bytearray,
         results.append(v2_response_to_v1(cmd, seq, payload, log))
     return results
 
-
 # ACE2 auto-discovery: serial_port: auto + ace_index (V2 probe)
 # Like V1's autodetect with a V2 probe. ace_index orders units by USB topology
 # (cable order); the STM32 UID confirms an ACE 2 and allows pinning via ace_uid.
 # Only unclaimed ports are probed.
 ACE2_BYID_GLOB = "/dev/serial/by-id/*1a86_USB_Single_Serial*-if00"
-
-
 def _ace2_scan_candidates() -> List[str]:
     """
     CH34x serial devices currently present, as real tty paths.
@@ -785,7 +765,6 @@ def _ace2_scan_candidates() -> List[str]:
         except Exception:
             out.append(p)
     return out
-
 
 def _ace2_topology_key(real_tty: str) -> str:
     """
@@ -807,7 +786,6 @@ def _ace2_topology_key(real_tty: str) -> str:
     except Exception:
         pass
     return re.sub(r"\d+", lambda m: m.group().zfill(6), bypath or real_tty)
-
 
 def _ace2_extract_uid(buf: bytearray) -> Optional[Tuple[int, int, int]]:
     """
@@ -838,7 +816,6 @@ def _ace2_extract_uid(buf: bytearray) -> Optional[Tuple[int, int, int]]:
         return (int(u1), int(_fval(fields, 2) or 0), int(_fval(fields, 3) or 0))
     except Exception:
         return None
-
 
 def probe_ace2_uid(port: str, baud: int, timeout: float = 1.5) -> Optional[Tuple[int, int, int]]:
     """
@@ -879,7 +856,6 @@ def probe_ace2_uid(port: str, baud: int, timeout: float = 1.5) -> Optional[Tuple
         with contextlib.suppress(Exception):
             if ser is not None:
                 ser.close()
-
 
 def resolve_ace2_port(ace_index: int, baud: int, ace_uid: Optional[Tuple[int, int, int]] = None,
                       settle: float = 6.0, logger: Optional[Any] = None) -> Optional[str]:
@@ -935,8 +911,7 @@ def resolve_ace2_port(ace_index: int, baud: int, ace_uid: Optional[Tuple[int, in
                 return candidate
     return None
 
-
-# ── Transport: V2 framing over the inherited connection machinery ─────────
+# Transport: V2 framing over the inherited connection machinery
 class ACE2Connection(ACEConnection):
     """ACE 2 Pro transport. Reuses the V1 connection's reactor I/O, request
     completion, heartbeat and reconnect machinery, but encodes/decodes the V2
@@ -1020,7 +995,7 @@ class ACE2Connection(ACEConnection):
         :param method: V1 method name to send.
         :param params: Optional dict of method parameters.
         :param timeout: Maximum time in seconds to wait for the response.
-        :return Any: The ``result`` portion of the decoded response.
+        :return Any: The `result` portion of the decoded response.
         :raises ACESerialError: When not connected, encoding/writing fails, or
                                 the device reports a non-zero error code.
         :raises ACETimeoutError: When no response arrives before the deadline.
@@ -1163,8 +1138,6 @@ class ACE2Connection(ACEConnection):
         for slot in range(self.slot_count):
             self.send_command_async("set_rfid_enable", {"index": slot, "enable": False})
 
-
-# ── Unit: the V1 ACE unit with the V2 transport swapped in ───────────
 class afcACE2(afcACE):
     """Anycubic ACE 2 Pro AFC unit. Reuses all of afcACE's AFC integration
     (load/unload, feed assist, RFID->Spoolman, dryer, diagnostics) and only
@@ -1184,7 +1157,7 @@ class afcACE2(afcACE):
         """
         Initialize the ACE 2 Pro unit on top of the V1 ACE unit.
 
-        :param config: ConfigWrapper for this unit; ``type`` defaults to ``ACE2``
+        :param config: ConfigWrapper for this unit; `type` defaults to `ACE2`
                        and the dryer set-point ceiling defaults to 70C.
         """
         super().__init__(config)
@@ -1207,11 +1180,8 @@ class afcACE2(afcACE):
                 raise config.error(error_str)
             uid1, uid2, uid3 = nums
             self.ace_uid = (uid1, uid2, uid3)
-        # ACE 2 Pro V2 serial runs at 230400 baud (the V1 ACE default is
-        # 115200); at the wrong baud the unit never sees a valid frame and
-        # never replies. Override the inherited default.
+        # ACE 2 Pro V2 serial runs at 230400 baud (the V1 ACE default is 115200)
         self.baud_rate = config.getint("baud_rate", 230400)
-        # Pro 2 allows a higher dryer set-point than the Pro V1 (55C default).
         self.max_dryer_temperature = config.getfloat("max_dryer_temperature", 70.0, minval=0.0)
         # Encoder feed-check (V2 SET_FEED_CHECK): at feed_error_length mm the
         # encoder must read at least feed_check_length, giving a slip tolerance of
@@ -1230,8 +1200,6 @@ class afcACE2(afcACE):
                 f"feed_check_length to widen tolerance (tolerance_mm ~= feed_error_length - "
                 f"feed_check_length / {ACE2_ENCODER_SCALE:.4f}).")
             raise config.error(error_str)
-        # Stuck/tangle detection defaults on for the ACE2: its encoder reports a
-        # per-slot jam state, so _check_stuck reacts to that instead of assist duration.
         self._stuck_detection = config.getboolean("stuck_spool_detection", True)
 
     def _apply_feed_check(self) -> None:
@@ -1266,17 +1234,16 @@ class afcACE2(afcACE):
         per-slot error state (stuck/tangled/assist/motor error) when they
         diverge. That is a true mechanical-jam signal, so we react to it directly
         instead of inferring a jam from how long feed-assist has run (the V1
-        ``_check_stuck`` heuristic, which this overrides). Gated to the active
+        `_check_stuck` heuristic, which this overrides). Gated to the active
         assist lane's slot, the one being driven during a print, so an idle
         slot's stale error can never pause a healthy print. The caller skips this
-        during load/unload (``_operation_active``), where feed/rollback errors
+        during load/unload (`_operation_active`), where feed/rollback errors
         are part of normal operation.
 
-        :param result: Decoded GET_STATUS dict with a per-slot ``slots`` list.
+        :param result: Decoded GET_STATUS dict with a per-slot `slots` list.
         """
         if not self._stuck_detection:
             return
-        # Only meaningful during a real, un-paused print.
         if (not self.afc.function.in_print()
             or self.afc.function.is_paused()):
             self._stuck_tripped = False
@@ -1294,26 +1261,23 @@ class afcACE2(afcACE):
             return
         state = slots[slot].get("slot_status")
         if state not in self._ENCODER_JAM_STATES:
-            # Healthy (or recovered), re-arm the one-shot latch.
             self._stuck_tripped = False
             return
         if self._stuck_tripped:
-            return  # already handled this jam; don't re-pause every heartbeat
+            return
         self._stuck_tripped = True
-        # Defer the pause off the serial/heartbeat path onto the reactor.
         self.afc.reactor.register_callback(
             lambda et, n=name, s=slot, st=state: self._handle_encoder_jam(n, s, st))
 
     def _handle_encoder_jam(self, name: str, slot: int, state: str) -> None:
         """
         Stop assist on the jammed slot and pause the print (deferred from
-        ``_check_stuck``) for an ACE2 firmware-reported encoder jam.
+        `_check_stuck`) for an ACE2 firmware-reported encoder jam.
 
         :param name: Lane name whose slot reported the jam.
         :param slot: ACE2 slot index for that lane.
-        :param state: The firmware slot_status that tripped (e.g. ``stuck_error``).
+        :param state: The firmware slot_status that tripped (e.g. `stuck_error`).
         """
-        # Stop driving the motor into the blockage before we pause.
         try:
             self._stop_feed_assist(slot)
         except Exception:
@@ -1327,8 +1291,6 @@ class afcACE2(afcACE):
                "the unit. Clear the snag, then resume. Run AFC_ACE_STUCK_SPOOL_DETECTION "
                "ENABLE=0 to disable this check.")
         try:
-            # Route through AFC so it snapshots position and uses the AFC
-            # pause/resume path (z-hop, restore on AFC_RESUME).
             self.afc.error.AFC_error(msg, pause=True)
         except Exception:
             self.logger.error(msg)
@@ -1359,11 +1321,6 @@ class afcACE2(afcACE):
         """
         sib = int(slot) ^ 1
         return sib if 0 <= sib < self.SLOTS_PER_UNIT else None
-
-    # No _refresh_slot_inventory override: the ACE 2 reads tags host-side over the
-    # MFRC522 passthrough (AFC_ACE2_rfid), and _uses_firmware_rfid = False gates
-    # off the base firmware path.
-
 
 def load_config_prefix(config: ConfigWrapper) -> afcACE2:
     """

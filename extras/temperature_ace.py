@@ -1,3 +1,9 @@
+# AFCProject Automated Filament Changer
+#
+# Copyright (C) 2026 AFCProject
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+#
 # Optional ACE temperature sensor for Klipper.
 # Reads the ACE device temperature from an AFC_ACE unit's cached
 # hardware status and exposes it as a standard temperature_sensor.
@@ -37,11 +43,9 @@ if TYPE_CHECKING:
     from extras.heaters import PrinterHeaters
     from mcu import MCU
 
-ACE_REPORT_TIME = 1.0  # seconds between samples
+ACE_REPORT_TIME = 1.0
 
-# Fallback logger for early init before AFC logger is available
 _fallback_logger = logging.getLogger("temperature_ace")
-
 
 class TemperatureACE:
     """Temperature sensor that reads ACE device temperature from an
@@ -51,39 +55,31 @@ class TemperatureACE:
         """
         Initialize the ACE temperature sensor.
 
-        :param config: Klipper config wrapper for this ``[temperature_sensor]``
-            section. Reads ``ace_unit``, the AFC_ACE unit name whose cached
-            hardware status supplies the temperature (default ``Ace1``).
+        :param config: Klipper config wrapper for this `[temperature_sensor]`
+            section. Reads `ace_unit`, the AFC_ACE unit name whose cached
+            hardware status supplies the temperature (default `Ace1`).
         """
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
         self.name = config.get_name().split()[-1]
         self.ace_unit_name = config.get("ace_unit", "Ace1")
-        # Thermal channel to report. 'default' is the box/env temp from get_status;
-        # the others are ACE2 GET_TEMP channels (box1/box2, ptc1/ptc2 heaters, env).
+        # Thermal channel to report.
         self.channel = config.getchoice("channel",
             {c: c for c in ("default", "box1", "box2", "ptc1", "ptc2", "env")}, "default")
-        # Register under a Mainsail-recognized sensor name so the UI also shows
-        # humidity, like temperature_oams' option of the same name.
         self.simulate_aht3x = config.getboolean("simulate_supported_sensor_mainsail", True)
 
-        # Temperature state
         self.temp = 0.0
         self.min_temp = 0.0
         self.max_temp = 70.0
         self.measured_min = float("inf")
         self.measured_max = 0.0
-        # Humidity (%RH) from the dryer sensor; only ACE 2 reports it.
         self.humidity = 0.0
         self._has_humidity = False
 
-        # AFC_ACE reference resolved on ready
         self._ace_unit: Any = None
-        # AFC logger reference (resolved in handle_ready)
         self._logger: Any = None
         self._sample_error_logged = False
 
-        # Klipper temperature callback
         self._callback: Optional[Callable[[float, float], None]] = None
 
         # Register as "aht10 <name>" so Mainsail and Fluidd show humidity (ACE 2).
@@ -116,7 +112,6 @@ class TemperatureACE:
         """
         self._ace_unit = self._resolve_unit()
 
-        # Try to grab AFC's logger for consistent log output
         try:
             afc_obj: afc = self.printer.lookup_object("AFC")
             self._logger = afc_obj.logger
@@ -124,8 +119,6 @@ class TemperatureACE:
             pass
 
         if self._ace_unit:
-            # Decide humidity support now so the field is in get_status from the
-            # first query; Mainsail registers the humidity field early.
             if getattr(self._ace_unit, "type", "") == "ACE2":
                 self._has_humidity = True
             self._log().info(f"temperature_ace: linked to AFC_ACE unit '{self.ace_unit_name}'")
@@ -152,7 +145,7 @@ class TemperatureACE:
         """
         Register the heaters callback that receives temperature samples.
 
-        :param cb: callable invoked as ``cb(measured_time, temp)`` each sample.
+        :param cb: callable invoked as `cb(measured_time, temp)` each sample.
         """
         self._callback = cb
 
@@ -168,7 +161,7 @@ class TemperatureACE:
         """
         Look up the AFC_ACE unit object via AFC's units dict.
 
-        :return Any: the AFC_ACE unit object for ``ace_unit_name``, or None if AFC
+        :return Any: the AFC_ACE unit object for `ace_unit_name`, or None if AFC
             or the unit is not (yet) available.
         """
         try:
@@ -180,7 +173,6 @@ class TemperatureACE:
         except Exception:
             pass
 
-        # Fallback: try direct printer object lookup
         try:
             return self.printer.lookup_object(f"AFC_ACE {self.ace_unit_name}", None)
         except Exception:
@@ -190,7 +182,7 @@ class TemperatureACE:
         """
         Timer callback: read ACE temperature and feed the heaters system.
 
-        Reads ``temp`` from the AFC_ACE unit's cached hardware status, tracks
+        Reads `temp` from the AFC_ACE unit's cached hardware status, tracks
         measured min/max, enforces the min/max limits (shutdown on breach), and
         invokes the registered heaters callback with the sample.
 
@@ -204,15 +196,11 @@ class TemperatureACE:
             if self._ace_unit:
                 hw_status = getattr(self._ace_unit, "_cached_hw_status", {})
                 if self.channel == "default":
-                    # Historical behaviour: the single box/env temp + humidity
-                    # from get_status.
                     self.temp = float(hw_status.get("temp", 0.0) or 0.0)
                     if "humidity" in hw_status:
                         self._has_humidity = True
                         self.humidity = float(hw_status.get("humidity", 0.0) or 0.0)
                 else:
-                    # A specific GET_TEMP channel (ACE2). env_humidity travels
-                    # with the same cache, so surface it too.
                     temp_info = getattr(self._ace_unit, "_cached_temp_info", {})
                     self.temp = float(temp_info.get(self.channel + "_temp", 0.0) or 0.0)
                     if "env_humidity" in temp_info:
@@ -268,13 +256,10 @@ class TemperatureACE:
         Return sensor status for Moonraker / status queries.
 
         :param eventtime: reactor event time (unused).
-        :return dict: ``temperature``, plus ``humidity`` when the unit reports it
+        :return dict: `temperature`, plus `humidity` when the unit reports it
             (ACE 2 only).
         """
-        # Mirror the OpenAMS sensor's status shape. measured_min/max are tracked
-        # but not published, since Mainsail showed them as unlabeled values.
         status = {"temperature": round(self.temp, 2)}
-        # Humidity only for ACE 2 (V1 ACE has no humidity sensor).
         if self._has_humidity:
             status["humidity"] = round(self.humidity, 2)
         return status
@@ -293,9 +278,9 @@ def _register_sensor_factory(config: "ConfigWrapper") -> None:
     """
     Idempotently register the temperature_ace sensor factory.
 
-    :param config: the config being loaded; its printer's ``heaters`` object
-        gets the ``temperature_ace`` sensor factory, and Klipper's
-        ``load_object`` needs the config itself to load heaters if they are
+    :param config: the config being loaded; its printer's `heaters` object
+        gets the `temperature_ace` sensor factory, and Klipper's
+        `load_object` needs the config itself to load heaters if they are
         not loaded yet.
     """
     printer = config.get_printer()
