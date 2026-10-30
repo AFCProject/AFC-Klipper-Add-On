@@ -2883,6 +2883,7 @@ def _build_unit(cls: type, prefix: str, name: str, ace2: bool, *,
         unit._hw_status_time = printer.reactor.monotonic()
     if temp_info is not None:
         unit._cached_temp_info = temp_info
+        unit._temp_info_time = printer.reactor.monotonic()
     for slot, slot_info in (inventory or {}).items():
         unit._slot_inventory[slot].update(slot_info)
     if prev_slot_states is not None:

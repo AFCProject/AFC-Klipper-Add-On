@@ -1382,11 +1382,13 @@ class TestAfcACEOnHwStatusCallback:
     def test_callback_temp_reply_does_not_touch_action(self):
         unit = self._unit()
         unit._current_action = "feeding(slot 0)"
+        unit.printer.reactor.now = 50.0
 
         unit._on_hw_status_callback({"result": {"ptc1_temp": 55.0}})
 
         assert unit._current_action == "feeding(slot 0)"
         assert unit._cached_temp_info == {"ptc1_temp": 55.0}
+        assert unit._temp_info_time == 50.0
         assert unit.logger.messages == []
 
     def test_a_preload_start_is_only_logged(self):
@@ -1408,6 +1410,7 @@ class TestAfcACEOnHwStatusCallback:
         assert unit._cached_hw_status == status
         assert unit._cached_temp_info == {}
         assert unit._hw_status_time == 123.0
+        assert unit._temp_info_time is None
         # _sync_slot_states copied the slot status and _check_stuck cleared the latch.
         assert unit._slot_inventory[0] == {"status": "ready"}
         assert unit._prev_slot_states == {"lane0": True}
@@ -1429,12 +1432,14 @@ class TestAfcACEOnHwStatusCallback:
         unit = self._unit()
         prev_status = {"status": "ready", "slots": []}
         unit._cached_hw_status = prev_status
+        unit.printer.reactor.now = 77.0
         temp = {"box1_temp": 0.0, "ptc1_temp": 55.0, "env_temp": 27.0,
                 "env_humidity": 30.0}
 
         unit._on_hw_status_callback({"result": temp})
 
         assert unit._cached_temp_info == temp
+        assert unit._temp_info_time == 77.0
         assert unit._cached_hw_status is prev_status
         assert unit._slot_inventory[0] == {}
         assert unit._stuck_tripped is True
@@ -1442,14 +1447,34 @@ class TestAfcACEOnHwStatusCallback:
 
     def test_temp_reply_detected_by_box_or_env_only(self):
         unit = self._unit()
+        unit.printer.reactor.now = 88.0
 
         unit._on_hw_status_callback({"result": {"box1_temp": 24.0}})
         assert unit._cached_temp_info == {"box1_temp": 24.0}
+        unit.printer.reactor.now = 89.0
         unit._on_hw_status_callback({"result": {"env_temp": 21.0}})
 
         assert unit._cached_temp_info == {"env_temp": 21.0}
+        assert unit._temp_info_time == 89.0
         assert unit._cached_hw_status == {}
         assert unit._slot_inventory[0] == {}
+        assert unit.logger.messages == []
+
+    def test_temp_reply_clock_error_leaves_time_unstamped(self):
+        unit = self._unit()
+
+        def broken_clock() -> float:
+            """
+            :return float: never returns
+            """
+            error_str = "clock"
+            raise RuntimeError(error_str)
+        unit.afc.reactor.monotonic = broken_clock
+
+        unit._on_hw_status_callback({"result": {"ptc1_temp": 55.0}})
+
+        assert unit._cached_temp_info == {"ptc1_temp": 55.0}
+        assert unit._temp_info_time is None
         assert unit.logger.messages == []
 
     def test_a_sensor_state_reply_goes_to_its_own_cache(self):
@@ -1484,6 +1509,7 @@ class TestAfcACEOnHwStatusCallback:
         assert unit._cached_hw_status == {}
         assert unit._cached_temp_info == {}
         assert unit._hw_status_time is None
+        assert unit._temp_info_time is None
         assert unit._stuck_tripped is True
         assert unit.logger.messages == []
 

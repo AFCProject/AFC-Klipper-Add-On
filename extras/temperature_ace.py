@@ -44,6 +44,10 @@ if TYPE_CHECKING:
     from mcu import MCU
 
 ACE_REPORT_TIME = 1.0
+# A cached reading older than this is treated as unavailable rather than live,
+# so a frozen value from a dropped connection can't mask a real temperature
+# rise past max_temp.
+ACE_STALE_AFTER = 10.0
 
 _fallback_logger = logging.getLogger("temperature_ace")
 
@@ -79,6 +83,7 @@ class TemperatureACE:
         self._ace_unit: Any = None
         self._logger: Any = None
         self._sample_error_logged = False
+        self._stale_logged = False
 
         self._callback: Optional[Callable[[float, float], None]] = None
 
@@ -194,30 +199,40 @@ class TemperatureACE:
                 self._ace_unit = self._resolve_unit()
 
             if self._ace_unit:
-                hw_status = getattr(self._ace_unit, "_cached_hw_status", {})
+                now = self.reactor.monotonic()
                 if self.channel == "default":
-                    self.temp = float(hw_status.get("temp", 0.0) or 0.0)
-                    if "humidity" in hw_status:
-                        self._has_humidity = True
-                        self.humidity = float(hw_status.get("humidity", 0.0) or 0.0)
+                    cache_time = getattr(self._ace_unit, "_hw_status_time", None)
+                    stale = cache_time is None or (now - cache_time) > ACE_STALE_AFTER
+                    if not stale:
+                        hw_status = getattr(self._ace_unit, "_cached_hw_status", {})
+                        self.temp = float(hw_status.get("temp", 0.0) or 0.0)
+                        if "humidity" in hw_status:
+                            self._has_humidity = True
+                            self.humidity = float(hw_status.get("humidity", 0.0) or 0.0)
                 else:
-                    temp_info = getattr(self._ace_unit, "_cached_temp_info", {})
-                    self.temp = float(temp_info.get(self.channel + "_temp", 0.0) or 0.0)
-                    if "env_humidity" in temp_info:
-                        self._has_humidity = True
-                        self.humidity = float(temp_info.get("env_humidity", 0.0) or 0.0)
+                    cache_time = getattr(self._ace_unit, "_temp_info_time", None)
+                    stale = cache_time is None or (now - cache_time) > ACE_STALE_AFTER
+                    if not stale:
+                        temp_info = getattr(self._ace_unit, "_cached_temp_info", {})
+                        self.temp = float(temp_info.get(self.channel + "_temp", 0.0) or 0.0)
+                        if "env_humidity" in temp_info:
+                            self._has_humidity = True
+                            self.humidity = float(temp_info.get("env_humidity", 0.0) or 0.0)
 
-                if self.temp > 0:
-                    self.measured_min = min(self.measured_min, self.temp)
-                    self.measured_max = max(self.measured_max, self.temp)
+                if stale:
+                    self._report_stale_cache(cache_time)
+                else:
+                    if self.temp > 0:
+                        self.measured_min = min(self.measured_min, self.temp)
+                        self.measured_max = max(self.measured_max, self.temp)
 
-                if (self.temp > 0
-                    and self.temp < self.min_temp):
-                    self.printer.invoke_shutdown(
-                        f"ACE temperature {self.temp:.1f} below minimum of {self.min_temp:.1f}")
-                if self.temp > self.max_temp:
-                    self.printer.invoke_shutdown(
-                        f"ACE temperature {self.temp:.1f} above maximum of {self.max_temp:.1f}")
+                    if (self.temp > 0
+                        and self.temp < self.min_temp):
+                        self.printer.invoke_shutdown(
+                            f"ACE temperature {self.temp:.1f} below minimum of {self.min_temp:.1f}")
+                    if self.temp > self.max_temp:
+                        self.printer.invoke_shutdown(
+                            f"ACE temperature {self.temp:.1f} above maximum of {self.max_temp:.1f}")
             else:
                 self.temp = 0.0
         except Exception as e:
@@ -232,6 +247,26 @@ class TemperatureACE:
             self._callback(mcu_obj.estimated_print_time(measured_time), self.temp)
 
         return eventtime + ACE_REPORT_TIME
+
+    def _report_stale_cache(self, cache_time: Optional[float]) -> None:
+        """
+        Handle a cached ACE reading that is missing or too old to trust.
+
+        A cache that has never been populated just means data is not yet
+        available (e.g. at startup) and is not a fault. A cache that was
+        populated but has since gone stale (e.g. the ACE connection dropped)
+        means the printer can no longer confirm the real temperature, so the
+        stale value is not reported as live; this only logs the condition
+        rather than shutting the printer down.
+
+        :param cache_time: reactor monotonic time of the last cache update, or
+            None if no update has ever been received.
+        """
+        if cache_time is None or self._stale_logged:
+            return
+        self._stale_logged = True
+        error_str = f"ACE temperature data is stale (no update for over {ACE_STALE_AFTER:.0f}s)"
+        self._log().error(f"temperature_ace: {error_str}")
 
     def get_temp(self, eventtime: float) -> Tuple[float, float]:
         """

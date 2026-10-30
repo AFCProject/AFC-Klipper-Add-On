@@ -284,6 +284,7 @@ class afcACE(afcUnit):
         self._hub_load_suppressed: set[str] = set()
         self._last_move_error: Optional[str] = None
         self._hw_status_time: Optional[float] = None
+        self._temp_info_time: Optional[float] = None
 
         self.gcode: GCodeDispatch = self.printer.lookup_object('gcode')
 
@@ -708,6 +709,10 @@ class afcACE(afcUnit):
         if ("slots" not in result
             and any(k in result for k in ("ptc1_temp", "box1_temp", "env_temp"))):
             self._cached_temp_info = result
+            try:
+                self._temp_info_time = self.afc.reactor.monotonic()
+            except Exception:
+                pass
             return
         if ("slots" not in result
             and "sensor_bitmask" in result):

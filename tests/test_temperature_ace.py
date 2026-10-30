@@ -9,7 +9,12 @@ from typing import Any, Dict, Optional, Tuple
 import pytest
 
 from extras.AFC_ACE import afcACE
-from extras.temperature_ace import _register_sensor_factory, load_config, TemperatureACE
+from extras.temperature_ace import (
+    ACE_STALE_AFTER,
+    _register_sensor_factory,
+    load_config,
+    TemperatureACE,
+)
 from tests.ace_helpers import (
     ace_isolation,
     AceConfig,
@@ -68,6 +73,7 @@ class TestTemperatureACEInit:
         assert sensor._ace_unit is None
         assert sensor._logger is None
         assert sensor._sample_error_logged is False
+        assert sensor._stale_logged is False
         assert sensor._callback is None
         assert printer.logger.messages == []
         assert fallback.messages == []
@@ -425,6 +431,7 @@ class TestTemperatureACESampleAceTemperature:
         readings = []
         for ptc1 in (55.0, 48.0, 61.0):
             unit._cached_temp_info = {"ptc1_temp": ptc1}
+            unit._temp_info_time = unit.printer.reactor.monotonic()
             sensor._sample_ace_temperature(200.0)
             readings.append((sensor.temp, sensor.measured_min, sensor.measured_max))
         assert readings == [(55.0, 55.0, 55.0), (48.0, 48.0, 55.0), (61.0, 48.0, 61.0)]
@@ -537,12 +544,91 @@ class TestTemperatureACESampleAceTemperature:
         printer = sensor.printer
         printer.objects["mcu"] = self.LaggingMcu(behind=40.0)
         printer.reactor.now = 130.0
+        unit._hw_status_time = printer.reactor.now
         assert sensor._sample_ace_temperature(200.0) == 201.0
         # The print time is the mcu's estimate for the reactor clock: 130.0 - 40.0.
         assert feed.calls == [((90.0, 25.0), {})]
         assert sensor.temp == 25.0
         assert printer.logger.messages == []
         assert printer.shutdowns == []
+
+    def test_default_channel_never_cached_is_not_logged_as_stale(self):
+        unit = make_ace_unit("Ace1")
+        sensor = self.sensor_for(unit)
+        sensor.temp = 5.0
+        sensor._sample_ace_temperature(200.0)
+        assert sensor.temp == 5.0
+        assert sensor._stale_logged is False
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == []
+
+    def test_default_channel_stale_cache_is_logged_not_shut_down(self):
+        unit = make_ace_unit("Ace1", hw_status={"temp": 40.0})
+        sensor = self.sensor_for(unit)
+        sensor.temp = 5.0
+        sensor.printer.reactor.now = unit._hw_status_time + ACE_STALE_AFTER + 1
+        sensor._sample_ace_temperature(200.0)
+        expected = f"ACE temperature data is stale (no update for over {ACE_STALE_AFTER:.0f}s)"
+        assert sensor.temp == 5.0  # the frozen cached 40.0 is not reported as live
+        assert sensor._stale_logged is True
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == [("error", f"temperature_ace: {expected}")]
+
+    def test_stale_cache_is_logged_only_once(self):
+        unit = make_ace_unit("Ace1", hw_status={"temp": 40.0})
+        sensor = self.sensor_for(unit)
+        sensor.printer.reactor.now = unit._hw_status_time + ACE_STALE_AFTER + 1
+        sensor._sample_ace_temperature(200.0)
+        sensor._sample_ace_temperature(201.0)
+        expected = f"ACE temperature data is stale (no update for over {ACE_STALE_AFTER:.0f}s)"
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == [("error", f"temperature_ace: {expected}")]
+
+    def test_non_default_channel_never_cached_is_not_logged_as_stale(self):
+        unit = make_ace2_unit("Ace1")
+        sensor = self.sensor_for(unit, "ptc1")
+        sensor.temp = 5.0
+        sensor._sample_ace_temperature(200.0)
+        assert sensor.temp == 5.0
+        assert sensor._stale_logged is False
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == []
+
+    def test_non_default_channel_stale_cache_is_logged_not_shut_down(self):
+        unit = make_ace2_unit("Ace1", temp_info={"ptc1_temp": 55.0})
+        sensor = self.sensor_for(unit, "ptc1")
+        sensor.temp = 5.0
+        sensor.printer.reactor.now = unit._temp_info_time + ACE_STALE_AFTER + 1
+        sensor._sample_ace_temperature(200.0)
+        expected = f"ACE temperature data is stale (no update for over {ACE_STALE_AFTER:.0f}s)"
+        assert sensor.temp == 5.0  # the frozen cached 55.0 is not reported as live
+        assert sensor._stale_logged is True
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == [("error", f"temperature_ace: {expected}")]
+
+
+class TestTemperatureACEReportStaleCache:
+    def test_never_cached_does_nothing(self):
+        sensor = make_temperature_ace(unit=None, callback=None)
+        sensor._report_stale_cache(None)
+        assert sensor._stale_logged is False
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == []
+
+    def test_stale_cache_is_logged(self):
+        sensor = make_temperature_ace(unit=None, callback=None)
+        sensor._report_stale_cache(50.0)
+        expected = f"ACE temperature data is stale (no update for over {ACE_STALE_AFTER:.0f}s)"
+        assert sensor._stale_logged is True
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == [("error", f"temperature_ace: {expected}")]
+
+    def test_already_logged_does_not_repeat(self):
+        sensor = make_temperature_ace(unit=None, callback=None)
+        sensor._stale_logged = True
+        sensor._report_stale_cache(50.0)
+        assert sensor.printer.shutdowns == []
+        assert sensor.printer.logger.messages == []
 
 
 class TestTemperatureACEGetTemp:
