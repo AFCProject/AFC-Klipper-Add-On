@@ -29,10 +29,15 @@ def tree_text(result: Result, relative: str) -> str:
     return result.tree[f"{CONFIG}/{relative}"]
 
 
+def _sensor_presses(index: int) -> List[str]:
+    """ACE has no toolhead sensor / ramming toggle (it is always a sensor), so skip it."""
+    return [] if TYPES[index] == "ACE" else [SENSOR_ROW]
+
+
 class TestFirstInstallPerUnitType:
     @pytest.mark.parametrize("index", range(len(TYPES)), ids=TYPES)
     def test_with_a_toolhead_sensor(self, tmp_path: Path, index: int) -> None:
-        result = install(tmp_path, index, SENSOR_ROW)
+        result = install(tmp_path, index, *_sensor_presses(index))
         assert result.code == 0, result.stdout + result.stderr
         names = [name.split("/")[-1] for name in result.tree if name.startswith(CONFIG)]
         assert "AFC.cfg" in names and "AFC_Hardware.cfg" in names
@@ -45,7 +50,7 @@ class TestFirstInstallPerUnitType:
     def test_the_screens_lead_to_the_install_and_a_clean_exit(
         self, tmp_path: Path, index: int
     ) -> None:
-        result = install(tmp_path, index, SENSOR_ROW)
+        result = install(tmp_path, index, *_sensor_presses(index))
         assert "Starting installation process.." in result.stdout
         assert "Test mode enabled; skipping Klipper restart." in result.stdout
         assert result.stderr == ""

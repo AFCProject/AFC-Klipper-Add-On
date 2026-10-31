@@ -30,7 +30,7 @@ _SECOND_NAME = "Turtle_2"
 
 def lowest_free_name(ctx: Context, sel: UnitSelection, unit: Optional[UnitType]) -> str:
     """
-    The default name for an additional unit: the lowest free ``<prefix>_N``.
+    The default name for an additional unit: the lowest free `<prefix>_N`.
 
     "Free" means no matching unit file exists yet in the AFC config directory.
 
@@ -39,7 +39,7 @@ def lowest_free_name(ctx: Context, sel: UnitSelection, unit: Optional[UnitType])
     :param unit: the unit type, or None for an unknown type
     :return str: the name
     """
-    prefix = unit.additional_name_prefix if unit is not None else "Unit"
+    prefix = unit.name_prefix(sel) if unit is not None else "Unit"
     number = 1
     while True:
         if unit is not None:
@@ -123,17 +123,22 @@ def replace_unit_name(ctx: Context, old: str, new: str) -> None:
 
 def _regular_files_named(directory: Path, name: str) -> List[Path]:
     """
-    Regular files (not links) with this exact name anywhere under a directory.
+    Regular files (not links) matching this name anywhere under a directory.
+
+    The match is case-insensitive, since a unit's own file can use different casing than
+    its name (e.g. ACE's default `AFC_ACE_1.cfg` for the unit named `Ace_1`).
 
     :param directory: tree to search; a missing one has no files
-    :param name: file name
+    :param name: file name to match
     :return List[Path]: the matches
     """
     found: List[Path] = []
+    target = name.lower()
     for root, _dirs, files in os.walk(directory):
-        candidate = Path(root) / name
-        if name in files and not candidate.is_symlink():
-            found.append(candidate)
+        for file_name in files:
+            candidate = Path(root) / file_name
+            if file_name.lower() == target and not candidate.is_symlink():
+                found.append(candidate)
     return found
 
 
@@ -155,7 +160,7 @@ def rename_unit_prompt(ctx: Context, console: Console, prompter: Prompter) -> st
     new = ask_for_name(
         console, prompter, f"Enter new name for unit (Default: {_SECOND_NAME}): ", _SECOND_NAME
     )
-    if not (ctx.afc_config_dir / f"AFC_{old}.cfg").is_file():
+    if not _regular_files_named(ctx.afc_config_dir, f"AFC_{old}.cfg"):
         return f"Unit {old} not found, please enter a valid unit name."
     replace_unit_name(ctx, old, new)
     return f"Renaming unit {old} to {new}"

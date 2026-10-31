@@ -1,0 +1,3 @@
+=== VARS ===
+boxturtle_name=Ace_1
+turtle_renamed=True

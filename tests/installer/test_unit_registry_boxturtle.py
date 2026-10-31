@@ -11,6 +11,7 @@ from installer.unit_registry.registry import (
     additional_buffer_options,
     additional_buffer_supported,
     additional_default_name,
+    force_additional_buffer_default,
     unit_for,
 )
 from installer.unit_registry.selection import UnitSelection
@@ -58,7 +59,7 @@ class TestReplayOfTheRecordedCases:
         assert missing_types.isdisjoint(registered_types)
         assert replayed, "no BoxTurtle fixtures were replayed"
         assert (FIXTURES / "message__BoxTurtle_4Lane__buffer-None.txt").exists()
-        assert len(pending) == 110  # replayed by test_install_flow_install.py
+        assert len(pending) == 120  # replayed by test_install_flow_install.py
         assert not unregistered
 
 
@@ -340,6 +341,8 @@ class TestRegistry:
         assert additional_buffer_options("Dummy") == ("None", "Special")
         assert additional_buffer_default("Dummy") == "Special"
         assert additional_default_name(ctx, sel) == "Dummy_1"
+        # a type that doesn't override it keeps the base class's False
+        assert force_additional_buffer_default("Dummy") is False
 
 
 class TestAdditionalBufferRules:
@@ -362,3 +365,4 @@ class TestAdditionalBufferRules:
             "TurtleNeck2Remastered",
             "FPS_PSF",
         )
+        assert force_additional_buffer_default("Nope") is False

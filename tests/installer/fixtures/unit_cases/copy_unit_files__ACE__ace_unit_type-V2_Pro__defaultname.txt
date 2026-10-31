@@ -1,0 +1,275 @@
+=== FILES ===
+--- AFC_ACE2_1.cfg ---
+# Anycubic ACE 2 Pro
+#
+# The ACE 2 is not an MCU. Klipper talks to its firmware over the unit's
+# own USB serial port and the ACE 2 moves the filament itself, so there
+# are no pins or steppers in this file. Its lanes are plain [AFC_lane]
+# sections, not [AFC_stepper].
+#
+# Before the first boot:
+#   1. Check serial_port and ace_index below.
+#   2. Pick the mode: combined (one toolhead) or direct (a tool per lane).
+#   3. The [AFC_extruder] each lane feeds needs a toolhead sensor in
+#      pin_tool_start (a switch pin, or buffer for an FPS/PSF buffer, see
+#      AFC_FPS.cfg). A load feeds afc_bowden_length, then pushes short
+#      pulses until that sensor triggers, and fails if it never does.
+# After boot:
+#   4. AFC_ACE_STATUS UNIT=Ace2_1 prints the unit's status, or "ACE not
+#      connected". AFC.log, next to klippy.log, says why.
+#   5. With the toolhead empty, insert a spool and run
+#      AFC_ACE_CALIBRATE UNIT=Ace2_1 LANE=lane0. It feeds until the toolhead
+#      sensor triggers and saves that length as the hub's
+#      afc_bowden_length and afc_unload_bowden_length. In direct mode,
+#      run it once for every lane.
+#
+# Firmware: the stock ACE 2 firmware runs everything in this file except
+# the RFID section below and feed speeds above 100 mm/s. Both need the AFC
+# build of the firmware in Firmwares/ACE2. Flash it over USB with
+# Firmwares/ACE2/ace2-ota-update.py, following
+# 'Firmwares/ACE2/installation instructions.md'. Stop Klipper while you
+# flash: AFC keeps the unit's serial port open.
+
+
+[AFC_ACE2 Ace2_1]
+# ---- Serial port ----
+# auto asks every ACE 2 on USB for its id and takes the ace_index-th one
+# in USB port order (first = 1). ACE 2 units show up as
+# /dev/serial/by-id/usb-1a86_USB_Single_Serial_*-if00. Moving a unit to a
+# different USB port can change the order.
+serial_port: auto
+ace_index: 1
+# With serial_port: auto, ace_uid ties this section to one box whatever
+# port it is on. Use the three numbers from its line
+# "ACE2 autodetect: <port> -> uid (...)" in AFC_ACE_serial.log (next to
+# klippy.log), without the parentheses.
+#ace_uid: <uid1>, <uid2>, <uid3>
+# Or comment out serial_port: auto and pin this section to one port. Each
+# ACE 2 has its own by-id name (ls -l /dev/serial/by-id/), so this works
+# for several units.
+#serial_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_XXXXXXXX-if00
+
+# ---- Mode ----
+# combined: all four lanes feed ONE toolhead through one shared hub.
+# direct:   each lane feeds its OWN extruder, e.g. one lane per tool on a
+#           toolchanger. Each lane then sets its own hub: and extruder:
+#           (see the hub and lane sections below).
+mode: combined
+hub: Ace2_1_hub             # direct mode: comment this out
+extruder: extruder          # the [AFC_extruder] fed; a lane can override
+#buffer: <buffer_name>      # an [AFC_buffer], e.g. from AFC_FPS.cfg. In
+                            # direct mode set it on each lane or
+                            # [AFC_extruder] instead. The ACE 2's own
+                            # buffer needs no setting;
+                            # AFC_ACE_BUFFER_STATE UNIT=Ace2_1 shows it.
+
+# ---- Feeding (defaults shown) ----
+#max_feed_speed: 100        # mm/s. Stock firmware refuses faster feeds;
+                            # the AFC firmware (see top) raises the cap
+                            # to 140.
+#feed_speed: 100            # mm/s, capped at max_feed_speed. Past about
+#retract_speed: 100         # 90 the gain is small and slip more likely.
+
+# ---- Stuck spool detection ----
+# On by default on the ACE 2. When its encoder reports that the spool of
+# the lane being printed is not turning with the motor (stuck, tangled,
+# slipping or a motor fault), AFC stops feed assist and pauses the print.
+# Toggle it live with AFC_ACE_STUCK_SPOOL_DETECTION UNIT=Ace2_1 ENABLE=0.
+#stuck_spool_detection: True
+
+# ---- Dryer ----
+#max_dryer_temperature: 70  # C. AFC_ACE_DRY never heats above this (the V1
+                            # ACE uses 55). Set 0 to hide this unit's
+                            # dryer from the [afc_dryer] panel.
+# Start and stop a drying cycle (DURATION in minutes; defaults are 50 C
+# for 90 minutes; FAN=0 dries with the dryer fan off):
+#   AFC_ACE_DRY UNIT=Ace2_1 TEMP=55 DURATION=240
+#   AFC_ACE_DRY_STOP UNIT=Ace2_1
+# ROTATE=1 turns the spools while drying, as the Bambu units do: every
+# dry_rotate_interval seconds each lane with nothing in the feed gears gets
+# a slow rollback, which turns its spool without moving filament. It is
+# refused while any lane on the unit is loaded to the hub or toolhead,
+# holds while printing, skips threaded lanes, and ends with the cycle.
+# Unthread a lane (tip secured to the spool) to dry it with rotation.
+#   AFC_ACE_DRY UNIT=Ace2_1 TEMP=50 DURATION=240 ROTATE=1
+#dry_rotate_length: 150     # mm of rollback per turn
+#dry_rotate_speed: 15       # mm/s, slow on purpose
+#dry_rotate_interval: 300   # seconds between turns
+# AFC_ACE_FAN UNIT=Ace2_1 SPEED=0-100 sets the unit's own fan. For buttons,
+# add templates/AFC_Dryer.cfg. Its web panel finds this unit by itself.
+
+# ---- Spoolman ----
+# Create a Spoolman spool when an RFID tag matches none. Needs Spoolman
+# and the [AFC_ACE2_rfid] section below.
+#auto_spoolman_create: False
+
+# One lane per ACE 2 slot. unit: is <unit name>:<slot 1-4>. map: is the
+# T# that selects the lane. Lane names and T#s must not repeat across your
+# units (see the end of this file). In direct mode, uncomment hub: and
+# extruder: in every lane, and point extruder: at that lane's tool.
+#
+# dist_hub: unlike the V1, the ACE 2 does not bring a new spool out to
+# the hub by itself. AFC feeds it dist_hub mm to park it at the hub, and a
+# load then feeds afc_bowden_length from there. In combined mode keep the
+# parked tip short of the point where the four tubes merge, or it blocks
+# the other lanes. In direct mode it can run most of the way to the tool.
+[AFC_lane lane0]
+unit: Ace2_1:1
+dist_hub: 60
+
+[AFC_lane lane1]
+unit: Ace2_1:2
+dist_hub: 60
+
+[AFC_lane lane2]
+unit: Ace2_1:3
+dist_hub: 60
+
+[AFC_lane lane3]
+unit: Ace2_1:4
+dist_hub: 60
+
+# The ACE 2 has no hub switch, so the hub is VIRTUAL: it reads occupied
+# only while a lane is loaded through to the toolhead.
+[AFC_hub Ace2_1_hub]
+switch_pin: virtual
+afc_bowden_length: 900      # mm from where a lane parks (dist_hub) to the
+                            # toolhead sensor. Too long pushes filament
+                            # into the extruder gears, so start short and
+                            # run AFC_ACE_CALIBRATE.
+
+# Direct mode: uncomment all four hubs, one per lane, and delete the one
+# above. Each lane runs to its own tool, so each needs its own length, and
+# a shared hub would block every load while any one tool is loaded. A lane
+# that names a missing hub gets a plain hub with no sensor, with no warning.
+#[AFC_hub Ace2_1_hub1]
+#switch_pin: virtual
+#afc_bowden_length: 900
+#
+#[AFC_hub Ace2_1_hub2]
+#switch_pin: virtual
+#afc_bowden_length: 900
+#
+#[AFC_hub Ace2_1_hub3]
+#switch_pin: virtual
+#afc_bowden_length: 900
+#
+#[AFC_hub Ace2_1_hub4]
+#switch_pin: virtual
+#afc_bowden_length: 900
+
+# Optional: the ACE 2's temperature and humidity on the Mainsail/Fluidd
+# card. Keep this after [AFC_ACE2 Ace2_1], which registers the sensor
+# type. Fluidd shows the humidity only with sensor_type: aht2x (the same
+# sensor).
+[temperature_sensor Ace2_1]
+sensor_type: aht2x
+ace_unit: Ace2_1            # the [AFC_ACE2] section name
+min_temp: 0
+max_temp: 85                # Klipper shuts down above this, so keep it
+                            # well above max_dryer_temperature
+
+
+# ---- RFID (optional) ----
+# Reads spool tags with the ACE 2's own readers, puts the material, color
+# and temperatures on the lane, and finds its Spoolman spool by the tag's
+# id (or creates one, with auto_spoolman_create). Decodes Bambu, Anycubic,
+# Creality, Snapmaker, Elegoo, BTT, QIDI, TigerTag, OpenSpool, OpenTag3D and
+# SpoolEase tags. Needs the AFC firmware (see the top
+# of this file). Without this section the unit runs its own slower insert
+# cycle and its lanes get no tag data.
+# Klipper takes only one [AFC_ACE2_rfid], and it serves one ACE 2: the one
+# named in ace2_object, or the first [AFC_ACE2] it finds.
+#[AFC_ACE2_rfid]
+#ace2_object: AFC_ACE2 Ace2_1
+#
+# Decode keys, 32 hex characters each. AFC does not ship them. Bambu tags
+# need bambu_master_key, the Bambu RFID master key published by the
+# Bambu-Research-Group RFID-Tag-Guide project. Creality CFS tags need both
+# creality keys, the two AES keys from the published CFS tag research
+# (DnG-Crafts cfs-programmer).
+# Anycubic, Snapmaker, Elegoo, QIDI, TigerTag, OpenSpool (what most phone
+# apps write), OpenTag3D and SpoolEase tags need no key, and any tag still
+# reads its id without one. A key left out here is taken from a shared
+# [AFC_rfid_keys] section, if you have one.
+#bambu_master_key: <32 hex characters>
+#creality_key: <32 hex characters>
+#creality_encryption_key: <32 hex characters>
+#
+#auto_spoolman_create: False     # True here or on the unit turns it on
+#disable_rfid: False             # True stops all automatic reads;
+                                 # ACE_RFID_READ still works
+#
+# Two slots share each reader (unit: slots 1+2 and 3+4), so a read can
+# catch the neighbor's tag. shared_reader_dedup rejects a tag already read
+# on the neighbor. auto_tag_adjust backs a parked neighbor (never one
+# loaded in a tool, never while printing) off by auto_tag_adjust_dist mm
+# to move its tag away, then feeds it back.
+#shared_reader_dedup: True
+#auto_tag_adjust: True
+#auto_tag_adjust_dist: 75
+#
+# Staging. skip_factory_autostage turns off the unit's slow factory insert
+# cycle; AFC then feeds stage_initial_dist mm into the unit plus dist_hub,
+# reading the tag on the way. It feeds at stage_scan_speed mm/s (90 at
+# most) for the first stage_scan_dist mm while polling the reader, and
+# stops to read when a tag answers.
+#skip_factory_autostage: True
+#stage_read: True                # False reads the tag once staged instead
+#stage_initial_dist: 500
+#stage_scan_dist: 600
+#stage_scan_speed: 25
+#
+# Scanning: hold a spool's tag to a lane's reader and run
+# ACE_RFID_SCAN LANE=lane0 SECONDS=30. With Spoolman, the tag's spool
+# becomes the spool for the next lane you load. scanner_lanes marks the
+# lanes you scan with; with only one listed, LANE= can be left out.
+#scanner_lanes: lane0
+#scan_seconds: 30
+#scan_interval: 0.3              # seconds between reads
+#scanner_confirm_reads: 2        # same tag this many reads in a row
+#
+# Leave lane_slot_map unset: the unit supplies each lane's slot. Set, only
+# the lanes listed are read, as lane:slot with slot 0-3 (one less than in
+# unit:), and with skip_factory_autostage on a lane left out is not fed
+# stage_initial_dist on insert either.
+#lane_slot_map: lane0:0, lane1:1, lane2:2, lane3:3
+#
+# Read retries, reader timing and more staging options are described
+# where extras/AFC_ACE2_rfid.py reads them. Leave them unless debugging.
+#
+# Read a tag by hand: ACE_RFID_READ LANE=lane0--- end AFC_ACE2_1.cfg ---
+--- AFC_Hardware.cfg ---
+[force_move]
+enable_force_move: True
+
+[AFC_extruder extruder]
+pin_tool_start: enter_tool_pin
+#pin_tool_end: None
+tool_stn: 72                    # See documentation for details on how to calculate this value. https://www.afcproject.dev/toolhead/calculation.html
+tool_stn_unload: 100            # See documentation for details on how to calculate this value. https://www.afcproject.dev/toolhead/calculation.html
+tool_sensor_after_extruder: 0   # Extra distance to move in mm once pre/post sensors are clear. Useful for when only using post sensor, so this distance can be the amount to move to clear extruder gears
+tool_unload_speed: 25           # Unload speed in mm/s when unloading toolhead. Default is 25mm/s.
+tool_load_speed: 25             # Load speed in mm/s when loading toolhead. Default is 25mm/s.
+
+#[filament_switch_sensor bypass]
+#switch_pin: turtleneck:PB5
+#pause_on_runout: False
+
+#--=================================================================================--#
+######### Tip Cut Servo ###############################################################
+#--=================================================================================--#
+#[servo tool_cut]
+# Pin for the cut pin servo.
+#pin: YOUR_SERVO_PIN_HERE
+# Adjust this value until a '_CUTTER_SERVO POS=out' extends the pin fully without a
+# buzzing sound
+#minimum_pulse_width: 0.00053
+# Adjust this value until a '_CUTTER_SERVO POS=in' retracts the pin fully without a
+# buzzing sound
+#maximum_pulse_width: 0.0023
+# Leave this value at 180
+#maximum_servo_angle: 180
+#   Initial angle (in degrees) to set the servo to. The default is to
+#   not send any signal at startup.
+--- end AFC_Hardware.cfg ---

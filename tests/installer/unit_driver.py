@@ -46,6 +46,7 @@ def selection_from(overrides: Dict[str, str]) -> UnitSelection:
         "qb_board_type": "qb_board_type",
         "qb_motor_type": "qb_motor_type",
         "emu_board_type": "emu_board_type",
+        "ace_unit_type": "ace_unit_type",
     }
     for key, value in overrides.items():
         if key in names:
@@ -80,6 +81,7 @@ LEGACY_KEYS = {
     "Board Type": {"HTLF": "D", "QuattroBox": "E", "EMU": "H", "Claymore": "H", "NightOwl": "J"},
     "Motor Type": {"QuattroBox": "F"},
     "Lane Count": {"EMU": "G"},
+    "Unit Type": {"ACE": "K"},
 }
 
 

@@ -1,0 +1,197 @@
+=== FILES ===
+--- AFC_ACE_1.cfg ---
+# Anycubic ACE Pro (first generation, "V1")
+#
+# The ACE is not an MCU. Klipper talks to its firmware over the ACE's own
+# USB serial port and the ACE moves the filament itself, so there are no
+# pins or steppers in this file. Its lanes are plain [AFC_lane] sections,
+# not [AFC_stepper].
+#
+# Before the first boot:
+#   1. Check serial_port and ace_index below.
+#   2. Pick the mode: combined (one toolhead) or direct (a tool per lane).
+#   3. The [AFC_extruder] each lane feeds needs a toolhead sensor in
+#      pin_tool_start (a switch pin, or buffer for an FPS/PSF buffer, see
+#      AFC_FPS.cfg). A load feeds afc_bowden_length, then pushes short
+#      pulses until that sensor triggers, and fails if it never does.
+# After boot:
+#   4. AFC_ACE_STATUS UNIT=Ace_1 prints the unit's status, or "ACE not
+#      connected". AFC.log, next to klippy.log, says why.
+#   5. With the toolhead empty, insert a spool and run
+#      AFC_ACE_CALIBRATE UNIT=Ace_1 LANE=lane0. It feeds until the toolhead
+#      sensor triggers and saves that length as the hub's
+#      afc_bowden_length. In direct mode, run it once for every lane.
+
+
+[AFC_ACE Ace_1]
+# ---- Serial port ----
+# auto finds this ACE by the id its firmware reports, which counts up in
+# cable order (first ACE = 1); ace_index says which one this section is.
+# auto keeps up when the ACE renumbers its ttyACM port, which it does on
+# its own. Use it for one ACE or for a chain.
+serial_port: auto
+ace_index: 1                # 1 = first ACE in the chain; used by auto
+# Or comment out serial_port: auto and pin this section to one port. A
+# single ACE can use its by-id path (ls -l /dev/serial/by-id/). Chained
+# ACEs all show the same by-id name, so pin those by USB port with
+# /dev/serial/by-path/ instead.
+#serial_port: /dev/serial/by-id/usb-XXXXXXXX-if00
+
+# ---- Mode ----
+# combined: all four lanes feed ONE toolhead through one shared hub.
+# direct:   each lane feeds its OWN extruder, e.g. one lane per tool on a
+#           toolchanger. Each lane then sets its own hub: and extruder:
+#           (see the hub and lane sections below).
+mode: combined
+hub: Ace_1_hub              # direct mode: comment this out
+extruder: extruder          # the [AFC_extruder] fed; a lane can override
+#buffer: <buffer_name>      # an [AFC_buffer], e.g. from AFC_FPS.cfg. In
+                            # direct mode set it on each lane or
+                            # [AFC_extruder] instead.
+
+# ---- Feeding (defaults shown) ----
+#feed_speed: 100            # mm/s, capped at 100. Lower both if a lane
+#retract_speed: 100         # slips or stalls.
+
+# ---- Stuck spool detection ----
+# Pauses the print when feed assist runs without a break for stuck_time
+# seconds, which means the spool is tangled or snagged. Off by default.
+# Toggle it live with AFC_ACE_STUCK_SPOOL_DETECTION UNIT=Ace_1 ENABLE=1.
+#stuck_spool_detection: False
+#stuck_time: 4              # seconds, 2 at the least
+
+# ---- Dryer ----
+#max_dryer_temperature: 55  # C. AFC_ACE_DRY never heats above this. Set 0 to
+                            # hide this unit's dryer from the [afc_dryer]
+                            # panel.
+# Start and stop a drying cycle (DURATION in minutes; defaults are 50 C
+# for 90 minutes; the V1 firmware ignores FAN=):
+#   AFC_ACE_DRY UNIT=Ace_1 TEMP=50 DURATION=240
+#   AFC_ACE_DRY_STOP UNIT=Ace_1
+# ROTATE=1 turns the spools while drying, as the Bambu units do: every
+# dry_rotate_interval seconds each lane with nothing in the feed gears gets
+# a slow rollback, which turns its spool without moving filament. It is
+# refused while any lane on the unit is loaded to the hub or toolhead,
+# holds while printing, skips threaded lanes, and ends with the cycle.
+# Unthread a lane (tip secured to the spool) to dry it with rotation.
+#   AFC_ACE_DRY UNIT=Ace_1 TEMP=50 DURATION=240 ROTATE=1
+#dry_rotate_length: 150     # mm of rollback per turn
+#dry_rotate_speed: 15       # mm/s, slow on purpose
+#dry_rotate_interval: 300   # seconds between turns
+# For buttons, add templates/AFC_Dryer.cfg. Its web panel finds this unit
+# by itself.
+# The V1 has no humidity sensor. If you fit one in the box, put its
+# section name here (box_env for [temperature_sensor box_env]) and the
+# dryer panel shows its humidity.
+#environment_sensor: box_env
+
+# One lane per ACE slot. unit: is <unit name>:<slot 1-4>. map: is the T#
+# that selects the lane. Lane names and T#s must not repeat across your
+# units (see the end of this file). In direct mode, uncomment hub: and
+# extruder: in every lane, and point extruder: at that lane's tool.
+[AFC_lane lane0]
+unit: Ace_1:1
+dist_hub: 60                # mm from the slot to the ACE's outlet. The V1
+                            # stages filament there itself on insert, so
+                            # AFC only feeds this for a lane it does not
+                            # know is staged, such as the first load after
+                            # an eject. An eject pulls back this plus
+                            # eject_buffer.
+#hub: Ace_1_hub1            # direct mode: this lane's own hub
+#extruder: extruder         # direct mode: this lane's own tool
+
+[AFC_lane lane1]
+unit: Ace_1:2
+dist_hub: 60 
+
+[AFC_lane lane2]
+unit: Ace_1:3
+dist_hub: 60 
+
+[AFC_lane lane3]
+unit: Ace_1:4
+dist_hub: 60 
+
+
+# There is no hub switch to wire, so the hub is VIRTUAL: it reads occupied
+# only while a lane is loaded through to the toolhead.
+[AFC_hub Ace_1_hub]
+switch_pin: virtual
+afc_bowden_length: 900      # mm from the ACE's outlet to the toolhead
+                            # sensor. Start a little shorter than your
+                            # tube and let AFC_ACE_CALIBRATE measure it: a
+                            # load feeds this whole length, so a value
+                            # that is too long over-feeds at the toolhead.
+
+# Direct mode: uncomment all four hubs, one per lane, and delete the one
+# above. Each lane runs to its own tool, so each needs its own length, and
+# a shared hub would block every load while any one tool is loaded. A lane
+# that names a missing hub gets a plain hub with no sensor, with no warning.
+#[AFC_hub Ace_1_hub1]
+#switch_pin: virtual
+#afc_bowden_length: 900
+#
+#[AFC_hub Ace_1_hub2]
+#switch_pin: virtual
+#afc_bowden_length: 900
+#
+#[AFC_hub Ace_1_hub3]
+#switch_pin: virtual
+#afc_bowden_length: 900
+#
+#[AFC_hub Ace_1_hub4]
+#switch_pin: virtual
+#afc_bowden_length: 900
+
+# Optional: the ACE's temperature on the Mainsail/Fluidd card. The V1
+# reports temperature only, no humidity. Keep this after [AFC_ACE Ace_1],
+# which registers the temperature_ace sensor type; placed before it,
+# Klipper stops with "Unknown temperature sensor".
+[temperature_sensor Ace_1]
+sensor_type: temperature_ace
+ace_unit: Ace_1             # the [AFC_ACE] section name
+min_temp: 0
+max_temp: 70                # Klipper shuts down above this. Keep it above
+                            # max_dryer_temperature.
+
+# ---- RFID ----
+# The V1 reads Anycubic RFID tags in its own firmware. The material,
+# color and temperatures on a tag go onto the lane with no extra setup.
+# The V1 reports no unique id per tag, so it does not create or match
+# Spoolman spools: set one by hand with SET_SPOOL_ID LANE=lane0 SPOOL_ID=n.
+# [AFC_ACE2_rfid] is for the ACE 2 Pro only; do not add it for a V1.
+# AFC_ACE_RFID_DUMP UNIT=Ace_1 LANE=lane0 prints what the ACE read from a tag.--- end AFC_ACE_1.cfg ---
+--- AFC_Hardware.cfg ---
+[force_move]
+enable_force_move: True
+
+[AFC_extruder extruder]
+pin_tool_start: enter_tool_pin
+#pin_tool_end: None
+tool_stn: 72                    # See documentation for details on how to calculate this value. https://www.afcproject.dev/toolhead/calculation.html
+tool_stn_unload: 100            # See documentation for details on how to calculate this value. https://www.afcproject.dev/toolhead/calculation.html
+tool_sensor_after_extruder: 0   # Extra distance to move in mm once pre/post sensors are clear. Useful for when only using post sensor, so this distance can be the amount to move to clear extruder gears
+tool_unload_speed: 25           # Unload speed in mm/s when unloading toolhead. Default is 25mm/s.
+tool_load_speed: 25             # Load speed in mm/s when loading toolhead. Default is 25mm/s.
+
+#[filament_switch_sensor bypass]
+#switch_pin: turtleneck:PB5
+#pause_on_runout: False
+
+#--=================================================================================--#
+######### Tip Cut Servo ###############################################################
+#--=================================================================================--#
+#[servo tool_cut]
+# Pin for the cut pin servo.
+#pin: YOUR_SERVO_PIN_HERE
+# Adjust this value until a '_CUTTER_SERVO POS=out' extends the pin fully without a
+# buzzing sound
+#minimum_pulse_width: 0.00053
+# Adjust this value until a '_CUTTER_SERVO POS=in' retracts the pin fully without a
+# buzzing sound
+#maximum_pulse_width: 0.0023
+# Leave this value at 180
+#maximum_servo_angle: 180
+#   Initial angle (in degrees) to set the servo to. The default is to
+#   not send any signal at startup.
+--- end AFC_Hardware.cfg ---

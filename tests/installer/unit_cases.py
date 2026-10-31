@@ -31,6 +31,7 @@ UNIT_VARIANTS: dict[str, list[dict[str, str]]] = {
         for n in (1, 3, 8)
         for bt in ("EBB", "SLB")
     ],
+    "ACE": [{"ace_unit_type": t} for t in ["V1", "V2_Pro"]],
 }
 
 # The default name offered for an additional unit of each type.
@@ -44,6 +45,7 @@ ADDITIONAL_UNIT_DEFAULT_NAME = {
     "EMU": "EMU_1",
     "HTLF": "HTLF_1",
     "Claymore": "Claymore_1",
+    "ACE": "Ace_1",
 }
 
 
@@ -187,6 +189,37 @@ def iter_cases():
             "installation_type": "HTLF",
             "htlf_board_type": "MMB_1.0",
             "seed_files": "AFC_MMB_HTLF_1.cfg",
+        },
+    )
+
+    # ACE's prefix itself depends on ace_unit_type (Ace vs Ace2), unlike every other
+    # type's static prefix. An existing V1 file must not block the V2_Pro default (and
+    # vice versa), since they are named from independent sequences.
+    yield (
+        "additional_default_name__ACE__ace_unit_type-V1__first-existing",
+        "additional_default_name",
+        {
+            "installation_type": "ACE",
+            "ace_unit_type": "V1",
+            "seed_files": "AFC_ACE_1.cfg",
+        },
+    )
+    yield (
+        "additional_default_name__ACE__ace_unit_type-V2_Pro__first-existing",
+        "additional_default_name",
+        {
+            "installation_type": "ACE",
+            "ace_unit_type": "V2_Pro",
+            "seed_files": "AFC_ACE2_1.cfg",
+        },
+    )
+    yield (
+        "additional_default_name__ACE__ace_unit_type-V2_Pro__v1-existing-does-not-block",
+        "additional_default_name",
+        {
+            "installation_type": "ACE",
+            "ace_unit_type": "V2_Pro",
+            "seed_files": "AFC_ACE_1.cfg",
         },
     )
 

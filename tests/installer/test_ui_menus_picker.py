@@ -119,6 +119,17 @@ class TestStepAdditional:
         menu.step()
         assert state.selection.additional_buffer_type == "TurtleNeck"
 
+    def test_ace_forces_its_own_default_even_when_the_buffer_is_shared(
+        self, tmp_path: Path
+    ) -> None:
+        # TurtleNeck is a valid ACE additional_buffer_option too, so without the
+        # force-default flag this would be carried over instead of reset.
+        menu, state, _, _, _ = build(
+            tmp_path, ADDITIONAL, [str(NAMES.index("ACE") + 1)], buffer_type="TurtleNeck"
+        )
+        menu.step()
+        assert state.selection.additional_buffer_type == "Internal"
+
     def test_openams_defaults_to_the_psf_buffer(self, tmp_path: Path) -> None:
         menu, state, _, _, _ = build(
             tmp_path, ADDITIONAL, [str(NAMES.index("OpenAMS") + 1)], buffer_type="TurtleNeck"
@@ -171,7 +182,9 @@ class TestStepNavigation:
         assert menu.step() is None
         assert calls(deps) == ["exit"]
 
-    @pytest.mark.parametrize("answer", ["0", "10", "-1", "1.5", "x", "", "²", "١"])
+    @pytest.mark.parametrize(
+        "answer", ["0", str(len(UNIT_TYPES) + 1), "-1", "1.5", "x", "", "²", "١"]
+    )
     @pytest.mark.parametrize("mode", [INSTALL, ADDITIONAL])
     def test_anything_else_is_reported_and_the_picker_stays(
         self, tmp_path: Path, mode: str, answer: str

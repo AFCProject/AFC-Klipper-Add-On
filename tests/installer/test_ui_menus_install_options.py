@@ -116,6 +116,16 @@ class TestView:
         menu, _, _, _, _ = build(tmp_path, [], itype="EMU")
         assert menu.view().art == "EMU"
 
+    def test_ace_has_no_sensor_row_only_a_buffer_and_version_row(self, tmp_path: Path) -> None:
+        menu, _, _, _, _ = build(
+            tmp_path, [], itype="ACE", sensor="Sensor", buffer="Internal", ace_unit_type="V1"
+        )
+        texts = row_texts(menu.view())
+        assert not [r for r in texts if "toolhead sensor or ramming" in r]
+        assert "10. Buffer type : Internal buffer" in texts
+        assert "11. ACE Unit Type : V1" in texts
+        assert "12. Toolhead sensor pin : " in "".join(texts)
+
     def test_after_the_install_only_the_footer_remains(self, tmp_path: Path) -> None:
         menu, state, _, _, _ = build(tmp_path, [])
         state.ctx.files_updated_or_installed = True

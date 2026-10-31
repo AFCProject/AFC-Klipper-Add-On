@@ -13,6 +13,7 @@ from installer.platform_core.context import Context
 from installer.unit_registry.base import GENERIC_BUFFER_OPTIONS, UnitType
 from installer.unit_registry.naming import ask_for_name, lowest_free_name
 from installer.unit_registry.selection import UnitSelection
+from installer.unit_registry.units.ace import Ace
 from installer.unit_registry.units.boxturtle import BoxTurtle4Lane, BoxTurtle8Lane
 from installer.unit_registry.units.claymore import Claymore
 from installer.unit_registry.units.emu import Emu
@@ -31,6 +32,7 @@ UNIT_TYPES: List[UnitType] = [
     Claymore(),
     QuattroBox(),
     OpenAms(),
+    Ace(),
     Vivid(),
     Emu(),
 ]
@@ -82,6 +84,18 @@ def additional_buffer_default(installation_type: str) -> str:
     """
     unit = unit_for(installation_type)
     return unit.additional_buffer_default if unit is not None else _GENERIC_DEFAULT_BUFFER
+
+
+def force_additional_buffer_default(installation_type: str) -> bool:
+    """
+    Should switching into this type always reset the buffer to its own default?
+
+    :param installation_type: display name
+    :return bool: True to force the reset even when the incoming buffer_type would
+        otherwise carry over; unknown types do not force it
+    """
+    unit = unit_for(installation_type)
+    return unit is not None and unit.force_additional_buffer_default
 
 
 def additional_default_name(ctx: Context, sel: UnitSelection) -> str:

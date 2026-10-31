@@ -24,6 +24,7 @@ class UnitSelection:
     qb_motor_type: str = "NEMA_14"
     emu_num_lanes: int = 5
     emu_board_type: str = "EBB"
+    ace_unit_type: str = "V1"
     buffer_type: str = "Unknown"
     additional_buffer_type: str = "None"
     toolhead_sensor: str = "Ramming"
