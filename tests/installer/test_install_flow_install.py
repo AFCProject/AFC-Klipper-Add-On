@@ -90,8 +90,8 @@ MESSAGE_CASES = [case for case in all_cases() if case[1] == "message"]
 
 
 class TestReplayOfTheMessageFixtures:
-    def test_all_110_message_fixtures_are_present(self) -> None:
-        assert len(MESSAGE_CASES) == 110
+    def test_all_120_message_fixtures_are_present(self) -> None:
+        assert len(MESSAGE_CASES) == 120
 
     @pytest.mark.parametrize(
         "name, mode, overrides", MESSAGE_CASES, ids=[case[0] for case in MESSAGE_CASES]

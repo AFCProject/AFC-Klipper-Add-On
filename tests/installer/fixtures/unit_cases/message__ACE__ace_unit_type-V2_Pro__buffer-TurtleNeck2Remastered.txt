@@ -1,0 +1,16 @@
+=== MESSAGE ===
+
+- AFC Configuration updated with selected options at <WORKDIR>/AFC/AFC.cfg
+
+- AFC-Klipper-Add-On python extensions installed to <WORKDIR>/klipper/klippy/extras/
+
+- Ensure you check the serial_port and ace_index settings in the <WORKDIR>/AFC/AFC_ACE2_1.cfg file (leaving serial_port as auto is fine).
+
+- Review the [AFC_ACE2_rfid] section if your unit has an RFID reader.
+  
+- Ensure you add the correct serial information to the <WORKDIR>/AFC/mcu/TN2.cfg file
+  
+You may now quit the script or return to the main menu.
+
+\033[0;31mIf you would like to add any additional units, please restart the script to ensure the
+current units are loaded correctly.\033[0m

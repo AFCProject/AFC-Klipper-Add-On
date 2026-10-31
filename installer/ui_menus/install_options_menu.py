@@ -126,7 +126,8 @@ class InstallOptionsMenu:
         sel = state.selection
         unit = require_unit(sel.installation_type)
         entries = [self._toggle(toggle.key, toggle.label) for toggle in TOGGLES]
-        entries.append(self._sensor())
+        if unit.ramming_supported:
+            entries.append(self._sensor())
         if unit.buffer_selectable:
             entries.append(self._buffer())
         entries += [self._unit_option(option) for option in unit.install_options()]

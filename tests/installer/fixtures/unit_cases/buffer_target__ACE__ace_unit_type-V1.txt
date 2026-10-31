@@ -1,0 +1,6 @@
+=== VARS ===
+buffer_unit_name=Ace_1
+buffer_unit_section_prefix=AFC_ACE
+buffer_extruder_file=AFC_ACE_1.cfg
+buffer_section_name=Ace_1
+buffer_prebaked_header=

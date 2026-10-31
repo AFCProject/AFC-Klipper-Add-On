@@ -183,6 +183,15 @@ class TestReplaceUnitName:
     def test_a_missing_directory_is_not_an_error(self, printer_tree: PrinterTree) -> None:
         replace_unit_name(make_ctx(printer_tree), "Old", "New")
 
+    def test_a_differently_cased_file_is_matched_and_moved_to_the_exact_new_name(
+        self, printer_tree: PrinterTree
+    ) -> None:
+        ctx = make_ctx(printer_tree)
+        put(ctx, "AFC_ACE_1.cfg", "[AFC_ACE Ace_1]\nhub: Ace_1\n")
+        replace_unit_name(ctx, "Ace_1", "Ace_2")
+        assert (ctx.afc_config_dir / "AFC_Ace_2.cfg").read_text() == "[AFC_ACE Ace_2]\nhub: Ace_2\n"
+        assert not (ctx.afc_config_dir / "AFC_ACE_1.cfg").exists()
+
 
 class TestRenameUnitPrompt:
     def setup(self, tree: PrinterTree) -> Context:
@@ -210,6 +219,18 @@ class TestRenameUnitPrompt:
         message = rename_unit_prompt(ctx, RecordingConsole(), ScriptedPrompter(["Ghost", "New"]))
         assert message == "Unit Ghost not found, please enter a valid unit name."
         assert (ctx.afc_config_dir / "AFC_Turtle_1.cfg").is_file()
+
+    def test_a_differently_cased_file_is_found_and_renamed(
+        self, printer_tree: PrinterTree
+    ) -> None:
+        ctx = make_ctx(printer_tree)
+        put(ctx, "AFC_ACE_1.cfg", "[AFC_ACE Ace_1]\n")
+        message = rename_unit_prompt(
+            ctx, RecordingConsole(), ScriptedPrompter(["Ace_1", "Ace_2"])
+        )
+        assert message == "Renaming unit Ace_1 to Ace_2"
+        assert (ctx.afc_config_dir / "AFC_Ace_2.cfg").read_text() == "[AFC_ACE Ace_2]\n"
+        assert not (ctx.afc_config_dir / "AFC_ACE_1.cfg").exists()
 
     def test_each_name_is_validated_and_asked_again(self, printer_tree: PrinterTree) -> None:
         ctx = self.setup(printer_tree)
@@ -321,8 +342,8 @@ NAMING_FIXTURES = [
 
 
 class TestReplayOfTheNamingFixtures:
-    def test_all_fifteen_naming_fixtures_are_replayed(self) -> None:
-        assert len(NAMING_FIXTURES) == 15
+    def test_all_nineteen_naming_fixtures_are_replayed(self) -> None:
+        assert len(NAMING_FIXTURES) == 19
 
     @pytest.mark.parametrize(
         "name, mode, overrides", NAMING_FIXTURES, ids=[case[0] for case in NAMING_FIXTURES]

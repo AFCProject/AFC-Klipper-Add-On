@@ -44,8 +44,12 @@ class UnitType(ABC):
     additional_buffer_supported: bool = False
     additional_buffer_options: Tuple[str, ...] = GENERIC_BUFFER_OPTIONS
     additional_buffer_default: str = "TurtleNeck"
+    # When True, switching an additional unit to this type always resets its buffer to
+    # additional_buffer_default.
+    force_additional_buffer_default: bool = False
     buffer_selectable: bool = True  # False: the buffer follows the sensor / ramming choice
     ramming_hardware: str = "a TurtleNeck buffer"  # wording for the sensor / ramming option
+    ramming_supported: bool = True  # False: always a toolhead sensor, no ramming toggle shown
 
     @abstractmethod
     def copy_files(
@@ -180,3 +184,15 @@ class UnitType(ABC):
         :return str: file name inside the AFC config directory
         """
         return f"AFC_{prefix}_{number}.cfg"
+
+    def name_prefix(self, sel: UnitSelection) -> str:
+        """
+        The prefix additional units of this type are named after.
+
+        By default this is the static `additional_name_prefix`; a type whose prefix
+        depends on a sub-type choice (for example ACE's V1 vs V2_Pro) overrides this.
+
+        :param sel: the user's unit choices
+        :return str: the prefix
+        """
+        return self.additional_name_prefix
