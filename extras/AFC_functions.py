@@ -2342,9 +2342,6 @@ class afcFunction:
                         msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
                         self.afc.error.AFC_error(msg, pause=False)
 
-                        # pos can be 0 when filament is still sitting at the hub (e.g. the
-                        # buffer-already-extended guard), so fall back to AFC_LANE_RESET's
-                        # default distance instead of passing an invalid DISTANCE=0.
                         reset_dis = abs(pos) if pos != 0 else None
                         self._afc_cali_fail(cali=cur_lane.name, dis=reset_dis,
                                             reset_lane=cur_lane.hub_obj.state,
