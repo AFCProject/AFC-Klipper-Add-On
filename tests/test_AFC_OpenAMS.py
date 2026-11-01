@@ -2205,8 +2205,21 @@ class TestAfcAMSInit:
         heaters = MagicMock()
         printer._objects["heaters"] = heaters
         self._build(config)
-        heaters.add_sensor_factory.assert_called_once_with(
-            "temperature_oams", TemperatureOAMS)
+        heaters.add_sensor_factory.assert_any_call("temperature_oams", TemperatureOAMS)
+
+    def test_registers_shared_aht2x_alias(self):
+        """OpenAMS-only printers must still get the shared aht2x Fluidd/Mainsail
+        alias registered, since no AFC_ACE unit may ever load to do it."""
+        from extras.temperature_afc import TemperatureAFC
+        config, printer, afc = self._config()
+        heaters = MagicMock()
+        # A bare MagicMock auto-creates any attribute (truthy), which would make
+        # register_on_heaters' "already registered" check pass by accident.
+        heaters._temperature_afc_registered = False
+        printer._objects["heaters"] = heaters
+        self._build(config)
+        heaters.add_sensor_factory.assert_any_call("aht2x", TemperatureAFC)
+        assert heaters._temperature_afc_registered is True
 
     def test_registers_mux_commands(self):
         config, printer, afc = self._config()

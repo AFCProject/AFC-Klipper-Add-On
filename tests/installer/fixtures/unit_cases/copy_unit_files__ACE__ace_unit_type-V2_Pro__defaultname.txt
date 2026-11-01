@@ -164,6 +164,7 @@ afc_bowden_length: 900      # mm from where a lane parks (dist_hub) to the
 # sensor).
 [temperature_sensor Ace2_1]
 sensor_type: aht2x
+afc_type: ACE2
 ace_unit: Ace2_1            # the [AFC_ACE2] section name
 min_temp: 0
 max_temp: 85                # Klipper shuts down above this, so keep it

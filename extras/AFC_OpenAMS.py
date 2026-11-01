@@ -763,11 +763,13 @@ class afcAMS(afcUnit):
         self._pending_spool_loaded_timers: Dict[str, Any] = {}
         self._td1_last_capture_time = None
 
-        # Register temperature_oams sensor factory during config parsing
         try:
             from extras.temperature_oams import TemperatureOAMS
+            from extras.temperature_afc import register_on_heaters
             pheaters = self.printer.load_object(config, "heaters")
             pheaters.add_sensor_factory("temperature_oams", TemperatureOAMS)
+            # Also register the shared aht2x alias.
+            register_on_heaters(pheaters)
         except Exception:
             pass
 

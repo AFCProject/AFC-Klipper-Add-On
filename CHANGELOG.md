@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed TD-1 calibration silently ignoring a failed move to hub/load instead of failing the calibration. Fixes #799
 - Fixed CALIBRATE_AFC continuing on to Bowden/TD-1 calibration after an earlier LANE or Bowden step had already failed. Fixes #747
 - Fixed Bowden calibration reporting a failure when homing actually succeeded but the move distance was greater than the fault distance.
+- Fixed potential aht2x objects getting overridden in klippers heater factory. Now temperature_afc only registers aht2x once and then returns the correct temperature_ace/oams depending on type.
 
 ## [10-25-2026]
 ### Fixed

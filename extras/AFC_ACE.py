@@ -354,11 +354,11 @@ class afcACE(afcUnit):
 
         try:
             from extras.temperature_ace import TemperatureACE
+            from extras.temperature_afc import register_on_heaters
             pheaters: PrinterHeaters = self.printer.load_object(config, "heaters")
             pheaters.add_sensor_factory("temperature_ace", TemperatureACE)
-            # Fluidd alias (aht2x -> aht10) so Fluidd shows ACE 2 humidity; distinct
-            # from OpenAMS's aht3x so the factories don't clobber each other.
-            pheaters.add_sensor_factory("aht2x", TemperatureACE)
+            # Also register the shared aht2x alias.
+            register_on_heaters(pheaters)
         except Exception as e:
             logging.info("AFC_ACE: temperature_ace factory not registered (%s); "
                          "use [temperature_ace <name>] config sections instead", e)

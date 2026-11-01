@@ -103,7 +103,8 @@ multiplier_low: 0.85
 [temperature_oams]
 
 [temperature_sensor oams1]
-sensor_type: temperature_oams
+sensor_type: aht2x
+afc_type: OpenAMS
 i2c_address: 64
 i2c_mcu: oams_mcu1
 i2c_bus: i2c0
