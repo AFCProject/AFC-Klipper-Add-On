@@ -12,6 +12,7 @@ from installer.ui_menus.rich_renderer import (
     RichRenderer,
     choose_renderer,
     load_rich,
+    make_rich_console,
     rich_disabled,
 )
 from installer.ui_menus.view import (
@@ -96,6 +97,56 @@ def draw(view: MenuView) -> str:
     )
     RichRenderer(RecordingConsole(), rich, rich_console).show(view)  # type: ignore[arg-type]
     return stream.getvalue()
+
+
+class TestMakeRichConsole:
+    @pytest.fixture
+    def rich(self) -> Any:
+        pytest.importorskip("rich")
+        return load_rich()
+
+    def _env(self, monkeypatch: pytest.MonkeyPatch, term: str, colorterm: str = "") -> None:
+        for name in ("NO_COLOR", "FORCE_COLOR", "COLORTERM", "TTY_COMPATIBLE"):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("TERM", term)
+        if colorterm:
+            monkeypatch.setenv("COLORTERM", colorterm)
+
+    def test_a_16_color_guess_is_raised_to_256(
+        self, rich: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._env(monkeypatch, "xterm-ghostty")
+        assert rich.Console(force_terminal=True).color_system == "standard"
+        console = make_rich_console(rich, file=io.StringIO(), force_terminal=True)
+        assert console.color_system == "256"
+
+    def test_truecolor_is_left_alone(self, rich: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._env(monkeypatch, "xterm-ghostty", "truecolor")
+        console = make_rich_console(rich, file=io.StringIO(), force_terminal=True)
+        assert console.color_system == "truecolor"
+
+    def test_a_256_color_term_is_left_alone(
+        self, rich: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._env(monkeypatch, "xterm-256color")
+        console = make_rich_console(rich, file=io.StringIO(), force_terminal=True)
+        assert console.color_system == "256"
+
+    def test_a_dumb_terminal_stays_uncolored(
+        self, rich: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._env(monkeypatch, "dumb")
+        console = make_rich_console(rich, file=io.StringIO(), force_terminal=True)
+        assert console.color_system is None
+
+    def test_the_renderer_builds_its_console_this_way(
+        self, rich: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._env(monkeypatch, "xterm-ghostty")
+        monkeypatch.setattr("sys.stdout", io.StringIO())
+        monkeypatch.setenv("FORCE_COLOR", "1")
+        renderer = RichRenderer(RecordingConsole(), rich)  # type: ignore[arg-type]
+        assert renderer._out.color_system == "256"
 
 
 class TestRichRenderer:

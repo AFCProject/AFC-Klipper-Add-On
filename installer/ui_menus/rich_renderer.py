@@ -42,6 +42,24 @@ def load_rich() -> Optional[Any]:
     return Rich
 
 
+def make_rich_console(rich: Any, **kwargs: Any) -> Any:
+    """
+    Build a `rich` Console that keeps 256 colors on terminals it only detects as 16 color.
+
+    Terminals such as ghostty, kitty or wezterm set neither `COLORTERM` nor a `*256color`
+    `TERM` over ssh, so `rich` picks the 16 color palette and the art and borders shift hue.
+    The plain renderer always writes 256 color codes, so this matches it.
+
+    :param rich: the object returned by `load_rich`
+    :param kwargs: passed to the `rich` Console
+    :return Any: the Console
+    """
+    console = rich.Console(**kwargs)
+    if console.color_system == "standard":
+        console = rich.Console(**kwargs, color_system="256")
+    return console
+
+
 class RichRenderer:
     """Draws the same MenuView with panels and styled text."""
 
@@ -55,7 +73,7 @@ class RichRenderer:
         """
         self._console = console
         self._rich = rich
-        self._out = rich_console if rich_console is not None else rich.Console()
+        self._out = rich_console if rich_console is not None else make_rich_console(rich)
 
     def clear(self) -> None:
         """Clear the screen (only when writing to a terminal)."""
