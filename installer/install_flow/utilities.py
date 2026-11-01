@@ -13,9 +13,9 @@ from installer.platform_core.errors import InstallerExit
 
 def del_var_file(ctx: Context, console: Console, prompter: Prompter) -> str:
     """
-    Delete ``AFC.var.unit`` after a y/n confirmation (a troubleshooting step).
+    Delete `AFC.var.unit` after a y/n confirmation (a troubleshooting step).
 
-    Only a (case insensitive, trimmed) ``y`` confirms. End of input stops the installer.
+    Only a (case insensitive, trimmed) `y` confirms. End of input stops the installer.
     The returned text keeps its trailing newline.
 
     :param ctx: installer context

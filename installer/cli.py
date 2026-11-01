@@ -71,9 +71,9 @@ class CliArgs:
 
 def help_text(prog: str) -> str:
     """
-    The ``-h`` text. Only the example line shows the program name.
+    The `-h` text. Only the example line shows the program name.
 
-    :param prog: how the script was invoked (``$0``)
+    :param prog: how the script was invoked (`$0`)
     :return str: help text ending with a newline
     """
     return "\n".join(line.replace("{prog}", prog) for line in _HELP_LINES) + "\n"
@@ -81,10 +81,10 @@ def help_text(prog: str) -> str:
 
 def _getopts(argv: List[str]) -> Iterator[Tuple[str, str]]:
     """
-    Walk the flags as ``getopts`` would, yielding ``(flag, value)`` pairs.
+    Walk the flags as `getopts` would, yielding `(flag, value)` pairs.
 
-    ``value`` is empty for ``t`` and ``h``. An unknown flag yields ``("?", letter)`` and a
-    flag missing its value yields ``(":", letter)``; the walk stops after either.
+    `value` is empty for `t` and `h`. An unknown flag yields `("?", letter)` and a
+    flag missing its value yields `(":", letter)`; the walk stops after either.
 
     :param argv: arguments without the program name
     :return Iterator[Tuple[str, str]]: the flags in order
@@ -120,12 +120,12 @@ def parse_args(
     argv: List[str], prog: str, out: Optional[TextIO] = None, err: Optional[TextIO] = None
 ) -> CliArgs:
     """
-    Parse the flags ``-a -k -s -m -n -b -p -y -t -h``.
+    Parse the flags `-a -k -s -m -n -b -p -y -t -h`.
 
-    Flags are handled in order and may be clustered (``-ty /path``). Parsing stops at
-    the first non-flag argument or ``--``. ``-h`` prints the help and exits 0 on the spot.
+    Flags are handled in order and may be clustered (`-ty /path`). Parsing stops at
+    the first non-flag argument or `--`. `-h` prints the help and exits 0 on the spot.
     An unknown flag or a missing value prints getopts' message and exits 1, as does a
-    ``-b`` value starting with ``-`` (git would read it as an option).
+    `-b` value starting with `-` (git would read it as an option).
 
     :param argv: arguments without the program name
     :param prog: program name for messages and the help example
@@ -158,13 +158,13 @@ def parse_args(
 
 def requested_branch(argv: List[str]) -> str:
     """
-    The branch asked for with ``-b``, scanned quietly so it can be switched to before
+    The branch asked for with `-b`, scanned quietly so it can be switched to before
     anything else loads.
 
-    Errors and ``-h`` are ignored here; the real parse reports them.
+    Errors and `-h` are ignored here; the real parse reports them.
 
     :param argv: arguments without the program name
-    :return str: the last ``-b`` value, or an empty string
+    :return str: the last `-b` value, or an empty string
     """
     branch = ""
     for flag, value in _getopts(argv):
@@ -177,7 +177,7 @@ def build_context(args: CliArgs, script_dir: Path, home: Path, argv: List[str]) 
     """
     Build the installer context from the flags.
 
-    ``afc_path`` is the checkout holding the script, never a path under ``home``, and the
+    `afc_path` is the checkout holding the script, never a path under `home`, and the
     Moonraker config defaults to the final printer config directory (issue #853).
 
     :param args: parsed flags

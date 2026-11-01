@@ -25,7 +25,7 @@ class ConfigDocument:
         Create a document.
 
         :param path: file the document was loaded from and saves back to
-        :param lines: lines including their ``\\n`` or ``\\r\\n`` terminators
+        :param lines: lines including their `\\n` or `\\r\\n` terminators
         """
         self.path = path
         self.lines = lines
@@ -33,7 +33,7 @@ class ConfigDocument:
     @staticmethod
     def split_lines(text: str) -> List[str]:
         """
-        Split text into lines that keep their terminators; only ``\\n`` ends a line.
+        Split text into lines that keep their terminators; only `\\n` ends a line.
 
         :param text: text to split
         :return List[str]: the lines
@@ -47,7 +47,7 @@ class ConfigDocument:
     @classmethod
     def load(cls, path: Path) -> ConfigDocument:
         """
-        Read a file. Only ``\\n`` ends a line, so ``\\r\\n`` stays attached to its line.
+        Read a file. Only `\\n` ends a line, so `\\r\\n` stays attached to its line.
 
         :param path: file to read
         :return ConfigDocument: the loaded document
@@ -57,7 +57,7 @@ class ConfigDocument:
 
     def append_text(self, text: str) -> None:
         """
-        Append text like ``echo >>``: it continues an unterminated last line.
+        Append text like `echo >>`: it continues an unterminated last line.
 
         :param text: text to add, may span several lines
         """

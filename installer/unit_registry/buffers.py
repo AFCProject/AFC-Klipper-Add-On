@@ -51,9 +51,9 @@ def build_buffer_config(
     adc_pin: str = "",
 ) -> str:
     """
-    The text of an ``[AFC_buffer <name>]`` block, without a trailing newline.
+    The text of an `[AFC_buffer <name>]` block, without a trailing newline.
 
-    :param buffer_type: ``TurtleNeck``, ``TurtleNeckV2``, ``TurtleNeck2Remastered`` or ``FPS_PSF``
+    :param buffer_type: `TurtleNeck`, `TurtleNeckV2`, `TurtleNeck2Remastered` or `FPS_PSF`
     :param unit_name: section name
     :param advance_pin: TurtleNeck advance pin
     :param trailing_pin: TurtleNeck trailing pin
@@ -129,7 +129,7 @@ def query_fps_pin(
     :param prompter: where answers come from
     :param buffer_name: name shown in the messages
     :param unit_name: unit whose name forms the default pin
-    :param default_pin: default pin, or empty for ``<unit>:PSF``
+    :param default_pin: default pin, or empty for `<unit>:PSF`
     :return str: the ADC pin
     """
     default = default_pin or f"{unit_name}:PSF"
@@ -164,7 +164,7 @@ def append_buffer_config(
     :param ctx: installer context
     :param console: where messages go
     :param prompter: used if the mcu file already exists
-    :param buffer_type: ``TurtleNeck``, ``TurtleNeckV2``, ``TurtleNeck2Remastered`` or ``FPS_PSF``
+    :param buffer_type: `TurtleNeck`, `TurtleNeckV2`, `TurtleNeck2Remastered` or `FPS_PSF`
     :param unit_name: section name for the buffer
     :param target_file: file to write into (created if missing)
     :param advance_pin: TurtleNeck advance pin
@@ -263,7 +263,7 @@ def apply_shared_buffer(
     :param ctx: installer context
     :param console: where the warning goes
     :param sel: the user's unit choices
-    :param shared_name: name of the existing ``[AFC_buffer <name>]`` section
+    :param shared_name: name of the existing `[AFC_buffer <name>]` section
     """
     target = _target_for(ctx, sel)
     if target is None:
@@ -280,7 +280,7 @@ def apply_shared_buffer(
 
 def list_existing_buffers(ctx: Context) -> List[str]:
     """
-    Names of every buffer defined in the top-level ``*.cfg`` files of the AFC directory.
+    Names of every buffer defined in the top-level `*.cfg` files of the AFC directory.
 
     :param ctx: installer context
     :return List[str]: sorted unique names

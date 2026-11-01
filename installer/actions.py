@@ -40,7 +40,7 @@ class RealActions:
         """
         Install the first unit and show the install message.
 
-        :param state: menu state, ``message`` is set
+        :param state: menu state, `message` is set
         """
         options = InstallOptions(selection=state.selection, toggles=dict(state.toggles))
         state.message = install_afc(
@@ -61,7 +61,7 @@ class RealActions:
         """
         Update AFC and add the result to the update menu's message.
 
-        :param state: menu state, ``update_message`` grows with each update in the session
+        :param state: menu state, `update_message` grows with each update in the session
         """
         version = get_git_version(state.ctx, self._runner) if state.ctx.git_install else ""
         state.update_message += update_afc(
@@ -72,7 +72,7 @@ class RealActions:
         """
         Remove AFC and show the uninstall message.
 
-        :param state: menu state, ``message`` is set
+        :param state: menu state, `message` is set
         """
         state.message = uninstall_afc(state.ctx, self._console, self._runner)
 

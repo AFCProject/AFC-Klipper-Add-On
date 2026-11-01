@@ -74,7 +74,7 @@ def check_for_hh(ctx: Context, console: Console) -> None:
 
 def _venv_python_version(python: Path, runner: CommandRunner) -> Optional[Tuple[int, int]]:
     """
-    Ask an interpreter for its ``(major, minor)`` version.
+    Ask an interpreter for its `(major, minor)` version.
 
     :param python: interpreter to run
     :param runner: command runner
@@ -96,7 +96,7 @@ def check_python_version(ctx: Context, console: Console, runner: CommandRunner) 
     The versions are compared as numbers, so 3.10 is newer than 3.8. The messages print
     uncolored.
 
-    :param ctx: installer context, ``klipper_venv`` holds the interpreter directory
+    :param ctx: installer context, `klipper_venv` holds the interpreter directory
     :param console: where messages go
     :param runner: command runner
     """
@@ -127,10 +127,10 @@ def check_for_zip_install(ctx: Context, console: Console, prompter: Prompter) ->
     """
     Detect a ZIP (non-git) install, warn about it, and wait for Enter.
 
-    A ``.git`` file (as in a worktree) is not a git directory, so it counts as a ZIP
+    A `.git` file (as in a worktree) is not a git directory, so it counts as a ZIP
     install too. End of input at the prompt stops the installer.
 
-    :param ctx: installer context, ``git_install`` is cleared for a ZIP install
+    :param ctx: installer context, `git_install` is cleared for a ZIP install
     :param console: where the warnings go
     :param prompter: used for the "Press Enter" prompt
     """
@@ -148,9 +148,9 @@ def check_for_zip_install(ctx: Context, console: Console, prompter: Prompter) ->
 
 def check_existing_install(ctx: Context) -> None:
     """
-    Set ``prior_installation`` if any AFC extension is already symlinked into Klipper.
+    Set `prior_installation` if any AFC extension is already symlinked into Klipper.
 
-    Every ``extras/*.py`` name is checked, ``__init__.py`` included, and a dangling
+    Every `extras/*.py` name is checked, `__init__.py` included, and a dangling
     link counts. The flag is never cleared here.
 
     :param ctx: installer context
