@@ -66,9 +66,9 @@ class ChoiceOption(UnitOption):
         Create the option.
 
         :param label: row label, also used in the status message
-        :param attr: the ``UnitSelection`` attribute that holds the value
+        :param attr: the `UnitSelection` attribute that holds the value
         :param choices: the values to step through
-        :param cast: converts a choice before it is stored (for example ``int``)
+        :param cast: converts a choice before it is stored (for example `int`)
         """
         self.label = label
         self.attr = attr
@@ -94,7 +94,7 @@ class ChoiceOption(UnitOption):
         :param console: unused
         :param prompter: unused
         :param sel: the user's unit choices, updated in place
-        :return str: ``<label>: <new value>``
+        :return str: `<label>: <new value>`
         """
         current = self.value(sel)
         if current in self.choices:
@@ -137,7 +137,7 @@ class NameOption(UnitOption):
         :param console: where prompts print
         :param prompter: where answers come from
         :param sel: the user's unit choices, updated in place
-        :return str: ``Naming unit <name>``
+        :return str: `Naming unit <name>`
         """
         from installer.unit_registry.naming import name_unit
         from installer.unit_registry.registry import name_additional_unit, unit_for

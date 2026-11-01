@@ -95,7 +95,7 @@ class Vivid(UnitType):
         """
         ViViD has no buffer choice by default.
 
-        :param sel: the user's unit choices, ``buffer_type`` is cleared
+        :param sel: the user's unit choices, `buffer_type` is cleared
         """
         sel.buffer_type = "None"
 
@@ -103,7 +103,7 @@ class Vivid(UnitType):
         """
         Only a sensor with no buffer chosen yet changes it; ramming leaves the buffer alone.
 
-        :param sel: the user's unit choices, ``buffer_type`` may change
+        :param sel: the user's unit choices, `buffer_type` may change
         :return str: the status message
         """
         if sel.toolhead_sensor == "Sensor":

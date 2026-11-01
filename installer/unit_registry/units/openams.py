@@ -100,7 +100,7 @@ class OpenAms(UnitType):
         """
         OpenAMS has no buffer choice: it follows ramming (FPS_PSF) or a sensor (none).
 
-        :param sel: the user's unit choices, ``buffer_type`` is set
+        :param sel: the user's unit choices, `buffer_type` is set
         """
         sel.buffer_type = "FPS_PSF" if sel.toolhead_sensor == "Ramming" else "None"
 
@@ -108,7 +108,7 @@ class OpenAms(UnitType):
         """
         Set the buffer from the sensor / ramming choice.
 
-        :param sel: the user's unit choices, ``buffer_type`` is set
+        :param sel: the user's unit choices, `buffer_type` is set
         :return str: the status message
         """
         if sel.toolhead_sensor == "Sensor":

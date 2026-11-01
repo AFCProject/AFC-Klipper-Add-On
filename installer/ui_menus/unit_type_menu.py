@@ -41,7 +41,7 @@ class UnitTypeMenu:
 
         :param state: shared menu state
         :param deps: menu collaborators
-        :param mode: ``install`` for the first unit or ``additional`` for another one
+        :param mode: `install` for the first unit or `additional` for another one
         """
         self._state = state
         self._deps = deps

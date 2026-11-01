@@ -37,7 +37,7 @@ class Emu(UnitType):
         """
         Copy the hardware file and generate the unit and mcu files.
 
-        A name still at the generic install default ``Turtle_1`` becomes ``EMU_1`` (this
+        A name still at the generic install default `Turtle_1` becomes `EMU_1` (this
         updates the selection). The generated files replace existing ones without asking.
 
         :param ctx: installer context
@@ -66,7 +66,7 @@ class Emu(UnitType):
 
     def buffer_target(self, ctx: Context, sel: UnitSelection) -> BufferTarget:
         """
-        The unit file and the ``<name>_buffer`` section the generator already wrote.
+        The unit file and the `<name>_buffer` section the generator already wrote.
 
         :param ctx: installer context
         :param sel: the user's unit choices

@@ -47,7 +47,7 @@ class Claymore(UnitType):
         """
         Copy the mcu, unit and hardware files.
 
-        A name still at the generic install default ``Turtle_1`` becomes ``Claymore_1``
+        A name still at the generic install default `Turtle_1` becomes `Claymore_1`
         (this updates the selection). A custom name is also written into the unit file.
 
         :param ctx: installer context

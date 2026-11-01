@@ -29,7 +29,7 @@ _T_TOKEN = re.compile(r"T[0-9]+")
 
 def _ask_yes(prompter: Prompter, prompt: str) -> bool:
     """
-    Ask a y/n question; only a (case insensitive, trimmed) ``y`` is a yes.
+    Ask a y/n question; only a (case insensitive, trimmed) `y` is a yes.
 
     End of input stops the installer.
 
@@ -45,9 +45,9 @@ def _ask_yes(prompter: Prompter, prompt: str) -> bool:
 
 def remove_t_macros(ctx: Context) -> None:
     """
-    Delete the old ``[gcode_macro T<n>]`` sections from AFC's macros file.
+    Delete the old `[gcode_macro T<n>]` sections from AFC's macros file.
 
-    Every ``T<digits>`` token anywhere in the file names a section to delete; a token
+    Every `T<digits>` token anywhere in the file names a section to delete; a token
     that names no section changes nothing. A missing macros file is fine.
 
     :param ctx: installer context
@@ -63,10 +63,10 @@ def remove_t_macros(ctx: Context) -> None:
 
 def remove_velocity(ctx: Context) -> List[str]:
     """
-    Remove the deprecated ``velocity`` option from every ``[AFC_buffer ...]`` section.
+    Remove the deprecated `velocity` option from every `[AFC_buffer ...]` section.
 
-    Only top level ``*.cfg`` files with a buffer section are considered. Any line starting
-    with ``velocity`` in such a file triggers the report, even if it sits in another
+    Only top level `*.cfg` files with a buffer section are considered. Any line starting
+    with `velocity` in such a file triggers the report, even if it sits in another
     section. A file with several buffer sections is fully cleaned and a directory with no
     buffer files is simply nothing to do.
 
@@ -138,10 +138,10 @@ def update_afc(
     """
     Update AFC: optionally refresh the macros, then relink and clean up old config.
 
-    :param ctx: installer context, ``files_updated_or_installed`` is set
+    :param ctx: installer context, `files_updated_or_installed` is set
     :param console: where messages go
     :param prompter: where answers come from
-    :param runner: command runner (used to repair a bad ``__init__.py`` link)
+    :param runner: command runner (used to repair a bad `__init__.py` link)
     :param afc_version: version text for the success message (git installs only)
     :return str: the update message
     """

@@ -72,7 +72,7 @@ def update_startup(
     """
     Run the update checks in order, ending with the screen clear before the update menu.
 
-    A missing ``.git`` quietly marks a ZIP install, and unlike install the update always
+    A missing `.git` quietly marks a ZIP install, and unlike install the update always
     tries the clone / pull step (outside test mode).
 
     :param ctx: installer context
