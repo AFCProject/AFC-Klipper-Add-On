@@ -459,13 +459,24 @@ class TestVivid:
         assert "Vivid_1" not in text(ctx, "AFC_Vivid_2.cfg")
         assert "Vivid_1" not in text(ctx, "mcu/Vivid_2.cfg")
 
-    def test_has_no_buffer_target_so_a_psf_buffer_is_skipped(
-        self, printer_tree: PrinterTree
-    ) -> None:
+    def test_buffer_targets(self, printer_tree: PrinterTree) -> None:
+        """ViViD's target exists only for extruder wiring; it has no buffer choice
+        (on_select always forces buffer_type to "None"), so a PSF buffer is still
+        never applied even though the target is no longer None."""
+        ctx = make_ctx(printer_tree)
         unit = unit_for(VIVID)
         assert unit is not None
-        sel = UnitSelection(installation_type=VIVID)
-        assert unit.buffer_target(make_ctx(printer_tree), sel) is None
+        first = unit.buffer_target(ctx, UnitSelection(installation_type=VIVID, unit_name="z"))
+        assert first == BufferTarget(
+            "Vivid_1", "AFC_vivid", ctx.afc_config_dir / "AFC_Vivid_1.cfg", "Vivid_1"
+        )
+        extra = unit.buffer_target(
+            ctx,
+            UnitSelection(installation_type=VIVID, unit_name="Vivid_2", is_additional_unit=True),
+        )
+        assert extra == BufferTarget(
+            "Vivid_2", "AFC_vivid", ctx.afc_config_dir / "AFC_Vivid_2.cfg", "Vivid_2"
+        )
 
     def test_rows_and_message(self, printer_tree: PrinterTree) -> None:
         ctx = make_ctx(printer_tree)

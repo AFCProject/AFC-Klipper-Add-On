@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Sequence
 
 import pytest
 
@@ -138,10 +138,16 @@ class TestApplyBoxturtleRename:
 
 
 class TestInstallAfcBehavior:
-    def run(self, tmp_path: Path, options: InstallOptions, **ctx_kwargs: object) -> Context:
+    def run(
+        self, tmp_path: Path, options: InstallOptions, prompter_answers: Sequence[str] = (),
+        **ctx_kwargs: object,
+    ) -> Context:
         home = sandbox(tmp_path, Scenario())
         ctx = Context.create(REPO_ROOT, home=home, **ctx_kwargs)  # type: ignore[arg-type]
-        install_afc(ctx, RecordingConsole(), ScriptedPrompter([]), FakeCommandRunner(), options)
+        install_afc(
+            ctx, RecordingConsole(), ScriptedPrompter(prompter_answers), FakeCommandRunner(),
+            options,
+        )
         return ctx
 
     def test_it_is_always_a_first_unit(self, tmp_path: Path) -> None:
@@ -249,6 +255,54 @@ class TestInstallAfcBehavior:
         )
         assert (home / "klipper" / ".git" / "info" / "exclude").read_text() == ""
         assert not [m for m in console.messages if "exclude" in m[1]]
+
+    def test_a_selected_extruder_with_an_existing_section_is_applied(
+        self, tmp_path: Path
+    ) -> None:
+        """extruder1 is already mapped to an [AFC_extruder] section; the unit's own
+        extruder: key must get that section's name, not the printer extruder itself."""
+        sel = UnitSelection(extruder="extruder1")
+        home = sandbox(tmp_path, Scenario())
+        ctx = Context.create(REPO_ROOT, home=home)
+        ctx.afc_config_dir.mkdir(parents=True)
+        (ctx.afc_config_dir / "AFC_Hardware.cfg").write_text(
+            "[AFC_extruder MyExtruder]\nextruder_name: extruder1\n"
+        )
+        install_afc(ctx, RecordingConsole(), ScriptedPrompter([]), FakeCommandRunner(),
+                    InstallOptions(selection=sel))
+        text = (ctx.afc_config_dir / "AFC_Turtle_1.cfg").read_text()
+        assert "extruder: MyExtruder" in text
+        assert "extruder: extruder\n" not in text
+
+    def test_a_selected_extruder_with_no_existing_section_creates_one(
+        self, tmp_path: Path
+    ) -> None:
+        sel = UnitSelection(extruder="extruder1")
+        ctx = self.run(tmp_path, InstallOptions(selection=sel), prompter_answers=[""])
+        unit_text = (ctx.afc_config_dir / "AFC_Turtle_1.cfg").read_text()
+        assert "extruder: extruder1" in unit_text
+        hardware_text = (ctx.afc_config_dir / "AFC_Hardware.cfg").read_text()
+        assert "[AFC_extruder extruder1]" in hardware_text
+        assert "extruder_name: extruder1" in hardware_text
+
+    @pytest.mark.parametrize("itype", TYPES, ids=TYPES)
+    def test_a_selected_extruder_is_applied_for_every_unit_type(
+        self, tmp_path: Path, itype: str
+    ) -> None:
+        """Every registered unit type writes the selected extruder's AFC_extruder
+        section name into its own unit file, not just BoxTurtle."""
+        unit = next(u for u in UNIT_TYPES if u.display_name == itype)
+        sel = UnitSelection(installation_type=itype, unit_name=unit.default_name,
+                            extruder="extruder1")
+        unit.on_select(sel)
+        ctx = self.run(tmp_path, InstallOptions(selection=sel), prompter_answers=["", ""])
+        target = unit.buffer_target(ctx, sel)
+        assert target is not None
+        unit_text = target.extruder_file.read_text()
+        assert "extruder: extruder1" in unit_text
+        hardware_text = (ctx.afc_config_dir / "AFC_Hardware.cfg").read_text()
+        assert "[AFC_extruder extruder1]" in hardware_text
+        assert "extruder_name: extruder1" in hardware_text
 
     def test_a_second_install_over_the_same_tree_keeps_a_single_include_and_prep(
         self, tmp_path: Path

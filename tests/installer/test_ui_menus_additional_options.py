@@ -66,6 +66,7 @@ def build(
     ctx = Context.create(afc_path=tmp_path / "afc", home=tmp_path)
     ctx.afc_config_dir.mkdir(parents=True, exist_ok=True)
     (ctx.afc_config_dir / "AFC_Turtle_1.cfg").write_text("[AFC_stepper lane1]\nname: Turtle_1\n")
+    sel.setdefault("is_additional_unit", True)
     selection = UnitSelection(
         installation_type=itype, additional_buffer_type=buffer, **sel  # type: ignore
     )
@@ -77,6 +78,12 @@ def build(
 def calls(deps: MenuDeps) -> List[str]:
     assert isinstance(deps.actions, FakeActions)
     return deps.actions.calls
+
+
+def write_printer_extruders(ctx: Context, *names: str) -> None:
+    ctx.printer_config_dir.mkdir(parents=True, exist_ok=True)
+    text = "".join(f"[{name}]\n" for name in names)
+    (ctx.printer_config_dir / "printer.cfg").write_text(text)
 
 
 class TestOwnBufferLabel:
@@ -180,6 +187,41 @@ class TestOptionRows:
         assert state.message == "Invalid selection, please try again."
 
 
+class TestExtruderRow:
+    def test_a_single_printer_extruder_shows_no_row(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, [])
+        write_printer_extruders(state.ctx, "extruder")
+        assert not [r for r in row_texts(menu.view()) if "Extruder" in r]
+
+    def test_multiple_extruders_add_a_row_after_the_buffer_row(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, [])
+        write_printer_extruders(state.ctx, "extruder", "extruder1")
+        texts = row_texts(menu.view())
+        assert texts[2:5] == [
+            "1. BoxTurtle Name : Turtle_2",
+            "2. Unit has its own buffer? : Yes: TurtleNeck",
+            "3. Extruder unit will be connected to : extruder",
+        ]
+
+    def test_cycling_wraps_back_to_the_first_extruder(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, ["3"] * 3)
+        write_printer_extruders(state.ctx, "extruder", "extruder1", "extruder2")
+        seen = []
+        for _ in range(3):
+            menu.step()
+            seen.append(state.selection.extruder)
+        assert seen == ["extruder1", "extruder2", "extruder"]
+        assert state.message == "Extruder: extruder"
+
+    def test_a_value_outside_the_list_restarts_at_the_first_extruder(
+        self, tmp_path: Path
+    ) -> None:
+        menu, state, _, _, _ = build(tmp_path, ["3"], extruder="Bogus")
+        write_printer_extruders(state.ctx, "extruder", "extruder1")
+        menu.step()
+        assert state.selection.extruder == "extruder"
+
+
 class TestInstallKey:
     def test_own_buffer_installs_applies_the_buffer_and_returns_to_main(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -190,8 +232,37 @@ class TestInstallKey:
         assert menu.step() == "main"
         assert calls(deps) == ["install_additional"]
         assert rec.calls == [("unit", "TurtleNeck", "True")]
-        assert state.selection.is_additional_unit is False
+        assert state.selection.is_additional_unit is True
         assert state.message == BASE.format(name="Turtle_2") + RESTART
+
+    def test_extruder_sees_is_additional_unit_true_when_buffer_is_supported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: List[str] = []
+
+        def fake_apply_unit_extruder(ctx: Any, console: Any, prompter: Any, sel: Any) -> None:
+            seen.append(str(sel.is_additional_unit))
+
+        monkeypatch.setattr(module, "apply_unit_extruder", fake_apply_unit_extruder)
+        Recorder().install(monkeypatch)
+        menu, state, _, _, _ = build(tmp_path, ["i"])
+        menu.step()
+        assert seen == ["True"]
+        assert state.selection.is_additional_unit is True
+
+    def test_extruder_sees_is_additional_unit_true_when_buffer_is_not_supported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: List[str] = []
+
+        def fake_apply_unit_extruder(ctx: Any, console: Any, prompter: Any, sel: Any) -> None:
+            seen.append(str(sel.is_additional_unit))
+
+        monkeypatch.setattr(module, "apply_unit_extruder", fake_apply_unit_extruder)
+        menu, state, _, _, _ = build(tmp_path, ["i"], itype="ViViD", buffer="None")
+        menu.step()
+        assert seen == ["True"]
+        assert state.selection.is_additional_unit is True
 
     def test_a_shared_buffer_asks_which_one_and_applies_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

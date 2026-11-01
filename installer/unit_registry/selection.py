@@ -29,3 +29,4 @@ class UnitSelection:
     additional_buffer_type: str = "None"
     toolhead_sensor: str = "Ramming"
     toolhead_sensor_pin: str = "Unknown"
+    extruder: str = "extruder"
