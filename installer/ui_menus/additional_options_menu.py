@@ -19,6 +19,7 @@ from installer.unit_registry.buffers import (
     apply_unit_buffer,
     prompt_shared_buffer_name,
 )
+from installer.unit_registry.extruders import apply_unit_extruder, find_printer_extruders
 from installer.unit_registry.options import UnitOption
 from installer.unit_registry.naming import name_in_use_message, verify_name_not_in_use
 from installer.unit_registry.registry import (
@@ -68,6 +69,11 @@ class AdditionalOptionsMenu:
         unit.refresh_additional_name(self._state.ctx, sel)
 
     def _buffer(self) -> Entry:
+        """
+        Build the own-buffer row, cycling through the unit type's buffer options on activate.
+
+        :return Entry: the row
+        """
         sel = self._state.selection
 
         def activate() -> str:
@@ -84,6 +90,24 @@ class AdditionalOptionsMenu:
             activate,
         )
 
+    def _extruder(self, extruders: List[str]) -> Entry:
+        """
+        Build the extruder-selection row, cycling through the printer's extruders on activate.
+
+        :param extruders: printer extruder names to cycle through
+        :return Entry: the row
+        """
+        sel = self._state.selection
+
+        def activate() -> str:
+            position = extruders.index(sel.extruder) + 1 if sel.extruder in extruders else 0
+            sel.extruder = extruders[position % len(extruders)]
+            return f"Extruder: {sel.extruder}"
+
+        return Entry(
+            lambda n: row(f"{n}. Extruder unit will be connected to : {sel.extruder}"), activate
+        )
+
     def _entries(self) -> List[Entry]:
         """
         Build the numbered rows for the current selection.
@@ -96,6 +120,9 @@ class AdditionalOptionsMenu:
         entries = [self._unit_option(option) for option in unit.additional_options()]
         if additional_buffer_supported(sel.installation_type):
             entries.append(self._buffer())
+        extruders = find_printer_extruders(state.ctx)
+        if len(extruders) > 1:
+            entries.append(self._extruder(extruders))
         return entries
 
     def _unit_option(self, option: UnitOption) -> Entry:
@@ -148,15 +175,14 @@ class AdditionalOptionsMenu:
         if supported and sel.additional_buffer_type == "None":
             shared = prompt_shared_buffer_name(ctx, deps.console, deps.prompter)
         deps.actions.install_additional(state)
+        apply_unit_extruder(ctx, deps.console, deps.prompter, sel)
         if supported:
-            sel.is_additional_unit = True
             if sel.additional_buffer_type != "None":
                 apply_unit_buffer(
                     ctx, deps.console, deps.prompter, sel, sel.additional_buffer_type
                 )
             elif shared:
                 apply_shared_buffer(ctx, deps.console, sel, shared)
-            sel.is_additional_unit = False
         message = (
             f"{sel.unit_name} created successfully, please look over config file and update "
             "lane numbers.\n"

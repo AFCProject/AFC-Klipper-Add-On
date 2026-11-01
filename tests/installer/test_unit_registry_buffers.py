@@ -339,11 +339,11 @@ class TestApplyUnitBuffer:
 
     def test_a_type_without_a_target_warns_and_skips(self, printer_tree: PrinterTree) -> None:
         console = RecordingConsole()
-        sel = UnitSelection(installation_type="ViViD")
+        sel = UnitSelection(installation_type="Not Registered")
         apply_unit_buffer(make_ctx(printer_tree), console, ScriptedPrompter([]), sel, "FPS_PSF")
         assert console.messages == [
             ("WARNING", "PSF buffer selected but no unit target is known for installation "
-                        "type 'ViViD'; skipping.")
+                        "type 'Not Registered'; skipping.")
         ]
 
     @pytest.mark.parametrize("buffer", ["TurtleNeck", "TurtleNeckV2", "FPS_PSF"])
@@ -389,10 +389,11 @@ class TestApplySharedBuffer:
 
     def test_a_type_without_a_target_warns_and_skips(self, printer_tree: PrinterTree) -> None:
         console = RecordingConsole()
-        sel = UnitSelection(installation_type="ViViD")
+        sel = UnitSelection(installation_type="Not Registered")
         apply_shared_buffer(make_ctx(printer_tree), console, sel, "Shared")
         assert console.messages == [
-            ("WARNING", "No unit target is known for installation type 'ViViD'; skipping.")
+            ("WARNING",
+             "No unit target is known for installation type 'Not Registered'; skipping.")
         ]
 
 

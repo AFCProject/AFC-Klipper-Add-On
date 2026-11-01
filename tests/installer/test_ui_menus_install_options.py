@@ -41,6 +41,12 @@ def calls(deps: MenuDeps) -> List[str]:
     return deps.actions.calls
 
 
+def write_printer_extruders(ctx: Context, *names: str) -> None:
+    ctx.printer_config_dir.mkdir(parents=True, exist_ok=True)
+    text = "".join(f"[{name}]\n" for name in names)
+    (ctx.printer_config_dir / "printer.cfg").write_text(text)
+
+
 class TestView:
     def test_a_boxturtle_with_ramming_and_no_buffer(self, tmp_path: Path) -> None:
         menu, _, _, _, _ = build(tmp_path, [])
@@ -192,6 +198,51 @@ class TestBufferRow:
             seen.append(state.selection.buffer_type)
         assert seen == ["TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF"]
         assert state.message == "Buffer Type: Proportional Sync-Feedback(PSF)"
+
+
+class TestExtruderRow:
+    def test_a_single_printer_extruder_shows_no_row(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, [])
+        write_printer_extruders(state.ctx, "extruder")
+        assert not [r for r in row_texts(menu.view()) if "Extruder" in r]
+
+    def test_no_printer_cfg_shows_no_row(self, tmp_path: Path) -> None:
+        menu, _, _, _, _ = build(tmp_path, [])
+        assert not [r for r in row_texts(menu.view()) if "Extruder" in r]
+
+    def test_multiple_extruders_add_a_row_after_the_unit_options(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, [])
+        write_printer_extruders(state.ctx, "extruder", "extruder1")
+        texts = row_texts(menu.view())
+        assert texts[-len(FOOTER) - 1] == "13. Extruder unit will be connected to : extruder"
+
+    def test_cycling_wraps_back_to_the_first_extruder(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, ["13"] * 3)
+        write_printer_extruders(state.ctx, "extruder", "extruder1", "extruder2")
+        seen = []
+        for _ in range(3):
+            menu.step()
+            seen.append(state.selection.extruder)
+        assert seen == ["extruder1", "extruder2", "extruder"]
+        assert state.message == "Extruder: extruder"
+
+    def test_a_value_outside_the_list_restarts_at_the_first_extruder(
+        self, tmp_path: Path
+    ) -> None:
+        menu, state, _, _, _ = build(tmp_path, ["13"], extruder="Bogus")
+        write_printer_extruders(state.ctx, "extruder", "extruder1")
+        menu.step()
+        assert state.selection.extruder == "extruder"
+
+    def test_the_pin_row_still_comes_last_with_an_extruder_row_present(
+        self, tmp_path: Path
+    ) -> None:
+        menu, state, _, _, _ = build(tmp_path, [], sensor="Sensor", buffer="None")
+        write_printer_extruders(state.ctx, "extruder", "extruder1")
+        texts = row_texts(menu.view())
+        assert texts[-len(FOOTER) - 2:-len(FOOTER)] == [
+            "13. Extruder unit will be connected to : extruder",
+            "14. Toolhead sensor pin : Unknown"]
 
 
 class TestUnitOptionRows:

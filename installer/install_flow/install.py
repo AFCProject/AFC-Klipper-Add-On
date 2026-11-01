@@ -35,6 +35,7 @@ from installer.platform_core.klipper_links import exclude_from_klipper_git, link
 from installer.platform_core.toggles import TOGGLES, default_toggles
 from installer.platform_core.system import CommandRunner, restart_service, u1_write_debug_file
 from installer.unit_registry.buffers import apply_unit_buffer
+from installer.unit_registry.extruders import apply_unit_extruder
 from installer.unit_registry.registry import unit_for
 from installer.unit_registry.selection import UnitSelection
 
@@ -51,7 +52,7 @@ class InstallOptions:
 
 def apply_boxturtle_rename(ctx: Context, sel: UnitSelection) -> None:
     """
-    Rewrite the template name ``Turtle_1`` everywhere if a BoxTurtle got another name.
+    Rewrite the template name `Turtle_1` everywhere if a BoxTurtle got another name.
 
     This is deliberately directory wide: the first unit's name can appear in shared files.
     Other unit types rename themselves while their files are copied.
@@ -132,10 +133,10 @@ def install_afc(
     """
     Install the first unit: copy configs, link extensions and apply every selected option.
 
-    On a Snapmaker U1 it also keeps ``.lite`` backups of Klipper's originals, uses the U1
-    config, comments out fluidd's ``T<n>`` macros and writes ``/oem/.debug``.
+    On a Snapmaker U1 it also keeps `.lite` backups of Klipper's originals, uses the U1
+    config, comments out fluidd's `T<n>` macros and writes `/oem/.debug`.
 
-    :param ctx: installer context, ``files_updated_or_installed`` is set
+    :param ctx: installer context, `files_updated_or_installed` is set
     :param console: where messages go
     :param prompter: used for overwrite and pin prompts
     :param runner: command runner (restarting Moonraker)
@@ -160,6 +161,7 @@ def install_afc(
         copy_config(ctx, console, prompter)
     link_extensions(ctx)
     unit.copy_files(ctx, console, prompter, sel)
+    apply_unit_extruder(ctx, console, prompter, sel)
     hardware = ctx.afc_config_dir / "AFC_Hardware.cfg"
     if not options.toggles["tip_cut_servo"]:
         remove_tip_cut_servo_section(hardware)

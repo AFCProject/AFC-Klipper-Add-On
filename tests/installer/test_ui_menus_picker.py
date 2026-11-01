@@ -18,16 +18,16 @@ from tests.installer.test_ui_menus_basic import FakeActions, fake_deps, row_text
 NAMES = [unit.display_name for unit in UNIT_TYPES]
 
 
-def make_state(tmp_path: Path, first_unit: bool = True, **sel: str) -> MenuState:
+def make_state(tmp_path: Path, first_unit: bool = True, **sel: object) -> MenuState:
     ctx = Context.create(afc_path=tmp_path / "afc", home=tmp_path)
     if first_unit:
         ctx.afc_config_dir.mkdir(parents=True, exist_ok=True)
         (ctx.afc_config_dir / "AFC_Turtle_1.cfg").write_text("[AFC_stepper lane1]\n")
-    return MenuState(ctx=ctx, selection=UnitSelection(**sel))
+    return MenuState(ctx=ctx, selection=UnitSelection(**sel))  # type: ignore[arg-type]
 
 
 def build(
-    tmp_path: Path, mode: str, answers: Sequence[str], first_unit: bool = True, **sel: str
+    tmp_path: Path, mode: str, answers: Sequence[str], first_unit: bool = True, **sel: object
 ) -> Tuple[UnitTypeMenu, MenuState, MenuDeps, RecordingConsole, ScriptedPrompter]:
     state = make_state(tmp_path, first_unit, **sel)
     deps, console, prompter = fake_deps(answers)
@@ -99,12 +99,22 @@ class TestStepInstall:
         menu, state, _, _, _ = build(tmp_path, INSTALL, ["1"], first_unit=False)
         assert menu.step() == "install_options"
 
+    def test_choosing_a_type_clears_is_additional_unit(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, INSTALL, ["1"], is_additional_unit=True)
+        menu.step()
+        assert state.selection.is_additional_unit is False
+
 
 class TestStepAdditional:
     def test_choosing_a_type_opens_the_additional_options(self, tmp_path: Path) -> None:
         menu, state, _, _, _ = build(tmp_path, ADDITIONAL, ["4"])
         assert menu.step() == "additional_options"
         assert state.selection.installation_type == NAMES[3]
+
+    def test_choosing_a_type_sets_is_additional_unit(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, ADDITIONAL, ["4"])
+        menu.step()
+        assert state.selection.is_additional_unit is True
 
     def test_a_buffer_the_type_supports_is_kept(self, tmp_path: Path) -> None:
         menu, state, _, _, _ = build(tmp_path, ADDITIONAL, ["1"], buffer_type="TurtleNeckV2")

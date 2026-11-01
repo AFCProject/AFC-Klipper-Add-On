@@ -16,6 +16,7 @@ from installer.ui_menus.entries import Entry, buffer_label, require_unit
 from installer.ui_menus.navigation import MenuDeps, read_choice
 from installer.ui_menus.state import INSTALLED_NOTE, MenuState
 from installer.ui_menus.view import INSTALL_OPTIONS_BOX, MenuView, Row, row
+from installer.unit_registry.extruders import find_printer_extruders
 from installer.unit_registry.options import UnitOption
 
 _PIN_PROMPT = "Enter toolhead sensor pin (Example: nhk:gpio13): "
@@ -88,6 +89,18 @@ class InstallOptionsMenu:
 
         return Entry(draw, activate)
 
+    def _extruder(self, extruders: List[str]) -> Entry:
+        sel = self._state.selection
+
+        def activate() -> str:
+            position = extruders.index(sel.extruder) + 1 if sel.extruder in extruders else 0
+            sel.extruder = extruders[position % len(extruders)]
+            return f"Extruder: {sel.extruder}"
+
+        return Entry(
+            lambda n: row(f"{n}. Extruder unit will be connected to : {sel.extruder}"), activate
+        )
+
     def _pin(self) -> Entry:
         sel = self._state.selection
 
@@ -131,6 +144,9 @@ class InstallOptionsMenu:
         if unit.buffer_selectable:
             entries.append(self._buffer())
         entries += [self._unit_option(option) for option in unit.install_options()]
+        extruders = find_printer_extruders(state.ctx)
+        if len(extruders) > 1:
+            entries.append(self._extruder(extruders))
         if sel.toolhead_sensor == "Sensor":
             entries.append(self._pin())
         return entries
