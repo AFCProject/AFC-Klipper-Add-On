@@ -1033,7 +1033,8 @@ class afcFunction:
         calibrated = []
         additional_msg = []
         calibrate_lanes: list[AFCLane] = []
-        checked: bool = False
+        # True by default: skipping a lane is not a failure.
+        checked: bool = True
         self.logger.info('Starting AFC distance Calibrations')
 
         # When a single lane is specified regardless if UNIT is specified or not

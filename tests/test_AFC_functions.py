@@ -2597,6 +2597,113 @@ class TestTcmdAssign:
 
 # ── end TcmdAssign ─────────────────────────────────────────────────────────────
 
+class TestLaneCalibration:
+    """Covers afcFunction._lane_calibration directly.
+
+    Regression coverage for AFCProject/AFC-Klipper-Add-On#883 review comment:
+    a lane that is merely skipped (standalone, not loaded, or no lane/unit
+    matched at all) must not be reported as a calibration failure, since the
+    caller (cmd_CALIBRATE_AFC) treats checked=False as "a fail prompt was
+    already shown, stop here" and aborts any requested Bowden/TD-1
+    calibration on that signal alone.
+    """
+
+    def _make_func_and_lane(self, standalone=False, load_state=True, prep_state=True):
+        func = _make_func()
+        func._afc_cali_fail = MagicMock()
+        afc = _make_afc()
+        afc.error = MagicMock()
+        lane = _make_afc_lane()
+        lane.is_direct_hub = MagicMock()
+        lane.hub_obj = MagicMock()
+        lane.hub_obj.is_virtual_pin = MagicMock(return_value=False)
+        lane.extruder_obj.is_standalone = MagicMock(return_value=standalone)
+        lane._load_state = load_state
+        lane.prep_state = prep_state
+        afc.lanes[lane.name] = lane
+        func.afc = afc
+        return func, lane
+
+    def test_lane_not_found_returns_checked_true_with_empty_results(self):
+        """No lane/unit matched the request at all; nothing failed."""
+        func, lane = self._make_func_and_lane()
+
+        result = func._lane_calibration("does_not_exist", None, 5, 25)
+
+        assert result == (True, [], [])
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", "Lane calibration Done!"),
+        ]
+        func._afc_cali_fail.assert_not_called()
+
+    def test_standalone_lane_is_skipped_and_returns_checked_true(self):
+        func, lane = self._make_func_and_lane(standalone=True)
+
+        result = func._lane_calibration(lane.name, None, 5, 25)
+
+        assert result == (True, [], [])
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", f"{lane.name} is a standalone lane, skipping calibration"),
+            ("info", "Lane calibration Done!"),
+        ]
+        func._afc_cali_fail.assert_not_called()
+        lane.is_direct_hub.assert_not_called()
+
+    def test_lane_not_loaded_is_skipped_and_returns_checked_true(self):
+        func, lane = self._make_func_and_lane(load_state=False, prep_state=True)
+
+        result = func._lane_calibration(lane.name, None, 5, 25)
+
+        assert result == (True, [], [])
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", f"{lane.name} not loaded skipping to next loaded lane"),
+            ("info", "Lane calibration Done!"),
+        ]
+        func._afc_cali_fail.assert_not_called()
+        lane.is_direct_hub.assert_not_called()
+
+    def test_lane_not_prepped_is_skipped_and_returns_checked_true(self):
+        """prep_state alone (load_state True) must also trigger the skip,
+        independent of load_state."""
+        func, lane = self._make_func_and_lane(load_state=True, prep_state=False)
+
+        result = func._lane_calibration(lane.name, None, 5, 25)
+
+        assert result == (True, [], [])
+        lane.is_direct_hub.assert_not_called()
+
+    def test_lane_calibration_failure_returns_checked_false(self):
+        func, lane = self._make_func_and_lane()
+        lane.is_direct_hub.return_value = False
+        lane.unit_obj.calibrate_lane = MagicMock(return_value=(False, "bad reading", 12))
+        lane.hub_obj.state = True
+
+        result = func._lane_calibration(lane.name, None, 5, 25)
+
+        assert result == (False, [], [])
+        func.afc.error.AFC_error.assert_called_once_with("bad reading", False)
+        func._afc_cali_fail.assert_called_once_with(
+            cali=lane.name, dis=12, reset_lane=True, fail_message="bad reading")
+
+    def test_lane_calibration_success_returns_checked_true_with_calibrated_lane(self):
+        func, lane = self._make_func_and_lane()
+        lane.is_direct_hub.return_value = False
+        lane.unit_obj.calibrate_lane = MagicMock(return_value=(True, "ok", 0))
+
+        result = func._lane_calibration(lane.name, None, 5, 25)
+
+        assert result == (True, [lane.name], [])
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", "Lane calibration Done!"),
+        ]
+        func._afc_cali_fail.assert_not_called()
+
+# ── end _lane_calibration ─────────────────────────────────────────────────────
+
 class TestCalibrateAFC:
     # ------------------------------------------------------------------
     # Fixtures / builders
@@ -2874,6 +2981,28 @@ class TestCalibrateAFC:
         self._assert_lane_calibration_called(func, lane_name)
         self._assert_calibrate_td1_not_called(lane)
         func._afc_cali_comp.assert_not_called()
+
+    def test_calibration_lane_merely_skipped_still_runs_requested_bowden(self):
+        """Regression coverage for the review comment on AFCProject/AFC-Klipper-Add-On#883:
+        unlike the checked=False tests above, a LANE that is simply unloaded (not a
+        calibration failure) must not abort the requested BOWDEN calibration. This exercises
+        the real _lane_calibration (not mocked), since the bug was in that method returning
+        checked=False for a skip with no failure ever reported."""
+        func, afc, lane1 = self._setup_calibration()
+        lane2 = _make_afc_lane("AFC_stepper lane2")
+        lane2.extruder_obj.is_standalone = MagicMock(return_value=False)
+        lane2._load_state = False
+        lane2.prep_state = False
+        afc.lanes[lane2.name] = lane2
+        del func._lane_calibration  # use the real method instead of the mock from _setup_calibration
+        gcmd = self._make_gcmd_for_calibration(lane=lane2.name, bowden=lane1.name)
+        self._set_calibrate_bowden_result(lane1, (True, "afc_bowden_length successful", 1000))
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        self._assert_calibrate_bowden_called(lane1)
+        func._afc_cali_comp.assert_called_once_with(
+            "Bowden_length: lane1", "AFC Calibration", "")
 
     def test_calibration_all_lanes_valid_success(self):
         func, afc, lane = self._setup_calibration()
