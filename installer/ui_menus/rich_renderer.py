@@ -55,7 +55,8 @@ def make_rich_console(rich: Any, **kwargs: Any) -> Any:
     :return Any: the Console
     """
     console = rich.Console(**kwargs)
-    if console.color_system == "standard":
+    if ("color_system" not in kwargs
+        and console.color_system == "standard"):
         console = rich.Console(**kwargs, color_system="256")
     return console
 

@@ -139,6 +139,22 @@ class TestMakeRichConsole:
         console = make_rich_console(rich, file=io.StringIO(), force_terminal=True)
         assert console.color_system is None
 
+    def test_an_explicit_standard_color_system_is_kept(
+        self, rich: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._env(monkeypatch, "xterm-ghostty")
+        console = make_rich_console(rich, file=io.StringIO(), force_terminal=True,
+                                    color_system="standard")
+        assert console.color_system == "standard"
+
+    def test_an_explicit_auto_color_system_is_not_overridden(
+        self, rich: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._env(monkeypatch, "xterm-ghostty")
+        console = make_rich_console(rich, file=io.StringIO(), force_terminal=True,
+                                    color_system="auto")
+        assert console.color_system == "standard"
+
     def test_the_renderer_builds_its_console_this_way(
         self, rich: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
