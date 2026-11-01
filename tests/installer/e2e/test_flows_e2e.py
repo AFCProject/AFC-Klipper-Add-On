@@ -143,8 +143,8 @@ class TestAdditionalUnit:
         assert f"{CONFIG}/AFC/AFC_Turtle_1.cfg" in result.tree
 
     def test_a_shared_buffer_points_the_new_unit_at_an_existing_one(self, tmp_path: Path) -> None:
-        # option 2 is "own buffer?": None is four presses away from TurtleNeck
-        result = additional(tmp_path, ["1", "2", "2", "2", "2", "I", "1"])
+        # option 2 is "own buffer?": None is five presses away from TurtleNeck
+        result = additional(tmp_path, ["1", "2", "2", "2", "2", "2", "I", "1"])
         assert "is set to share the existing buffer" in result.stdout
 
     def test_without_a_first_unit_it_refuses(self, tmp_path: Path) -> None:

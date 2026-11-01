@@ -290,7 +290,8 @@ class TestCycleBuffer:
         [
             ("Ramming", "TurtleNeck", "TurtleNeckV2"),
             ("Ramming", "TurtleNeckV2", "TurtleNeck2Remastered"),
-            ("Ramming", "TurtleNeck2Remastered", "FPS_PSF"),
+            ("Ramming", "TurtleNeck2Remastered", "Compensator"),
+            ("Ramming", "Compensator", "FPS_PSF"),
             ("Ramming", "FPS_PSF", "TurtleNeck"),
             ("Sensor", "FPS_PSF", "None"),
             ("Sensor", "None", "TurtleNeck"),
