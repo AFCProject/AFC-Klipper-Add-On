@@ -347,3 +347,247 @@ class TestCalibrateBowdenU1Sensor:
         unit.calibrate_bowden(lane, dis=1, tol=1)
 
         lane.move_to.assert_not_called()
+
+
+class TestCalibrateBowdenBufferExtended:
+    """Regression coverage for AFCProject/AFC-Klipper-Add-On#742: an already
+    extended buffer made the toolhead-confirm loop exit immediately with
+    bow_pos=0, which then surfaced as the unrelated, confusing
+    "Failed to home filament back to hub" message instead of a clear one."""
+
+    def test_buffer_already_extended_returns_before_entering_retry_loop(self):
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = TestCalibrateBowdenNegativeDistance()._make_lane_for_calibration()
+        lane.extruder_obj.tool_start = "buffer"
+        lane.buffer_obj = MagicMock()
+        lane.buffer_obj.name = "TN1"
+        lane.buffer_obj.advance_state = True
+        unit.calc_position = MagicMock(return_value=(0, "retract to extruder", True))
+
+        success, message, pos = unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        msg = "TN1 buffer is already extended, please check buffer sensors and rerun calibration"
+
+        assert success is False
+        assert message == msg
+        assert pos == 0
+        lane.move_to.assert_not_called()
+
+    def test_buffer_not_extended_enters_the_retry_loop(self):
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = TestCalibrateBowdenNegativeDistance()._make_lane_for_calibration()
+        lane.extruder_obj.tool_start = "buffer"
+        lane.buffer_obj = MagicMock()
+        lane.buffer_obj.name = "TN1"
+        lane.buffer_obj.advance_state = False
+        unit.calc_position = MagicMock(return_value=(10, "retract from toolhead sensor", True))
+
+        unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        lane.move_to.assert_called()
+
+    def test_extended_buffer_state_ignored_when_tool_start_is_not_buffer(self):
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = TestCalibrateBowdenNegativeDistance()._make_lane_for_calibration()
+        lane.extruder_obj.tool_start = "toolhead"
+        lane.buffer_obj = MagicMock()
+        lane.buffer_obj.advance_state = True
+        unit.calc_position = MagicMock(return_value=(10, "retract from toolhead sensor", True))
+
+        unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        lane.move_to.assert_called()
+
+
+class TestCalibrateBowdenFaultDistance:
+    """Regression coverage: reaching fault_dis inside the toolhead-confirm
+    retry loop must not fault when the move that reached it also homed
+    successfully and the toolhead sensor is now triggered, since that is a
+    successful calibration rather than a real failure to reach the sensor."""
+
+    def _make_lane_for_fault_dis(self, dist_hub=900):
+        lane = TestCalibrateBowdenNegativeDistance()._make_lane_for_calibration(dist_hub=dist_hub)
+        lane.extruder_obj.tool_start = "toolhead"
+        return lane
+
+    def test_homed_and_sensor_triggered_succeeds_despite_reaching_fault_dis(self):
+        from extras.AFC_lane import AFCMoveWarning
+
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = True
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = self._make_lane_for_fault_dis(dist_hub=900)
+        # fault_dis = dist_hub + 500 = 1400; a single homed move reaches it exactly.
+        lane.move_to.return_value = (True, 1400, AFCMoveWarning.NONE)
+        lane.get_toolhead_pre_sensor_state.side_effect = [False, True]
+
+        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        assert success is True
+        assert message == "dist_hub successful"
+        assert bowden_dist == 1400
+
+    def test_homed_but_sensor_not_triggered_faults_at_fault_dis(self):
+        from extras.AFC_lane import AFCMoveWarning
+
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = True
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = self._make_lane_for_fault_dis(dist_hub=900)
+        lane.move_to.return_value = (True, 1400, AFCMoveWarning.NONE)
+        lane.get_toolhead_pre_sensor_state.side_effect = [False, False]
+
+        success, message, bow_pos = unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        assert success is False
+        assert "while moving to toolhead" in message
+        assert bow_pos == 1400
+
+    def test_homing_never_occurred_faults_at_fault_dis_even_if_sensor_would_read_true(self):
+        from extras.AFC_lane import AFCMoveWarning
+
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = True
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = self._make_lane_for_fault_dis(dist_hub=900)
+        lane.move_to.return_value = (False, 1400, AFCMoveWarning.NONE)
+        # Second value would report "triggered" if it were ever read, proving
+        # the fault fires purely off homed being False, via the `and` short-circuit.
+        lane.get_toolhead_pre_sensor_state.side_effect = [False, True]
+
+        success, message, bow_pos = unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        assert success is False
+        assert "while moving to toolhead" in message
+        assert bow_pos == 1400
+        assert lane.get_toolhead_pre_sensor_state.call_count == 1
+
+    def test_homed_within_overshoot_past_fault_dis_still_succeeds(self):
+        """A homed move can legitimately land past fault_dis by up to
+        homing_overshoot and still be a real successful load: dist_hub=1092
+        gives fault_dis=1592, and a homed distance of 1600 is still within
+        dist_hub + 500 + homing_overshoot(50) = 1642."""
+        from extras.AFC_lane import AFCMoveWarning
+
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = True
+        unit.afc.error = MagicMock()
+        unit.afc.function = MagicMock()
+
+        lane = self._make_lane_for_fault_dis(dist_hub=1092)
+        lane.move_to.return_value = (True, 1600, AFCMoveWarning.NONE)
+        lane.get_toolhead_pre_sensor_state.side_effect = [False, True]
+
+        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1)
+
+        assert success is True
+        assert message == "dist_hub successful"
+        assert bowden_dist == 1600
+
+
+class TestCalibrateTd1:
+    """Regression coverage for AFCProject/AFC-Klipper-Add-On#799: a failed
+    move_to_hub/move_to_load result was ignored, letting calibrate_td1 reset
+    position, rewrite config, and report success after a failed move."""
+
+    def _make_lane_for_td1(self, is_direct_dist, dist_hub=900):
+        lane = MagicMock()
+        lane.name = "lane1"
+        lane.fullname = "AFC_stepper lane1"
+        lane.td1_device_id = "SN1"
+        lane.dist_hub = dist_hub
+        lane.short_move_dis = 10
+        lane.short_moves_speed = 50
+        lane.short_moves_accel = 100
+        lane.td1_bowden_length = 0
+        lane.is_direct_dist.return_value = is_direct_dist
+        lane.is_direct_hub.return_value = True
+        lane.hub_obj.afc_bowden_length = dist_hub
+        lane.hub_obj.fullname = "AFC_hub hub1"
+        return lane
+
+    def _make_unit_for_td1(self):
+        unit = _make_box_turtle()
+        unit.afc.homing_enabled = False
+        unit.afc.function = MagicMock()
+        unit.afc.function.check_for_td1_id.return_value = (True, "")
+        unit.get_td1_data = MagicMock(return_value=True)
+        return unit
+
+    def test_move_to_hub_failure_returns_early_and_disables_lane(self):
+        unit = self._make_unit_for_td1()
+        lane = self._make_lane_for_td1(is_direct_dist=False)
+        lane.unit_obj.move_to_hub.return_value = (False, 0, None)
+
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+
+        assert success is False
+        assert message == "Failed to home filament back to hub"
+        assert pos == 0
+        lane.do_enable.assert_called_with(False)
+        unit.afc.function.ConfigRewrite.assert_not_called()
+
+    def test_move_to_load_failure_returns_early_and_disables_lane(self):
+        unit = self._make_unit_for_td1()
+        lane = self._make_lane_for_td1(is_direct_dist=True)
+        lane.unit_obj.move_to_load.return_value = (False, 0, None)
+
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+
+        assert success is False
+        assert message == "Failed to home filament back to hub"
+        assert pos == 0
+        lane.do_enable.assert_called_with(False)
+        unit.afc.function.ConfigRewrite.assert_not_called()
+
+    def test_move_to_hub_success_continues_to_completion(self):
+        unit = self._make_unit_for_td1()
+        unit.calc_position = MagicMock(return_value=(0, "Moving to hub", True))
+        lane = self._make_lane_for_td1(is_direct_dist=False)
+        # is_direct_hub=False so `checkpoint` is assigned via move_until_state before
+        # the post-move "Reset to hub" calc_position call reads it.
+        lane.is_direct_hub.return_value = False
+        unit.move_until_state = MagicMock(return_value=(0, "Moving to hub", True))
+        lane.unit_obj.move_to_hub.return_value = (True, 0, None)
+
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+
+        assert success is True
+        assert message == "td1_bowden_length calibration successful"
+        unit.afc.function.ConfigRewrite.assert_called_once_with(
+            lane.hub_obj.fullname, "td1_bowden_length", pos,
+            f"\n td1_bowden_length: New: {pos} Old: 0"
+        )
+
+    def test_move_to_load_success_continues_to_completion(self):
+        unit = self._make_unit_for_td1()
+        lane = self._make_lane_for_td1(is_direct_dist=True)
+        lane.unit_obj.move_to_load.return_value = (True, 0, None)
+
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+
+        assert success is True
+        assert message == "td1_bowden_length calibration successful"
+        assert lane.td1_bowden_length == pos
+        unit.afc.function.ConfigRewrite.assert_called_once_with(
+            lane.fullname, "td1_bowden_length", pos,
+            f"\n td1_bowden_length: New: {pos} Old: 0"
+        )

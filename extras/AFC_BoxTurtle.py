@@ -154,6 +154,20 @@ class afcBoxTurtle(afcUnit):
         return succeeded
 
     def calibrate_bowden(self, cur_lane, dis, tol):
+        """
+        Calibration function for automatically determining afc_bowden_length or dist_hub when
+        calibration lane is setup in direct mode.
+
+        :param cur_lane: Lane to use for calibration
+        :param dis: Distance step to move when calibrating
+        :param tol: Tolerance for fine adjustments during calibration, only used when moving
+                    filament to hub
+
+        :return success,message,length: Returns tuple, when successful returns True, message,
+                                        and the calibrated length. When error occurs, returns
+                                        False, message, and length of current bowden before
+                                        error occurred
+        """
         cur_extruder = cur_lane.extruder_obj
         cur_hub = cur_lane.hub_obj
         if cur_lane.is_direct_hub():
@@ -213,6 +227,11 @@ class afcBoxTurtle(afcUnit):
         if (cur_extruder.tool_start
             or cur_extruder.fila_tool_start is not None):
             # if tool_start is defined move and confirm distance
+            if (cur_extruder.tool_start == 'buffer'
+                and cur_lane.buffer_obj.advance_state):
+                msg = f"{cur_lane.buffer_obj.name} buffer is already extended, please check buffer "
+                msg += "sensors and rerun calibration"
+                return False, msg, 0
             while not cur_lane.get_toolhead_pre_sensor_state():
                 if self.afc.homing_enabled:
                     dis = fault_dis
@@ -227,6 +246,11 @@ class afcBoxTurtle(afcUnit):
                 bow_pos += distance
                 self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.1)
                 if bow_pos >= fault_dis:
+                    if (homed
+                        and cur_lane.get_toolhead_pre_sensor_state()):
+                        # homing succeeded and the toolhead sensor is triggered, bow_pos just
+                        # happened to reach fault_dis on the same move that found it
+                        break
                     # fault if move to bowden length does not reach toolhead sensor return to calibration macro
                     msg = 'while moving to toolhead. Failed after {}mm, '.format(bow_pos)
                     msg += 'if filament stopped short of the toolhead sensor/ramming during calibration'
@@ -378,6 +402,11 @@ class afcBoxTurtle(afcUnit):
             success, _, _ = cur_lane.unit_obj.move_to_load(cur_lane, bow_pos,
                                                            MoveDirection.NEG,
                                                            self.afc.homing_enabled)
+
+        if not success:
+            msg = "Failed to home filament back to hub"
+            cur_lane.do_enable(False)
+            return False, msg, bow_pos
 
         if (not self.afc.homing_enabled
             and not is_direct_dist):

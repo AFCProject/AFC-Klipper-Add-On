@@ -1033,7 +1033,8 @@ class afcFunction:
         calibrated = []
         additional_msg = []
         calibrate_lanes: list[AFCLane] = []
-        checked: bool = False
+        # True by default: skipping a lane is not a failure.
+        checked: bool = True
         self.logger.info('Starting AFC distance Calibrations')
 
         # When a single lane is specified regardless if UNIT is specified or not
@@ -2288,6 +2289,10 @@ class afcFunction:
         try:
             if lanes is not None:
                 checked, calibrated, additional_msg = self._lane_calibration(lanes, unit, tol, dis)
+                if not checked:
+                    # _lane_calibration already popped its own fail prompt; stop here
+                    # instead of running Bowden/TD-1 against a lane that just failed.
+                    return
             else:
                 self.logger.info('No lanes selected to calibrate dist_hub')
 
@@ -2301,6 +2306,7 @@ class afcFunction:
                 if failed_check:
                     additional_msg.append(msg)
                     self.afc.error.AFC_error(msg, pause=False)
+                    checked = False
                     return
 
                 # Need to select the tool first before calibrating for Snapmaker printers. This requires
@@ -2314,6 +2320,7 @@ class afcFunction:
                         error_msg = ("Printer needs to be homed before calibrating PTFE length "
                                     "to toolhead")
                         if not self.check_homed(error_msg):
+                            checked = False
                             return
                         self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
                         snapmaker_tool_selected = True
@@ -2324,6 +2331,7 @@ class afcFunction:
                                 f"Failed to select tool '{cur_lane.extruder_obj.name}' before Bowden calibration",
                                 pause=False,
                             )
+                            checked = False
                             return
                         if self.afc.park_pre_load_cmd:
                             self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
@@ -2335,7 +2343,9 @@ class afcFunction:
                         msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
                         self.afc.error.AFC_error(msg, pause=False)
 
-                        self._afc_cali_fail(cali=cur_lane.name, dis=abs(pos), reset_lane=(pos!=0),
+                        reset_dis = abs(pos) if pos != 0 else None
+                        self._afc_cali_fail(cali=cur_lane.name, dis=reset_dis,
+                                            reset_lane=cur_lane.hub_obj.state,
                                             title="AFC Bowden Calibration Failed", fail_message=msg)
                         return
                     else: calibrated.append('Bowden_length: {}'.format(afc_bl))
@@ -2359,11 +2369,13 @@ class afcFunction:
                     msg = f"{td1_lane.name} loaded to toolhead, unload from toolhead before "
                     msg += "trying to calibrate td1_bowden_length."
                     self.afc.error.AFC_error(msg, pause=False)
+                    checked = False
                     return
                 if td1_lane.hub_obj.state:
                     msg = f"{td1_lane.hub_obj.name} hub is triggered, make sure hub is clear before trying to calibrate TD-1 bowden length"
                     self.afc.error.AFC_error(msg, pause=False)
                     self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE=0 msg='{msg}' RESET=0")
+                    checked = False
                     return
 
                 checked, msg, pos = td1_lane.unit_obj.calibrate_td1( td1_lane, dis, tol)
