@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Tuple
 import pytest
 
 from extras.AFC_ACE import afcACE
+from extras.temperature_afc import TemperatureAFC
 from extras.temperature_ace import (
     ACE_STALE_AFTER,
     _register_sensor_factory,
@@ -89,6 +90,23 @@ class TestTemperatureACEInit:
     def test_unknown_channel_is_a_config_error(self):
         with pytest.raises(configparser.Error):
             self.build({"channel": "ptc3"})
+
+    def test_reads_afc_type_option(self):
+        """afc_type must actually be read (not just accepted as a config
+        value), so Klipper's own "unused option" check doesn't flag it when a
+        section sets it for temperature_afc's benefit (sensor_type: aht2x)
+        but sensor_type is temperature_ace directly."""
+        printer = make_ace_printer()
+        config = AceConfig("temperature_sensor ace_temp", printer, {"afc_type": "ACE"})
+        get_hook = config.get = Hook(config.get)
+
+        TemperatureACE(config)
+
+        assert get_hook.calls == [
+            (("ace_unit", "Ace1"), {}),
+            (("afc_type", None), {}),
+            (("channel", "default"), {}),
+        ]
 
     def test_simulate_aht3x_true_registers_aht10_object(self):
         sensor, printer, added, fallback = self.build()
@@ -680,9 +698,9 @@ class TestLoadConfig:
         with capture_log("temperature_ace") as fallback:
             load_config(AceConfig("temperature_ace", printer))
         assert add.calls == [(("temperature_ace", TemperatureACE), {}),
-                             (("aht2x", TemperatureACE), {})]
+                             (("aht2x", TemperatureAFC), {})]
         assert printer.heaters.factories == {"temperature_ace": TemperatureACE,
-                                             "aht2x": TemperatureACE}
+                                             "aht2x": TemperatureAFC}
         assert printer.heaters._temperature_ace_registered is True
         assert fallback.messages == []
 
@@ -694,9 +712,9 @@ class TestRegisterSensorFactory:
         with capture_log("temperature_ace") as fallback:
             _register_sensor_factory(AceConfig("temperature_ace", printer))
         assert add.calls == [(("temperature_ace", TemperatureACE), {}),
-                             (("aht2x", TemperatureACE), {})]
+                             (("aht2x", TemperatureAFC), {})]
         assert printer.heaters.factories == {"temperature_ace": TemperatureACE,
-                                             "aht2x": TemperatureACE}
+                                             "aht2x": TemperatureAFC}
         assert printer.heaters._temperature_ace_registered is True
         assert fallback.messages == []
 
@@ -723,9 +741,9 @@ class TestRegisterSensorFactory:
         # Klipper's load_object takes the config being loaded.
         assert printer.load_object.calls == [((config, "heaters"), {})]
         assert add.calls == [(("temperature_ace", TemperatureACE), {}),
-                             (("aht2x", TemperatureACE), {})]
+                             (("aht2x", TemperatureAFC), {})]
         assert heaters.factories == {"temperature_ace": TemperatureACE,
-                                     "aht2x": TemperatureACE}
+                                     "aht2x": TemperatureAFC}
         assert heaters._temperature_ace_registered is True
         assert fallback.messages == []
 

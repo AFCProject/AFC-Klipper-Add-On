@@ -37,6 +37,7 @@ try:
 except ImportError:
     pass
 
+from extras.temperature_afc import TemperatureAFC  # noqa: E402
 from extras.temperature_oams import (  # noqa: E402
     TemperatureOAMS,
     TEMP_REG,
@@ -52,6 +53,7 @@ from extras.temperature_oams import (  # noqa: E402
     HUMI_RES_11,
     HUMI_RES_8,
     load_config,
+    _register_sensor_factory,
 )
 from tests.conftest import MockAFC, MockPrinter, MockReactor, MockConfig
 
@@ -136,11 +138,25 @@ class TestInit:
             sensor = TemperatureOAMS(config)
         assert sensor.sample_timer is not None
 
-    def test_simulate_aht3x_default_true_registers_aht3x_object(self):
+    def test_reads_afc_type_option(self):
+        """afc_type must actually be read, so Klipper's own "unused option"
+        check doesn't flag it when a section sets it for temperature_afc's
+        benefit (sensor_type: aht2x) but sensor_type is temperature_oams
+        directly."""
+        config, printer = self._config(values={"afc_type": "OpenAMS"})
+        config.get = MagicMock(wraps=config.get)
+        with patch("extras.temperature_oams.bus.MCU_I2C_from_config", MagicMock()):
+            TemperatureOAMS(config)
+        config.get.assert_called_once_with("afc_type", None)
+
+    def test_simulate_aht3x_default_true_registers_aht10_object(self):
+        """Registered as "aht10", not "aht3x": Fluidd/Mainsail's humidity card
+        is keyed off sensor_type aht2x, which maps onto aht10 (matching
+        temperature_ace's TemperatureACE, not a distinct aht3x alias)."""
         config, printer = self._config()
         with patch("extras.temperature_oams.bus.MCU_I2C_from_config", MagicMock()):
             sensor = TemperatureOAMS(config)
-        printer.add_object.assert_called_once_with("aht3x oams1", sensor)
+        printer.add_object.assert_called_once_with("aht10 oams1", sensor)
 
     def test_simulate_aht3x_false_registers_temperature_oams_object(self):
         config, printer = self._config(values={"simulate_supported_sensor_mainsail": False})
@@ -603,18 +619,78 @@ class TestGetStatus:
         assert status == {"temperature": 21.23, "humidity": 55.68}
 
 
-# ── load_config ───────────────────────────────────────────────────────────────
+# load_config / _register_sensor_factory
+
+def _make_config_with_heaters():
+    """MockConfig wired to a printer whose "heaters" is a MagicMock, with the
+    registration flags a bare MagicMock would otherwise auto-create as
+    truthy (breaking the "already registered" checks) explicitly cleared."""
+    afc = MockAFC()
+    printer = MockPrinter(afc=afc)
+    heaters = MagicMock()
+    heaters._temperature_oams_registered = False
+    heaters._temperature_afc_registered = False
+    printer._objects["heaters"] = heaters
+    config = MockConfig(name="temperature_sensor oams1", printer=printer)
+    return config, heaters
+
 
 class TestLoadConfig:
-    def test_registers_sensor_factory(self):
-        afc = MockAFC()
-        printer = MockPrinter(afc=afc)
-        heaters = MagicMock()
-        printer._objects["heaters"] = heaters
-        config = MockConfig(name="temperature_sensor oams1", printer=printer)
+    def test_registers_both_factories(self):
+        config, heaters = _make_config_with_heaters()
 
         load_config(config)
 
-        heaters.add_sensor_factory.assert_called_once_with(
-            "temperature_oams", TemperatureOAMS
-        )
+        heaters.add_sensor_factory.assert_any_call("temperature_oams", TemperatureOAMS)
+        heaters.add_sensor_factory.assert_any_call("aht2x", TemperatureAFC)
+        assert heaters._temperature_oams_registered is True
+
+
+class TestRegisterSensorFactory:
+    def test_registers_both_factories_on_loaded_heaters(self):
+        config, heaters = _make_config_with_heaters()
+
+        _register_sensor_factory(config)
+
+        heaters.add_sensor_factory.assert_any_call("temperature_oams", TemperatureOAMS)
+        heaters.add_sensor_factory.assert_any_call("aht2x", TemperatureAFC)
+        assert heaters._temperature_oams_registered is True
+
+    def test_already_registered_returns_early(self):
+        """Tracked on the heaters object (not a module flag) so a fresh
+        heaters object after a Klipper RESTART is never mistaken for an
+        already-registered one; see _register_sensor_factory's docstring."""
+        config, heaters = _make_config_with_heaters()
+        heaters._temperature_oams_registered = True
+
+        _register_sensor_factory(config)
+
+        heaters.add_sensor_factory.assert_not_called()
+        assert heaters._temperature_oams_registered is True
+
+    def test_load_object_fallback_when_lookup_fails(self):
+        config, heaters = _make_config_with_heaters()
+        printer = config.get_printer()
+        printer.lookup_object = MagicMock(side_effect=Exception("not loaded yet"))
+        printer.load_object = MagicMock(return_value=heaters)
+
+        _register_sensor_factory(config)
+
+        printer.load_object.assert_called_once_with(config, "heaters")
+        heaters.add_sensor_factory.assert_any_call("temperature_oams", TemperatureOAMS)
+        assert heaters._temperature_oams_registered is True
+
+    def test_load_object_failure_logs_warning(self, caplog):
+        import logging
+        config, heaters = _make_config_with_heaters()
+        printer = config.get_printer()
+        printer.lookup_object = MagicMock(side_effect=Exception("not loaded yet"))
+        printer.load_object = MagicMock(side_effect=Exception("no heaters"))
+
+        with caplog.at_level(logging.WARNING):
+            _register_sensor_factory(config)  # must not raise
+
+        heaters.add_sensor_factory.assert_not_called()
+        assert [r.getMessage() for r in caplog.records] == [
+            "temperature_oams: failed to load heaters: no heaters"
+        ]

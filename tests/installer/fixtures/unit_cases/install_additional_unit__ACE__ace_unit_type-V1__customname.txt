@@ -149,6 +149,7 @@ afc_bowden_length: 900      # mm from the ACE's outlet to the toolhead
 # Klipper stops with "Unknown temperature sensor".
 [temperature_sensor CustomName2]
 sensor_type: temperature_ace
+afc_type: ACE
 ace_unit: CustomName2             # the [AFC_ACE] section name
 min_temp: 0
 max_temp: 70                # Klipper shuts down above this. Keep it above

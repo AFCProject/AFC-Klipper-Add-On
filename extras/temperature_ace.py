@@ -67,6 +67,8 @@ class TemperatureACE:
         self.reactor = self.printer.get_reactor()
         self.name = config.get_name().split()[-1]
         self.ace_unit_name = config.get("ace_unit", "Ace1")
+        # afc_type is unused here; read so Klipper doesn't flag it as unused.
+        config.get("afc_type", None)
         # Thermal channel to report.
         self.channel = config.getchoice("channel",
             {c: c for c in ("default", "box1", "box2", "ptc1", "ptc2", "env")}, "default")
@@ -333,7 +335,7 @@ def _register_sensor_factory(config: "ConfigWrapper") -> None:
     if getattr(heaters, "_temperature_ace_registered", False):
         return
     heaters.add_sensor_factory("temperature_ace", TemperatureACE)
-    # Register the Fluidd alias early too: sensor_type aht2x is resolved in the main
-    # config pass, before AFC_ACE loads, so registering only there fails at boot.
-    heaters.add_sensor_factory("aht2x", TemperatureACE)
+    # Also register the shared aht2x alias in case AFC_ACE never loads.
+    from extras.temperature_afc import register_on_heaters
+    register_on_heaters(heaters)
     heaters._temperature_ace_registered = True

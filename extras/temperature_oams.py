@@ -22,7 +22,10 @@ from . import bus
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
+    from extras.heaters import PrinterHeaters
     from klippy import Printer
+
+_fallback_logger = logging.getLogger("temperature_oams")
 
 # HDC1080 register addresses
 TEMP_REG = 0x00
@@ -63,6 +66,8 @@ class TemperatureOAMS:
         self.printer: Printer = config.get_printer()
         self.name = config.get_name().split()[-1]
         self.reactor = self.printer.get_reactor()
+        # afc_type is unused here; read so Klipper doesn't flag it as unused.
+        config.get("afc_type", None)
         self.i2c = bus.MCU_I2C_from_config(
             config, default_addr=HDC1080_I2C_ADDR, default_speed=100000)
         self.report_time = config.getint('report_time', 5, minval=5)
@@ -71,7 +76,7 @@ class TemperatureOAMS:
         self.simulate_aht3x = config.getboolean(
             'simulate_supported_sensor_mainsail', True)
         if self.simulate_aht3x:
-            self.printer.add_object("aht3x " + self.name, self)
+            self.printer.add_object("aht10 " + self.name, self)
         else:
             self.printer.add_object("temperature_oams " + self.name, self)
         self.printer.register_event_handler("klippy:connect",
@@ -304,9 +309,37 @@ class TemperatureOAMS:
 
 def load_config(config: ConfigWrapper) -> None:
     """
-    Register ``temperature_oams`` as a heaters sensor factory.
+    Register the temperature_oams sensor factory with Klipper (config hook).
 
-    :param config: ConfigWrapper used to look up the heaters object.
+    :param config: Klipper config wrapper (used only to reach the printer).
     """
-    pheater = config.get_printer().lookup_object("heaters")
-    pheater.add_sensor_factory("temperature_oams", TemperatureOAMS)
+    _register_sensor_factory(config)
+
+
+def _register_sensor_factory(config: ConfigWrapper) -> None:
+    """
+    Idempotently register the temperature_oams sensor factory.
+
+    :param config: the config being loaded; its printer's `heaters` object
+        gets the `temperature_oams` sensor factory, and Klipper's
+        `load_object` needs the config itself to load heaters if they are
+        not loaded yet.
+    """
+    printer = config.get_printer()
+    heaters: PrinterHeaters
+    try:
+        heaters = printer.lookup_object("heaters")
+    except Exception:
+        try:
+            heaters = printer.load_object(config, "heaters")
+        except Exception as e:
+            _fallback_logger.warning(f"temperature_oams: failed to load heaters: {e}")
+            return
+
+    if getattr(heaters, "_temperature_oams_registered", False):
+        return
+    heaters.add_sensor_factory("temperature_oams", TemperatureOAMS)
+    # Also register the shared aht2x alias in case AFC_OpenAMS never loads.
+    from extras.temperature_afc import register_on_heaters
+    register_on_heaters(heaters)
+    heaters._temperature_oams_registered = True
