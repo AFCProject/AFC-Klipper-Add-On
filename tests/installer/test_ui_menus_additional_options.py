@@ -87,6 +87,7 @@ class TestOwnBufferLabel:
         assert own_buffer_label("TurtleNeck") == "Yes: TurtleNeck"
         assert own_buffer_label("FPS_PSF") == "Yes: Proportional Sync-Feedback(PSF)"
         assert own_buffer_label("TurtleNeck2Remastered") == "Yes: TurtleNeck 2 Remastered"
+        assert own_buffer_label("Compensator") == "Yes: Compensator(PSF)"
 
 
 class TestEntry:
@@ -159,13 +160,14 @@ class TestOptionRows:
     def test_the_buffer_row_cycles_through_the_types_options_and_wraps(
         self, tmp_path: Path
     ) -> None:
-        menu, state, _, _, _ = build(tmp_path, ["2"] * 5)
+        menu, state, _, _, _ = build(tmp_path, ["2"] * 6)
         seen = []
-        for _ in range(5):
+        for _ in range(6):
             menu.step()
             seen.append(state.selection.additional_buffer_type)
         assert seen == [
-            "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF", "None", "TurtleNeck"
+            "TurtleNeckV2", "TurtleNeck2Remastered", "Compensator", "FPS_PSF", "None",
+            "TurtleNeck"
         ]
         assert state.message == "Unit has its own buffer? Yes: TurtleNeck"
 
@@ -245,6 +247,18 @@ class TestInstallKey:
     ) -> None:
         Recorder().install(monkeypatch)
         menu, state, _, _, _ = build(tmp_path, ["i"], buffer="FPS_PSF")
+        menu.step()
+        assert state.message == (
+            BASE.format(name="Turtle_2")
+            + "\n\nEnsure the PSF ADC pin in your buffer configuration matches where your "
+            "wiring is connected to your MCU." + RESTART
+        )
+
+    def test_compensator_adds_the_adc_note_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        Recorder().install(monkeypatch)
+        menu, state, _, _, _ = build(tmp_path, ["i"], buffer="Compensator")
         menu.step()
         assert state.message == (
             BASE.format(name="Turtle_2")

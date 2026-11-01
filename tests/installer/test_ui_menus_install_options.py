@@ -185,12 +185,14 @@ class TestBufferRow:
         assert state.message == "Buffer Type: TurtleNeck 2 Remastered"
 
     def test_a_number_cycles_the_buffer_and_names_it(self, tmp_path: Path) -> None:
-        menu, state, _, _, _ = build(tmp_path, ["11"] * 4)
+        menu, state, _, _, _ = build(tmp_path, ["11"] * 5)
         seen = []
-        for _ in range(4):
+        for _ in range(5):
             menu.step()
             seen.append(state.selection.buffer_type)
-        assert seen == ["TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF"]
+        assert seen == [
+            "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "Compensator", "FPS_PSF"
+        ]
         assert state.message == "Buffer Type: Proportional Sync-Feedback(PSF)"
 
 

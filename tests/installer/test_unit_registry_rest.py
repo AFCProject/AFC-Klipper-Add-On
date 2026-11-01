@@ -389,12 +389,12 @@ class TestAce:
         assert unit is not None
         sel = UnitSelection(installation_type=ACE, buffer_type="Internal")
         seen = [sel.buffer_type]
-        for _ in range(6):
+        for _ in range(7):
             unit.cycle_buffer(sel)
             seen.append(sel.buffer_type)
         assert seen == [
             "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered",
-            "FPS_PSF", "None", "Internal",
+            "Compensator", "FPS_PSF", "None", "Internal",
         ]
 
     def test_cycle_buffer_from_an_unknown_value_restarts_at_internal(self) -> None:
@@ -428,7 +428,8 @@ class TestAce:
     def test_additional_buffer_options_include_internal(self) -> None:
         assert additional_buffer_supported(ACE) is True
         assert additional_buffer_options(ACE) == (
-            "None", "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF"
+            "None", "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered",
+            "Compensator", "FPS_PSF"
         )
         assert additional_buffer_default(ACE) == "Internal"
 
@@ -483,15 +484,15 @@ class TestVivid:
 
 
 class TestAdditionalBufferRulesForTheRest:
-    def test_openams_offers_only_none_and_fps_psf_and_defaults_to_fps_psf(self) -> None:
+    def test_openams_offers_none_compensator_and_fps_psf_and_defaults_to_fps_psf(self) -> None:
         assert additional_buffer_supported(OPENAMS) is True
-        assert additional_buffer_options(OPENAMS) == ("None", "FPS_PSF")
+        assert additional_buffer_options(OPENAMS) == ("None", "Compensator", "FPS_PSF")
         assert additional_buffer_default(OPENAMS) == "FPS_PSF"
 
     def test_quattrobox_offers_the_full_cycle(self) -> None:
         assert additional_buffer_supported(QUATTRO) is True
         assert additional_buffer_options(QUATTRO) == (
-            "None", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF"
+            "None", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "Compensator", "FPS_PSF"
         )
 
     def test_vivid_has_no_additional_unit_buffer(self) -> None:

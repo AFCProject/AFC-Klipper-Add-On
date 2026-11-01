@@ -15,6 +15,7 @@ from installer.ui_menus.navigation import MenuDeps, read_choice
 from installer.ui_menus.state import MenuState
 from installer.ui_menus.view import ADDITIONAL_OPTIONS_BOX, MenuView, Row, row
 from installer.unit_registry.buffers import (
+    FPS_STYLE_TYPES,
     apply_shared_buffer,
     apply_unit_buffer,
     prompt_shared_buffer_name,
@@ -177,7 +178,7 @@ class AdditionalOptionsMenu:
                 "\n\nEnsure you add the correct serial information to the "
                 f"{ctx.afc_config_dir}/mcu/TN2.cfg file"
             )
-        if sel.additional_buffer_type == "FPS_PSF":
+        if sel.additional_buffer_type in FPS_STYLE_TYPES:
             message += (
                 "\n\nEnsure the PSF ADC pin in your buffer configuration matches where your "
                 "wiring is connected to your MCU."

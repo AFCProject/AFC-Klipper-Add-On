@@ -34,7 +34,7 @@ from installer.platform_core.context import Context
 from installer.platform_core.klipper_links import exclude_from_klipper_git, link_extensions
 from installer.platform_core.toggles import TOGGLES, default_toggles
 from installer.platform_core.system import CommandRunner, restart_service, u1_write_debug_file
-from installer.unit_registry.buffers import apply_unit_buffer
+from installer.unit_registry.buffers import FPS_STYLE_TYPES, apply_unit_buffer
 from installer.unit_registry.registry import unit_for
 from installer.unit_registry.selection import UnitSelection
 
@@ -89,7 +89,7 @@ def build_install_message(ctx: Context, sel: UnitSelection) -> str:
             "\n- Ensure you add the correct serial information to the "
             f"{ctx.afc_config_dir}/mcu/TN2.cfg file\n  "
         )
-    if sel.buffer_type == "FPS_PSF":
+    if sel.buffer_type in FPS_STYLE_TYPES:
         message += (
             "\n- Ensure the PSF ADC pin in your buffer configuration matches where your "
             "wiring is connected to your MCU.\n  "

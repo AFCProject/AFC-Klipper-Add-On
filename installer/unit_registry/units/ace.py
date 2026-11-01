@@ -17,7 +17,8 @@ from installer.unit_registry.options import ACE_UNIT_TYPES, ChoiceOption, NameOp
 from installer.unit_registry.selection import UnitSelection
 
 _BUFFER_ORDER: Tuple[str, ...] = (
-    "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF", "None"
+    "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "Compensator", "FPS_PSF",
+    "None"
 )
 
 
@@ -37,7 +38,8 @@ class Ace(UnitType):
     additional_name_prefix = "Ace"
     additional_buffer_supported = True
     additional_buffer_options: Tuple[str, ...] = (
-        "None", "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF"
+        "None", "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered",
+        "Compensator", "FPS_PSF"
     )
     additional_buffer_default = "Internal"
     ramming_supported = False

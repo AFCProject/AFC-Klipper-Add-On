@@ -635,6 +635,113 @@ class TestAttachToolStartEndstopToStepper:
         lane._attach_tool_start_endstop_to_stepper()  # should not raise
 
 
+# _attach_fps_psf_buffer_endstop_to_stepper
+# Lanes that share one physical drive stepper (HTLF, NightOwl, QuattroBox) but
+# each have their own FPS_PSF buffer never get wired up by
+# AFC_stepper._handle_ready, which only fires once for the shared drive
+# stepper itself. handle_unit_connect attaches each lane's own buffer here
+# instead, under a lane-prefixed name.
+
+class TestAttachFpsPsfBufferEndstopToStepper:
+    def _make_fps_buffer(self):
+        buffer_obj = MagicMock()
+        buffer_obj.type = "FPS_PSF"
+        buffer_obj.fps_endstop = MagicMock()
+        buffer_obj.fps_trailing_endstop = MagicMock()
+        return buffer_obj
+
+    def test_attaches_buffer_and_trailing_on_the_shared_drive_stepper(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="PD3")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops["lane4_buffer"] == (
+            lane.buffer_obj.fps_endstop, "lane4_buffer")
+        assert drive_stepper._endstops["lane4_buffer_trailing"] == (
+            lane.buffer_obj.fps_trailing_endstop, "lane4_buffer_trailing")
+        assert "lane4_tool_start" not in drive_stepper._endstops
+        assert lane.endstops[AFCHomingPoints.BUFFER] == {
+            "endstop": lane.buffer_obj.fps_endstop, "endstop_name": "lane4_buffer"}
+        lane.buffer_obj.fps_endstop.add_stepper.assert_called_once_with(
+            drive_stepper.extruder_stepper.stepper)
+        lane.buffer_obj.fps_trailing_endstop.add_stepper.assert_called_once_with(
+            drive_stepper.extruder_stepper.stepper)
+
+    def test_also_attaches_tool_start_when_extruder_uses_buffer(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops["lane4_tool_start"] == (
+            lane.buffer_obj.fps_endstop, "lane4_tool_start")
+        assert drive_stepper._endstops["lane4_buffer"] == (
+            lane.buffer_obj.fps_endstop, "lane4_buffer")
+
+    def test_noop_when_lane_owns_its_own_stepper(self):
+        """A lane with its own real stepper (self.drive_stepper is None) is
+        handled by AFC_stepper._handle_ready instead; must not be touched here."""
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()  # should not raise
+
+        lane.buffer_obj.fps_endstop.add_stepper.assert_not_called()
+
+    def test_noop_when_no_buffer_obj(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = None
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops == {}
+
+    def test_noop_when_buffer_is_not_fps_psf(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = MagicMock(type="switched")
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops == {}
+
+    def test_does_not_overwrite_an_already_registered_buffer_endstop(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        existing_buffer = (MagicMock(), "lane4_buffer")
+        existing_trailing = (MagicMock(), "lane4_buffer_trailing")
+        drive_stepper._endstops = {
+            "lane4_buffer": existing_buffer, "lane4_buffer_trailing": existing_trailing}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="PD3")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops["lane4_buffer"] is existing_buffer
+        assert drive_stepper._endstops["lane4_buffer_trailing"] is existing_trailing
+        lane.buffer_obj.fps_endstop.add_stepper.assert_not_called()
+        lane.buffer_obj.fps_trailing_endstop.add_stepper.assert_not_called()
+
+
 # ── move_advanced: stepperless unit delegation ───────────────────────────────
 # New branch: stepperless units (e.g. OpenAMS) delegate the move to the unit's
 # lane_move instead of driving a (non-existent) stepper directly.

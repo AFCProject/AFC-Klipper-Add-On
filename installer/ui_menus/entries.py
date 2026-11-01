@@ -16,6 +16,7 @@ from installer.unit_registry.registry import unit_for
 
 _BUFFER_LABELS = {
     "TurtleNeck2Remastered": "TurtleNeck 2 Remastered",
+    "Compensator": "Compensator(PSF)",
     "FPS_PSF": "Proportional Sync-Feedback(PSF)",
     "Internal": "Internal buffer",
 }

@@ -75,6 +75,13 @@ class TestBuildInstallMessage:
             "is connected to your MCU.\n  "
         ) in build_install_message(self.ctx(), sel)
 
+    def test_compensator_adds_the_adc_pin_note_too(self) -> None:
+        sel = UnitSelection(unit_name="Bob", buffer_type="Compensator")
+        assert (
+            "\n- Ensure the PSF ADC pin in your buffer configuration matches where your wiring "
+            "is connected to your MCU.\n  "
+        ) in build_install_message(self.ctx(), sel)
+
     @pytest.mark.parametrize("buffer", ["None", "Unknown", "TurtleNeck"])
     def test_other_buffers_add_no_note(self, buffer: str) -> None:
         sel = UnitSelection(unit_name="Bob", buffer_type=buffer)
