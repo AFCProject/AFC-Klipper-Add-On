@@ -141,8 +141,11 @@ def _make_fps_buffer(name="FPS_buffer1", **overrides):
     buf.sample_time = 0.005
     buf.report_time = 0.1
     buf.reversed = False
+    buf.adc_min_val = 0.0
+    buf.adc_max_val = 1.0
 
     buf.fps_value = 0.0
+    buf.raw_value = 0.0
     buf.set_point = 0.5
     buf.low_point = 0.1
     buf.high_point = 0.9
@@ -2124,6 +2127,50 @@ class TestAdcCallback:
         buf._adc_callback(1.0, 0.3)
         assert buf.fps_value == pytest.approx(0.7)
 
+    def test_raw_value_captures_unscaled_reading(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf._adc_callback(1.0, 0.42)
+        assert buf.raw_value == pytest.approx(0.42)
+        assert buf.fps_value == pytest.approx(0.42)
+
+    def test_rescales_within_custom_adc_range(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.1
+        buf.adc_max_val = 0.9
+        buf._adc_callback(1.0, 0.5)
+        assert buf.raw_value == pytest.approx(0.5)
+        assert buf.fps_value == pytest.approx(0.5)
+
+    def test_rescale_clamps_reading_below_min_to_zero(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.2
+        buf.adc_max_val = 0.8
+        buf._adc_callback(1.0, 0.1)
+        assert buf.raw_value == pytest.approx(0.1)
+        assert buf.fps_value == pytest.approx(0.0)
+
+    def test_rescale_clamps_reading_above_max_to_one(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.2
+        buf.adc_max_val = 0.8
+        buf._adc_callback(1.0, 0.9)
+        assert buf.raw_value == pytest.approx(0.9)
+        assert buf.fps_value == pytest.approx(1.0)
+
+    def test_reversed_applies_after_rescale_not_to_raw_value(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.2
+        buf.adc_max_val = 0.8
+        buf.reversed = True
+        buf._adc_callback(1.0, 0.35)
+        assert buf.raw_value == pytest.approx(0.35)
+        assert buf.fps_value == pytest.approx(0.75)
+
     def test_not_reversed_leaves_value_unchanged(self):
         buf, afc, reactor, printer = _make_fps_buffer()
         buf._lane_has_rotation_control = MagicMock(return_value=False)
@@ -3009,6 +3056,9 @@ class TestAFCFPSBufferInit:
         assert buf._latch_enabled is False
         assert buf.reversed is False
         assert buf.fps_value == 0.0
+        assert buf.raw_value == 0.0
+        assert buf.adc_min_val == 0.1
+        assert buf.adc_max_val == 0.9
         assert buf._homing_high_point == 0.7
         assert buf._last_logged_integral == 0.0
         assert buf.integral_extrusion_threshold == 0.02
@@ -3026,6 +3076,16 @@ class TestAFCFPSBufferInit:
     def test_homing_high_point_config_override(self):
         buf, afc, printer, adc = _build_real_fps_buffer(values={"homing_high_point": 0.8})
         assert buf._homing_high_point == 0.8
+
+    def test_adc_min_val_config_override(self):
+        buf, afc, printer, adc = _build_real_fps_buffer(values={"adc_min_val": 0.05})
+        assert buf.adc_min_val == 0.05
+        assert buf.adc_max_val == 0.9
+
+    def test_adc_max_val_config_override(self):
+        buf, afc, printer, adc = _build_real_fps_buffer(values={"adc_max_val": 0.95})
+        assert buf.adc_min_val == 0.1
+        assert buf.adc_max_val == 0.95
 
     def test_kalico_adc_logs_setup_message(self):
         adc = _FakeADC(has_minmax=True)
@@ -3790,7 +3850,8 @@ class TestFPSCmdQueryBuffer:
     def test_reports_raw_smoothed_and_set_point(self):
         buf, afc, reactor, printer = _make_fps_buffer()
         buf.enable = False
-        buf.fps_value = 0.321
+        buf.reversed = False
+        buf.raw_value = 0.321
         buf.smoothed_fps = 0.456
         buf.set_point = 0.5
         buf.logger = MagicMock()
@@ -3799,6 +3860,28 @@ class TestFPSCmdQueryBuffer:
         assert "raw: 0.321" in msg
         assert "smoothed: 0.456" in msg
         assert "set_point: 0.50" in msg
+
+    def test_not_reversed_omits_raw_flipped_line(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf.enable = False
+        buf.reversed = False
+        buf.raw_value = 0.2
+        buf.fps_value = 0.2
+        buf.logger = MagicMock()
+        buf.cmd_QUERY_BUFFER(MagicMock())
+        msg = buf.logger.info.call_args[0][0]
+        assert "raw flipped" not in msg
+
+    def test_reversed_reports_raw_flipped_line(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf.enable = False
+        buf.reversed = True
+        buf.raw_value = 0.2
+        buf.fps_value = 0.8
+        buf.logger = MagicMock()
+        buf.cmd_QUERY_BUFFER(MagicMock())
+        msg = buf.logger.info.call_args[0][0]
+        assert "raw flipped: 0.800" in msg
 
     def test_not_enabled_skips_rotation_distance(self):
         buf, afc, reactor, printer = _make_fps_buffer()
@@ -3924,10 +4007,12 @@ class TestCmdAfcSetFpsSetPoint:
 class TestFPSGetStatus:
     def test_includes_base_and_fps_specific_keys(self):
         buf, afc, reactor, printer = _make_fps_buffer()
+        buf.raw_value = 0.234
         buf.fps_value = 0.3456
         buf.smoothed_fps = 0.4567
         buf.set_point = 0.5
         result = buf.get_status()
+        assert result["raw_value"] == 0.234
         assert result["fps_value"] == 0.346
         assert result["smoothed_fps"] == 0.457
         assert result["set_point"] == 0.5

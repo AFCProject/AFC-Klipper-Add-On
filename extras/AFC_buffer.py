@@ -770,6 +770,8 @@ class AFCFPSBuffer(AFCBuffer):
         self.sample_time: float = config.getfloat('sample_time', 0.005)
         self.report_time: float = config.getfloat('report_time', 0.100)
         self.reversed: bool = config.getboolean('reversed', False)
+        self.adc_min_val: float = config.getfloat('adc_min_val', 0.1)
+        self.adc_max_val: float = config.getfloat('adc_max_val', 0.9)
 
         # Setup ADC sampling — handle both Klipper and Kalico APIs
         if hasattr(self.adc, "setup_minmax"): # Kalico has this
@@ -796,6 +798,7 @@ class AFCFPSBuffer(AFCBuffer):
         # are accepted alongside set_point/low_point/high_point. If both
         # are specified, the primary name takes precedence.
         self.fps_value: float = 0.0
+        self.raw_value: float = 0.0
         _sp_default = config.getfloat('neutral_point', 0.5, minval=0.1, maxval=0.9)
         self.set_point: float = config.getfloat('set_point', _sp_default, minval=0.1, maxval=0.9)
         _lp_default = config.getfloat('max_tension', 0.1, minval=0.0, maxval=0.5)
@@ -972,6 +975,9 @@ class AFCFPSBuffer(AFCBuffer):
         elif read_value is None:
             read_value = read_time
             read_time = self.reactor.monotonic()
+        self.raw_value = read_value
+        read_value = (read_value - self.adc_min_val) / (self.adc_max_val - self.adc_min_val)
+        read_value = max(0.0, min(1.0, read_value))
 
         if self.reversed:
             read_value = 1.0 - read_value
@@ -1410,9 +1416,10 @@ class AFCFPSBuffer(AFCBuffer):
 
         buffer_status = self.buffer_status()
         state_info = "{}{}".format(buffer_status, state_mapping.get(buffer_status, ''))
-        state_info += "\n{} raw: {:.3f}  smoothed: {:.3f}  set_point: {:.2f}".format(
-            self.type, self.fps_value, self.smoothed_fps, self.set_point
-        )
+        state_info += f"\n{self.type} raw: {self.raw_value:.3f}"
+        if self.reversed:
+            state_info += f" raw flipped: {self.fps_value:.3f}"
+        state_info += f" smoothed: {self.smoothed_fps:.3f} set_point: {self.set_point:.2f}"
 
         if self.enable and self.current_lane is not None:
             if self.current_lane.extruder_stepper is not None:
@@ -1475,6 +1482,7 @@ class AFCFPSBuffer(AFCBuffer):
 
         response = super().get_status(eventtime)
 
+        response['raw_value'] = self.raw_value
         response['fps_value'] = round(self.fps_value, 3)
         response['smoothed_fps'] = round(self.smoothed_fps, 3)
         response['set_point'] = self.set_point
