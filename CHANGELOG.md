@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-02-206]
+### Fixed
+- Fixed a bug where a lane without an extruder stepper could error out if the `QUERY_BUFFER` macro was run. 
+
 ## [10-31-2026]
 ### Fixed
 - Fixed Bowden calibration not detecting an already extended buffer when `pin_tool_start` is set to buffer, which previously surfaced as an unrelated "failed to home filament back to hub" error. Fixes #742
