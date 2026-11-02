@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from installer.platform_core.console import NC, RED
 from installer.ui_menus.art import art_name_for_type
-from installer.ui_menus.entries import Entry, buffer_label, require_unit
+from installer.ui_menus.entries import Entry, buffer_label, extruder_entry, require_unit
 from installer.ui_menus.navigation import MenuDeps, read_choice
 from installer.ui_menus.state import MenuState
 from installer.ui_menus.view import ADDITIONAL_OPTIONS_BOX, MenuView, Row, row
@@ -90,24 +90,6 @@ class AdditionalOptionsMenu:
             activate,
         )
 
-    def _extruder(self, extruders: List[str]) -> Entry:
-        """
-        Build the extruder-selection row, cycling through the printer's extruders on activate.
-
-        :param extruders: printer extruder names to cycle through
-        :return Entry: the row
-        """
-        sel = self._state.selection
-
-        def activate() -> str:
-            position = extruders.index(sel.extruder) + 1 if sel.extruder in extruders else 0
-            sel.extruder = extruders[position % len(extruders)]
-            return f"Extruder: {sel.extruder}"
-
-        return Entry(
-            lambda n: row(f"{n}. Extruder unit will be connected to : {sel.extruder}"), activate
-        )
-
     def _entries(self) -> List[Entry]:
         """
         Build the numbered rows for the current selection.
@@ -122,7 +104,7 @@ class AdditionalOptionsMenu:
             entries.append(self._buffer())
         extruders = find_printer_extruders(state.ctx)
         if len(extruders) > 1:
-            entries.append(self._extruder(extruders))
+            entries.append(extruder_entry(sel, extruders))
         return entries
 
     def _unit_option(self, option: UnitOption) -> Entry:
@@ -159,7 +141,7 @@ class AdditionalOptionsMenu:
 
     def _install(self) -> str:
         """
-        Install the unit, wire up its buffer, and build the success message.
+        Install the unit, wire up its buffer and extruder, and build the success message.
 
         :return str: the next menu: "main" on success, this screen if the name is taken
         """
@@ -175,7 +157,8 @@ class AdditionalOptionsMenu:
         if supported and sel.additional_buffer_type == "None":
             shared = prompt_shared_buffer_name(ctx, deps.console, deps.prompter)
         deps.actions.install_additional(state)
-        apply_unit_extruder(ctx, deps.console, deps.prompter, sel)
+        if len(find_printer_extruders(ctx)) > 1:
+            apply_unit_extruder(ctx, deps.console, deps.prompter, sel)
         if supported:
             if sel.additional_buffer_type != "None":
                 apply_unit_buffer(

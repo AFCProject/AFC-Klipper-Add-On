@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Dict
 
 import pytest
 
@@ -103,6 +104,43 @@ class TestFindPrinterExtruders:
 
         assert find_printer_extruders(ctx) == ["extruder"]
 
+    def test_the_count_override_forces_a_synthetic_list(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path)
+        (ctx.printer_config_dir / "printer.cfg").write_text("[extruder]\n")
+
+        assert find_printer_extruders(ctx, {"AFC_EXTRUDER_COUNT": "3"}) == [
+            "extruder", "extruder1", "extruder2"
+        ]
+
+    def test_a_count_override_of_one_is_just_the_default_extruder(
+        self, tmp_path: Path
+    ) -> None:
+        ctx = _ctx(tmp_path)
+
+        assert find_printer_extruders(ctx, {"AFC_EXTRUDER_COUNT": "1"}) == ["extruder"]
+
+    @pytest.mark.parametrize(
+        "env",
+        [{}, {"AFC_EXTRUDER_COUNT": ""}, {"AFC_EXTRUDER_COUNT": "0"},
+         {"AFC_EXTRUDER_COUNT": "-1"}, {"AFC_EXTRUDER_COUNT": "bogus"}],
+        ids=["unset", "empty", "zero", "negative", "non_numeric"],
+    )
+    def test_an_invalid_override_falls_back_to_the_real_scan(
+        self, tmp_path: Path, env: Dict[str, str]
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        (ctx.printer_config_dir / "printer.cfg").write_text("[extruder]\n[extruder1]\n")
+
+        assert find_printer_extruders(ctx, env) == ["extruder", "extruder1"]
+
+    def test_omitting_env_reads_the_real_os_environ(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        monkeypatch.setenv("AFC_EXTRUDER_COUNT", "2")
+
+        assert find_printer_extruders(ctx) == ["extruder", "extruder1"]
+
 
 def _write_hardware(ctx: Context, text: str) -> Path:
     ctx.afc_config_dir.mkdir(parents=True, exist_ok=True)
@@ -175,6 +213,47 @@ class TestFindAfcExtruderSections:
 
         assert find_afc_extruder_sections(ctx) == {
             "extruder": "extruder", "extruder1": "extruder1",
+        }
+
+    def test_a_section_reachable_only_through_printer_cfg_is_also_found(
+        self, tmp_path: Path
+    ) -> None:
+        """A section the user placed in printer.cfg (or a file it includes) outside
+        the AFC config directory must still be seen, or the installer can append a
+        second section for the same extruder and trigger a duplicate mapping error."""
+        ctx = _ctx(tmp_path)
+        _write_hardware(ctx, "[AFC_extruder extruder]\n")
+        (ctx.printer_config_dir / "printer.cfg").write_text(
+            "[include my_toolhead.cfg]\n[extruder]\nnozzle_diameter: 0.4\n"
+        )
+        (ctx.printer_config_dir / "my_toolhead.cfg").write_text(
+            "[AFC_extruder MyExtruder]\nextruder_name: extruder1\n"
+        )
+
+        assert find_afc_extruder_sections(ctx) == {
+            "extruder": "extruder", "MyExtruder": "extruder1",
+        }
+
+    def test_a_missing_printer_cfg_does_not_affect_the_directory_scan(
+        self, tmp_path: Path
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        _write_hardware(ctx, "[AFC_extruder extruder]\n")
+
+        assert find_afc_extruder_sections(ctx) == {"extruder": "extruder"}
+
+    def test_a_circular_include_from_printer_cfg_does_not_hang(
+        self, tmp_path: Path
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        _write_hardware(ctx, "[AFC_extruder extruder]\n")
+        (ctx.printer_config_dir / "printer.cfg").write_text(
+            "[include loop.cfg]\n[AFC_extruder MyExtruder]\nextruder_name: extruder1\n"
+        )
+        (ctx.printer_config_dir / "loop.cfg").write_text("[include printer.cfg]\n")
+
+        assert find_afc_extruder_sections(ctx) == {
+            "extruder": "extruder", "MyExtruder": "extruder1",
         }
 
 
@@ -262,6 +341,62 @@ class TestResolveAfcExtruderSection:
         text = hardware.read_text()
         assert "[AFC_extruder MyNewExtruder]" in text
         assert "extruder_name: extruder1" in text
+
+    def test_a_colliding_name_is_rejected_and_reprompts(self, tmp_path: Path) -> None:
+        """Klipper merges a second section with the same name into the first rather
+        than rejecting it, so a colliding name must never reach _append_afc_extruder_block."""
+        ctx = _ctx(tmp_path)
+        hardware = _write_hardware(ctx, "[AFC_extruder extruder]\n")
+        console, prompter = RecordingConsole(), ScriptedPrompter(["extruder", "extruder2"])
+
+        name = resolve_afc_extruder_section(ctx, console, prompter, "extruder1")
+
+        assert name == "extruder2"
+        prompt = (
+            "Enter a name for the new AFC_extruder section or leave as default "
+            "(default: extruder1): "
+        )
+        assert prompter.prompts == [prompt, prompt]
+        assert console.messages[-1] == (
+            "WARNING",
+            "'extruder' is already an AFC_extruder section name; please choose another.",
+        )
+        text = hardware.read_text()
+        assert text.count("[AFC_extruder extruder]") == 1
+        assert "[AFC_extruder extruder2]" in text
+
+    def test_a_blank_answer_colliding_with_the_default_name_also_reprompts(
+        self, tmp_path: Path
+    ) -> None:
+        """The blank-answer fallback to the extruder's own name is itself subject to
+        the same collision check, not just a typed answer."""
+        ctx = _ctx(tmp_path)
+        hardware = _write_hardware(
+            ctx, "[AFC_extruder extruder1]\nextruder_name: extruder2\n"
+        )
+        console, prompter = RecordingConsole(), ScriptedPrompter(["", "NewExtruder"])
+
+        name = resolve_afc_extruder_section(ctx, console, prompter, "extruder1")
+
+        assert name == "NewExtruder"
+        assert console.messages[-1] == (
+            "WARNING",
+            "'extruder1' is already an AFC_extruder section name; please choose another.",
+        )
+        new_section = hardware.read_text().split("[AFC_extruder NewExtruder]")[1]
+        assert "extruder_name: extruder1" in new_section
+
+    def test_end_of_input_after_a_rejected_name_raises(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path)
+        hardware = _write_hardware(ctx, "[AFC_extruder extruder]\n")
+        before = hardware.read_text()
+        console, prompter = RecordingConsole(), ScriptedPrompter(["extruder"])
+
+        with pytest.raises(InstallerExit) as exc:
+            resolve_afc_extruder_section(ctx, console, prompter, "extruder1")
+
+        assert exc.value.code == 1
+        assert hardware.read_text() == before
 
     def test_end_of_input_raises_installer_exit_and_writes_nothing(
         self, tmp_path: Path

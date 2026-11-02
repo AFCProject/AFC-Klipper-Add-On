@@ -35,7 +35,7 @@ from installer.platform_core.klipper_links import exclude_from_klipper_git, link
 from installer.platform_core.toggles import TOGGLES, default_toggles
 from installer.platform_core.system import CommandRunner, restart_service, u1_write_debug_file
 from installer.unit_registry.buffers import apply_unit_buffer
-from installer.unit_registry.extruders import apply_unit_extruder
+from installer.unit_registry.extruders import apply_unit_extruder, find_printer_extruders
 from installer.unit_registry.registry import unit_for
 from installer.unit_registry.selection import UnitSelection
 
@@ -161,7 +161,8 @@ def install_afc(
         copy_config(ctx, console, prompter)
     link_extensions(ctx)
     unit.copy_files(ctx, console, prompter, sel)
-    apply_unit_extruder(ctx, console, prompter, sel)
+    if len(find_printer_extruders(ctx)) > 1:
+        apply_unit_extruder(ctx, console, prompter, sel)
     hardware = ctx.afc_config_dir / "AFC_Hardware.cfg"
     if not options.toggles["tip_cut_servo"]:
         remove_tip_cut_servo_section(hardware)

@@ -6,10 +6,11 @@
 """Detecting the printer's extruders and wiring the chosen one into a unit."""
 from __future__ import annotations
 
+import os
 import re
 import textwrap
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Mapping, Optional, Set
 
 from installer.config_editor.document import ConfigDocument
 from installer.config_editor.edits import ensure_trailing_newline
@@ -19,6 +20,7 @@ from installer.platform_core.errors import InstallerExit
 from installer.unit_registry.registry import unit_for
 from installer.unit_registry.selection import UnitSelection
 
+EXTRUDER_COUNT_ENV = "AFC_EXTRUDER_COUNT"  # testing only: force a synthetic extruder list
 _EXTRUDER_HEADER = re.compile(r"^\[(extruder\d*)\]\s*(?:[;#].*)?$")
 _INCLUDE = re.compile(r"^\[include\s+(.+?)\]\s*(?:[;#].*)?$")
 _AFC_EXTRUDER_HEADER = re.compile(r"^\[AFC_extruder\s+([^\]]+)\]\s*(?:[;#].*)?$")
@@ -37,7 +39,7 @@ _FALLBACK_AFC_EXTRUDER_BODY: List[str] = [
 ]
 
 
-def find_printer_extruders(ctx: Context) -> List[str]:
+def find_printer_extruders(ctx: Context, env: Optional[Mapping[str, str]] = None) -> List[str]:
     """
     List every `[extruder]`/`[extruderN]` section in the user's printer config.
 
@@ -45,13 +47,39 @@ def find_printer_extruders(ctx: Context) -> List[str]:
     extruder defined in an included file is also found. A missing printer.cfg yields
     an empty list.
 
+    Set `AFC_EXTRUDER_COUNT` to force a synthetic `["extruder", "extruder1", ...]`
+    list of that length instead, for testing the multi-extruder flow without a real
+    multi-extruder printer.cfg (mirrors `AFC_NO_RICH` for the renderer).
+
     :param ctx: installer context
+    :param env: environment holding the `AFC_EXTRUDER_COUNT` switch, defaults to
+        `os.environ`
     :return List[str]: extruder section names in the order they're first found, for
         example `["extruder", "extruder1"]`
     """
+    forced = _forced_extruder_count(os.environ if env is None else env)
+    if forced is not None:
+        return ["extruder"] + [f"extruder{i}" for i in range(1, forced)]
     found: List[str] = []
     _scan_file(ctx.printer_config_dir / "printer.cfg", found, set())
     return found
+
+
+def _forced_extruder_count(env: Mapping[str, str]) -> Optional[int]:
+    """
+    Parse the `AFC_EXTRUDER_COUNT` testing override.
+
+    :param env: the environment to look in
+    :return Optional[int]: the forced count, or None if unset or not a positive integer
+    """
+    raw = env.get(EXTRUDER_COUNT_ENV, "")
+    if not raw:
+        return None
+    try:
+        count = int(raw)
+    except ValueError:
+        return None
+    return count if count > 0 else None
 
 
 def _scan_file(path: Path, found: List[str], visited: Set[Path]) -> None:
@@ -84,8 +112,13 @@ def _scan_file(path: Path, found: List[str], visited: Set[Path]) -> None:
 
 def find_afc_extruder_sections(ctx: Context) -> Dict[str, str]:
     """
-    Every `[AFC_extruder <name>]` section in the AFC config directory, mapped to the
-    real printer extruder it targets.
+    Every `[AFC_extruder <name>]` section reachable from the active configuration,
+    mapped to the real printer extruder it targets.
+
+    Scans every top-level `*.cfg` file in the AFC config directory, then follows
+    printer.cfg's own `[include ...]` graph the same way `find_printer_extruders`
+    does, so a section a user placed there (or in another included file outside
+    the AFC config directory) is still found.
 
     The target is the section's own `extruder_name:` value, or the section's own
     name when that option is absent, matching `AFC_extruder`'s own default
@@ -95,24 +128,52 @@ def find_afc_extruder_sections(ctx: Context) -> Dict[str, str]:
     :return Dict[str, str]: `{section_name: target_extruder_name}`
     """
     sections: Dict[str, str] = {}
+    visited: Set[Path] = set()
     for path in sorted(ctx.afc_config_dir.glob("*.cfg")):
-        current: Optional[str] = None
-        for line in path.read_text(errors="ignore").splitlines():
-            stripped = line.strip()
-            header_match = _AFC_EXTRUDER_HEADER.match(stripped)
-            if header_match:
-                current = header_match.group(1)
-                sections[current] = current
-                continue
-            if current is None:
-                continue
-            if stripped.startswith("["):
-                current = None
-                continue
-            name_match = _EXTRUDER_NAME_OPTION.match(stripped)
-            if name_match:
-                sections[current] = name_match.group(1)
+        _scan_afc_extruder_file(path, sections, visited)
+    _scan_afc_extruder_file(ctx.printer_config_dir / "printer.cfg", sections, visited)
     return sections
+
+
+def _scan_afc_extruder_file(
+    path: Path, sections: Dict[str, str], visited: Set[Path]
+) -> None:
+    """
+    Scan one config file for `[AFC_extruder ...]` sections, following its own
+    `[include ...]` lines the same way Klipper does.
+
+    :param path: file to scan, ignored if it doesn't exist
+    :param sections: section name -> target extruder, extended in place
+    :param visited: resolved paths already scanned, extended in place
+    """
+    if not path.is_file():
+        return
+    resolved = path.resolve()
+    if resolved in visited:
+        return
+    visited.add(resolved)
+    current: Optional[str] = None
+    for line in path.read_text(errors="ignore").splitlines():
+        stripped = line.strip()
+        header_match = _AFC_EXTRUDER_HEADER.match(stripped)
+        if header_match:
+            current = header_match.group(1)
+            sections[current] = current
+            continue
+        include_match = _INCLUDE.match(stripped)
+        if include_match:
+            current = None
+            for included in sorted(path.parent.glob(include_match.group(1))):
+                _scan_afc_extruder_file(included, sections, visited)
+            continue
+        if current is None:
+            continue
+        if stripped.startswith("["):
+            current = None
+            continue
+        name_match = _EXTRUDER_NAME_OPTION.match(stripped)
+        if name_match:
+            sections[current] = name_match.group(1)
 
 
 def section_for_extruder(ctx: Context, target: str) -> Optional[str]:
@@ -224,14 +285,17 @@ def _append_afc_extruder_block(hardware: Path, block: str) -> None:
     doc.save()
 
 
-def _ask_afc_extruder_name(console: Console, prompter: Prompter, target: str) -> str:
+def _ask_afc_extruder_name(
+    console: Console, prompter: Prompter, target: str, existing_names: Set[str]
+) -> str:
     """
     Ask for a name for a new AFC_extruder section; the blank answer keeps the default.
 
-    :param console: where the notice goes
+    :param console: where the notice and any name-in-use warning go
     :param prompter: where the answer comes from
     :param target: real printer extruder the new section will target, also its
         suggested (default) name
+    :param existing_names: `[AFC_extruder <name>]` section names already in use
     :return str: the chosen section name
     :raises InstallerExit: if the prompter reports end of input
     """
@@ -245,10 +309,17 @@ def _ask_afc_extruder_name(console: Console, prompter: Prompter, target: str) ->
         f"Enter a name for the new AFC_extruder section or leave as default (default: "
         f"{target}): "
     )
-    answer = prompter.ask(prompt)
-    if answer is None:
-        raise InstallerExit(1)
-    return answer.strip() or target
+    while True:
+        answer = prompter.ask(prompt)
+        if answer is None:
+            raise InstallerExit(1)
+        name = answer.strip() or target
+        if name not in existing_names:
+            return name
+        console.print_msg(
+            "WARNING",
+            f"'{name}' is already an AFC_extruder section name; please choose another.",
+        )
 
 
 def resolve_afc_extruder_section(
@@ -260,9 +331,10 @@ def resolve_afc_extruder_section(
 
     Cross references every `[AFC_extruder <name>]` section's effective target (see
     :func:`find_afc_extruder_sections`) so a section the user renamed is still found.
-    If none targets it yet, asks for a name (default: the extruder's own name) and
-    creates a new section in AFC_Hardware.cfg with `extruder_name:` set explicitly,
-    the same pattern `templates/AFC_Hardware_U1.cfg` uses for its tool extruders.
+    If none targets it yet, asks for a name (default: the extruder's own name, and
+    re-asked if it collides with an existing section) and creates a new section in
+    AFC_Hardware.cfg with `extruder_name:` set explicitly, the same pattern
+    `templates/AFC_Hardware_U1.cfg` uses for its tool extruders.
 
     :param ctx: installer context
     :param console: where prompts and notices go
@@ -273,11 +345,12 @@ def resolve_afc_extruder_section(
         unused when an existing section is found
     :return str: the AFC_extruder section name
     """
-    existing = section_for_extruder(ctx, target)
+    sections = find_afc_extruder_sections(ctx)
+    existing = next((name for name, mapped in sections.items() if mapped == target), None)
     if existing is not None:
         return existing
     hardware = ctx.afc_config_dir / "AFC_Hardware.cfg"
-    name = _ask_afc_extruder_name(console, prompter, target)
+    name = _ask_afc_extruder_name(console, prompter, target, set(sections))
     block = _build_afc_extruder_block(ctx, name, target, pin_tool_start)
     _append_afc_extruder_block(hardware, block)
     return name

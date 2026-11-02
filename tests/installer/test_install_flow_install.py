@@ -257,10 +257,11 @@ class TestInstallAfcBehavior:
         assert not [m for m in console.messages if "exclude" in m[1]]
 
     def test_a_selected_extruder_with_an_existing_section_is_applied(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """extruder1 is already mapped to an [AFC_extruder] section; the unit's own
         extruder: key must get that section's name, not the printer extruder itself."""
+        monkeypatch.setenv("AFC_EXTRUDER_COUNT", "2")
         sel = UnitSelection(extruder="extruder1")
         home = sandbox(tmp_path, Scenario())
         ctx = Context.create(REPO_ROOT, home=home)
@@ -275,8 +276,9 @@ class TestInstallAfcBehavior:
         assert "extruder: extruder\n" not in text
 
     def test_a_selected_extruder_with_no_existing_section_creates_one(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("AFC_EXTRUDER_COUNT", "2")
         sel = UnitSelection(extruder="extruder1")
         ctx = self.run(tmp_path, InstallOptions(selection=sel), prompter_answers=[""])
         unit_text = (ctx.afc_config_dir / "AFC_Turtle_1.cfg").read_text()
@@ -285,12 +287,27 @@ class TestInstallAfcBehavior:
         assert "[AFC_extruder extruder1]" in hardware_text
         assert "extruder_name: extruder1" in hardware_text
 
+    def test_a_single_detected_extruder_leaves_the_default_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        """With only one printer extruder detected, the selection screen never shows
+        the extruder row, so install_afc must not touch the unit's extruder: line
+        (or prompt for a new AFC_extruder section name) either."""
+        sel = UnitSelection(extruder="extruder1")
+        ctx = self.run(tmp_path, InstallOptions(selection=sel))
+        unit_text = (ctx.afc_config_dir / "AFC_Turtle_1.cfg").read_text()
+        assert "extruder: extruder1" not in unit_text
+        assert "extruder: extruder" in unit_text
+        hardware_text = (ctx.afc_config_dir / "AFC_Hardware.cfg").read_text()
+        assert "[AFC_extruder extruder1]" not in hardware_text
+
     @pytest.mark.parametrize("itype", TYPES, ids=TYPES)
     def test_a_selected_extruder_is_applied_for_every_unit_type(
-        self, tmp_path: Path, itype: str
+        self, tmp_path: Path, itype: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Every registered unit type writes the selected extruder's AFC_extruder
         section name into its own unit file, not just BoxTurtle."""
+        monkeypatch.setenv("AFC_EXTRUDER_COUNT", "2")
         unit = next(u for u in UNIT_TYPES if u.display_name == itype)
         sel = UnitSelection(installation_type=itype, unit_name=unit.default_name,
                             extruder="extruder1")

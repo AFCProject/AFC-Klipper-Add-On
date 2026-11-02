@@ -246,6 +246,7 @@ class TestInstallKey:
         monkeypatch.setattr(module, "apply_unit_extruder", fake_apply_unit_extruder)
         Recorder().install(monkeypatch)
         menu, state, _, _, _ = build(tmp_path, ["i"])
+        write_printer_extruders(state.ctx, "extruder", "extruder1")
         menu.step()
         assert seen == ["True"]
         assert state.selection.is_additional_unit is True
@@ -260,9 +261,27 @@ class TestInstallKey:
 
         monkeypatch.setattr(module, "apply_unit_extruder", fake_apply_unit_extruder)
         menu, state, _, _, _ = build(tmp_path, ["i"], itype="ViViD", buffer="None")
+        write_printer_extruders(state.ctx, "extruder", "extruder1")
         menu.step()
         assert seen == ["True"]
         assert state.selection.is_additional_unit is True
+
+    def test_a_single_detected_extruder_skips_applying_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With only one printer extruder detected, the options screen never shows
+        the extruder row, so install must not call apply_unit_extruder either."""
+        seen: List[str] = []
+
+        def fake_apply_unit_extruder(ctx: Any, console: Any, prompter: Any, sel: Any) -> None:
+            seen.append(str(sel.is_additional_unit))
+
+        monkeypatch.setattr(module, "apply_unit_extruder", fake_apply_unit_extruder)
+        Recorder().install(monkeypatch)
+        menu, state, _, _, _ = build(tmp_path, ["i"])
+        write_printer_extruders(state.ctx, "extruder")
+        menu.step()
+        assert seen == []
 
     def test_a_shared_buffer_asks_which_one_and_applies_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
