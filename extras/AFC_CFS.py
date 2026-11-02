@@ -3,19 +3,10 @@
 # Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-
-# Creality CFS (Color Filament System) unit.
 #
-# The CFS is a closed box: it moves filament itself and reports its own
-# sensors over RS-485 (a CH340 USB adapter is built into its cable). Klipper
-# never drives a CFS motor directly. This unit:
-#   - owns the serial link to one box (non-blocking, reactor-driven),
-#   - polls the box and mirrors per-slot filament presence into AFC lanes,
-#   - runs tool load/unload for its lanes. Lanes are plain [AFC_lane]
-#     sections (unit: <name>:<1-4>); this unit sets their custom load/unload
-#     commands, so Mainsail/Fluidd/GrumpyScreen see them as ordinary lanes.
-#
-# Tested on a K1 with one box and a K1 Max with two boxes on one chain.
+# Creality CFS support originally written by Mikeinredding(with AI assistance) and Jean-Claude Van Code (Claude, Anthropic's AI).
+# Idea and support from Pellcorp and the incredible SimpleAF community.
+# Protocol details from tomaspakosta/k1c-cfs-klipper (GNU GPLv3).
 from __future__ import annotations
 
 import errno
