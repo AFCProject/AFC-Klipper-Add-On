@@ -72,6 +72,7 @@ def _make_unit(afc):
     unit._lane_commands = set()
     unit.present_last = {}
     unit.load_reports = {}
+    unit._offline_warned = False
     for name in BOX_IO:
         setattr(unit, name, MagicMock())
     unit.read_material_mask = MagicMock(return_value=0b1111)
@@ -593,3 +594,41 @@ class TestRealAfcLaneSection:
         assert lane.custom_unload_cmd == "AFC_CFS_TOOL_UNLOAD LANE=lane2"
         assert lane._load_state is False
         assert lane.load_state is False       # empty shared path: virtual hub reads clear
+
+
+class TestConsoleMessages:
+    """Routine messages go to AFC.log only (debug); the console gets what a user acts on."""
+
+    @staticmethod
+    def _levels(unit, text):
+        return [level for level, msg in unit.logger.messages if text in msg]
+
+    def test_online_at_start_is_debug_only(self):
+        unit = _make_unit(MockAFC())
+        unit.online = False
+        unit.transport.request = MagicMock(return_value=None)
+        unit.version_sn = None
+        unit._set_online()
+        assert self._levels(unit, "online (addr") == ["debug"]
+
+    def test_back_online_after_offline_is_shown(self):
+        unit = _make_unit(MockAFC())
+        unit.transport.request = MagicMock(return_value=None)
+        unit.version_sn = None
+        unit._set_offline("no reply")
+        unit._set_online()
+        unit._set_offline("no reply")
+        unit._set_online()
+        unit.online = False              # went quiet without a warning: no message
+        unit._set_online()
+        assert self._levels(unit, ": offline (") == ["warning", "warning"]
+        assert self._levels(unit, "online (addr") == ["info", "info", "debug"]
+
+    def test_insert_and_remove_are_debug_only(self):
+        lane = _make_lane()
+        unit = lane.unit_obj
+        unit.present_last[lane.name] = False
+        unit.update_lane_presence(lane, True)
+        unit.update_lane_presence(lane, False)
+        assert self._levels(unit, "spool detected") == ["debug"]
+        assert self._levels(unit, "is empty") == ["debug"]
