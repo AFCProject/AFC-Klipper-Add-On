@@ -3,13 +3,16 @@
 # Copyright (C) 2019-2022  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-
 import logging
+
+from typing import List, Union
 from extras import led
+
 BACKGROUND_PRIORITY_CLOCK = 0x7fffffff00000000
 BIT_MAX_TIME = .000004
 RESET_MIN_TIME = .000050
 MAX_MCU_SIZE = 500  # Sanity check on LED chain length
+
 class AFCled:
     def __init__(self, config):
         self.printer    = printer = config.get_printer()
@@ -128,11 +131,20 @@ class AFCled:
 
         self.ledHelper_set_color_fn(index, color)
 
-    def led_change(self, index, status, update_last=True):
+    def led_change(self, index, status: Union[str, List[float]], update_last: bool = True) -> None:
+        """
+        Sets the color of one or more LEDs. Colors with fewer than 4 values are padded
+        with 0 so RGBW chains always receive (R,G,B,W).
+
+        :param index: LED index, "start-end" range string, or list of indexes
+        :param status: Color as a "R,G,B[,W]" string or a list of floats
+        :param update_last: When True, saves the color so it can be restored later
+        """
         if isinstance(status, list):
-            colors = status
+            colors = list(status)
         else:
-            colors=list(map(float,status.split(',')))
+            colors = list(map(float, status.split(',')))
+        colors += [0.0] * (4 - len(colors))
 
         if isinstance(index, str) and "-" in index:
             start, end = map(int, index.split("-"))
