@@ -398,6 +398,52 @@ class TestResolveAfcExtruderSection:
         assert exc.value.code == 1
         assert hardware.read_text() == before
 
+    def test_a_name_with_spaces_is_rejected_and_reprompts(self, tmp_path: Path) -> None:
+        """Spaces are not valid in a Klipper config section name, so a name with an
+        internal space must never reach _append_afc_extruder_block."""
+        ctx = _ctx(tmp_path)
+        hardware = _write_hardware(ctx, "[AFC_extruder extruder]\n")
+        console, prompter = RecordingConsole(), ScriptedPrompter(["My Extruder", "MyExtruder"])
+
+        name = resolve_afc_extruder_section(ctx, console, prompter, "extruder1")
+
+        assert name == "MyExtruder"
+        assert console.messages[-1] == (
+            "WARNING",
+            "'My Extruder' contains spaces, which are not valid in a config section "
+            "name; please choose another.",
+        )
+        text = hardware.read_text()
+        assert "[AFC_extruder My Extruder]" not in text
+        assert "[AFC_extruder MyExtruder]" in text
+
+    def test_leading_and_trailing_spaces_are_trimmed_not_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """Only an internal space is invalid; surrounding whitespace around an
+        otherwise valid name is just trimmed, same as every other prompt answer."""
+        ctx = _ctx(tmp_path)
+        hardware = _write_hardware(ctx, "[AFC_extruder extruder]\n")
+        console, prompter = RecordingConsole(), ScriptedPrompter(["  MyExtruder  "])
+
+        name = resolve_afc_extruder_section(ctx, console, prompter, "extruder1")
+
+        assert name == "MyExtruder"
+        assert not [m for m in console.messages if "spaces" in m[1]]
+        assert "[AFC_extruder MyExtruder]" in hardware.read_text()
+
+    def test_end_of_input_after_a_name_with_spaces_raises(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path)
+        hardware = _write_hardware(ctx, "[AFC_extruder extruder]\n")
+        before = hardware.read_text()
+        console, prompter = RecordingConsole(), ScriptedPrompter(["My Extruder"])
+
+        with pytest.raises(InstallerExit) as exc:
+            resolve_afc_extruder_section(ctx, console, prompter, "extruder1")
+
+        assert exc.value.code == 1
+        assert hardware.read_text() == before
+
     def test_end_of_input_raises_installer_exit_and_writes_nothing(
         self, tmp_path: Path
     ) -> None:

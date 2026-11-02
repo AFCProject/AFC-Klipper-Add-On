@@ -314,6 +314,13 @@ def _ask_afc_extruder_name(
         if answer is None:
             raise InstallerExit(1)
         name = answer.strip() or target
+        if any(ch.isspace() for ch in name):
+            console.print_msg(
+                "WARNING",
+                f"'{name}' contains spaces, which are not valid in a config section name; "
+                "please choose another.",
+            )
+            continue
         if name not in existing_names:
             return name
         console.print_msg(
