@@ -24,7 +24,7 @@ from installer.unit_registry.selection import UnitSelection
 
 def normalize_board_type(board: str) -> str:
     """
-    MMB_1.0 and MMB_1.1 share one template and file name segment, ``MMB``.
+    MMB_1.0 and MMB_1.1 share one template and file name segment, `MMB`.
 
     :param board: HTLF board type
     :return str: the board name used in template and unit file names
@@ -75,7 +75,7 @@ class Htlf(UnitType):
         self, ctx: Context, console: Console, prompter: Prompter, sel: UnitSelection
     ) -> None:
         """
-        Copy the mcu and unit files, then rename ``HTLF_1`` to the unit name.
+        Copy the mcu and unit files, then rename `HTLF_1` to the unit name.
 
         :param ctx: installer context
         :param console: where messages go
@@ -143,7 +143,7 @@ class Htlf(UnitType):
 
     def additional_probe_file(self, prefix: str, number: int, sel: UnitSelection) -> str:
         """
-        HTLF unit files carry the board: ``AFC_<board>_<prefix>_<n>.cfg``.
+        HTLF unit files carry the board: `AFC_<board>_<prefix>_<n>.cfg`.
 
         :param prefix: name prefix
         :param number: candidate number

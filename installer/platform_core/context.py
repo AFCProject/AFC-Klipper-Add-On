@@ -24,7 +24,7 @@ from installer.platform_core.platform_info import PlatformInfo
 
 def _timestamp() -> str:
     """
-    Current time in the ``%Y%m%d%H%M%S`` form used in backup names.
+    Current time in the `%Y%m%d%H%M%S` form used in backup names.
 
     :return str: the timestamp
     """
@@ -77,16 +77,16 @@ class Context:
         """
         Build a Context using the defaults for anything not overridden.
 
-        ``afc_path`` is always the checkout the installer runs from, never ``$HOME``
+        `afc_path` is always the checkout the installer runs from, never `$HOME`
         based (issue #853). The Moonraker config defaults to a file inside the
-        final printer config directory, so a ``-p`` override moves it too.
+        final printer config directory, so a `-p` override moves it too.
 
         :param afc_path: the AFC-Klipper-Add-On checkout
         :param home: home directory, defaults to the current user's
-        :param printer_config_dir: override for ``~/printer_data/config``
-        :param klipper_dir: override for ``~/klipper``
-        :param klipper_venv: override for ``~/klippy-env/bin``
-        :param moonraker_config_file: override for ``<printer_config_dir>/moonraker.conf``
+        :param printer_config_dir: override for `~/printer_data/config`
+        :param klipper_dir: override for `~/klipper`
+        :param klipper_venv: override for `~/klippy-env/bin`
+        :param moonraker_config_file: override for `<printer_config_dir>/moonraker.conf`
         :param klipper_service: Klipper service name
         :param moonraker_address: Moonraker host with scheme
         :param moonraker_port: Moonraker port
@@ -130,19 +130,19 @@ class Context:
 
     @property
     def moonraker(self) -> str:
-        """Moonraker base URL as ``address:port``."""
+        """Moonraker base URL as `address:port`."""
         return f"{self.moonraker_address}:{self.moonraker_port}"
 
     @property
     def klipper_extra_path(self) -> Path:
-        """Klipper's ``klippy/extras`` directory, derived from ``klipper_dir``."""
+        """Klipper's `klippy/extras` directory, derived from `klipper_dir`."""
         return self.klipper_dir / "klippy" / "extras"
 
     def apply_platform(self, info: PlatformInfo) -> None:
         """
         Record the detected platform; Snapmaker forces the system python directory.
 
-        :param info: detection result from ``detect_platform``
+        :param info: detection result from `detect_platform`
         """
         self.is_k1_os = info.is_k1_os
         self.is_snapmaker = info.is_snapmaker

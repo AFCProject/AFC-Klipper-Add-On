@@ -20,14 +20,14 @@ _MOONRAKER_SECTION = "[update_manager afc-software]"
 
 def manage_include(path: Path, action: str) -> None:
     """
-    Add or remove the ``[include AFC/*.cfg]`` line in a config file.
+    Add or remove the `[include AFC/*.cfg]` line in a config file.
 
-    ``add`` does nothing if any line already contains the statement. Otherwise it goes
-    before every ``SAVE_CONFIG`` marker line, or at the end when the exact marker text
-    is absent. ``remove`` drops every line containing the statement.
+    `add` does nothing if any line already contains the statement. Otherwise it goes
+    before every `SAVE_CONFIG` marker line, or at the end when the exact marker text
+    is absent. `remove` drops every line containing the statement.
 
     :param path: config file, normally printer.cfg
-    :param action: ``"add"`` or ``"remove"``
+    :param action: `"add"` or `"remove"`
     """
     if action not in ("add", "remove"):
         error_str = f"manage_include: unknown action '{action}'"
@@ -74,10 +74,10 @@ def _add_include(doc: ConfigDocument) -> None:
 
 def moonraker_update_block(afc_path: str, gitrepo: str, service: str, home: str) -> str:
     """
-    Build the ``[update_manager afc-software]`` block for moonraker.conf.
+    Build the `[update_manager afc-software]` block for moonraker.conf.
 
-    A checkout under ``home`` is written as ``~/...``. The primary branch is always
-    ``main``, whatever branch is installed.
+    A checkout under `home` is written as `~/...`. The primary branch is always
+    `main`, whatever branch is installed.
 
     :param afc_path: the AFC-Klipper-Add-On checkout
     :param gitrepo: git remote URL

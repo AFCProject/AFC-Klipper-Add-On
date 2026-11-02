@@ -51,7 +51,7 @@ class InstallOptions:
 
 def apply_boxturtle_rename(ctx: Context, sel: UnitSelection) -> None:
     """
-    Rewrite the template name ``Turtle_1`` everywhere if a BoxTurtle got another name.
+    Rewrite the template name `Turtle_1` everywhere if a BoxTurtle got another name.
 
     This is deliberately directory wide: the first unit's name can appear in shared files.
     Other unit types rename themselves while their files are copied.
@@ -132,10 +132,10 @@ def install_afc(
     """
     Install the first unit: copy configs, link extensions and apply every selected option.
 
-    On a Snapmaker U1 it also keeps ``.lite`` backups of Klipper's originals, uses the U1
-    config, comments out fluidd's ``T<n>`` macros and writes ``/oem/.debug``.
+    On a Snapmaker U1 it also keeps `.lite` backups of Klipper's originals, uses the U1
+    config, comments out fluidd's `T<n>` macros and writes `/oem/.debug`.
 
-    :param ctx: installer context, ``files_updated_or_installed`` is set
+    :param ctx: installer context, `files_updated_or_installed` is set
     :param console: where messages go
     :param prompter: used for overwrite and pin prompts
     :param runner: command runner (restarting Moonraker)

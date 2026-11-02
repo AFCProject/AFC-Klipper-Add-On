@@ -53,7 +53,7 @@ def lowest_free_name(ctx: Context, sel: UnitSelection, unit: Optional[UnitType])
 
 def valid_unit_name(name: str) -> bool:
     """
-    Is this an allowed unit name: ASCII letters, digits, ``-`` and ``_``, at most 24 long?
+    Is this an allowed unit name: ASCII letters, digits, `-` and `_`, at most 24 long?
 
     :param name: candidate name
     :return bool: True if allowed
@@ -91,7 +91,7 @@ def name_unit(
 
     :param console: where messages go
     :param prompter: where answers come from
-    :param sel: the user's unit choices, ``unit_name`` is updated
+    :param sel: the user's unit choices, `unit_name` is updated
     :param default: the name used when the answer is empty
     :return str: the status message for the menu
     """
@@ -105,9 +105,9 @@ def replace_unit_name(ctx: Context, old: str, new: str) -> None:
     """
     Rename a unit everywhere in the AFC config directory.
 
-    Every file's contents are rewritten, then each ``AFC_<old>.cfg`` anywhere in the tree
-    moves to ``AFC_<new>.cfg`` at the top and each ``mcu/**/<old>.cfg`` to ``mcu/<new>.cfg``,
-    replacing whatever is there, like the ``find -exec mv`` it ports.
+    Every file's contents are rewritten, then each `AFC_<old>.cfg` anywhere in the tree
+    moves to `AFC_<new>.cfg` at the top and each `mcu/**/<old>.cfg` to `mcu/<new>.cfg`,
+    replacing whatever is there, like the `find -exec mv` it ports.
 
     :param ctx: installer context
     :param old: current unit name
@@ -192,7 +192,7 @@ def verify_name_not_in_use(ctx: Context, name: str) -> bool:
     """
     Is this name already used anywhere in the AFC config directory contents?
 
-    A plain substring search over every file, so ``Turtle_1`` is blocked by ``Turtle_10``.
+    A plain substring search over every file, so `Turtle_1` is blocked by `Turtle_10`.
 
     :param ctx: installer context
     :param name: candidate unit name
@@ -213,7 +213,7 @@ def name_in_use_message(name: str) -> str:
 
 def check_existing_unit_installed(ctx: Context) -> bool:
     """
-    Has a first unit been installed (does any config file define an ``[AFC_stepper lane``)?
+    Has a first unit been installed (does any config file define an `[AFC_stepper lane`)?
 
     :param ctx: installer context
     :return bool: True if a lane section exists

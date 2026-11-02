@@ -34,7 +34,7 @@ class UnitType(ABC):
     """
     A supported unit type.
 
-    Only ``copy_files`` is required. The other hooks default to "nothing to do", so a
+    Only `copy_files` is required. The other hooks default to "nothing to do", so a
     type only implements what it needs.
     """
 
@@ -99,7 +99,7 @@ class UnitType(ABC):
     @property
     def default_name(self) -> str:
         """
-        The name a first unit of this type starts with (``<prefix>_1``, for example ``HTLF_1``).
+        The name a first unit of this type starts with (`<prefix>_1`, for example `HTLF_1`).
 
         :return str: the default unit name
         """
@@ -126,7 +126,7 @@ class UnitType(ABC):
         Reset the unit name to the lowest free default unless the user chose a name.
 
         :param ctx: installer context
-        :param sel: the user's unit choices, ``unit_name`` may be updated
+        :param sel: the user's unit choices, `unit_name` may be updated
         """
         from installer.unit_registry.naming import lowest_free_name
 
@@ -144,7 +144,7 @@ class UnitType(ABC):
         """
         Adjust the buffer after the toolhead sensor / ramming choice flipped.
 
-        :param sel: the user's unit choices, ``buffer_type`` may change
+        :param sel: the user's unit choices, `buffer_type` may change
         :return str: the status message
         """
         if sel.toolhead_sensor == "Sensor":
@@ -162,7 +162,7 @@ class UnitType(ABC):
         """
         Step to the next buffer type (a buffer is mandatory with ramming, optional with a sensor).
 
-        :param sel: the user's unit choices, ``buffer_type`` is updated
+        :param sel: the user's unit choices, `buffer_type` is updated
         """
         order = {
             "TurtleNeck": "TurtleNeckV2",
@@ -176,9 +176,9 @@ class UnitType(ABC):
 
     def additional_probe_file(self, prefix: str, number: int, sel: UnitSelection) -> str:
         """
-        File name whose existence means unit ``<prefix>_<number>`` is taken.
+        File name whose existence means unit `<prefix>_<number>` is taken.
 
-        :param prefix: name prefix, e.g. ``Turtle``
+        :param prefix: name prefix, e.g. `Turtle`
         :param number: candidate number
         :param sel: the user's unit choices
         :return str: file name inside the AFC config directory

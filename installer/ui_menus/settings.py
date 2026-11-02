@@ -97,11 +97,11 @@ def set_klipper_service(ctx: Context, text: str) -> str:
 
 def parse_moonraker_address(text: str, current_port: str) -> Tuple[str, str]:
     """
-    Split ``[http[s]://]host[:port]`` into the address and port the context stores.
+    Split `[http[s]://]host[:port]` into the address and port the context stores.
 
     :param text: the typed address
     :param current_port: the port to keep when none is typed
-    :return Tuple[str, str]: the address with its scheme (default ``http://``) and the port
+    :return Tuple[str, str]: the address with its scheme (default `http://`) and the port
     :raises ValueError: if the scheme, host or port is not valid (the message says why)
     """
     rest = text.strip()

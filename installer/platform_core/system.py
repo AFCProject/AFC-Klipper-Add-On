@@ -31,7 +31,7 @@ class CommandRunner:
         Run a command.
 
         A missing executable behaves like a shell: exit status 127 and a
-        ``command not found`` message on stderr (raised if ``check`` is set).
+        `command not found` message on stderr (raised if `check` is set).
 
         :param args: argv list, executable first
         :param check: raise CalledProcessError on a nonzero exit status
@@ -49,7 +49,7 @@ class CommandRunner:
 
     def exists(self, name: str) -> bool:
         """
-        Check whether a command is on PATH, like ``command -v``.
+        Check whether a command is on PATH, like `command -v`.
 
         :param name: command name
         :return bool: True if it can be found
@@ -85,7 +85,7 @@ def run_or_exit(runner: CommandRunner, argv: Sequence[str]) -> None:
 
 def restart_service(runner: CommandRunner, name: str) -> None:
     """
-    Restart a service with ``sudo systemctl``, or ``sudo service`` without systemd.
+    Restart a service with `sudo systemctl`, or `sudo service` without systemd.
 
     :param runner: command runner
     :param name: service name
@@ -101,7 +101,7 @@ _HTTP_SCHEMES = ("http://", "https://")
 
 def _fetch(url: str) -> bytes:
     """
-    GET a URL and return the body even for an HTTP error status, like ``curl -s``.
+    GET a URL and return the body even for an HTTP error status, like `curl -s`.
 
     :param url: address to request
     :return bytes: response body
@@ -119,8 +119,8 @@ def query_printer_status(moonraker_url: str) -> bool:
     """
     Ask Moonraker whether the printer is idle enough to restart Klipper.
 
-    :param moonraker_url: Moonraker base URL as ``address:port``
-    :return bool: True when a state was reported and it is not ``Printing``. A non-http(s)
+    :param moonraker_url: Moonraker base URL as `address:port`
+    :return bool: True when a state was reported and it is not `Printing`. A non-http(s)
         address is never queried and counts as not idle.
     """
     if not moonraker_url.startswith(_HTTP_SCHEMES):
@@ -158,10 +158,10 @@ def u1_write_debug_file(
     oem_dir: Path = Path("/oem"),
 ) -> None:
     """
-    Create ``/oem/.debug`` so Klipper changes survive a U1 reboot.
+    Create `/oem/.debug` so Klipper changes survive a U1 reboot.
 
     :param console: where progress messages go
-    :param runner: command runner, used to escalate with ``su`` when not root
+    :param runner: command runner, used to escalate with `su` when not root
     :param euid: effective user id, defaults to the current process's
     :param oem_dir: location of the oem directory
     """
@@ -185,7 +185,7 @@ def restart_klipper(
     """
     Restart Klipper when the printer is idle, otherwise warn and leave it running.
 
-    The service restarted is the literal ``klipper``, not the ``-s`` value.
+    The service restarted is the literal `klipper`, not the `-s` value.
 
     :param ctx: installer context
     :param console: where warnings go

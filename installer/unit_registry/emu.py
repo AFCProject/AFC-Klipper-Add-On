@@ -13,7 +13,7 @@ from typing import List
 from installer.platform_core.context import Context
 
 # The text lives in data files. Their
-# ``${unit_name}`` style placeholders are string.Template syntax, so nothing is rewritten.
+# `${unit_name}` style placeholders are string.Template syntax, so nothing is rewritten.
 TEMPLATE_DIR = Path(__file__).resolve().parent / "emu_templates"
 
 
@@ -21,7 +21,7 @@ def _render(name: str, **values: object) -> str:
     """
     Fill in one template file.
 
-    :param name: template file name without the ``.tmpl`` suffix
+    :param name: template file name without the `.tmpl` suffix
     :param values: placeholder values
     :return str: the rendered text
     """
@@ -31,15 +31,15 @@ def _render(name: str, **values: object) -> str:
 
 def generate_emu_config(ctx: Context, unit_name: str, num_lanes: int, board_type: str) -> None:
     """
-    Write ``mcu/<unit>.cfg`` and ``AFC_<unit>.cfg`` for an EMU with the given lanes.
+    Write `mcu/<unit>.cfg` and `AFC_<unit>.cfg` for an EMU with the given lanes.
 
     Existing files are replaced without asking. Any board
-    other than ``SLB`` (including an empty one) is treated as ``EBB``.
+    other than `SLB` (including an empty one) is treated as `EBB`.
 
     :param ctx: installer context
     :param unit_name: unit name used throughout the generated config
     :param num_lanes: number of lanes (0 produces a unit with no lanes)
-    :param board_type: ``SLB``, or anything else for ``EBB``
+    :param board_type: `SLB`, or anything else for `EBB`
     """
     cfg = ctx.afc_config_dir
     (cfg / "mcu").mkdir(parents=True, exist_ok=True)
