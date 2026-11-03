@@ -3,7 +3,7 @@ Runs the AFC_CFS unit (with plain AFC lanes) against a simulated CFS box (tests/
 on Klipper's *real* reactor, so the serial I/O, completions, mutex and timer
 interplay are exercised for real.
 
-Run as a subprocess (tests/test_AFC_CFS_reactor.py does this) because the AFC
+Run as a subprocess (TestAfcCFSOnRealReactor in tests/test_AFC_CFS.py does this) because the AFC
 test conftest replaces chelper with a mock, and the real reactor needs the
 real one:
 
