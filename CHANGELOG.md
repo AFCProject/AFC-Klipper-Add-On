@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-09-2026]
+### Fixed
+- fix Cut.cfg macro to honor the safe_move_first when heading to safe park location
+
 ## [11-08-2026]
 ### Changed
 - The `afc-debug.sh` script now runs completely on python and no longer requires any 3rd party dependencies.
