@@ -498,7 +498,8 @@ class CFSTrace:
     Optional JSON-lines trace of everything the unit does with the box: every
     frame sent and received (with reply latency), timeouts, connection
     changes, and load/unload/cut events with timings. Used to debug and tune
-    the integration from real prints (summarize with tools/cfs_trace_summary.py).
+    the integration from real prints (cfs_trace_summary.py in
+    github.com/mikeinredding/afc-creality-cfs summarizes one).
 
     Writes happen on a background thread so a slow SD/eMMC write can never
     stall Klipper's reactor; the reactor side only appends to a bounded queue.
