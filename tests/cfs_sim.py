@@ -49,8 +49,8 @@ class FakeCFS:
         self.stage_delays = dict(stage_delays or {})
         self.stage0_feed = stage0_feed        # mm stage 0 pushes toward the toolhead
         self.mute = False                     # True = box not answering yet (booting)
-        self.reel_positions = []
-        self.start_positions = []             # filament position at each stage-0 start              # filament position at each stage-1 reel
+        self.reel_positions = []              # filament position at each stage-1 reel
+        self.start_positions = []             # filament position at each stage-0 start
         self.reel_delay = reel_delay          # seconds RETRUDE stage 1 blocks (K1: 12.4)
 
         self.position = 0.0

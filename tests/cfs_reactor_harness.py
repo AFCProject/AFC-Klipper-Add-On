@@ -15,6 +15,7 @@ reports the longest the reactor was ever unable to service it.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -41,11 +42,13 @@ else:
     sys.path.append(KLIPPY)
     import reactor as kreactor  # noqa: E402
 import tests.conftest  # noqa: E402,F401  installs Klipper mocks for everything else
-from tests.conftest import MockAFC  # noqa: E402
-from tests.cfs_sim import FakeCFS  # noqa: E402
+from extras.AFC_lane import AFCLane  # noqa: E402
+from tests.conftest import MockAFC, MockConfig, MockPrinter  # noqa: E402
+
 from extras import AFC_CFS as P  # noqa: E402
 from extras.AFC_CFS import afcCFS  # noqa: E402
-from extras.AFC_lane import AFCLane  # noqa: E402
+from tests.cfs_helpers import CfsExtruder, CfsHub, complete_afc  # noqa: E402
+from tests.cfs_sim import FakeCFS  # noqa: E402
 
 FAST = {
     "stage_settle_time": 0.02,
@@ -55,26 +58,6 @@ FAST = {
 }
 
 
-class Defaults:
-    """Stands in for a Klipper config section: returns each option's real
-    default unless overridden."""
-
-    def __init__(self, values):
-        self.values = values
-
-    def get(self, key, default=None):
-        return self.values.get(key, default)
-
-    def getint(self, key, default=None, **kw):
-        return int(self.values.get(key, default))
-
-    def getfloat(self, key, default=None, **kw):
-        return float(self.values.get(key, default))
-
-    def getboolean(self, key, default=None):
-        return bool(self.values.get(key, default))
-
-
 class Logger:
     def __init__(self):
         self.lines = []
@@ -82,17 +65,23 @@ class Logger:
     def _log(self, level, msg):
         self.lines.append("{}: {}".format(level, msg))
 
-    def debug(self, msg):
+    def debug(self, msg, **kwargs):
         self._log("debug", msg)
 
-    def info(self, msg):
+    def info(self, msg, **kwargs):
         self._log("info", msg)
 
-    def warning(self, msg):
+    def warning(self, msg, **kwargs):
         self._log("warning", msg)
 
-    def error(self, msg):
+    def error(self, msg, traceback=None, stack_name="", **kwargs):
         self._log("error", msg)
+
+    def raw(self, msg, **kwargs):
+        self._log("raw", msg)
+
+    def set_debug(self, val):
+        pass
 
 
 class Watchdog:
@@ -125,21 +114,23 @@ class Watchdog:
         return self.slow_ticks <= 2 and self.max_gap < 0.25
 
 
-class FakeExtruder:
+class FakeExtruder(CfsExtruder):
+    """The toolhead sensor follows the simulated box."""
+
     def __init__(self, sim):
         self.sim = sim
-        self.name = "extruder"
-        self.tool_start = "pin"
-        self.fila_tool_start = None      # newer AFC checks this before tool_start_state
+        super().__init__("extruder")
         self.tool_stn = 50.0
         self.tool_load_speed = 25.0
-        self.estats = MagicMock()
         self.moved = []
-        self.lane_loaded = None
 
     @property
     def tool_start_state(self):
         return self.sim.toolhead_sensor
+
+    @tool_start_state.setter
+    def tool_start_state(self, value):
+        pass                             # the simulated box decides
 
 
 class Rig:
@@ -148,7 +139,7 @@ class Rig:
         self.sim = sim
         self.logger = Logger()
 
-        afc = MockAFC()
+        afc = complete_afc(MockAFC())
         afc.tool_cut = True
         afc.tool_cut_cmd = "AFC_CUT"
         afc.park = False
@@ -168,23 +159,27 @@ class Rig:
             r.pause(r.monotonic() + min(abs(distance) / max(speed, 0.1) * 0.01, 0.2))
 
         afc.move_e_pos = move_e_pos
+        afc.logger = self.logger
+        afc.reactor = r
         self.afc = afc
+        self.printer = MockPrinter(afc=afc)
+        self.printer._reactor = r            # Klipper's real reactor
+        self.printer.reactor = r
+        self.printer._objects["AFC_extruder extruder"] = self.extruder
 
         self.unit = self.add_unit("CFS_1", **overrides)
 
     def add_unit(self, name, **overrides):
-        """Another [AFC_CFS] section; with the same serial it joins the chain."""
-        unit = afcCFS.__new__(afcCFS)
-        unit.reactor = self.r
-        unit.logger = self.logger
-        unit.name = name
-        unit.lanes = {}
-        unit.afc = self.afc
+        """Another [AFC_CFS] section, built and connected like Klipper does; with the same
+        serial it joins the chain."""
         values = dict(FAST)
         values.update(overrides)
         values.setdefault("serial", self.sim.path)
-        unit._load_cfs_config(Defaults(values))
-        unit._init_cfs_runtime()
+        values.setdefault("hub", name)
+        values.setdefault("extruder", "extruder")
+        self.printer._objects.setdefault(f"AFC_hub {name}", CfsHub(name))
+        unit = afcCFS(MockConfig(name=f"AFC_CFS {name}", printer=self.printer, values=values))
+        unit.handle_connect()
         unit.on_filament_insert = MagicMock()
         unit.on_filament_remove = MagicMock()
         unit.lane_tool_loaded = MagicMock()      # LED handling, needs a full lane
@@ -193,31 +188,19 @@ class Rig:
         return unit
 
     def lane(self, index, unit=None, name=None):
+        """A real [AFC_lane] section on a slot, attached like klippy:connect does."""
         unit = unit or self.unit
-        lane = AFCLane.__new__(AFCLane)
-        lane.name = name or "lane{}".format(index)
-        lane.index = index
-        lane.unit_obj = unit
-        lane.afc = self.afc
-        lane.reactor = self.r
-        lane.logger = self.logger
-        lane.extruder_obj = self.extruder
+        name = name or "lane{}".format(index)
+        lane = AFCLane(MockConfig(name=f"AFC_lane {name}", printer=self.printer,
+                                  values={"unit": f"{unit.name}:{index}"}))
+        self.printer._objects[f"AFC_lane {name}"] = lane
+        lane.handle_unit_connect(unit)   # what AFC_unit_<unit>:connect does for this lane
+        unit._setup_lane(lane)           # and then the unit's own setup
         lane.select_lane = MagicMock()
         lane.disable_buffer = MagicMock()
         lane.set_loaded = MagicMock()
         lane.set_unloaded = MagicMock()
-        lane.loaded_to_hub = False
-        lane.status = None
-        lane.tool_loaded = False
-        lane.runout_lane = None
-        lane.spool_id = None
         lane._afc_prep_done = True
-        lane.prep = None
-        lane.load = None
-        lane.custom_load_cmd = None
-        lane.custom_unload_cmd = None
-        unit.lanes[lane.name] = lane
-        unit._setup_lane(lane)           # what the unit does at connect
         lane.unit_obj.present_last[lane.name] = None
         return lane
 
@@ -313,7 +296,7 @@ def sc_poll_presence(r):
     rig = Rig(r, sim)
     lanes = [rig.lane(i) for i in (1, 2, 3)]
     def presence():
-        return [l.unit_obj.present_last[l.name] for l in lanes]
+        return [x.unit_obj.present_last[x.name] for x in lanes]
 
     # Wait for the readings instead of a fixed time, so a slow test machine
     # doesn't fail the check
@@ -364,8 +347,8 @@ def sc_box_boots_late(r):
         setattr(rig.unit, name, MagicMock())
     rig.afc.current = None
     lanes = [rig.lane(i) for i in (1, 2, 3)]
-    for l in lanes:
-        l._afc_prep_done = False
+    for x in lanes:
+        x._afc_prep_done = False
 
     def unmute(eventtime):
         sim.mute = False
@@ -373,13 +356,13 @@ def sc_box_boots_late(r):
     r.register_timer(unmute, r.monotonic() + 2.0)
     dog = Watchdog(r)
     started = r.monotonic()
-    results = [_prep_lane(rig, l) for l in lanes]
+    results = [_prep_lane(rig, x) for x in lanes]
     took = r.monotonic() - started
     dog.stop()
     sim.close()
     return {
         "all_lanes_online": results == [True, True, True],
-        "presence_right": [l.prep_state for l in lanes] == [True, True, False],
+        "presence_right": [x.prep_state for x in lanes] == [True, True, False],
         # one connect attempt to a silent box takes a few seconds itself
         "waited_for_box": 1.5 < took < 10.0,
         "reactor_never_stalled": dog.never_stalled,
@@ -399,9 +382,9 @@ def sc_offline_prep_then_online(r):
     lanes = [rig.lane(i) for i in (1, 2, 3)]
     lanes[0].tool_loaded = True
     rig.extruder.lane_loaded = "lane1"
-    for l in lanes:
-        l._afc_prep_done = False
-    results = [_prep_lane(rig, l) for l in lanes]
+    for x in lanes:
+        x._afc_prep_done = False
+    results = [_prep_lane(rig, x) for x in lanes]
     rig.unit._cfs_handle_ready()
     sim.mute = False
     wait(r, 3.0)
@@ -410,13 +393,13 @@ def sc_offline_prep_then_online(r):
     return {
         "prep_saw_offline": results == [False, False, False],
         "came_online": rig.unit.online,
-        "presence_synced": ([l.unit_obj.present_last[l.name] for l in lanes]
+        "presence_synced": ([x.unit_obj.present_last[x.name] for x in lanes]
                             == [True, True, False]),
         "no_insert_event": not rig.unit.on_filament_insert.called,
         "tool_loaded_kept": lanes[0].tool_loaded and not lanes[0].set_unloaded.called,
         "tool_led_set": rig.unit.lane_tool_loaded_idle.called,
     }, {"results": results, "online": rig.unit.online,
-        "presence": [l.unit_obj.present_last[l.name] for l in lanes]}
+        "presence": [x.unit_obj.present_last[x.name] for x in lanes]}
 
 
 def _load(rig, lane):
@@ -744,6 +727,20 @@ def sc_two_boxes_load_while_polling(r):
     unit2.connect()
     rig.unit._cfs_handle_ready()
     unit2._cfs_handle_ready()
+    # Count box 1's polls only while box 2 holds the chain for its sequence;
+    # box 1 may be polled during the unload's cut, which is outside it. Each
+    # poll reads the sensor state twice (material, then connections), so one
+    # poll already under way as box 2 takes the chain shows up as 2 frames.
+    busy_polls = []
+    hold_chain = unit2.operation
+
+    @contextlib.contextmanager
+    def watched_operation():
+        with hold_chain():
+            start = box1.count(P.GET_FILAMENT_SENSOR_STATE)
+            yield
+            busy_polls.append(box1.count(P.GET_FILAMENT_SENSOR_STATE) - start)
+    unit2.operation = watched_operation
     wait(r, 0.5)
     polls_before = box1.count(P.GET_FILAMENT_SENSOR_STATE)
     lane5.unit_obj.cmd_AFC_CFS_TOOL_LOAD(lane5, None)
@@ -762,12 +759,13 @@ def sc_two_boxes_load_while_polling(r):
         "unloaded": sim.position == 0.0 and not sim.toolhead_sensor,
         "box1_never_got_motor_commands": box1.count(P.EXTRUDE_PROCESS) == 0
                                          and box1.count(P.RETRUDE_PROCESS) == 0,
-        "box1_not_polled_while_box2_busy": polls_during <= 1,
+        "box1_not_polled_while_box2_busy": (len(busy_polls) == 2
+                                            and all(n <= 2 for n in busy_polls)),
         "box1_polled_again_after": polls_after > 0,
         "box1_still_online": rig.unit.online,
         "reactor_never_stalled": dog.never_stalled,
     }, {"failures": rig.failures, "max_gap_ms": round(dog.max_gap * 1000, 2),
-        "box1_polls": [polls_before, polls_during, polls_after]}
+        "box1_polls": [polls_before, polls_during, polls_after], "busy_polls": busy_polls}
 
 
 def sc_stage5_reply_lost(r):
@@ -802,7 +800,7 @@ def sc_wrong_box_at_address(r):
     return {
         "refused": not ok and not rig.unit.online,
         "explains": "power-cycle" in (rig.unit.transport.last_error or "") or
-                    any("wrong" in l or "expected" in l for l in rig.logger.lines),
+                    any("wrong" in line or "expected" in line for line in rig.logger.lines),
     }, {"lines": rig.logger.lines[-3:]}
 
 

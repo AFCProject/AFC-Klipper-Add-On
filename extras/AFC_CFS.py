@@ -1201,7 +1201,7 @@ class afcCFS(afcUnit):
         if (uid
             and (len(uid) != 24 or any(c not in "0123456789abcdef" for c in uid))):
             msg = f"box_uid must be 24 hex digits, got '{uid}'"
-            raise config.error(msg) if hasattr(config, "error") else ValueError(msg)
+            raise config.error(msg)
         self.box_uid: Optional[bytes] = bytes.fromhex(uid) if uid else None
         self.poll_interval = config.getfloat("poll_interval", 1.0, minval=0.2)
         # Stock firmware sends CMD_ONLINE_CHECK every 1.5s (10s while printing);
@@ -1248,12 +1248,15 @@ class afcCFS(afcUnit):
         # Abort stage 5 early if the measuring wheel hasn't moved for this long
         self.stage5_stall_time = config.getfloat("stage5_stall_time", 8.0, minval=1.)
         self.stage5_stall_distance = config.getfloat("stage5_stall_distance", 2.0, minval=0.)
-        # Toolhead-side prime moves interleaved with stages 6 and 7.
-        # Stock firmware values: 10mm @ 35mm/min, then 5mm @ 10mm/min.
+        # Toolhead-side prime moves interleaved with stages 6 and 7. Stock firmware:
+        # 10mm @ 35mm/min, then 5mm @ 10mm/min. Stock runs that slow second push only
+        # as a fallback; 600 mm/min loaded reliably on a K1 Max and saves ~30 s a load.
+        # The box holds EXTRUDE_ERR8 (slot light red) from the toolhead sensor until
+        # stage 6, so prime1 at 300 mm/min keeps that to ~2 s instead of ~17 s.
         self.prime1_length = config.getfloat("prime1_length", 10.0, minval=0.)
-        self.prime1_speed = config.getfloat("prime1_speed", 35.0, above=0.)   # mm/min
+        self.prime1_speed = config.getfloat("prime1_speed", 300.0, above=0.)  # mm/min
         self.prime2_length = config.getfloat("prime2_length", 5.0, minval=0.)
-        self.prime2_speed = config.getfloat("prime2_speed", 10.0, above=0.)   # mm/min
+        self.prime2_speed = config.getfloat("prime2_speed", 600.0, above=0.)  # mm/min
         self.stage7_arg = config.getint("stage7_arg", 3, minval=0, maxval=255)
         # Send SET_BOX_MODE [00][01] after the load to clear the EXTRUDE_ERR8 the
         # box latches. Those bytes are the feed/change-mode command and take the
@@ -1487,8 +1490,7 @@ class afcCFS(afcUnit):
 
         :return bool: True if printing
         """
-        printer = getattr(self, "printer", None)
-        stats = printer.lookup_object("print_stats", None) if printer is not None else None
+        stats = self.printer.lookup_object("print_stats", None)
         if stats is None:
             return False
         try:
@@ -1501,11 +1503,9 @@ class afcCFS(afcUnit):
         """
         Record print start/stop so trace events can be tied to a job.
         """
-        printer = getattr(self, "printer", None)
-        if (printer is None
-            or not self.trace.enabled):
+        if not self.trace.enabled:
             return
-        stats = printer.lookup_object("print_stats", None)
+        stats = self.printer.lookup_object("print_stats", None)
         if stats is None:
             return
         try:
@@ -1815,15 +1815,15 @@ class afcCFS(afcUnit):
         """
         Block (cooperatively) while a tag read runs on any box of this chain.
         """
-        units = getattr(getattr(self, "bus", None), "units", None) or [self]
-        if not any(getattr(u, "_rfid_busy", False) for u in units):
+        units = self.bus.units
+        if not any(u._rfid_busy for u in units):
             return
         limit = (self.rfid_busy_timeout + self.resync_timeout
                  + self.rfid_read_attempts * (2.0 + self.rfid_retry_interval) + 10.0)
         start = self.reactor.monotonic()
         self.logger.info(f"CFS {self.name}: waiting for an RFID tag read to finish")
         self.trace.event("wait_for_tag_read")
-        while any(getattr(u, "_rfid_busy", False) for u in units):
+        while any(u._rfid_busy for u in units):
             if self.reactor.monotonic() - start > limit:
                 self.logger.warning(f"CFS {self.name}: tag read still running after "
                                     f"{limit:.0f}s; continuing")
@@ -2034,8 +2034,8 @@ class afcCFS(afcUnit):
         :param lane: lane to act on
         """
         where = f"[AFC_lane {lane.name}]"
-        if (getattr(lane, "prep", None) is not None
-            or getattr(lane, "load", None) is not None):
+        if (lane.prep is not None
+            or lane.load is not None):
             error_str = (f"{where}: CFS lanes take filament presence from the box; "
                          f"remove prep/load pins")
             raise CONFIG_ERROR(error_str)
@@ -2049,9 +2049,9 @@ class afcCFS(afcUnit):
         lane._load_state = False
         self.present_last[lane.name] = None
         self.load_reports[lane.name] = {}
-        if getattr(lane, "custom_load_cmd", None) is None:
+        if lane.custom_load_cmd is None:
             lane.custom_load_cmd = f"AFC_CFS_TOOL_LOAD LANE={lane.name}"
-        if getattr(lane, "custom_unload_cmd", None) is None:
+        if lane.custom_unload_cmd is None:
             lane.custom_unload_cmd = f"AFC_CFS_TOOL_UNLOAD LANE={lane.name}"
         if lane.name in self._lane_commands:
             return
@@ -2103,7 +2103,7 @@ class afcCFS(afcUnit):
 
         :return Any: unit with the cutter switch
         """
-        return getattr(self, "cutter_source", None) or self
+        return self.cutter_source or self
 
     def _cutter_engaged(self) -> bool:
         """
@@ -2123,6 +2123,21 @@ class afcCFS(afcUnit):
         :param fields: event fields
         """
         self.trace.event(ev, lane=lane.name, slot=P.slot_letter(lane.index), **fields)
+
+    def _trace_box_state(self, lane: AFCLane, point: str) -> None:
+        """
+        With tracing on, read the box's state and record it, to see when
+        the box latches an error during the handoff. Nothing is sent
+        without a trace.
+
+        :param lane: lane to act on
+        :param point: where in the load this is
+        """
+        if not self.trace.enabled:
+            return
+        status = self.read_box_status()
+        self._lane_trace(lane, "box_state", point=point, status=P.status_name(status),
+                         toolhead_sensor=self._toolhead_sensor(lane))
 
     def _lane_fail(self, lane: AFCLane, message: str) -> None:
         """
@@ -2152,7 +2167,7 @@ class afcCFS(afcUnit):
         lane.loaded_to_hub = present
         slot = P.slot_letter(lane.index)
 
-        if not getattr(lane, "_afc_prep_done", False):
+        if not lane._afc_prep_done:
             self.afc.save_vars()
             return
         if previous is None:
@@ -2178,11 +2193,7 @@ class afcCFS(afcUnit):
             if (lane.tool_loaded
                 and self.afc.function.is_printing()):
                 self._lane_trace(lane, "runout", runout_lane=lane.runout_lane)
-                fila = getattr(lane, "fila_load", None)
-                if (fila is not None
-                    and not fila.runout_helper.sensor_enabled):
-                    self.logger.warning(f"CFS runout on {lane.name} ignored, sensor disabled")
-                elif lane.runout_lane is not None:
+                if lane.runout_lane is not None:
                     # The tail is still in the path; let AFC's infinite spool decide.
                     lane._perform_infinite_runout()
                 else:
@@ -2296,14 +2307,19 @@ class afcCFS(afcUnit):
 
         # Handoff: the toolhead extruder grabs the filament while the box
         # finishes its stages.
+        self._trace_box_state(lane, "toolhead")
         if self.prime1_length > 0:
             self._e_move(self.prime1_length, self.prime1_speed, "prime 1")
+        self._trace_box_state(lane, "prime1")
         reply = self.extrude_stage(bits, 0x06)
         self.load_reports[lane.name]["stage6"] = P.status_name(reply.status if reply else None)
+        self._trace_box_state(lane, "stage6")
         if self.prime2_length > 0:
             self._e_move(self.prime2_length, self.prime2_speed, "prime 2")
+        self._trace_box_state(lane, "prime2")
         reply = self.extrude_stage(bits, 0x07, self.stage7_arg)
         self.load_reports[lane.name]["stage7"] = P.status_name(reply.status if reply else None)
+        self._trace_box_state(lane, "stage7")
         if (reply is None
             or not reply.ok):
             stage7 = self.load_reports[lane.name]["stage7"]
@@ -2321,6 +2337,7 @@ class afcCFS(afcUnit):
         self.connection_motor(P.CONN_STOP)
         if self.clear_mode_after_load:
             self.clear_latched_error()
+        self._trace_box_state(lane, "print_mode")
 
         if not self._toolhead_sensor(lane):
             return False, "toolhead sensor cleared after the handoff"
@@ -2424,7 +2441,7 @@ class afcCFS(afcUnit):
         cutter = self._cutter()
         reason = None
         for attempt in range(max(self.load_attempts, 1) + 1):
-            triggers_before = getattr(cutter, "cutter_trigger_count", 0)
+            triggers_before = cutter.cutter_trigger_count
             lane.extruder_obj.estats.increase_cut_total()
             self.afc.gcode.run_script_from_command(
                 f"{self.afc.tool_cut_cmd} EXTRUDER={lane.extruder_obj.name}")
@@ -2432,10 +2449,7 @@ class afcCFS(afcUnit):
                 self._lane_trace(lane, "cut", attempt=attempt + 1, verified=False)
                 return None
             # Let the cut moves finish and the switch report arrive
-            toolhead = getattr(self.afc, "toolhead", None)
-            if (toolhead is not None
-                and hasattr(toolhead, "wait_moves")):
-                toolhead.wait_moves()
+            self.afc.toolhead.wait_moves()
             start = self.reactor.monotonic()
             self._pause(0.1)
             while self._cutter_engaged():
@@ -2443,7 +2457,7 @@ class afcCFS(afcUnit):
                     break
                 self._pause(0.01)
             released = not self._cutter_engaged()
-            fired = getattr(cutter, "cutter_trigger_count", 0) > triggers_before
+            fired = cutter.cutter_trigger_count > triggers_before
             self._lane_trace(lane, "cut", attempt=attempt + 1, verified=True, fired=fired,
                              released=released, seconds=round(self.reactor.monotonic() - start, 2))
             if not released:
@@ -2686,8 +2700,9 @@ class afcCFS(afcUnit):
         if (not self.rfid_read_at_startup
             or self._rfid_startup_queued):
             return
-        if self.material_mask is None or not self.lanes or not all(
-                getattr(lane, "_afc_prep_done", False) for lane in self.lanes.values()):
+        if (self.material_mask is None
+            or not self.lanes
+            or not all(lane._afc_prep_done for lane in self.lanes.values())):
             return
         self._rfid_startup_queued = True
         for lane in self.lanes.values():
@@ -2714,8 +2729,7 @@ class afcCFS(afcUnit):
 
         :return bool: True during a job
         """
-        printer = getattr(self, "printer", None)
-        stats = printer.lookup_object("print_stats", None) if printer is not None else None
+        stats = self.printer.lookup_object("print_stats", None)
         if stats is None:
             return False
         try:
@@ -2737,13 +2751,14 @@ class afcCFS(afcUnit):
         if (self.bus.operation_active
             or self.transport.busy):
             return "box busy"
-        if getattr(lane, "tool_loaded", False) or (
-                self.connected_mask is not None and self.connected_mask & P.slot_bit(lane.index)):
+        if (lane.tool_loaded
+            or (self.connected_mask is not None
+                and self.connected_mask & P.slot_bit(lane.index))):
             return "lane is loaded"
         # Untested: turning one slot while another of this box is loaded
         # (that slot is in print mode). Wait until the box is unloaded.
-        if self.connected_mask or any(getattr(other, "tool_loaded", False)
-                                      for other in self.lanes.values()):
+        if (self.connected_mask
+            or any(other.tool_loaded for other in self.lanes.values())):
             return "another slot of this box is loaded"
         if (self.material_mask is not None
             and not self.material_mask & P.slot_bit(lane.index)):
@@ -2862,9 +2877,9 @@ class afcCFS(afcUnit):
         """
         cmds = []
         if (tag.get("spool_id")
-            and getattr(self.afc, "spoolman", None) is not None):
+            and self.afc.spoolman is not None):
             cmds.append(f'SET_SPOOL_ID LANE={lane.name} SPOOL_ID={tag["spool_id"]}')
-        elif getattr(lane, "spool_id", None):
+        elif lane.spool_id:
             self.logger.info(f"CFS {lane.name}: lane has Spoolman spool {lane.spool_id}; "
                              f"tag not applied")
         else:

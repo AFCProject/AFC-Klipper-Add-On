@@ -102,6 +102,27 @@ def test_summary_reports_failures_and_link_problems():
     assert "swapped spool" in text
 
 
+def test_summary_shows_box_state_during_the_handoff():
+    t = 1_760_000_000.0
+    events = [
+        {"ts": t, "ev": "load_start", "lane": "lane1", "slot": "A"},
+        {"ts": t + 1, "ev": "box_state", "lane": "lane1", "point": "prime1", "status": "OK"},
+        {"ts": t + 2, "ev": "load_start", "lane": "lane1", "slot": "A"},
+        {"ts": t + 10, "ev": "box_state", "lane": "lane1", "point": "toolhead", "status": "OK"},
+        {"ts": t + 27.5, "ev": "box_state", "lane": "lane1", "point": "prime1",
+         "status": "EXTRUDE_ERR8"},
+        {"ts": t + 40, "ev": "box_state", "lane": "lane1", "point": "toolhead", "status": "OK"},
+    ]
+    buf = io.StringIO()
+    summary.summarize(events, out=buf)
+    lines = [ln.split(": ", 1)[1] for ln in buf.getvalue().splitlines()
+             if ln.startswith("    ") and "lane1:" in ln]
+    # A new attempt starts at load_start or at each "toolhead" read
+    assert lines == ["prime1 OK (+0.0s)",
+                     "toolhead OK (+0.0s), prime1 EXTRUDE_ERR8 (+17.5s)",
+                     "toolhead OK (+0.0s)"]
+
+
 def test_summary_cli_filters_events(tmp_path, capsys):
     path = tmp_path / "t.jsonl"
     path.write_text("\n".join(json.dumps(e) for e in [

@@ -124,6 +124,22 @@ def summarize(events, out=sys.stdout):
     if handoffs:
         st7 = Counter("{} (arg {})".format(e.get("stage7"), e.get("stage7_arg")) for e in handoffs)
         p("  stage 7 replies:  " + ", ".join("{} x{}".format(k, v) for k, v in st7.most_common()))
+    # Box state read at each step of the handoff, one line per load attempt,
+    # with seconds since the filament reached the toolhead
+    attempts, current = [], None
+    for e in events:
+        if e["ev"] == "box_state":
+            if current is None or e.get("point") == "toolhead":
+                current = {"ts": e["ts"], "lane": e.get("lane"), "steps": []}
+                attempts.append(current)
+            current["steps"].append("{} {} (+{:.1f}s)".format(
+                e.get("point"), e.get("status"), e["ts"] - current["ts"]))
+        elif e["ev"] == "load_start":
+            current = None
+    if attempts:
+        p("  box state during the handoff:")
+        for a in attempts:
+            p("    {} {}: {}".format(when(a["ts"]), a["lane"], ", ".join(a["steps"])))
 
     # Unloads
     unloads = [e for e in events if e["ev"] == "unload_end"]
