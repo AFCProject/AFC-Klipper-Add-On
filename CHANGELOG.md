@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [11-04-2026]
+### Added
+- Added a `SET_FILAMENT_INFO` macro to optionally set filament vendor and name when not using spoolman. 
+
 ## [11-01-2026]
 ### Added
 - Added ability to choose extruder when first installing AFC and when adding additional units on a multi-toolhead system
