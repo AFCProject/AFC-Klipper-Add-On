@@ -5107,3 +5107,43 @@ class TestAfcCFSTemplates:
         # AFC_CFS_wipe.cfg is optional; the leave-purge macro the load needs is in AFC_CFS_1.cfg
         ids = [p.id for p in _macros()]
         assert "AFC_CFS_1.cfg:gcode_macro AFC_CFS_LEAVE_PURGE" in ids
+
+
+def _render_leave_purge(y=230.0, homed="xyz", next_lane=None, current_load=None):
+    """Render AFC_CFS_LEAVE_PURGE from AFC_CFS_1.cfg as Klipper would and return its lines."""
+    path = next(p for p in TEMPLATES if p.name == "AFC_CFS_1.cfg")
+    cp = configparser.RawConfigParser(strict=False, inline_comment_prefixes=None,
+                                      comment_prefixes=("#", ";"))
+    cp.read(path)
+    section = "gcode_macro AFC_CFS_LEAVE_PURGE"
+    env = jinja2.Environment("{%", "%}", "{", "}")
+    template = env.from_string(cp.get(section, "gcode"))
+    printer = {
+        "gcode_macro AFC_CFS_PARK": {"safe_y": 215.0, "travel_speed": 250},
+        "AFC": {"next_lane": next_lane, "current_load": current_load},
+        "toolhead": {"homed_axes": homed, "position": {"y": y}},
+    }
+    text = template.render(printer=printer, params={}, settle_ms=1000)
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+class TestAfcCFSLeavePurgeMacro:
+    LEAVES = ["SAVE_GCODE_STATE NAME=_afc_cfs_leave", "G90", "G1 Y215.0 F15000", "M400",
+              "G4 P1000", "RESTORE_GCODE_STATE NAME=_afc_cfs_leave"]
+
+    def test_leaves_the_chute(self):
+        assert _render_leave_purge() == self.LEAVES
+
+    def test_already_in_front(self):
+        assert _render_leave_purge(y=200.0) == []
+
+    def test_not_homed(self):
+        assert _render_leave_purge(homed="xz") == []
+
+    def test_stays_between_unload_and_load_of_a_change(self):
+        # After the unload the old lane is still (or no longer) current; the load comes next
+        assert _render_leave_purge(next_lane="lane2", current_load="lane1") == []
+        assert _render_leave_purge(next_lane="lane2", current_load=None) == []
+
+    def test_leaves_after_the_load_of_a_change(self):
+        assert _render_leave_purge(next_lane="lane2", current_load="lane2") == self.LEAVES
