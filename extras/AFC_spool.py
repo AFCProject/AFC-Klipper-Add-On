@@ -92,6 +92,9 @@ class AFCSpool:
         self.gcode.register_mux_command('SET_COLOR',            "LANE", lane_obj.name, self.cmd_SET_COLOR,              desc=self.cmd_SET_COLOR_help)
         self.gcode.register_mux_command('SET_WEIGHT',           "LANE", lane_obj.name, self.cmd_SET_WEIGHT,             desc=self.cmd_SET_WEIGHT_help)
         self.gcode.register_mux_command('SET_MATERIAL',         "LANE", lane_obj.name, self.cmd_SET_MATERIAL,           desc=self.cmd_SET_MATERIAL_help)
+        self.gcode.register_mux_command('SET_FILAMENT_INFO', "LANE", lane_obj.name,
+                                        self.cmd_SET_FILAMENT_INFO,
+                                        desc=self.cmd_SET_FILAMENT_INFO_help)
         self.gcode.register_mux_command('SET_SPOOL_ID',         "LANE", lane_obj.name, self.cmd_SET_SPOOL_ID,           desc=self.cmd_SET_SPOOL_ID_help)
         self.gcode.register_mux_command('SET_RUNOUT',           "LANE", lane_obj.name, self.cmd_SET_RUNOUT,             desc=self.cmd_SET_RUNOUT_help)
         self.gcode.register_mux_command('SET_MAP',              "LANE", lane_obj.name, self.cmd_SET_MAP,                desc=self.cmd_SET_MAP_help)
@@ -545,6 +548,45 @@ class AFCSpool:
         # automatically sets density based on material name
         if density is not None:
             cur_lane.filament_density = density
+
+        cur_lane.send_lane_data()
+        self.afc.save_vars()
+        self.set_snapmaker_filament_params(cur_lane)
+
+    cmd_SET_FILAMENT_INFO_help = "Sets filament vendor and name for a lane"
+    def cmd_SET_FILAMENT_INFO(self, gcmd: GCodeCommand) -> None:
+        """
+        Set the filament vendor and/or filament name for a lane without needing Spoolman.
+
+        Values are published in lane_data and saved across restarts. They are cleared when
+        the spool is replaced. A value that is not supplied is left unchanged, and an empty
+        value clears that field.
+
+        Optional Values
+        ----
+        VENDOR - Filament vendor/brand name. eg. Polymaker, Elegoo
+        NAME - Filament name. eg. PolyTerra PLA
+
+        Usage
+        -----
+        `SET_FILAMENT_INFO LANE=<lane> VENDOR=<vendor> NAME=<filament name>`
+
+        Example
+        -----
+        ```
+        SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyTerra PLA"
+        ```
+        """
+        lane = gcmd.get('LANE', None)
+        if lane is None:
+            self.logger.info("No LANE Defined")
+            return
+        if lane not in self.afc.lanes:
+            self.logger.info(f"{lane} Unknown")
+            return
+        cur_lane = self.afc.lanes[lane]
+        cur_lane.spool_vendor = gcmd.get('VENDOR', cur_lane.spool_vendor)
+        cur_lane.filament_name = gcmd.get('NAME', cur_lane.filament_name)
 
         cur_lane.send_lane_data()
         self.afc.save_vars()

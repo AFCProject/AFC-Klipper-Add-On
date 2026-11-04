@@ -171,6 +171,11 @@ class afcPrep:
                             cur_lane.material = units[cur_lane.unit][cur_lane.name]['material']
                         if 'color' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.color = units[cur_lane.unit][cur_lane.name]['color']
+                        lane_vars = units[cur_lane.unit][cur_lane.name]
+                        if 'filament_name' in lane_vars:
+                            cur_lane.filament_name = lane_vars['filament_name']
+                        if 'spool_vendor' in lane_vars:
+                            cur_lane.spool_vendor = lane_vars['spool_vendor']
                         if 'weight' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.weight = units[cur_lane.unit][cur_lane.name]['weight']
                         if 'density' in units[cur_lane.unit][cur_lane.name]:
