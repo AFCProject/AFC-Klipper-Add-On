@@ -36,10 +36,10 @@ LITE_NAMES = ("AFC.py", "AFC_unit.py", "AFC_lane.py")
 
 def check_and_move_lite_files(ctx: Context, console: Console) -> None:
     """
-    Keep a ``.lite`` copy of each Snapmaker original before AFC replaces it.
+    Keep a `.lite` copy of each Snapmaker original before AFC replaces it.
 
     An existing copy is never overwritten. Every message says the file is copied to
-    ``AFC.py.lite``, whichever file it is.
+    `AFC.py.lite`, whichever file it is.
 
     :param ctx: installer context
     :param console: where progress messages go
@@ -53,7 +53,7 @@ def check_and_move_lite_files(ctx: Context, console: Console) -> None:
 
 def move_lite_files_back(ctx: Context) -> None:
     """
-    Put each ``.lite`` original back over the file AFC installed (even over a symlink).
+    Put each `.lite` original back over the file AFC installed (even over a symlink).
 
     :param ctx: installer context
     """
@@ -65,7 +65,7 @@ def move_lite_files_back(ctx: Context) -> None:
 
 def comment_gcode_in_fluidd(ctx: Context, console: Console, comment: bool) -> None:
     """
-    Comment out (or restore) Snapmaker's ``T<n>`` macros in fluidd.cfg.
+    Comment out (or restore) Snapmaker's `T<n>` macros in fluidd.cfg.
 
     :param ctx: installer context
     :param console: where progress and errors go
@@ -141,7 +141,7 @@ def u1_enable(
     oem_dir: Path = Path("/oem"),
 ) -> None:
     """
-    Enable AFC on a Snapmaker U1 (the firmware's ``-e`` action) and restart Klipper.
+    Enable AFC on a Snapmaker U1 (the firmware's `-e` action) and restart Klipper.
 
     :param ctx: installer context
     :param console: where progress messages go
@@ -167,7 +167,7 @@ def u1_disable(
     ctx: Context, console: Console, runner: CommandRunner, euid: Optional[int] = None
 ) -> None:
     """
-    Disable AFC on a Snapmaker U1 (the firmware's ``-d`` action) and restart Klipper.
+    Disable AFC on a Snapmaker U1 (the firmware's `-d` action) and restart Klipper.
 
     :param ctx: installer context
     :param console: where progress messages go

@@ -3,7 +3,7 @@
 # Copyright (C) 2026 AFCProject
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-"""Entry point for ``python -m installer install|update|u1``."""
+"""Entry point for `python -m installer install|update|u1`."""
 from __future__ import annotations
 
 import os
@@ -31,7 +31,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     """
     Run one of the installer commands.
 
-    :param argv: arguments to parse, defaults to ``sys.argv[1:]``
+    :param argv: arguments to parse, defaults to `sys.argv[1:]`
     :return int: process exit code
     """
     args = list(sys.argv[1:] if argv is None else argv)

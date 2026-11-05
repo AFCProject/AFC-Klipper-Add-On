@@ -68,7 +68,8 @@
    Sphinx-style convention in this shape: a short description, a blank line,
    then one `:param name:` per parameter (skip `self`) and a `:return type:`
    line if the method returns something meaningful (omit it otherwise).
-   No blank line between the `:param`/`:return` block and the closing `"""`.
+   No blank line between the `:param`/`:return` block and the closing `"""`. 
+   Docstrings should use a single backtick when appropriate. 
 
    ```python
    def register_lane_macros(self, lane_obj: AFCLane):

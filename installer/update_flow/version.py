@@ -16,13 +16,13 @@ _VERSION_KEY = "AFC_VERSION="
 
 def get_git_version(ctx: Context, runner: CommandRunner) -> str:
     """
-    Build the version string from ``extras/AFC.py``, plus the short hash for a git checkout.
+    Build the version string from `extras/AFC.py`, plus the short hash for a git checkout.
 
-    A missing ``AFC_VERSION`` line gives an empty version.
+    A missing `AFC_VERSION` line gives an empty version.
 
     :param ctx: installer context
     :param runner: command runner
-    :return str: version, or ``version-hash`` when the checkout is a git clone
+    :return str: version, or `version-hash` when the checkout is a git clone
     """
     version = ""
     try:

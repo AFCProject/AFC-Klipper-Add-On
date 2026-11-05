@@ -44,7 +44,7 @@ def unit_for(installation_type: str) -> Optional[UnitType]:
     """
     Look up a unit type by its display name.
 
-    :param installation_type: display name, e.g. ``BoxTurtle (4-Lane)``
+    :param installation_type: display name, e.g. `BoxTurtle (4-Lane)`
     :return Optional[UnitType]: the unit, or None for an unknown type
     """
     for unit in UNIT_TYPES:
@@ -104,7 +104,7 @@ def additional_default_name(ctx: Context, sel: UnitSelection) -> str:
 
     :param ctx: installer context
     :param sel: the user's unit choices
-    :return str: the lowest free ``<prefix>_N`` name
+    :return str: the lowest free `<prefix>_N` name
     """
     return lowest_free_name(ctx, sel, unit_for(sel.installation_type))
 
@@ -118,7 +118,7 @@ def name_additional_unit(
     :param ctx: installer context
     :param console: where messages go
     :param prompter: where answers come from
-    :param sel: the user's unit choices, ``unit_name`` and ``turtle_renamed`` are updated
+    :param sel: the user's unit choices, `unit_name` and `turtle_renamed` are updated
     :return str: the status message for the menu
     """
     default = additional_default_name(ctx, sel)

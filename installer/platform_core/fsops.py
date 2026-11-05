@@ -17,7 +17,7 @@ _CHOICE_PROMPT = "  (o)verwrite / (s)kip / (b)ackup and copy? [o/s/b]: "
 
 def _copy(src: Path, dst: Path) -> None:
     """
-    Copy like ``cp`` / ``cp -R``: into ``dst`` when it is an existing directory.
+    Copy like `cp` / `cp -R`: into `dst` when it is an existing directory.
 
     :param src: file or directory to copy
     :param dst: destination path or existing directory
@@ -31,7 +31,7 @@ def _copy(src: Path, dst: Path) -> None:
 
 def _remove(path: Path) -> None:
     """
-    Remove a file, link or directory tree like ``rm -rf``.
+    Remove a file, link or directory tree like `rm -rf`.
 
     :param path: what to remove
     """
@@ -52,7 +52,7 @@ def safe_copy(
     :param prompter: where the overwrite/skip/backup answer comes from
     :param src: file or directory to copy
     :param dst: destination path, or an existing directory to copy into
-    :return str: ``"copied"`` or ``"skipped"``
+    :return str: `"copied"` or `"skipped"`
     """
     effective = dst / src.name if dst.is_dir() else dst
     if not effective.exists():
@@ -87,7 +87,7 @@ def safe_copy(
 
 def backup_afc_config(ctx: Context) -> None:
     """
-    Move the AFC config directory to ``AFC.backup.<backup_date>`` if it exists.
+    Move the AFC config directory to `AFC.backup.<backup_date>` if it exists.
 
     :param ctx: installer context
     """
@@ -98,7 +98,7 @@ def backup_afc_config(ctx: Context) -> None:
 
 def remove_vars_tool_file(ctx: Context) -> None:
     """
-    Delete ``AFC/*.tool`` files, like ``rm -f``; directories and others are kept.
+    Delete `AFC/*.tool` files, like `rm -f`; directories and others are kept.
 
     :param ctx: installer context
     """

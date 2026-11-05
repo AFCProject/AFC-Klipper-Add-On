@@ -22,7 +22,7 @@ _ANY_HEADER = re.compile(r"\[.+\]")
 
 def _bodies(doc: ConfigDocument) -> List[str]:
     """
-    Lines without their ``\\n`` (a ``\\r`` stays).
+    Lines without their `\\n` (a `\\r` stays).
 
     :param doc: loaded document
     :return List[str]: line contents
@@ -32,7 +32,7 @@ def _bodies(doc: ConfigDocument) -> List[str]:
 
 def _save_awk_output(doc: ConfigDocument, out: List[str]) -> None:
     """
-    Save the lines with every line ending in ``\\n``.
+    Save the lines with every line ending in `\\n`.
 
     :param doc: document being edited
     :param out: line contents without terminators
@@ -45,14 +45,14 @@ def _save_awk_output(doc: ConfigDocument, out: List[str]) -> None:
 
 def set_key_in_section(path: Path, header: str, key: str, value: str) -> None:
     """
-    Set ``key: value`` in the section whose header line is exactly ``header``.
+    Set `key: value` in the section whose header line is exactly `header`.
 
-    An existing ``key:`` line is replaced in place and repeats are dropped. If there is
+    An existing `key:` line is replaced in place and repeats are dropped. If there is
     none, the line goes before the first empty line of the section, before the next
-    header, or at the end of the file. Every line is rewritten with a ``\\n``.
+    header, or at the end of the file. Every line is rewritten with a `\\n`.
 
     :param path: config file
-    :param header: full header line, e.g. ``[AFC_BoxTurtle Turtle_1]``
+    :param header: full header line, e.g. `[AFC_BoxTurtle Turtle_1]`
     :param key: option name
     :param value: option value
     """
@@ -93,7 +93,7 @@ def replace_section_block(path: Path, header: str, new_block: str) -> bool:
     Replace a section (header and body) with new text, keeping the blank line after it.
 
     The check for the header is a plain substring search, but only a line
-    equal to ``header`` is replaced. A body ends at the first empty line or next header.
+    equal to `header` is replaced. A body ends at the first empty line or next header.
 
     :param path: config file
     :param header: exact header line
@@ -150,10 +150,10 @@ def remove_section_block(path: Path, header: str) -> None:
 
 def section_names(paths: Iterable[Path], prefix: str) -> List[str]:
     """
-    Names of every ``[<prefix> <name>]`` section in the given files, sorted and unique.
+    Names of every `[<prefix> <name>]` section in the given files, sorted and unique.
 
     :param paths: files to read; ones that cannot be read are skipped
-    :param prefix: section type, e.g. ``AFC_buffer``
+    :param prefix: section type, e.g. `AFC_buffer`
     :return List[str]: the names
     """
     pattern = re.compile(rf"\[{re.escape(prefix)} ([^\]]+)\]")
@@ -182,7 +182,7 @@ def _edit_range(
     :param path: file to edit
     :param start_regex: regex searched in each line to open a range
     :param end_text: text whose first occurrence in a later line closes the range
-    :param transform: function applied to each line in a range (without its ``\\n``)
+    :param transform: function applied to each line in a range (without its `\\n`)
     """
     start = re.compile(start_regex)
     doc = ConfigDocument.load(path)
@@ -207,7 +207,7 @@ def _edit_range(
 
 def comment_range(path: Path, start_regex: str, end_text: str) -> None:
     """
-    Prefix every line from a start match through the end marker with ``# ``.
+    Prefix every line from a start match through the end marker with `# `.
 
     :param path: file to edit
     :param start_regex: regex that opens a range
@@ -218,7 +218,7 @@ def comment_range(path: Path, start_regex: str, end_text: str) -> None:
 
 def uncomment_range(path: Path, start_regex: str, end_text: str) -> None:
     """
-    Remove one leading ``# `` from each line of a range, leaving other lines as they are.
+    Remove one leading `# ` from each line of a range, leaving other lines as they are.
 
     :param path: file to edit
     :param start_regex: regex that opens a range

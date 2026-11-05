@@ -32,13 +32,13 @@ _DELIMITER = "-" * 40
 
 
 class Console:
-    """Colored message output, replacing ``print_msg`` and ``clear``."""
+    """Colored message output, replacing `print_msg` and `clear`."""
 
     def __init__(self, stream: Optional[TextIO] = None) -> None:
         """
         Create a console.
 
-        :param stream: where to write, defaults to ``sys.stdout`` looked up on each call
+        :param stream: where to write, defaults to `sys.stdout` looked up on each call
         """
         self._stream = stream
 

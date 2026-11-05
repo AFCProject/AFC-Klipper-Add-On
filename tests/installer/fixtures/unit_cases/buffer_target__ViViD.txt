@@ -1,6 +1,6 @@
 === VARS ===
-buffer_unit_name=
-buffer_unit_section_prefix=
-buffer_extruder_file=
-buffer_section_name=
+buffer_unit_name=Vivid_1
+buffer_unit_section_prefix=AFC_vivid
+buffer_extruder_file=AFC_Vivid_1.cfg
+buffer_section_name=Vivid_1
 buffer_prebaked_header=
