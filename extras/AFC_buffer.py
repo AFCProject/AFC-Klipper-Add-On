@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from mcu import MCU_adc
 
-try: from extras.AFC_utils import add_filament_switch, VirtualFilamentSensor, PollingEndstopWrapper
+try: from extras.AFC_utils import (add_filament_switch, VirtualFilamentSensor,
+                                  PollingEndstopWrapper, get_led_color)
 except: raise error("Error when trying to import AFC_utils.add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
 
 TRAILING_STATE_NAME = "Trailing"
@@ -74,10 +75,10 @@ class AFCBuffer:
         # LED SETTINGS
         self.led                    = False
         self.led_index              = config.get('led_index', None)
-        self.led_advancing          = config.get('led_buffer_advancing', self.afc.led_buffer_advancing)
-        self.led_trailing           = config.get('led_buffer_trailing', self.afc.led_buffer_trailing)
-        self.led_neutral            = config.get('led_buffer_neutral', self.afc.led_buffer_neutral)
-        self.led_buffer_disabled    = config.get('led_buffer_disable', self.afc.led_buffer_disabled)
+        self.led_advancing          = get_led_color(config, 'led_buffer_advancing', self.afc.led_buffer_advancing)
+        self.led_trailing           = get_led_color(config, 'led_buffer_trailing', self.afc.led_buffer_trailing)
+        self.led_neutral            = get_led_color(config, 'led_buffer_neutral', self.afc.led_buffer_neutral)
+        self.led_buffer_disabled    = get_led_color(config, 'led_buffer_disable', self.afc.led_buffer_disabled)
 
         if self.led_index is not None:
             self.led = True

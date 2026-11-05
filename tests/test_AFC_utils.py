@@ -21,9 +21,10 @@ import pytest
 from extras.AFC_utils import (
     add_filament_switch, check_and_return, section_in_config, DebounceButton,
     AFC_moonraker, VirtualRunoutHelper, VirtualFilamentSensor, AFC_PrintFileMetaData,
-    natural_sort_key, PollingEndstopWrapper,
+    natural_sort_key, PollingEndstopWrapper, get_led_color,
 )
-from tests.conftest import MockGCodeCommand
+from configfile import error as ConfigError
+from tests.conftest import MockConfig, MockGCodeCommand
 
 
 # ── natural_sort_key ────────────────────────────────────────────────────────
@@ -1867,3 +1868,60 @@ class TestPollingEndstopWrapperQueryEndstop:
     def test_not_triggered_returns_zero(self):
         endstop, reactor, mcu, triggered = _make_polling_endstop(trigger_value=False)
         assert endstop.query_endstop(0) == 0
+
+
+# get_led_color
+
+def _led_config(**values):
+    config = MockConfig(name="AFC_stepper lane1", values=values)
+    config.error = ConfigError
+    return config
+
+
+class TestGetLedColor:
+    @pytest.mark.parametrize("value", ["1,0,0", "0,0.8,0,0", "1,1,.5,0", " 0.4 , 0.4,0 ,0"])
+    def test_valid_color_returned_unchanged(self, value):
+        config = _led_config(led_ready=value)
+        assert get_led_color(config, "led_ready") == value
+
+    def test_default_used_and_validated_when_option_missing(self):
+        config = _led_config()
+        assert get_led_color(config, "led_ready", "0,1,0,0") == "0,1,0,0"
+
+    def test_none_returned_when_no_value_and_default_none(self):
+        config = _led_config()
+        assert get_led_color(config, "led_ready", None) is None
+
+    def test_boundaries_zero_and_one_accepted(self):
+        config = _led_config(led_ready="0,1,0,1")
+        assert get_led_color(config, "led_ready") == "0,1,0,1"
+
+    @pytest.mark.parametrize("value", ["0.1.0,0,0", "1;0,0", "a,b,c", "1,0,", ""])
+    def test_non_numeric_channel_raises(self, value):
+        config = _led_config(led_ready=value)
+        with pytest.raises(ConfigError) as exc:
+            get_led_color(config, "led_ready")
+        expected = (f"[AFC_stepper lane1] option 'led_ready' has invalid LED color "
+                    f"'{value}', expected 3 or 4 comma separated numbers from 0 to 1 "
+                    f"(R,G,B[,W])")
+        assert str(exc.value) == expected
+
+    @pytest.mark.parametrize("value", ["1,0", "1", "1,0,0,0,0"])
+    def test_wrong_channel_count_raises(self, value):
+        config = _led_config(led_ready=value)
+        with pytest.raises(ConfigError) as exc:
+            get_led_color(config, "led_ready")
+        assert "invalid LED color" in str(exc.value)
+        assert f"'{value}'" in str(exc.value)
+
+    @pytest.mark.parametrize("value", ["1.1,0,0", "0,-0.1,0", "0,0,2,0", "0,0,0,1.01"])
+    def test_out_of_range_channel_raises(self, value):
+        config = _led_config(led_ready=value)
+        with pytest.raises(ConfigError) as exc:
+            get_led_color(config, "led_ready")
+        assert f"'{value}'" in str(exc.value)
+
+    def test_invalid_default_raises(self):
+        config = _led_config()
+        with pytest.raises(ConfigError):
+            get_led_color(config, "led_ready", "1,0")

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from gcode import GCodeCommand
     from configfile import ConfigWrapper
 
-try: from extras.AFC_utils import ERROR_STR, section_in_config
+try: from extras.AFC_utils import ERROR_STR, section_in_config, get_led_color
 except:
     trace=traceback.format_exc()
     err_str = f"Error when trying to import AFC_utils.ERROR_STR\n{trace}"
@@ -80,19 +80,19 @@ class afcUnit:
         self.remember_spool              = config.getboolean('remember_spool', False)                        # Turns on/off ability to remember last ejected spool values for all lanes in this unit, can be overridden in AFC_stepper section
         # LED SETTINGS
         # All variables use: (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in AFC.cfg file
-        self.led_fault                   = config.get('led_fault', self.afc.led_fault)                       # LED color to set when faults occur in lane
-        self.led_ready                   = config.get('led_ready', self.afc.led_ready)                       # LED color to set when lane is ready
-        self.led_not_ready               = config.get('led_not_ready', self.afc.led_not_ready)               # LED color to set when lane not ready
-        self.led_loading                 = config.get('led_loading', self.afc.led_loading)                   # LED color to set when lane is loading
-        self.led_prep_loaded             = config.get('led_loading', self.afc.led_loading)                   # LED color to set when lane is loaded
-        self.led_unloading               = config.get('led_unloading', self.afc.led_unloading)               # LED color to set when lane is unloading
-        self.led_tool_loaded             = config.get('led_tool_loaded', self.afc.led_tool_loaded)           # LED color to set when lane is loaded into tool
-        self.led_tool_loaded_idle        = config.get('led_tool_loaded_idle', self.afc.led_tool_loaded_idle) # LED color to set when lane is loaded into tool and idle
-        self.led_tool_unloaded           = config.get('led_tool_unloaded', self.afc.led_tool_unloaded)       # LED color to set when lanes extruder is unloaded
-        self.led_spool_illum             = config.get('led_spool_illuminate', self.afc.led_spool_illum)      # LED color to illuminate under spool
+        self.led_fault                   = get_led_color(config, 'led_fault', self.afc.led_fault)                       # LED color to set when faults occur in lane
+        self.led_ready                   = get_led_color(config, 'led_ready', self.afc.led_ready)                       # LED color to set when lane is ready
+        self.led_not_ready               = get_led_color(config, 'led_not_ready', self.afc.led_not_ready)               # LED color to set when lane not ready
+        self.led_loading                 = get_led_color(config, 'led_loading', self.afc.led_loading)                   # LED color to set when lane is loading
+        self.led_prep_loaded             = get_led_color(config, 'led_loading', self.afc.led_loading)                   # LED color to set when lane is loaded
+        self.led_unloading               = get_led_color(config, 'led_unloading', self.afc.led_unloading)               # LED color to set when lane is unloading
+        self.led_tool_loaded             = get_led_color(config, 'led_tool_loaded', self.afc.led_tool_loaded)           # LED color to set when lane is loaded into tool
+        self.led_tool_loaded_idle        = get_led_color(config, 'led_tool_loaded_idle', self.afc.led_tool_loaded_idle) # LED color to set when lane is loaded into tool and idle
+        self.led_tool_unloaded           = get_led_color(config, 'led_tool_unloaded', self.afc.led_tool_unloaded)       # LED color to set when lanes extruder is unloaded
+        self.led_spool_illum             = get_led_color(config, 'led_spool_illuminate', self.afc.led_spool_illum)      # LED color to illuminate under spool
         self.led_logo_index              = config.get('led_logo_index', None)                                # LED Logo index
-        self.led_logo_color              = self.afc.function.HexConvert(config.get('led_logo_color', '0,0,0,0'))# Default logo color when nothing is loaded
-        self.led_logo_loading            = self.afc.function.HexConvert(config.get('led_logo_loading', self.led_loading ))
+        self.led_logo_color              = self.afc.function.HexConvert(get_led_color(config, 'led_logo_color', '0,0,0,0'))# Default logo color when nothing is loaded
+        self.led_logo_loading            = self.afc.function.HexConvert(get_led_color(config, 'led_logo_loading', self.led_loading ))
 
         self.led_use_filament_color:bool  = config.getboolean('led_use_filament_color', self.afc.led_use_filament_color)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
 
