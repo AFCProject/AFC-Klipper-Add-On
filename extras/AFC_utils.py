@@ -139,6 +139,38 @@ def check_and_return( value_str:str, data_values:dict[str, Any] ) -> str:
 
     return value
 
+def get_led_color(config: ConfigWrapper, option: str,
+                  default: Optional[str] = None) -> Optional[str]:
+    """
+    Reads an LED color option and validates it at config load time.
+
+    A valid color is 3 or 4 comma separated floats (R,G,B[,W]), each from 0 to 1.
+    A value of None (no value and no default) is returned unchanged.
+
+    :param config: Config object to read the option from
+    :param option: Name of the config option
+    :param default: Value used when the option is not set
+    :return str: The color string, or None if no value and no default
+    """
+    value = config.get(option, default)
+    if value is None:
+        return None
+
+    parts = str(value).split(",")
+    error_str = (f"[{config.get_name()}] option '{option}' has invalid LED color "
+                 f"'{value}', expected 3 or 4 comma separated numbers from 0 to 1 "
+                 f"(R,G,B[,W])")
+    if len(parts) not in (3, 4):
+        raise config.error(error_str)
+    for part in parts:
+        try:
+            channel = float(part)
+        except ValueError:
+            raise config.error(error_str)
+        if not 0.0 <= channel <= 1.0:
+            raise config.error(error_str)
+    return value
+
 def section_in_config(config: ConfigWrapper, name: str) -> bool:
     """
     Helper function for searching through config file to see if a config section exists
