@@ -595,7 +595,7 @@ class AFCBuffer:
 
     cmd_QUERY_BUFFER_help = "Report Buffer sensor state"
     cmd_QUERY_BUFFER_options = {"BUFFER": {"type": "string", "default": "Turtle_1"}}
-    def cmd_QUERY_BUFFER(self, gcmd):
+    def cmd_QUERY_BUFFER(self, gcmd: GCodeCommand) -> None:
         """
         Reports the current state of the buffer sensor and, if applicable, the rotation
         distance of the current AFC stepper motor.
@@ -605,6 +605,7 @@ class AFCBuffer:
         - If the `turtleneck` feature is enabled and a tool is loaded, the rotation
           distance of the current AFC stepper motor is reported, along with the
           current state of the buffer sensor.
+        - If the loaded lane has no extruder stepper, the rotation distance is omitted.
         - If the `turtleneck` feature is not enabled, only the buffer state is reported.
         - Both the buffer state and, if applicable, the stepper motor's rotation
           distance are sent back as G-code responses.
@@ -625,18 +626,20 @@ class AFCBuffer:
         }
 
         buffer_status = self.buffer_status()
-        state_info = "{}{}".format(buffer_status, state_mapping.get(buffer_status, ''))
+        state_info = f"{buffer_status}{state_mapping.get(buffer_status, '')}"
 
         if self.enable:
-            if self.current_lane is not None:
-                stepper = self.current_lane.extruder_stepper.stepper
-                rotation_dist = stepper.get_rotation_distance()[0]
-                state_info += ("\n{} Rotation distance: {:.4f}".format(self.current_lane.name,
-                                                                       rotation_dist))
+            lane = self.current_lane
+            if (lane is not None
+                and lane.extruder_stepper is not None
+                and lane.extruder_stepper.stepper is not None):
+                rotation_dist = lane.extruder_stepper.stepper.get_rotation_distance()[0]
+                state_info += f"\n{lane.name} Rotation distance: {rotation_dist:.4f}"
             if self.error_sensitivity > 0:
-                state_info += "\nFault detection enabled, sensitivity {}".format(self.error_sensitivity)
+                state_info += (f"\nFault detection enabled, "
+                               f"sensitivity {self.error_sensitivity}")
 
-        self.logger.info("{} : {}".format(self.name, state_info))
+        self.logger.info(f"{self.name} : {state_info}")
 
     def cmd_ENABLE_BUFFER(self, gcmd: GCodeCommand):
         """

@@ -22,7 +22,7 @@ import sys
 import importlib.util
 import configparser
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import pytest
 
 from extras.AFC_buffer import (
@@ -1410,14 +1410,53 @@ class TestCmdQueryBufferBase:
         assert "18.7500" in msg
         assert lane.name in msg
 
+    def _enabled_buf_with_lane(self):
+        buf = _make_buffer()
+        buf.enable = True
+        buf.last_state = NEUTRAL_STATE_NAME
+        buf.error_sensitivity = 4.0
+        buf.logger = MagicMock()
+        lane = _make_lane(buf)
+        lane.name = "lane1"
+        buf.current_lane = lane
+        return buf, lane
+
+    def test_lane_without_extruder_stepper_skips_rotation_distance(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = None
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
+    def test_lane_with_none_stepper_skips_rotation_distance(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = MagicMock()
+        lane.extruder_stepper.stepper = None
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
+    def test_lane_with_stepper_reports_rotation_distance_exact(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = MagicMock()
+        lane.extruder_stepper.stepper.get_rotation_distance.return_value = [18.75]
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nlane1 Rotation distance: 18.7500"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
     def test_enabled_no_lane_skips_rotation_distance(self):
         buf = _make_buffer()
         buf.enable = True
         buf.current_lane = None
+        buf.error_sensitivity = 0
+        buf.last_state = NEUTRAL_STATE_NAME
         buf.logger = MagicMock()
         buf.cmd_QUERY_BUFFER(_make_gcmd())
-        msg = buf.logger.info.call_args[0][0]
-        assert "Rotation distance" not in msg
+        assert buf.logger.info.call_args_list == [call(f"{buf.name} : {NEUTRAL_STATE_NAME}")]
 
     def test_enabled_with_fault_detection_reports_sensitivity(self):
         buf = _make_buffer()

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [11-02-2026]
 ### Fixed
+- Fixed a bug where a lane without an extruder stepper could error out if the `QUERY_BUFFER` macro was run. 
 - An error will be thrown at startup if the led configuration is invalid, instead of erroring during a print.
 
 ## [11-01-2026]
