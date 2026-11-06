@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, List
 
-from installer.ui_menus.view import Row
+from installer.ui_menus.view import Row, row
 from installer.unit_registry.base import UnitType
 from installer.unit_registry.registry import unit_for
+from installer.unit_registry.selection import UnitSelection
 
 
 _BUFFER_LABELS = {
@@ -37,6 +38,27 @@ def buffer_label(buffer_type: str) -> str:
     :return str: user facing label
     """
     return _BUFFER_LABELS.get(buffer_type, buffer_type)
+
+
+def extruder_entry(sel: UnitSelection, extruders: List[str]) -> Entry:
+    """
+    Build the extruder-selection row, cycling through the printer's extruders on activate.
+
+    Shared by both options screens, which only show this row once more than one
+    printer extruder is detected.
+
+    :param sel: the user's unit choices, `extruder` is updated on activate
+    :param extruders: printer extruder names to cycle through
+    :return Entry: the row
+    """
+    def activate() -> str:
+        position = extruders.index(sel.extruder) + 1 if sel.extruder in extruders else 0
+        sel.extruder = extruders[position % len(extruders)]
+        return f"Extruder: {sel.extruder}"
+
+    return Entry(
+        lambda n: row(f"{n}. Extruder unit will be connected to : {sel.extruder}"), activate
+    )
 
 
 def require_unit(installation_type: str) -> UnitType:
