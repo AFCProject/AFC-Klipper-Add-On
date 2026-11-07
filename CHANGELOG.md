@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-06-2026]
+### Fixed
+- Fixed unload so that ACE units are no longer fighting toolhead extruder when unloading
+
 ## [11-02-2026]
 ### Fixed
 - Fixed a bug where a lane without an extruder stepper could error out if the `QUERY_BUFFER` macro was run. 
