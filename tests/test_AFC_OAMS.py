@@ -243,7 +243,7 @@ class TestInit:
         with patch("extras.AFC_OAMS.AMSHardwareService") as mock_service_cls:
             mock_service_cls.for_printer.return_value = MagicMock()
             oams = AFC_OAMS(config)
-        assert printer._gcode.register_mux_command.call_count == 11
+        assert printer._gcode.register_mux_command.call_count == 12
         assert oams.gcode is printer._gcode
 
     def test_default_runtime_state(self):
@@ -710,10 +710,11 @@ class TestRegisterCommands:
         gcode = MagicMock()
         oams.gcode = gcode
         oams.register_commands("oams1")
-        assert gcode.register_mux_command.call_count == 11
+        assert gcode.register_mux_command.call_count == 12
         registered_names = [c[0][0] for c in gcode.register_mux_command.call_args_list]
         assert "OAMS_LOAD_SPOOL" in registered_names
         assert "OAMS_RESET_RETRY_COUNTS" in registered_names
+        assert "OAMS_SET_LED_ERROR" in registered_names
 
 
 # ── cmd_OAMS_RETRY_STATUS / cmd_OAMS_RESET_RETRY_COUNTS ──────────────────────
@@ -969,6 +970,383 @@ class TestLoadSpoolWithRetry:
 
 # ── unload_spool_with_retry ────────────────────────────────────────────────────
 
+class TestTheErrorStateIsWhatActuallyStopsTheUnit:
+    """
+    MEASURED, on a jammed unload with the motor still pulling at 0.54 A four
+    minutes after AFC had given up and paused the print:
+
+        OAMS_ABORT_ACTION (firmware cancel)  i unchanged 0.56 -> 0.57
+        OAMS_FOLLOWER ENABLE=0               i unchanged 0.49 -> 0.59
+        OAMS_LOAD_SPOOL                      queued, never ran
+        oams_set_led_error(bay, 1)           i 0.54 -> 0.00 in under 4s
+
+    Only the last stops it. Nothing in the plugin said so -- the firmware is
+    not published, the host sees a two-byte "set LED" command, and upstream
+    calls it immediately before pausing, which reads as decoration. It is not.
+    It also LATCHES: clearing the LED does not restart the motor.
+    """
+
+    def test_giving_up_sets_the_bay_error_state(self):
+        oams = _make_oams()
+        oams.current_spool = 1
+        oams.abort_current_action = MagicMock()
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        oams.set_led_error = MagicMock()
+        oams.unload_spool = MagicMock(
+            side_effect=[(False, "OAMS is busy"), (False, "OAMS is busy")])
+
+        success, _ = oams.unload_spool_with_retry(max_retries=2)
+
+        assert success is False
+        oams.set_led_error.assert_any_call(1, 1), (
+            "giving up must actually stop the unit, not just report failure")
+
+    def test_the_retry_stops_the_unit_so_the_next_attempt_can_land(self):
+        # THE POINT OF THE WHOLE THING. The unit keeps driving after a failed
+        # attempt returns, so attempt 2 was being sent to a unit mid-unload and
+        # came back "OAMS is busy" -- the pair of refusals in the jam report.
+        # Stop it, work the extruder, clear the latch, THEN retry.
+        oams = _make_oams()
+        oams.current_spool = 1
+        oams.abort_current_action = MagicMock()
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        calls = []
+        oams.set_led_error = lambda bay, val: calls.append((bay, val))
+        oams.unload_spool = MagicMock(
+            side_effect=[(False, "OAMS is busy"), (True, "unloaded")])
+
+        assert oams.unload_spool_with_retry(max_retries=3)[0] is True
+        # A fresh unload clears the bay first (see the previous test), so scope
+        # this to the retry cycle: the stop, and then a clear AFTER it.
+        assert (1, 1) in calls, "the unit was never actually stopped"
+        stopped_at = calls.index((1, 1))
+        assert (1, 0) in calls[stopped_at:], (
+            "the latch must be cleared after the stop, or the retry starts on "
+            "an errored unit")
+
+    def test_a_fresh_unload_clears_a_latch_left_by_a_previous_give_up(self):
+        # The operator's recovery path: a jam gives up with the bay latched
+        # (that latch is what stopped the unit), they clear the filament by
+        # hand, then ask for the unload again. That ask must not inherit the
+        # flag that stopped the last one.
+        oams = _make_oams()
+        oams.current_spool = 1
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        calls = []
+        oams.set_led_error = lambda bay, val: calls.append((bay, val))
+        oams.unload_spool = MagicMock(return_value=(True, "unloaded"))
+        oams._flag_bay(1)          # the previous give-up latched it
+
+        oams.unload_spool_with_retry()
+
+        assert calls and calls[0] == (1, 0), (
+            "the first thing a fresh unload does must be to clear the bay")
+
+    def test_the_bay_is_captured_before_a_success_clears_it(self):
+        # unload_spool() sets current_spool to None on success, so the bay has
+        # to be remembered from the start or the clear names nothing.
+        oams = _make_oams()
+        oams.current_spool = 2
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        oams.set_led_error = MagicMock()
+
+        def _unload():
+            oams.current_spool = None
+            return True, "unloaded"
+        oams.unload_spool = _unload
+        oams._flag_bay(2)
+
+        assert oams.unload_spool_with_retry()[0] is True
+        oams.set_led_error.assert_any_call(2, 0)
+
+    def test_a_successful_load_clears_the_bay_the_jam_flagged(self):
+        # The operator's other recovery route: clear the jam by hand and load
+        # the lane again. An unload cleared the latch; a load did not, so the
+        # light stayed on after the problem was fixed.
+        oams = _make_oams()
+        oams.reactor.pause = MagicMock()
+        oams.set_led_error = MagicMock()
+        oams.load_spool = MagicMock(return_value=(OAMSOpCode.SUCCESS, "loaded"))
+        oams._flag_bay(1)          # the jam that gave up latched it
+
+        assert oams.load_spool_with_retry(1)[0] is True
+        oams.set_led_error.assert_any_call(1, 0)
+
+    def test_the_stop_forces_the_edge(self):
+        # THE STOP IS THE EDGE, NOT THE STATE. Measured back to back on a unit
+        # still pulling at 0.50 A: re-setting an already-latched bay left it
+        # running (0.50, 0.50, 0.49); clear-then-set stopped it dead. Without
+        # this a SECOND give-up on the same bay cannot stop the unit -- watched
+        # live, stop_unit_motion logged success while the motor ran on.
+        oams = _make_oams()
+        calls = []
+        oams.set_led_error = lambda bay, val: calls.append((bay, val))
+        assert oams.stop_unit_motion(1) is True
+        assert calls == [(1, 0), (1, 1)], (
+            "the stop must clear then set, or an already-latched bay is a no-op")
+
+    def test_stop_is_a_no_op_with_no_bay_to_name(self):
+        oams = _make_oams()
+        oams.current_spool = None
+        oams.set_led_error = MagicMock()
+        assert oams.stop_unit_motion() is False
+        oams.set_led_error.assert_not_called()
+
+    def test_a_failed_stop_does_not_raise(self):
+        oams = _make_oams()
+        oams.set_led_error = MagicMock(side_effect=Exception("link down"))
+        assert oams.stop_unit_motion(1) is False
+
+    def test_clearing_one_bay_leaves_the_others_alone(self):
+        # clear_errors() blanks all four and resets the action state; another
+        # bay's genuine error is not ours to discard.
+        oams = _make_oams()
+        oams.set_led_error = MagicMock()
+        oams._flag_bay(3)
+        oams._clear_bay_error(3)
+        oams.set_led_error.assert_called_once_with(3, 0)
+
+
+class TestWeOnlyClearWhatWeLit:
+    """
+    The clear runs on the ordinary load and unload paths, so it must not write
+    to the bay error state unless we are the ones who set it. Otherwise every
+    load and unload pokes a firmware latch we cannot read, and an error raised
+    by the firmware itself is wiped by the next success on that bay.
+
+    That last case cannot be tested from here: the host has no way to read the
+    error state back, so a firmware-raised error is indistinguishable from no
+    error at all. What IS testable is the property that protects it -- we
+    write only to bays this set records, and the firmware cannot put a bay in
+    that set.
+    """
+
+    def test_a_clean_unload_never_touches_the_bay(self):
+        oams = _make_oams()
+        oams.current_spool = 1
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        oams.set_led_error = MagicMock()
+        oams.unload_spool = MagicMock(return_value=(True, "unloaded"))
+
+        assert oams.unload_spool_with_retry()[0] is True
+        oams.set_led_error.assert_not_called()
+
+    def test_a_clean_load_never_touches_the_bay(self):
+        oams = _make_oams()
+        oams.reactor.pause = MagicMock()
+        oams.set_led_error = MagicMock()
+        oams.load_spool = MagicMock(return_value=(OAMSOpCode.SUCCESS, "loaded"))
+
+        assert oams.load_spool_with_retry(1)[0] is True
+        oams.set_led_error.assert_not_called()
+
+    def test_the_stop_flags_the_bay_it_stopped(self):
+        oams = _make_oams()
+        oams.set_led_error = MagicMock()
+        assert oams.stop_unit_motion(2) is True
+        assert 2 in oams._bay_flags()
+
+    def test_a_failed_stop_flags_nothing(self):
+        oams = _make_oams()
+        oams.set_led_error = MagicMock(side_effect=Exception("link down"))
+        assert oams.stop_unit_motion(2) is False
+        assert 2 not in oams._bay_flags()
+
+    def test_the_flag_drops_once_cleared(self):
+        oams = _make_oams()
+        oams.set_led_error = MagicMock()
+        oams._flag_bay(0)
+        oams._clear_bay_error(0)
+        assert 0 not in oams._bay_flags()
+        oams.set_led_error.reset_mock()
+        oams._clear_bay_error(0)
+        oams.set_led_error.assert_not_called()
+
+    def test_a_failed_clear_keeps_the_flag(self):
+        # The LED is still lit if the send threw, so we still owe the clear.
+        oams = _make_oams()
+        oams._flag_bay(0)
+        oams.set_led_error = MagicMock(side_effect=Exception("link down"))
+        oams._clear_bay_error(0)
+        assert 0 in oams._bay_flags()
+
+    def test_clear_errors_drops_every_flag(self):
+        oams = _make_oams()
+        oams.set_led_error = MagicMock()
+        oams.determine_current_spool = MagicMock(return_value=None)
+        oams._flag_bay(0)
+        oams._flag_bay(3)
+        oams.clear_errors()
+        assert oams._bay_flags() == set()
+
+    def test_a_hand_set_error_is_ours_to_clear(self):
+        # The operator's workflow: stop a bay by hand, free the jam, unload.
+        # That set went through the plugin, so the unload that succeeds turns
+        # the light back off.
+        oams = _make_oams()
+        oams.set_led_error = MagicMock()
+        gcmd = MagicMock()
+        gcmd.get_int.side_effect = lambda name, *a, **k: {"SPOOL": 1, "VALUE": 1}[name]
+        oams.cmd_OAMS_SET_LED_ERROR(gcmd)
+        assert 1 in oams._bay_flags()
+
+    def test_a_hand_cleared_error_is_no_longer_owed(self):
+        oams = _make_oams()
+        oams.set_led_error = MagicMock()
+        oams._flag_bay(1)
+        gcmd = MagicMock()
+        gcmd.get_int.side_effect = lambda name, *a, **k: {"SPOOL": 1, "VALUE": 0}[name]
+        oams.cmd_OAMS_SET_LED_ERROR(gcmd)
+        assert 1 not in oams._bay_flags()
+
+
+class TestWorkingTheExtruderFree:
+    """
+    The retract between unload attempts was a flat 5 mm against a
+    tool_stn_unload of 75 -- a fifteenth of the distance AFC itself says clears
+    the gears. It could never free anything.
+
+    It is worth doing at all because the unit keeps pulling after a failed
+    attempt returns: measured on a deliberately jammed unload, the command
+    errored and the motor was still straining four minutes later at 0.53-0.59 A
+    with the encoder frozen. So the gap between attempts is the one moment when
+    pulling from both ends at once can walk the filament out.
+    """
+
+    def _oams(self, **cfg):
+        oams = _make_oams(config_values=cfg or None)
+        oams.gcode = MagicMock()
+        return oams
+
+    def test_it_prefers_the_lanes_own_tool_stn_unload(self):
+        oams = self._oams()
+        oams.current_spool = 1
+        oams._resolve_lane_name = lambda idx: "lane5"
+        lane = types.SimpleNamespace(
+            extruder_obj=types.SimpleNamespace(tool_stn_unload=75.0))
+        oams.afc = types.SimpleNamespace(lanes={"lane5": lane})
+        assert oams._stall_retract_mm() == 75.0
+
+    def test_explicit_config_overrides_the_lane(self):
+        oams = self._oams(unload_stall_retract_mm=20.0)
+        oams.current_spool = 1
+        oams._resolve_lane_name = lambda idx: "lane5"
+        oams.afc = types.SimpleNamespace(lanes={"lane5": types.SimpleNamespace(
+            extruder_obj=types.SimpleNamespace(tool_stn_unload=75.0))})
+        assert oams._stall_retract_mm() == 20.0
+
+    def test_an_unresolvable_lane_falls_back(self):
+        # A bare OAMS_UNLOAD_SPOOL, no hardware service, a spool AFC does not
+        # know: still retract something worth doing.
+        oams = self._oams()
+        oams.current_spool = None
+        assert oams._stall_retract_mm() == 40.0
+
+    def test_zero_skips_retracting_entirely(self):
+        oams = self._oams(unload_stall_retract_mm=0.0,
+                          unload_stall_retract_tries=0)
+        oams.current_spool = None
+        oams._work_the_extruder_free()
+        oams.gcode.run_script_from_command.assert_not_called()
+
+    def test_it_repeats(self):
+        oams = self._oams(unload_stall_retract_mm=30.0,
+                          unload_stall_retract_tries=3)
+        oams._work_the_extruder_free()
+        moves = [str(c) for c in oams.gcode.run_script_from_command.call_args_list
+                 if "G1 E-" in str(c)]
+        assert len(moves) == 3 and all("E-30.00" in m for m in moves)
+
+    def test_a_refused_move_stops_retrying_and_does_not_raise(self):
+        # A cold extruder, or a toolhead that is not the loaded one. The unload
+        # retry must proceed without the retract rather than die with it.
+        oams = self._oams(unload_stall_retract_mm=30.0,
+                          unload_stall_retract_tries=3)
+        oams.gcode.run_script_from_command.side_effect = Exception("cold")
+        oams._work_the_extruder_free()
+        assert oams.gcode.run_script_from_command.call_count == 1
+
+
+class TestAWedgedUnitIsActuallyCancelled:
+    """
+    Host-side idle does not mean the unit is idle.
+
+    action_status is cleared the moment the MCU answers, and ERROR_BUSY is an
+    answer -- so after a refused command the host reads "nothing in flight"
+    while the unit is still moving. abort_current_action's early return then
+    skipped the firmware cancel in the exact case its own comment describes: a
+    wedged MCU that rejects everything until power-cycled.
+
+    Reported from a real jam: PLA swelled in a hot chamber, both unload
+    attempts came back "OAMS is busy", AFC gave up and paused -- and the AMS
+    carried on retracting, because nothing had ever told it to stop.
+    """
+
+    def test_force_sends_the_cancel_with_no_action_tracked(self):
+        oams = _make_oams()
+        oams.action_status = None
+        oams.action_status_code = OAMSOpCode.ERROR_BUSY
+        oams._unit_busy = True
+        oams.load_spool_cancel = MagicMock()
+        oams.abort_current_action(wait=False, force=True)
+        oams.load_spool_cancel.assert_called_once()
+
+    def test_force_does_not_erase_the_reason_for_the_abort(self):
+        # Nothing was tracked, so there is no status to rewrite -- and the code
+        # already recorded is why the caller is aborting.
+        oams = _make_oams()
+        oams.action_status = None
+        oams.action_status_code = OAMSOpCode.ERROR_BUSY
+        oams._unit_busy = True
+        oams.load_spool_cancel = MagicMock()
+        oams.abort_current_action(wait=False, force=True)
+        assert oams.action_status_code == OAMSOpCode.ERROR_BUSY
+
+    def test_without_force_it_still_short_circuits(self):
+        # Unchanged for every existing caller.
+        oams = _make_oams()
+        oams.action_status = None
+        oams.load_spool_cancel = MagicMock()
+        oams.abort_current_action(wait=False)
+        oams.load_spool_cancel.assert_not_called()
+
+    def test_giving_up_on_an_unload_still_stops_the_unit(self):
+        # THE BUG. Every path out of the retry loop leaves a command with the
+        # MCU, and the caller's next act is to error and pause the print.
+        oams = _make_oams()
+        oams.abort_current_action = MagicMock()
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        oams.unload_spool = MagicMock(
+            side_effect=[(False, "OAMS is busy"), (False, "OAMS is busy")])
+
+        success, _ = oams.unload_spool_with_retry(max_retries=2)
+
+        assert success is False
+        assert oams.abort_current_action.call_args_list[-1].kwargs.get("force") is True, (
+            "the unit must be cancelled when AFC gives up, not left running")
+
+    def test_the_retry_abort_forces_too(self):
+        # The previous attempt has ANSWERED, so action_status is already clear
+        # and an unforced abort would send no cancel -- which is why attempt 2
+        # got refused as well.
+        oams = _make_oams()
+        oams.abort_current_action = MagicMock()
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        oams.unload_spool = MagicMock(
+            side_effect=[(False, "OAMS is busy"), (True, "unloaded")])
+
+        oams.unload_spool_with_retry(max_retries=3)
+
+        assert oams.abort_current_action.call_args_list[0].kwargs.get("force") is True
+
+
 class TestUnloadSpoolWithRetry:
     def test_success_first_attempt(self):
         oams = _make_oams()
@@ -994,7 +1372,12 @@ class TestUnloadSpoolWithRetry:
         success, message = oams.unload_spool_with_retry(max_retries=3)
 
         assert success is True
-        assert gcode.run_script_from_command.call_count == 4  # M83, G92, G1, M400
+        # Two passes of M83/G92/G1/M400 -- the retract now repeats
+        # (unload_stall_retract_tries) instead of a single token 5 mm.
+        assert gcode.run_script_from_command.call_count == 8
+        assert any("G1 E-40.00" in str(c) for c
+                   in gcode.run_script_from_command.call_args_list), (
+            "the retract must be a distance that can actually clear the gears")
         oams.abort_current_action.assert_called_once()
         assert oams.reactor.pause.call_count == 2  # pre-retry delay + post-abort
         assert any(
@@ -1039,8 +1422,11 @@ class TestUnloadSpoolWithRetry:
         assert success is True
         assert (
             "warning",
-            "OAMS[0]: Failed to retract extruder before unload retry: no extruder",
+            "OAMS[0]: could not retract the extruder (40mm, try 1/2): no extruder",
         ) in oams.logger.messages
+        # ...and it gives up on retracting rather than retrying a move the
+        # toolhead has already refused.
+        assert gcode.run_script_from_command.call_count == 1
 
     def test_all_attempts_fail(self):
         oams = _make_oams()
@@ -1323,6 +1709,20 @@ class TestCalibrateHubHesCommand:
         assert oams.hub_hes_on[0] == pytest.approx(0.4, rel=1e-4)
 
 
+    def test_stall_raises(self):
+        oams = _make_oams()
+        oams._wait_for_calibration = MagicMock(return_value=False)
+        gcmd = _make_gcmd({"SPOOL": 2})
+
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_CALIBRATE_HUB_HES(gcmd)
+
+        oams._wait_for_calibration.assert_called_once_with("HES 2")
+        gcmd.error.assert_called_once_with(
+            "Calibration of HES 2 stopped: the OpenAMS stopped moving without an answer")
+        oams.afc.function.ConfigRewrite.assert_not_called()
+
+
 class TestCalibratePtfeLengthCommand:
     def test_missing_spool_raises(self):
         oams = _make_oams()
@@ -1386,6 +1786,20 @@ class TestCalibratePtfeLengthCommand:
 
         gcmd.error.assert_called_once_with("Calibration of PTFE length failed")
 
+    def test_stall_raises(self):
+        oams = _make_oams()
+        oams._wait_for_calibration = MagicMock(return_value=False)
+        gcmd = _make_gcmd({"SPOOL": 0})
+
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_CALIBRATE_PTFE_LENGTH(gcmd)
+
+        oams._wait_for_calibration.assert_called_once_with("PTFE length")
+        gcmd.error.assert_called_once_with(
+            "Calibration of PTFE length stopped: the OpenAMS stopped moving without an "
+            "answer. Check where the filament stopped short of the toolhead")
+        oams.afc.function.ConfigRewrite.assert_not_called()
+
     def test_wait_loop_pauses_until_action_completes(self):
         oams = _make_oams()
         oams.action_status_code = OAMSOpCode.SUCCESS
@@ -1396,6 +1810,63 @@ class TestCalibratePtfeLengthCommand:
         oams.cmd_OAMS_CALIBRATE_PTFE_LENGTH(gcmd)
 
         oams.reactor.pause.assert_called_once()
+
+
+class TestWaitForCalibration:
+    @staticmethod
+    def _clock(oams, clicks=None, answer_at=None):
+        """
+        Make reactor.pause move the clock to its target, feeding encoder
+        readings and answering the calibration when the clock reaches answer_at.
+
+        :param oams: unit under test
+        :param clicks: encoder readings taken one per pause, the last repeating
+        :param answer_at: clock time the firmware answers, None never
+        """
+        readings = list(clicks or [])
+
+        def pause(until):
+            oams.reactor._monotonic = until
+            if readings:
+                oams.encoder_clicks = readings.pop(0) if len(readings) > 1 else readings[0]
+            if answer_at is not None and until >= answer_at:
+                oams.action_status = None
+        oams.reactor.pause = MagicMock(side_effect=pause)
+
+    def test_answered_calibration_returns_true(self):
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.CALIBRATING
+        self._clock(oams, answer_at=101.0)
+
+        assert oams._wait_for_calibration("PTFE length") is True
+        assert oams.reactor.pause.call_count == 2
+        oams.oams_load_spool_cancel_cmd.send.assert_not_called()
+        assert oams.logger.messages == []
+
+    def test_a_moving_encoder_keeps_waiting(self):
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.CALIBRATING
+        # Feeding for 40s, longer than the stall window, then answering.
+        self._clock(oams, clicks=list(range(1, 82)), answer_at=140.0)
+
+        assert oams._wait_for_calibration("PTFE length") is True
+        oams.oams_load_spool_cancel_cmd.send.assert_not_called()
+        assert oams.logger.messages == []
+
+    def test_a_still_encoder_without_an_answer_cancels(self):
+        oams = _make_oams(oams_idx=1)
+        oams.action_status = OAMSStatus.CALIBRATING
+        oams.encoder_clicks = 2042
+        self._clock(oams)
+
+        assert oams._wait_for_calibration("PTFE length") is False
+        oams.oams_load_spool_cancel_cmd.send.assert_called_once_with()
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.ERROR_UNSPECIFIED
+        assert oams.logger.messages[0] == (
+            "error", "OAMS[1]: PTFE length calibration got no answer and the encoder "
+                     "has not moved for 30s, cancelling it")
+        assert oams.logger.messages[-1] == ("info", "OAMS[1]: Abort complete")
 
 
 # ── load_spool ────────────────────────────────────────────────────────────────
@@ -1713,22 +2184,87 @@ class TestUnloadSpool:
         assert success is False
         assert "Unknown error" in message
 
-    def test_timeout_returns_error(self):
-        oams = _make_oams()
-        times = iter([0.0, 41.0, 41.0])
+    @staticmethod
+    def _clocked(oams, on_pause=None):
+        """Drive the reactor the way a real one behaves: monotonic() reports
+        the clock, pause() advances it."""
+        t = [0.0]
+        oams.reactor.monotonic = lambda: t[0]
 
-        def monotonic():
-            return next(times, 41.0)
-        oams.reactor.monotonic = monotonic
+        def pause(_waketime):
+            t[0] += 1.0
+            if on_pause is not None:
+                on_pause(t[0])
+        oams.reactor.pause = pause
+        return t
+
+    def test_it_keeps_waiting_while_the_encoder_is_still_moving(self):
+        # THE BUG. A genuine 41s unload tripped a hardcoded 40s deadline and
+        # was reported as "MCU unresponsive" one second before the MCU
+        # answered; the retry then "succeeded" only by finding the bay empty.
+        # While the encoder ticks, the unit is working -- wait for it.
+        oams = _make_oams()
+
+        def tick(now):
+            oams.encoder_clicks += 1          # still moving
+            if now >= 60.0:                   # ...and then it finishes
+                oams.action_status = None
+                oams.action_status_code = OAMSOpCode.SUCCESS
+        self._clocked(oams, on_pause=tick)
+
+        success, message = oams.unload_spool()
+        assert success is True                # not a timeout at 40s
+        assert "unloaded successfully" in message
+
+    def test_a_still_encoder_after_movement_is_a_stall(self):
+        oams = _make_oams()
+
+        def tick(now):
+            if now <= 5.0:
+                oams.encoder_clicks += 1      # moves, then stops dead
+        self._clocked(oams, on_pause=tick)
 
         success, message = oams.unload_spool()
         assert success is False
-        assert "timed out" in message
+        assert "stalled" in message and "jammed" in message
         assert oams.action_status is None
         assert oams.action_status_code == OAMSOpCode.ERROR_UNSPECIFIED
-        assert (
-            "error", "OAMS[0]: Unload operation timed out after 40 seconds"
-        ) in oams.logger.messages
+
+    def test_an_encoder_that_never_reports_falls_through_to_the_backstop(self):
+        # Cannot tell "not instrumented" from "stuck" with no movement ever
+        # seen, so it does not guess -- it waits out unload_timeout.
+        oams = _make_oams()
+        oams.unload_timeout = 30.0
+        self._clocked(oams)                   # encoder never changes
+
+        success, message = oams.unload_spool()
+        assert success is False
+        assert "did not complete within 30s" in message
+        assert "never reported any encoder movement" in message
+        assert "stalled" not in message       # that would be a guess
+
+    def test_the_backstop_does_not_claim_the_mcu_is_unresponsive(self):
+        # It said "MCU unresponsive" for a unit that answered a second later,
+        # which sends someone chasing a hardware fault that is not there.
+        oams = _make_oams()
+        oams.unload_timeout = 30.0
+        self._clocked(oams)
+        _success, message = oams.unload_spool()
+        assert "unresponsive" not in message.lower()
+
+    def test_the_encoder_check_can_be_disabled(self):
+        oams = _make_oams()
+        oams.unload_stall_dwell = 0.0
+        oams.unload_timeout = 30.0
+
+        def tick(now):
+            if now <= 5.0:
+                oams.encoder_clicks += 1
+        self._clocked(oams, on_pause=tick)
+
+        _success, message = oams.unload_spool()
+        assert "stalled" not in message       # backstop only
+        assert "did not complete" in message
 
     def test_loop_body_pauses_before_success(self):
         oams = _make_oams()
@@ -1782,8 +2318,10 @@ class TestAbortActionCommand:
         oams.abort_current_action = MagicMock()
         gcmd = _make_gcmd({})
         oams.cmd_OAMS_ABORT_ACTION(gcmd)
+        # force: an operator-invoked abort must reach the firmware even when
+        # the unit has already answered and host status is clear.
         oams.abort_current_action.assert_called_once_with(
-            code=OAMSOpCode.ERROR_KLIPPER_CALL, wait=True
+            code=OAMSOpCode.ERROR_KLIPPER_CALL, wait=True, force=True
         )
 
     def test_custom_code_and_no_wait(self):
@@ -1792,7 +2330,7 @@ class TestAbortActionCommand:
         gcmd = _make_gcmd({"CODE": OAMSOpCode.ERROR_BUSY, "WAIT": 0})
         oams.cmd_OAMS_ABORT_ACTION(gcmd)
         oams.abort_current_action.assert_called_once_with(
-            code=OAMSOpCode.ERROR_BUSY, wait=False
+            code=OAMSOpCode.ERROR_BUSY, wait=False, force=True
         )
 
 
@@ -1884,6 +2422,144 @@ class TestAbortCurrentAction:
             "warning",
             "OAMS[0]: Failed to send firmware cancel during abort: no cancel cmd",
         ) in oams.logger.messages
+
+    def test_wait_during_a_load_returns_on_the_cancel_ack(self):
+        # The cancel's ack is what the wait is for, so it must end the load
+        # rather than be swallowed and leave the wait to time out.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams.action_status_value = 7
+        clock = {"now": 100.0, "pauses": 0}
+
+        def pause(t):
+            clock["pauses"] += 1
+            clock["now"] = t
+            if clock["pauses"] == 1:
+                oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                          "code": OAMSOpCode.CANCEL})
+
+        oams.reactor.monotonic = lambda: clock["now"]
+        oams.reactor.pause = pause
+        oams.logger.messages.clear()
+
+        oams.abort_current_action(code=OAMSOpCode.ERROR_KLIPPER_CALL, wait=True)
+
+        assert clock["pauses"] == 1
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.ERROR_KLIPPER_CALL
+        assert oams.action_status_value is None
+        assert oams._pending_cancel_ack is False
+        oams.oams_load_spool_cancel_cmd.send.assert_called_once_with()
+        loading = int(OAMSStatus.LOADING)
+        klipper_call = int(OAMSOpCode.ERROR_KLIPPER_CALL)
+        assert oams.logger.messages == [
+            ("debug", f"OAMS[0]: Aborting current action {loading} "
+                      f"with code {klipper_call}"),
+            ("debug", "OAMS status received"),
+            ("info", "OAMS[0]: Abort complete"),
+        ]
+
+    def test_forced_abort_with_nothing_in_flight_leaves_no_flag(self):
+        oams = _make_oams()
+        oams.action_status = None
+        oams.action_status_code = OAMSOpCode.ERROR_BUSY
+        oams._unit_busy = True
+        oams.logger.messages.clear()
+
+        oams.abort_current_action(wait=False, force=True)
+
+        oams.oams_load_spool_cancel_cmd.send.assert_called_once_with()
+        assert oams._pending_cancel_ack is False
+        assert oams.action_status_code == OAMSOpCode.ERROR_BUSY
+        assert oams.logger.messages == [
+            ("debug", "OAMS[0]: Abort without waiting - status cleared"),
+        ]
+
+        # A later real CANCEL is therefore not eaten by a stale flag.
+        oams.action_status = OAMSStatus.UNLOADING
+        oams._oams_action_status({"action": OAMSStatus.UNLOADING,
+                                  "code": OAMSOpCode.CANCEL})
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.CANCEL
+
+    def test_forced_abort_sends_nothing_to_a_unit_that_finished(self):
+        # The firmware holds a cancel sent while idle and drops the next load
+        # with it, so a load that reported SUCCESS gets no cancel after it.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams._unit_busy = True
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.SUCCESS})
+        oams.logger.messages.clear()
+
+        oams.abort_current_action(wait=True, force=True)
+
+        oams.oams_load_spool_cancel_cmd.send.assert_not_called()
+        assert oams._unit_busy is False
+        assert oams.action_status_code == OAMSOpCode.SUCCESS
+        assert oams.logger.messages == []
+
+    def test_a_busy_refusal_leaves_the_unit_busy(self):
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.UNLOADING
+        oams._oams_action_status({"action": OAMSStatus.UNLOADING,
+                                  "code": OAMSOpCode.ERROR_BUSY})
+        assert oams._unit_busy is True
+
+        oams.abort_current_action(wait=False, force=True)
+
+        oams.oams_load_spool_cancel_cmd.send.assert_called_once_with()
+
+    def test_a_late_cancel_ack_ends_the_busy_state(self):
+        # The stall path gives up on a load host-side; the cancel's ack comes
+        # with nothing in flight and still says the unit has stopped.
+        oams = _make_oams()
+        oams.action_status = None
+        oams._unit_busy = True
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.CANCEL})
+        assert oams._unit_busy is False
+
+    def test_the_swallowed_cancel_ack_leaves_the_auto_unload_busy(self):
+        # Printer 3: the stall path cancels the load and starts the auto-unload;
+        # the swallowed ack says nothing about the unload still running.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams.load_spool_cancel()
+        oams.action_status = None
+        oams.action_status = OAMSStatus.UNLOADING
+        oams._unit_busy = True
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.CANCEL})
+        assert oams._unit_busy is True
+
+        oams._oams_action_status({"action": OAMSStatus.UNLOADING,
+                                  "code": OAMSOpCode.SUCCESS})
+        assert oams._unit_busy is False
+
+    def test_a_reply_about_the_other_operation_leaves_the_unit_busy(self):
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.UNLOADING
+        oams._unit_busy = True
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.SUCCESS})
+        assert oams._unit_busy is True
+
+    def test_abort_without_wait_keeps_the_flag_for_the_unwaited_ack(self):
+        # A load was in flight and nobody waits for its cancel, so the ack
+        # is still due and must stay marked.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams.logger.messages.clear()
+
+        oams.abort_current_action(code=OAMSOpCode.ERROR_BUSY, wait=False)
+
+        assert oams._pending_cancel_ack is True
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.ERROR_BUSY
+        assert oams.logger.messages == [
+            ("debug", "OAMS[0]: Abort without waiting - status cleared"),
+        ]
 
 
 # ── cmd_OAMS_FOLLOWER ──────────────────────────────────────────────────────────
@@ -2046,14 +2722,169 @@ class TestOamsActionStatus:
 
     def test_unloading_action_clears_status(self):
         oams = _make_oams()
+        oams.action_status = OAMSStatus.UNLOADING       # an unload IS in flight
         oams._oams_action_status({"action": OAMSStatus.UNLOADING, "code": OAMSOpCode.ERROR_BUSY})
         assert oams.action_status is None
         assert oams.action_status_code == OAMSOpCode.ERROR_BUSY
 
     def test_error_action_clears_status(self):
         oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
         oams._oams_action_status({"action": OAMSStatus.ERROR, "code": OAMSOpCode.ERROR_UNSPECIFIED})
         assert oams.action_status is None
+
+    def test_the_cancel_ack_does_not_finish_the_auto_unload(self):
+        """THE RACE, as it happened. The load-stall path cancels the load and
+        starts an auto-unload in the same breath, so the cancel's ack arrives
+        with the unload waiting:
+
+          Load stalled - encoder stopped advancing for 5s (spool stuck)
+          Auto-unloading before retry
+          Unload failed: Unload was cancelled (stale cancel response
+            interfered). Attempt 1/2
+
+        It recovered six seconds later having reported a failure that never
+        happened."""
+        oams = _make_oams()
+        oams.load_spool_cancel()                        # ack now in flight
+        oams.action_status = OAMSStatus.UNLOADING       # the auto-unload starts
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.CANCEL})
+        assert oams.action_status == OAMSStatus.UNLOADING   # still waiting
+        assert oams.action_status_code != OAMSOpCode.CANCEL
+
+        # ...and the unload's own reply still lands.
+        oams._oams_action_status({"action": OAMSStatus.UNLOADING,
+                                  "code": OAMSOpCode.SUCCESS})
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.SUCCESS
+
+    def test_only_one_cancel_ack_is_swallowed(self):
+        # The flag is armed by sending a cancel, not standing. A second CANCEL
+        # is a real one and must not be eaten.
+        oams = _make_oams()
+        oams.load_spool_cancel()
+        oams.action_status = OAMSStatus.UNLOADING
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.CANCEL})
+        oams._oams_action_status({"action": OAMSStatus.UNLOADING,
+                                  "code": OAMSOpCode.CANCEL})
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.CANCEL
+
+    def test_stall_path_ack_is_swallowed_once_the_load_is_given_up(self):
+        # The stall path cancels, clears the load host-side and starts the
+        # auto-unload; the late ack must not finish that unload.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams.load_spool_cancel()
+        oams.action_status = None                       # load given up on
+        oams.action_status = OAMSStatus.UNLOADING       # auto-unload starts
+        oams.action_status_code = None
+        oams.logger.messages.clear()
+
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.CANCEL})
+
+        assert oams.action_status == OAMSStatus.UNLOADING
+        assert oams.action_status_code is None
+        assert oams._pending_cancel_ack is False
+        assert oams.logger.messages == [
+            ("debug", "OAMS status received"),
+            ("debug", "OAMS[0]: swallowed the cancel ack for the load "
+                      "that was just cancelled"),
+        ]
+
+    def test_cancel_ack_finishes_a_load_that_is_waiting_on_it(self):
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams.load_spool_cancel()
+        oams.logger.messages.clear()
+
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.CANCEL})
+
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.CANCEL
+        assert oams._pending_cancel_ack is False
+        assert oams.logger.messages == [("debug", "OAMS status received")]
+
+    def test_a_stalled_loads_ack_does_not_finish_the_next_load(self):
+        # Printer 3: the stall path cancelled a load and gave up, the next load
+        # went out before the ack came, and the ack read as that load passing.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams.load_spool_cancel()
+        oams.action_status = None                       # stalled load given up on
+        sent = []
+        oams.oams_load_spool_cmd = MagicMock()
+        oams.oams_load_spool_cmd.send.side_effect = sent.append
+        replies = iter([{"action": OAMSStatus.LOADING, "code": OAMSOpCode.CANCEL},
+                        {"action": OAMSStatus.LOADING, "code": OAMSOpCode.SUCCESS}])
+        oams.load_stall_dwell = 0.0
+        oams.reactor.pause = lambda t: oams._oams_action_status(next(replies))
+
+        code, message = oams.load_spool(2)
+
+        assert sent == [[2]]
+        assert code == OAMSOpCode.SUCCESS
+        assert message == "Spool loaded successfully"
+        assert oams._pending_cancel_ack is False
+        assert oams._cancel_ack_stale is False
+        assert ("debug", "OAMS[0]: swallowed the cancel ack for the load "
+                         "that was just cancelled") in oams.logger.messages
+
+    def test_a_cancel_for_the_load_itself_still_ends_it(self):
+        oams = _make_oams()
+        oams.oams_load_spool_cmd = MagicMock()
+        oams.load_stall_dwell = 0.0
+
+        def pause(t):
+            if oams._pending_cancel_ack is False:
+                oams.load_spool_cancel()                # cancelled while it runs
+            else:
+                oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                          "code": OAMSOpCode.CANCEL})
+
+        oams.reactor.pause = pause
+        code, message = oams.load_spool(1)
+
+        assert code == OAMSOpCode.CANCEL
+        assert message == "Spool loading cancelled"
+
+    def test_pending_flag_alone_does_not_swallow_a_non_cancel_reply(self):
+        # Flag set but the reply is not a CANCEL: it is a normal result.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.LOADING
+        oams.load_spool_cancel()
+        oams.action_status = OAMSStatus.UNLOADING
+        oams.logger.messages.clear()
+
+        oams._oams_action_status({"action": OAMSStatus.UNLOADING,
+                                  "code": OAMSOpCode.SUCCESS})
+
+        assert oams.action_status is None
+        assert oams.action_status_code == OAMSOpCode.SUCCESS
+        assert oams._pending_cancel_ack is True
+        assert oams.logger.messages == [("debug", "OAMS status received")]
+
+    def test_a_reply_about_the_other_operation_is_ignored(self):
+        # A load's reply cannot finish an unload, whatever it says.
+        oams = _make_oams()
+        oams.action_status = OAMSStatus.UNLOADING
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.SUCCESS})
+        assert oams.action_status == OAMSStatus.UNLOADING
+        assert oams.action_status_code != OAMSOpCode.SUCCESS
+
+    def test_a_reply_with_nothing_in_flight_is_ignored(self):
+        # Recording its code would hand it to whatever runs next.
+        oams = _make_oams()
+        oams.action_status = None
+        oams.action_status_code = None
+        oams._oams_action_status({"action": OAMSStatus.LOADING,
+                                  "code": OAMSOpCode.ERROR_BUSY})
+        assert oams.action_status_code is None
 
     def test_calibrating_action_captures_value(self):
         oams = _make_oams()

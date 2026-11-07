@@ -42,7 +42,7 @@ import types
 import itertools
 import importlib.util
 import configparser
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import pytest
 
 # AFC_OpenAMS.py -> AFC_unit.py chain does not import `mcu`, but AFC_OAMS.py
@@ -467,16 +467,6 @@ class TestAMSHardwareService:
     def test_init_default_state(self):
         service, printer = self._service()
         assert service._status_callbacks == []
-        assert service._polling_timer is None
-        assert service._polling_interval == 2.0
-        assert service._polling_interval_idle == 4.0
-        assert service._consecutive_idle_polls == 0
-        assert service._idle_poll_threshold == 3
-        assert service._last_encoder_clicks is None
-        assert service._last_f1s_hes == [None, None, None, None]
-        assert service._last_hub_hes == [None, None, None, None]
-        assert service._last_fps_value is None
-        assert service._polling_enabled is False
         assert service._reactor is None
         assert service._controller is None
         assert service._status == {}
@@ -829,123 +819,6 @@ class TestAMSHardwareService:
         afc.units = {}
         printer._objects["AFC"] = afc
         assert service._resolve_lane_name_from_afc("ams1", 0) is None
-
-    def test_polling_callback_disabled_returns_never(self):
-        service, printer = self._service()
-        service._polling_enabled = False
-        service._reactor = MockReactor()
-        result = service._polling_callback(0.0)
-        assert result == MockReactor.NEVER
-
-    def test_polling_callback_disabled_lazily_caches_reactor(self):
-        service, printer = self._service()
-        service._polling_enabled = False
-        assert service._reactor is None  # not yet cached
-
-        result = service._polling_callback(0.0)
-
-        assert service._reactor is printer._reactor
-        assert result == MockReactor.NEVER
-
-    def test_polling_callback_publishes_f1s_and_hub_changes(self):
-        service, printer = self._service()
-        service._polling_enabled = True
-        service._reactor = MockReactor()
-        controller = MagicMock()
-        controller.get_status.return_value = {
-            "f1s_hes_value": [1, 0, 0, 0],
-            "hub_hes_value": [0, 1, 0, 0],
-            "encoder_clicks": 5,
-        }
-        service.attach_controller(controller)
-
-        f1s_events = []
-        hub_events = []
-        service.event_bus.subscribe(
-            "f1s_changed", lambda event_type, **kw: f1s_events.append(kw))
-        service.event_bus.subscribe(
-            "hub_changed", lambda event_type, **kw: hub_events.append(kw))
-
-        service._polling_callback(0.0)
-
-        assert len(f1s_events) == 4  # all 4 bays go from unseen(None) to a value
-        assert len(hub_events) == 4
-        bay0 = next(e for e in f1s_events if e["bay"] == 0)
-        assert bay0["value"] is True
-        assert service._last_f1s_hes == [True, False, False, False]
-        assert service._last_hub_hes == [False, True, False, False]
-
-    def test_polling_callback_no_status_backs_off(self):
-        service, printer = self._service()
-        service._polling_enabled = True
-        service._reactor = MockReactor()
-        result = service._polling_callback(100.0)
-        assert result == 100.0 + service._polling_interval_idle
-
-    def test_polling_callback_exception_backs_off(self):
-        service, printer = self._service()
-        service._polling_enabled = True
-        service._reactor = MockReactor()
-        service.poll_status = MagicMock(side_effect=Exception("boom"))
-        result = service._polling_callback(100.0)
-        assert result == 100.0 + service._polling_interval_idle
-
-    def test_polling_callback_idle_backoff_after_threshold(self):
-        service, printer = self._service()
-        service._polling_enabled = True
-        service._reactor = MockReactor()
-        service._idle_poll_threshold = 1
-        service._consecutive_idle_polls = 5
-        controller = MagicMock()
-        controller.get_status.return_value = {
-            "f1s_hes_value": [0, 0, 0, 0], "hub_hes_value": [0, 0, 0, 0],
-        }
-        service.attach_controller(controller)
-        result = service._polling_callback(100.0)
-        assert result == 100.0 + service._polling_interval_idle
-
-    def test_polling_callback_no_change_skips_publish(self):
-        service, printer = self._service()
-        service._polling_enabled = True
-        service._reactor = MockReactor()
-        # Pre-seed last-seen values identical to the upcoming poll so neither
-        # loop's "changed" branch is taken.
-        service._last_f1s_hes = [False, False, False, False]
-        service._last_hub_hes = [False, False, False, False]
-        controller = MagicMock()
-        controller.get_status.return_value = {
-            "f1s_hes_value": [0, 0, 0, 0], "hub_hes_value": [0, 0, 0, 0],
-        }
-        service.attach_controller(controller)
-        events = []
-        service.event_bus.subscribe(
-            "f1s_changed", lambda event_type, **kw: events.append(kw))
-        service.event_bus.subscribe(
-            "hub_changed", lambda event_type, **kw: events.append(kw))
-
-        service._polling_callback(0.0)
-
-        assert events == []
-
-    def test_polling_callback_encoder_progress_resets_idle_counter(self):
-        service, printer = self._service()
-        service._polling_enabled = True
-        service._reactor = MockReactor()
-        service._consecutive_idle_polls = 2
-        service._last_encoder_clicks = 10
-        controller = MagicMock()
-        controller.get_status.return_value = {
-            "f1s_hes_value": [0, 0, 0, 0], "hub_hes_value": [0, 0, 0, 0],
-            "encoder_clicks": 15,
-        }
-        service.attach_controller(controller)
-
-        service._polling_callback(0.0)
-
-        assert service._last_encoder_clicks == 15
-        # consecutive_idle_polls was reset to 0 then incremented once
-        assert service._consecutive_idle_polls == 1
-
 
 # ═════════════════════════════════════════════════════════════════════════
 # FollowerState / FollowerController
@@ -1657,6 +1530,30 @@ class TestOAMSMonitorTick:
         assert result == 100.0 + MONITOR_INTERVAL_IDLE
         assert monitor.state.clog_start_time is None
 
+    def test_a_pause_ends_the_clog_window(self):
+        """A paused print's ticks never count toward the clog window, so a
+        RESUME starts a new one instead of firing at once on the old one."""
+        printing = {"on": True}
+        monitor, reactor, fps = _make_monitor(is_printing_fn=lambda: printing["on"])
+        monitor._running = True
+        monitor._oams = MagicMock(encoder_clicks=2618)
+        monitor.state.state = FPSLoadState.LOADED
+        monitor.state.toolhead_confirmed = True
+        monitor.state.clog_start_time = 5.0
+        monitor.state.clog_start_extruder = 0.0
+        monitor.state.clog_start_encoder = 2618
+        monitor.state.clog_active = True
+        printing["on"] = False
+        monitor._monitor_tick(100.0)
+        assert monitor.state.clog_start_time is None
+        assert monitor.state.clog_start_encoder is None
+        assert monitor.state.clog_active is False
+        printing["on"] = True
+        fps.extruder = MagicMock(last_position=24.2)
+        monitor._monitor_tick(300.0)
+        assert monitor.state.clog_start_time == 300.0
+        monitor._on_clog.assert_not_called()
+
     def test_engagement_in_progress_skips_detection(self):
         monitor, reactor, fps = _make_monitor()
         monitor._running = True
@@ -2143,15 +2040,19 @@ class TestAfcAMSInit:
         assert ams._engagement_length == 20.0
         assert ams._engagement_speed == 300.0
         assert ams._defer_engagement is False
+        assert ams._engagement_min_clicks == 10
+        assert ams._engagement_min_fps_drop == 0.03
+        assert ams._load_failure == ""
 
     def test_custom_engagement_params(self):
         config, printer, afc = self._config(
             values={"engagement_length": 15.0, "engagement_speed": 200.0,
-                    "defer_engagement": True})
+                    "defer_engagement": True, "engagement_min_clicks": 4})
         ams = self._build(config)
         assert ams._engagement_length == 15.0
         assert ams._engagement_speed == 200.0
         assert ams._defer_engagement is True
+        assert ams._engagement_min_clicks == 4
 
     def test_clog_sensitivity_lowercased(self):
         config, printer, afc = self._config(values={"clog_sensitivity": "HIGH"})
@@ -2317,15 +2218,94 @@ class TestVerifyEngagement:
         ams, afc, printer, reactor = _make_ams(oams=oams)
         # Simulate the encoder advancing once the extrude commands are sent.
         ams._oams_extrude = MagicMock(
-            side_effect=lambda *a, **k: setattr(oams, "encoder_clicks", 5))
+            side_effect=lambda *a, **k: setattr(oams, "encoder_clicks", 12))
         lane = _make_lane("lane1")
 
         result = ams._verify_engagement(lane)
 
         assert result is True
         assert any(
-            lvl == "info" and "Engagement verified: encoder moved 5 clicks" in m
+            lvl == "info" and "Engagement verified: encoder moved 12 clicks" in m
             for lvl, m in ams.logger.messages)
+
+    def test_a_status_is_waited_for_before_the_encoder_is_read(self):
+        class _FakeOams:
+            def __init__(self):
+                self.encoder_clicks = 0
+
+        oams = _FakeOams()
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._oams_extrude = MagicMock()
+        pauses = []
+
+        def pause(t):
+            pauses.append(t)
+            if t == 101.0:
+                # The status carrying the move's clicks lands during the wait.
+                oams.encoder_clicks = 30
+        reactor.pause = pause
+        lane = _make_lane("lane1")
+
+        result = ams._verify_engagement(lane)
+
+        assert result is True
+        assert pauses == [101.5, 101.0]
+        assert ("info", "Engagement verified: encoder moved 30 clicks") in ams.logger.messages
+
+    def test_clicks_from_the_load_itself_do_not_count(self):
+        class _FakeOams:
+            def __init__(self):
+                self.encoder_clicks = 2486
+
+        oams = _FakeOams()
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._oams_extrude = MagicMock()
+        ams._engagement_min_clicks = 10
+
+        def pause(t):
+            if t == 101.5:
+                # The status with the load's last clicks lands during the first wait.
+                oams.encoder_clicks = 2519
+        reactor.pause = pause
+        lane = _make_lane("lane1")
+
+        assert ams._verify_engagement(lane) is False
+
+    def _fps_case(self, fps_before, fps_after, min_drop=0.03):
+        # A load ends with the buffer compressed: the gears pull the engagement move out
+        # of it and the encoder does not turn (printer 3, lane6, 2026-10-25)
+        class _FakeOams:
+            def __init__(self):
+                self.encoder_clicks = 2513
+                self.fps_value = fps_before
+
+        oams = _FakeOams()
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._engagement_min_clicks = 10
+        ams._engagement_min_fps_drop = min_drop
+
+        def extrude(length, speed, label=""):
+            oams.fps_value = fps_after
+        ams._oams_extrude = extrude
+        return ams._verify_engagement(_make_lane("lane1")), ams
+
+    def test_an_fps_drop_proves_engagement_without_encoder_clicks(self):
+        ok, ams = self._fps_case(0.996, 0.622)
+        assert ok is True
+
+    def test_the_small_drop_of_a_good_load_proves_engagement(self):
+        # A 20 mm pull takes only a little of the buffer's slack (printer 3, 2026-10-26)
+        ok, ams = self._fps_case(1.0, 0.91)
+        assert ok is True
+
+    def test_a_flat_fps_still_fails(self):
+        ok, ams = self._fps_case(0.99, 0.98)
+        assert ok is False
+        assert "FPS 0.99 -> 0.98" in ams._load_failure
+
+    def test_fps_drop_check_off_at_zero(self):
+        ok, ams = self._fps_case(0.996, 0.2, min_drop=0.0)
+        assert ok is False
 
     def test_encoder_moved_enough_on_retry_returns_true(self):
         class _FakeOams:
@@ -2339,9 +2319,9 @@ class TestVerifyEngagement:
 
         def pause(t):
             pause_calls["n"] += 1
-            if pause_calls["n"] == 2:
+            if pause_calls["n"] == 3:
                 # Simulate the encoder catching up during the brief retry pause.
-                oams.encoder_clicks = 3
+                oams.encoder_clicks = 11
         reactor.pause = pause
         lane = _make_lane("lane1")
 
@@ -2350,7 +2330,7 @@ class TestVerifyEngagement:
         assert result is True
         assert any(
             lvl == "info"
-            and "Engagement verified on retry: encoder moved 3 clicks" in m
+            and "Engagement verified on retry: encoder moved 11 clicks" in m
             for lvl, m in ams.logger.messages)
 
     def test_no_encoder_movement_returns_false(self):
@@ -2364,8 +2344,43 @@ class TestVerifyEngagement:
 
         assert result is False
         assert (
-            "error", "Engagement verification failed: encoder moved only 0 clicks"
+            "error",
+            "Engagement verification failed: encoder moved only 0 clicks of the 10 needed"
         ) in ams.logger.messages
+        assert ams._load_failure == "encoder moved only 0 clicks of the 10 needed"
+
+    def test_too_little_encoder_movement_returns_false(self):
+        class _FakeOams:
+            def __init__(self):
+                self.encoder_clicks = 0
+
+        oams = _FakeOams()
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._oams_extrude = MagicMock(
+            side_effect=lambda *a, **k: setattr(oams, "encoder_clicks", 6))
+        lane = _make_lane("lane1")
+
+        result = ams._verify_engagement(lane)
+
+        assert result is False
+        assert (
+            "error",
+            "Engagement verification failed: encoder moved only 6 clicks of the 10 needed"
+        ) in ams.logger.messages
+
+    def test_the_configured_minimum_is_used(self):
+        class _FakeOams:
+            def __init__(self):
+                self.encoder_clicks = 0
+
+        oams = _FakeOams()
+        ams, afc, printer, reactor = _make_ams(
+            oams=oams, config_values={"engagement_min_clicks": 4})
+        ams._oams_extrude = MagicMock(
+            side_effect=lambda *a, **k: setattr(oams, "encoder_clicks", 4))
+        lane = _make_lane("lane1")
+
+        assert ams._verify_engagement(lane) is True
 
     def test_no_oams_returns_false_without_reading_encoder(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
@@ -3196,9 +3211,19 @@ class TestUnitLoadLane:
         lane = _make_lane("lane1")
         result = ams.unit_load_lane(lane, MagicMock())
         assert result is False
-        afc.error.handle_lane_failure.assert_called_once()
-        _, kwargs = afc.error.handle_lane_failure.call_args
-        assert kwargs["pause"] is True
+        afc.error.handle_lane_failure.assert_called_once_with(
+            lane, "OpenAMS load failed for lane1", pause=True)
+
+    def test_the_failure_reason_is_in_the_pause_message(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_load_sequence = MagicMock(return_value=False)
+        ams._load_failure = "encoder moved only 2 clicks of the 10 needed"
+        afc.function.in_print.return_value = False
+        lane = _make_lane("lane1")
+        assert ams.unit_load_lane(lane, MagicMock()) is False
+        afc.error.handle_lane_failure.assert_called_once_with(
+            lane, "OpenAMS load failed for lane1: encoder moved only 2 clicks of the 10 needed",
+            pause=False)
 
 
 class TestUnitUnloadLane:
@@ -3232,6 +3257,18 @@ class TestUnitUnloadLane:
         assert result is False
         afc.save_vars.assert_not_called()
 
+    def test_monitor_stops_before_the_tip_is_formed(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_unload_sequence = MagicMock(return_value=True)
+        afc.post_unload_macro = None
+        afc.move_e_pos = MagicMock()
+        calls = []
+        ams._monitor = MagicMock()
+        ams._monitor.stop.side_effect = lambda: calls.append("stop")
+        afc.do_tool_cut_tip_form = MagicMock(side_effect=lambda *a: calls.append("tip"))
+        ams.unit_unload_lane(_make_lane("lane1"), MagicMock())
+        assert calls == ["stop", "tip"]
+
     def test_runs_post_unload_macro_when_configured(self):
         ams, afc, printer, reactor = _make_ams()
         ams._oams_unload_sequence = MagicMock(return_value=True)
@@ -3245,15 +3282,16 @@ class TestUnitUnloadLane:
 
 
 class TestLaneUnloadingAndPrepareUnload:
-    def test_prepare_unload_stops_follower(self):
+    def test_prepare_unload_reverses_follower(self):
+        # A stopped follower holds the AMS motor locked during tip forming
         ams, afc, printer, reactor = _make_ams()
         follower = MagicMock()
         ams._follower = follower
         lane = _make_lane("lane1")
         ams.prepare_unload(lane, None, None)
-        follower.set_follower_state.assert_called_once()
-        args = follower.set_follower_state.call_args[0]
-        assert args[2] == 0 and args[3] == 0  # enable=0, direction=0
+        follower.set_follower_state.assert_not_called()
+        follower.enable_follower.assert_called_once()
+        assert follower.enable_follower.call_args[0][2] == 0  # direction=0, reverse
 
     def test_prepare_unload_no_follower_is_noop(self):
         ams, afc, printer, reactor = _make_ams()
@@ -3638,7 +3676,7 @@ class TestPollOamsSensors:
         oams = MagicMock()
         ams, afc, printer, reactor = _make_ams(oams=oams)
         ams._operation_active = True
-        assert ams._poll_oams_sensors(100.0) == 102.0
+        assert ams._poll_oams_sensors(100.0) == 100.25
 
     def test_f1s_change_triggers_handle_load_runout(self):
         oams = MagicMock()
@@ -3650,9 +3688,11 @@ class TestPollOamsSensors:
         ams._last_f1s[0] = True  # was present, now gone
         ams._should_block_sensor_for_runout = MagicMock(return_value=False)
 
-        ams._poll_oams_sensors(100.0)
+        ams._poll_oams_sensors(100.0)      # starts the debounce window
+        lane.handle_load_runout.assert_not_called()
+        ams._poll_oams_sensors(101.0)      # held past f1s_debounce -> commits
 
-        lane.handle_load_runout.assert_called_once_with(100.0, False)
+        lane.handle_load_runout.assert_called_once_with(101.0, False)
         assert ams._last_f1s[0] is False
 
     def test_f1s_change_blocked_by_runout_guard_skips_handle(self):
@@ -3665,7 +3705,8 @@ class TestPollOamsSensors:
         ams._last_f1s[0] = True
         ams._should_block_sensor_for_runout = MagicMock(return_value=True)
 
-        ams._poll_oams_sensors(100.0)
+        ams._poll_oams_sensors(100.0)      # starts the debounce window
+        ams._poll_oams_sensors(101.0)      # held past f1s_debounce -> commits
 
         lane.handle_load_runout.assert_not_called()
         assert ams._last_f1s[0] is False
@@ -3681,6 +3722,26 @@ class TestPollOamsSensors:
         ams._poll_oams_sensors(100.0)
 
         assert lane.loaded_to_hub is False
+
+    def test_seated_spool_reasserts_loaded_to_hub(self):
+        # AFC.LANE_UNLOAD clears loaded_to_hub after eject_lane, and OpenAMS
+        # cannot eject -- the spool stays seated and staged. One switch feeds
+        # prep and load, so a present f1s must put the pair back in step
+        # rather than leaving prep=True/load=False, which the hardware cannot
+        # be in and which the UI reports as "filament detected but not
+        # loaded".
+        oams = MagicMock()
+        oams.f1s_hes_value = [1, 0, 0, 0]
+        oams.hub_hes_value = [0, 0, 0, 0]
+        lane = _make_lane("lane1", loaded_to_hub=False)
+        ams, afc, printer, reactor = _make_ams(oams=oams, lanes={"lane1": lane})
+        ams._spool_map["lane1"] = 0
+        ams._last_f1s[0] = True          # no edge: f1s never left
+
+        ams._poll_oams_sensors(100.0)
+
+        assert lane.prep_state is True
+        assert lane.loaded_to_hub is True
 
     def test_resync_prev_skips_runout_handling_but_updates_cache(self):
         oams = MagicMock()
@@ -3709,7 +3770,8 @@ class TestPollOamsSensors:
         ams._hub_load_suppressed.add("lane1")
         ams._should_block_sensor_for_runout = MagicMock(return_value=False)
 
-        ams._poll_oams_sensors(100.0)
+        ams._poll_oams_sensors(100.0)      # starts the debounce window
+        ams._poll_oams_sensors(101.0)      # held past f1s_debounce -> commits
 
         assert lane._load_suppressed is True
         assert "lane1" not in ams._hub_load_suppressed
@@ -3727,13 +3789,16 @@ class TestPollOamsSensors:
         assert lane._load_state is True
         assert ams._last_hub[0] is True
 
-    def test_reschedules_two_seconds_later(self):
+    def test_reschedules_at_poll_interval(self):
+        # 0.25s default: the poll reads host-cached values only (no bus
+        # traffic), so the fast cadence is free and makes insert edges,
+        # runout edges, and post-op resyncs land near-instantly.
         oams = MagicMock()
         oams.f1s_hes_value = []
         oams.hub_hes_value = []
         ams, afc, printer, reactor = _make_ams(oams=oams)
         result = ams._poll_oams_sensors(50.0)
-        assert result == 52.0
+        assert result == 50.25
 
     def test_unmapped_lane_is_skipped(self):
         oams = MagicMock()
@@ -5170,6 +5235,22 @@ class TestOamsLoad:
         lane = _make_lane("lane1", extruder_obj=ext, **overrides)
         return lane
 
+    def test_a_load_starts_with_no_failure_reason(self):
+        oams = MagicMock()
+        oams.determine_current_spool.return_value = None
+        oams.load_spool_with_retry.return_value = (True, "ok")
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._load_failure = "an earlier load's reason"
+        ams._verify_engagement = MagicMock(return_value=True)
+        ams._advance_tool_stn_to_nozzle = MagicMock()
+        ams._wait_for_idle = MagicMock(return_value=True)
+        lane = self._lane()
+
+        result = ams._oams_load(lane)
+
+        assert result is True
+        assert ams._load_failure == ""
+
     def test_no_oams_returns_false(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
         lane = self._lane()
@@ -5435,22 +5516,27 @@ class TestOamsLoad:
         ams._oams_extrude.assert_called_once()
         args = ams._oams_extrude.call_args[0]
         assert args[0] == -25.0  # -(15.0 + 10.0)
-        oams.abort_current_action.assert_called_once_with(wait=True)
+        # Forced: the unit has just answered, which cleared action_status.
+        oams.abort_current_action.assert_called_once_with(wait=True, force=True)
         oams.unload_spool_with_retry.assert_called_once()
         oams.clear_errors.assert_called_once()
         assert any(
             lvl == "info" and "Engagement failed attempt 1, cleaning up" in m
             for lvl, m in ams.logger.messages)
-        # Follower is stopped 3x: before the load attempt starts, during
-        # engagement cleanup, and again before hardware cleanup.
+        # Follower is stopped before the load attempt and before hardware
+        # cleanup; during the cleanup retract it runs in reverse, since a stopped
+        # follower holds the AMS motor locked against the retract.
         cleanup_calls = follower.set_follower_state.call_args_list
-        assert len(cleanup_calls) == 3
+        assert len(cleanup_calls) == 2
         assert all(c[0][2] == 0 for c in cleanup_calls)
+        reverse = [c for c in follower.enable_follower.call_args_list
+                   if "engagement cleanup" in c[0][3]]
+        assert len(reverse) == 1 and reverse[0][0][2] == 0
         # wait_for_idle: start, before-attempt, then 4x during cleanup.
         assert ams._wait_for_idle.call_count == 6
-        # "stop before load" + "before load" enable + "stop before cleanup"
-        # (no retry-reenable pause since max_retries=1 means no next attempt).
-        assert afc.reactor.pause.call_count == 3
+        # "stop before load" + "before load" enable + reverse spin-up +
+        # "stop before cleanup" (no retry-reenable pause since max_retries=1).
+        assert afc.reactor.pause.call_count == 4
 
     def test_engagement_failure_no_retract_when_tool_stn_unload_zero(self):
         oams = MagicMock()

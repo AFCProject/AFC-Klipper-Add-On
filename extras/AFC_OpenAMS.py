@@ -52,6 +52,11 @@ except: raise error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.form
 # hardware controller lives in its own AFC_OAMS.py because Klipper resolves the
 # [AFC_OAMS ...] config section to that module name.
 
+# Seconds to let a status message land before reading the encoder after an
+# engagement move, since the count only arrives with the unit's status.
+ENGAGEMENT_SETTLE = 1.0
+
+
 class OAMSStatus(IntEnum):
     """
     Enumeration of firmware action/status codes reported by the OAMS MCU.
@@ -306,10 +311,10 @@ class AMSHardwareService:
     """
     Per-(printer, unit) façade over the [oams] hardware controller.
 
-    Resolves and caches the ``[AFC_OAMS <name>]`` controller, polls its sensors on
-    a reactor timer, caches the latest status and per-lane snapshots, and
-    publishes f1s/hub/spool change events on the shared ``AMSEventBus``. One
-    instance exists per (printer, unit name) pair.
+    Resolves and caches the ``[AFC_OAMS <name>]`` controller, caches the latest
+    status and per-lane snapshots, and publishes spool change events on the
+    shared ``AMSEventBus``. One instance exists per (printer, unit name) pair.
+    Sensor polling itself lives on ``afcOpenAMS._poll_oams_sensors``.
     """
     _instances: Dict[Tuple[int, str], AMSHardwareService] = {}
 
@@ -336,16 +341,6 @@ class AMSHardwareService:
         self.registry = LaneRegistry.for_printer(printer, logger=self.logger)
         self.event_bus = AMSEventBus.get_instance(logger=self.logger)
         self._reactor: Optional[Reactor] = None
-        self._polling_timer = None
-        self._polling_interval = 2.0
-        self._polling_interval_idle = 4.0
-        self._consecutive_idle_polls = 0
-        self._idle_poll_threshold = 3
-        self._last_encoder_clicks = None
-        self._last_f1s_hes: list[Optional[bool]] = [None, None, None, None]
-        self._last_hub_hes: list[Optional[bool]] = [None, None, None, None]
-        self._last_fps_value = None
-        self._polling_enabled = False
 
     @classmethod
     def for_printer(
@@ -414,53 +409,6 @@ class AMSHardwareService:
         if self._reactor is None:
             self._reactor = self.printer.get_reactor()
         return self._reactor.monotonic()
-
-    def _polling_callback(self, eventtime: float) -> float:
-        """
-        Reactor timer callback: poll status and publish sensor-change events.
-        Publishes ``f1s_changed``/``hub_changed`` events on transitions and
-        backs the poll interval off to the idle rate when nothing changes.
-
-        :param eventtime: reactor time the timer fired.
-        :return float: next scheduled reactor time, or ``NEVER`` if disabled.
-        """
-        if not self._polling_enabled:
-            if self._reactor is None:
-                self._reactor = self.printer.get_reactor()
-            return self._reactor.NEVER
-        try:
-            status = self.poll_status()
-            if not status:
-                return eventtime + self._polling_interval_idle
-            f1s_values = status.get("f1s_hes_value", [])
-            for bay in range(min(len(f1s_values), 4)):
-                new_val = bool(f1s_values[bay])
-                old_val = self._last_f1s_hes[bay]
-                if old_val is None or new_val != old_val:
-                    self.event_bus.publish(
-                        "f1s_changed", unit_name=self.name, bay=bay,
-                        value=new_val, eventtime=eventtime)
-                self._last_f1s_hes[bay] = new_val
-            hub_values = status.get("hub_hes_value", [])
-            for bay in range(min(len(hub_values), 4)):
-                new_val = bool(hub_values[bay])
-                old_val = self._last_hub_hes[bay]
-                if old_val is None or new_val != old_val:
-                    self.event_bus.publish(
-                        "hub_changed", unit_name=self.name, bay=bay,
-                        value=new_val, eventtime=eventtime)
-                self._last_hub_hes[bay] = new_val
-            encoder_clicks = status.get("encoder_clicks")
-            if encoder_clicks is not None:
-                if self._last_encoder_clicks is not None and encoder_clicks != self._last_encoder_clicks:
-                    self._consecutive_idle_polls = 0
-                self._last_encoder_clicks = encoder_clicks
-            self._consecutive_idle_polls += 1
-            if self._consecutive_idle_polls > self._idle_poll_threshold:
-                return eventtime + self._polling_interval_idle
-            return eventtime + self._polling_interval
-        except Exception:
-            return eventtime + self._polling_interval_idle
 
     def poll_status(self) -> Optional[Dict[str, Any]]:
         """
@@ -718,7 +666,20 @@ class afcAMS(afcUnit):
         self._engagement_length = config.getfloat("engagement_length", 20.0, minval=1.0)
         self._engagement_speed = config.getfloat("engagement_speed", 300.0, minval=10.0)
         self._defer_engagement = config.getboolean("defer_engagement", False)
+        # Encoder clicks the engagement move must turn: a 20 mm move turns
+        # some 35 on a 1.75 click/mm encoder, while a filament jammed short of
+        # the extruder gears turns a few as the follower compresses the buffer.
+        self._engagement_min_clicks = config.getint("engagement_min_clicks", 10, minval=1)
+        # FPS drop that also proves engagement: a load ends with the buffer
+        # compressed (FPS ~1.0, ~0.46 slack), so the gears pull the 20 mm out of
+        # it (good loads fell 0.05-0.16) and the encoder does not turn at all; a
+        # jammed filament leaves it flat.
+        self._engagement_min_fps_drop = config.getfloat(
+            "engagement_min_fps_drop", 0.03, minval=0.0, maxval=1.0)
         self._engagement_params: Dict[str, tuple[float, float]] = {}
+        # Why the last load failed, for the pause message.
+        self._load_failure = ""
+
 
         # Runtime state
         self.oams: AFC_OAMS = None  # type: ignore[assignment]  # resolved in handle_ready()
@@ -751,13 +712,29 @@ class afcAMS(afcUnit):
         except Exception:
             pass
 
+        # Sensor polling rate. The poll only reads host-cached values, so a
+        # fast rate adds no bus traffic.
+        self.sensor_poll_interval = config.getfloat(
+            "sensor_poll_interval", 0.25, minval=0.05)
+        # A raw f1s change must hold this long before the host acts on it, so
+        # a chattering sensor does not fire false runout or insert events.
+        self.f1s_debounce = config.getfloat(
+            "f1s_debounce", 0.75, minval=0.0)
+        # Same for the hub HES as seen by the virtual hub; live reads stay raw.
+        self.hub_debounce = config.getfloat(
+            "hub_debounce", 0.5, minval=0.0)
+
         # Sensor polling state
         self._last_f1s: list[Optional[bool]] = [None] * 4
+        self._f1s_pending_since: list[Optional[float]] = [None] * 4
+        self._hub_pending_since: list[Optional[float]] = [None] * 4
         self._last_hub: list[Optional[bool]] = [None] * 4
         self._poll_timer = None
 
         # Operation guard — prevents polling from corrupting state during load/unload
         self._operation_active = False
+        # Last-seen action for transition logging; '' is idle.
+        self._current_action = ""
         self._prev_states_stale = False
         self._hub_load_suppressed: set[str] = set()
         self._pending_spool_loaded_timers: Dict[str, Any] = {}
@@ -776,6 +753,63 @@ class afcAMS(afcUnit):
         # klippy:ready is registered by afcUnit.__init__ (upstream core) and
         # dispatches to our handle_ready override below — don't register it
         # again here or it would run twice (double poll timer / monitor init).
+
+    # Map the OAMS controller's action_status (OAMSStatus) and the monitor's
+    # FPSLoadState to readable strings for get_status.
+    _OAMS_ACTION_NAMES = {
+        OAMSStatus.LOADING: "loading",
+        OAMSStatus.UNLOADING: "unloading",
+        OAMSStatus.FORWARD_FOLLOWING: "forward_following",
+        OAMSStatus.REVERSE_FOLLOWING: "reverse_following",
+        OAMSStatus.COASTING: "coasting",
+        OAMSStatus.STOPPED: "stopped",
+        OAMSStatus.CALIBRATING: "calibrating",
+        OAMSStatus.ERROR: "error",
+    }
+    _FPS_STATE_NAMES = {0: "unloaded", 1: "loaded", 2: "loading", 3: "unloading"}
+
+    def _current_oams_action(self) -> str:
+        """
+        Return the controller's action_status as a readable string.
+
+        :return str: action string ('loading'/'unloading'/...), or '' when idle.
+        """
+        if self.oams is None:
+            return ""
+        act = getattr(self.oams, "action_status", None)
+        if act is None:
+            return ""
+        return self._OAMS_ACTION_NAMES.get(act, "busy")
+
+    def get_status(self, eventtime: Optional[float] = None) -> dict:
+        """
+        Extend the base unit status with the OpenAMS live state: connection,
+        sensors, failure counts, current action and the monitor's load state.
+
+        :param eventtime: reactor event time (unused; Klipper status interface).
+        :return dict: the status dict.
+        """
+        response = super().get_status(eventtime)
+        oams = self.oams
+        response["oams_connected"] = oams is not None
+        if oams is not None:
+            response["oams_current_spool"] = getattr(oams, "current_spool", None)
+            response["oams_fps_value"] = getattr(oams, "fps_value", None)
+            response["oams_f1s_hes"] = list(getattr(oams, "f1s_hes_value", []) or [])
+            response["oams_hub_hes"] = list(getattr(oams, "hub_hes_value", []) or [])
+            response["oams_load_failures"] = getattr(oams, "load_retry_failures", 0)
+            response["oams_unload_failures"] = getattr(oams, "unload_retry_failures", 0)
+        response["oams_action"] = self._current_oams_action() or "idle"
+        response["oams_busy"] = bool(self._operation_active)
+        st = getattr(self._monitor, "state", None) if self._monitor else None
+        if st is not None:
+            response["oams_load_state"] = self._FPS_STATE_NAMES.get(
+                getattr(st, "state", None), "")
+            response["oams_current_lane"] = getattr(st, "current_lane", None)
+            response["oams_current_spool_idx"] = getattr(st, "current_spool_idx", None)
+            response["oams_clog_detecting"] = getattr(st, "clog_start_time", None) is not None
+            response["oams_stuck_detecting"] = getattr(st, "stuck_start_time", None) is not None
+        return response
 
     def handle_connect(self) -> None:
         """
@@ -848,7 +882,9 @@ class afcAMS(afcUnit):
                     on_stuck_spool=self._on_stuck_spool_detected,
                     on_clog=self._on_clog_detected,
                     on_stuck_cleared=self._on_stuck_spool_cleared,
-                    is_printing_fn=lambda: self.afc.function.in_print(),
+                    # Printing, not just in a print: a paused print's ticks would
+                    # count toward the clog window and fire it again on RESUME
+                    is_printing_fn=lambda: self.afc.function.is_printing(),
                     is_lane_loaded_fn=lambda: any(
                         getattr(lane, 'tool_loaded', False)
                         and getattr(lane, 'extruder_obj', None) is not None
@@ -928,10 +964,9 @@ class afcAMS(afcUnit):
 
             # Vivid model: prep_state = F1S (filament inserted in lane);
             # raw_load_state = live hub HES (hub-junction occupancy, trips while
-            # filament is at the junction, 0 at idle). loaded_to_hub is a LATCHED
-            # logical flag — seeded here from F1S (a present spool is staged at
-            # the hub), then held until load/unload or the spool is removed; it
-            # is never clobbered by the transient hub HES.
+            # filament is at the junction, 0 at idle). loaded_to_hub follows F1S
+            # (the firmware stages every seated spool at the hub) and is never
+            # clobbered by the transient hub HES.
             lane.prep_state = f1s_present
             lane._load_state = hub_present
             lane.loaded_to_hub = f1s_present
@@ -943,13 +978,25 @@ class afcAMS(afcUnit):
 
     def _poll_oams_sensors(self, eventtime: float) -> float:
         """
-        Periodic timer callback — detect sensor changes and update lane state.
+        Periodic timer callback: detect sensor changes and update lane state.
+
+        :param eventtime: reactor time the timer fired.
+        :return float: next scheduled reactor time.
         """
         if self.oams is None:
             return self.afc.reactor.NEVER
 
+        # Log action transitions, before the gate so loads/unloads are seen.
+        action = self._current_oams_action()
+        if action != self._current_action:
+            self.logger.info(
+                f"OpenAMS {self.name}: {self._current_action or 'idle'} -> "
+                f"{action or 'idle'}")
+            self._current_action = action
+
+        poll_iv = getattr(self, 'sensor_poll_interval', 0.25)
         if self._operation_active:
-            return eventtime + 2.0
+            return eventtime + poll_iv
 
         resync_prev = self._prev_states_stale
         self._prev_states_stale = False
@@ -962,42 +1009,116 @@ class afcAMS(afcUnit):
             if slot < 0:
                 continue
 
-            # F1S -> prep_state (filament inserted in lane). When the spool is
-            # removed (F1S lost) the lane can no longer be loaded to hub, so clear
-            # the latched loaded_to_hub (mirrors Vivid clearing it when the prep
-            # sensor is lost). loaded_to_hub is otherwise NOT sensor-derived.
+            # F1S -> prep_state and loaded_to_hub, debounced.
             if slot < len(f1s_values):
-                new_f1s = bool(f1s_values[slot])
-
-                lane.prep_state = new_f1s
-                if not new_f1s:
-                    lane.loaded_to_hub = False
-
-                if resync_prev:
-                    self._last_f1s[slot] = new_f1s
-                else:
-                    old_f1s = self._last_f1s[slot] if slot < len(self._last_f1s) else None
-
-                    if old_f1s is not None and new_f1s != old_f1s:
-                        if self._should_block_sensor_for_runout(lane, new_f1s):
-                            self._last_f1s[slot] = new_f1s
-                            continue
-                        if lane_name in self._hub_load_suppressed:
-                            lane._load_suppressed = True
-                            self._hub_load_suppressed.discard(lane_name)
-                        lane.handle_load_runout(eventtime, new_f1s)
-
-                    self._last_f1s[slot] = new_f1s
+                self._update_f1s_debounced(
+                    lane, lane_name, slot, bool(f1s_values[slot]),
+                    eventtime, resync_prev)
 
             # Hub HES -> raw_load_state: live hub-junction occupancy aggregated by
             # the native virtual hub (any(lane.raw_load_state)). 0 at idle is
             # correct — filament is staged clear of the junction.
+            # Debounced like f1s; load and scan paths read the live values.
             if slot < len(hub_values):
-                new_hub = bool(hub_values[slot])
-                lane._load_state = new_hub
-                self._last_hub[slot] = new_hub
+                self._update_hub_debounced(
+                    lane, slot, bool(hub_values[slot]), eventtime, resync_prev)
 
-        return eventtime + 2.0
+        return eventtime + poll_iv
+
+    def _update_f1s_debounced(self, lane: AFCLane, lane_name: str, slot: int,
+                              raw_f1s: bool, eventtime: float,
+                              resync_prev: bool) -> None:
+        """
+        Debounced f1s handling for one lane. A change commits only after
+        holding for ``f1s_debounce`` seconds. The bay's single switch drives
+        both prep_state and loaded_to_hub, re-asserted every poll so a
+        declined eject cannot leave the lane prepped but not loaded.
+
+        :param lane: the AFC lane for this bay.
+        :param lane_name: the lane's name.
+        :param slot: bay index.
+        :param raw_f1s: current raw sensor reading.
+        :param eventtime: reactor time of this poll.
+        :param resync_prev: seed/resync pass; accept raw without edges.
+        """
+        # Shim-built test units bypass __init__, so lazy-init the state.
+        if getattr(self, '_f1s_pending_since', None) is None:
+            self._f1s_pending_since = [None] * 4
+        debounce = getattr(self, 'f1s_debounce', 0.75)
+        committed = (self._last_f1s[slot]
+                     if slot < len(self._last_f1s) else None)
+
+        if resync_prev or committed is None:
+            self._last_f1s[slot] = raw_f1s
+            self._f1s_pending_since[slot] = None
+            lane.prep_state = lane.loaded_to_hub = raw_f1s
+            return
+
+        if raw_f1s == committed:
+            # Stable (or chattered back): drop any pending change.
+            self._f1s_pending_since[slot] = None
+            lane.prep_state = lane.loaded_to_hub = committed
+            return
+
+        since = self._f1s_pending_since[slot]
+        if since is None:
+            self._f1s_pending_since[slot] = eventtime
+            lane.prep_state = lane.loaded_to_hub = committed
+            return
+        if eventtime - since < debounce:
+            lane.prep_state = lane.loaded_to_hub = committed
+            return
+
+        # Held long enough: commit the change and fire the edge.
+        self._f1s_pending_since[slot] = None
+        lane.prep_state = lane.loaded_to_hub = raw_f1s
+        if self._should_block_sensor_for_runout(lane, raw_f1s):
+            self._last_f1s[slot] = raw_f1s
+            return
+        if lane_name in self._hub_load_suppressed:
+            lane._load_suppressed = True
+            self._hub_load_suppressed.discard(lane_name)
+        lane.handle_load_runout(eventtime, raw_f1s)
+        self._last_f1s[slot] = raw_f1s
+
+    def _update_hub_debounced(self, lane: AFCLane, slot: int, raw_hub: bool,
+                              eventtime: float, resync_prev: bool) -> None:
+        """
+        Debounced hub-HES handling for one lane: a change commits to
+        ``lane._load_state`` only after holding for ``hub_debounce`` seconds.
+
+        :param lane: the AFC lane for this bay.
+        :param slot: bay index.
+        :param raw_hub: current raw sensor reading.
+        :param eventtime: reactor time of this poll.
+        :param resync_prev: seed/resync pass; accept raw without debounce.
+        """
+        if getattr(self, '_hub_pending_since', None) is None:
+            self._hub_pending_since = [None] * 4
+        debounce = getattr(self, 'hub_debounce', 0.5)
+        committed = (self._last_hub[slot]
+                     if slot < len(self._last_hub) else None)
+
+        if resync_prev or committed is None:
+            self._last_hub[slot] = raw_hub
+            self._hub_pending_since[slot] = None
+            lane._load_state = raw_hub
+            return
+        if raw_hub == committed:
+            self._hub_pending_since[slot] = None
+            lane._load_state = committed
+            return
+        since = self._hub_pending_since[slot]
+        if since is None:
+            self._hub_pending_since[slot] = eventtime
+            lane._load_state = committed
+            return
+        if eventtime - since < debounce:
+            lane._load_state = committed
+            return
+        self._hub_pending_since[slot] = None
+        self._last_hub[slot] = raw_hub
+        lane._load_state = raw_hub
 
     # ── Engagement verification ─────────────────────────────────────
 
@@ -1043,13 +1164,16 @@ class afcAMS(afcUnit):
                     self._get_monitor_state(), self.oams, 1,
                     "engagement verification", force=True)
 
-            # Record encoder before
+            # Wait for FPS pressure to normalize
+            self.afc.reactor.pause(self.afc.reactor.monotonic() + 1.5)
+
+            # Record encoder before, after the wait: the status read at the end of the
+            # load can still be missing the load's last clicks, which would count as
+            # engagement
             encoder_before = 0
             if self.oams and hasattr(self.oams, 'encoder_clicks'):
                 encoder_before = self.oams.encoder_clicks or 0
-
-            # Wait for FPS pressure to normalize
-            self.afc.reactor.pause(self.afc.reactor.monotonic() + 1.5)
+            fps_before = self._oams_fps_value()
 
             # Two-phase extrude: prime then main
             prime_length = min(5.0, engagement_length)
@@ -1059,17 +1183,27 @@ class afcAMS(afcUnit):
             if remaining > 0:
                 self._oams_extrude(remaining, engagement_speed, "engagement_main")
 
-            # Check encoder movement
+            # Check encoder movement, once a status has carried the count
+            self.afc.reactor.pause(self.afc.reactor.monotonic() + ENGAGEMENT_SETTLE)
             encoder_after = 0
             if self.oams and hasattr(self.oams, 'encoder_clicks'):
                 encoder_after = self.oams.encoder_clicks or 0
 
             encoder_delta = abs(encoder_after - encoder_before)
-            min_movement = 2
+            min_movement = self._engagement_min_clicks
 
             if encoder_delta >= min_movement:
                 self.logger.info(
                     f"Engagement verified: encoder moved {encoder_delta} clicks")
+                return True
+
+            fps_after = self._oams_fps_value()
+            if (self._engagement_min_fps_drop > 0
+                    and fps_before is not None and fps_after is not None
+                    and fps_before - fps_after >= self._engagement_min_fps_drop):
+                self.logger.info(
+                    f"Engagement verified: FPS fell {fps_before:.2f} -> {fps_after:.2f} "
+                    f"(encoder moved {encoder_delta} clicks)")
                 return True
 
             # Brief retry
@@ -1082,13 +1216,23 @@ class afcAMS(afcUnit):
                     f"Engagement verified on retry: encoder moved {encoder_retry} clicks")
                 return True
 
-            self.logger.error(
-                f"Engagement verification failed: encoder moved only {encoder_delta} clicks")
+            self._load_failure = (f"encoder moved only {encoder_delta} clicks of the "
+                                  f"{min_movement} needed")
+            if fps_before is not None and fps_after is not None:
+                self._load_failure += f", FPS {fps_before:.2f} -> {fps_after:.2f}"
+            self.logger.error(f"Engagement verification failed: {self._load_failure}")
             return False
 
         finally:
             if self._monitor:
                 self._monitor.notify_engagement_end()
+
+    def _oams_fps_value(self) -> Optional[float]:
+        """
+        Last FPS reading the OAMS reported, or None when it has none.
+        """
+        value = getattr(self.oams, 'fps_value', None) if self.oams else None
+        return value if isinstance(value, (int, float)) else None
 
     def _oams_extrude(self, length: float, speed: float, label: str = "") -> None:
         """
@@ -1569,8 +1713,9 @@ class afcAMS(afcUnit):
             # pause the print when printing, so a failed toolchange doesn't
             # continue with no filament loaded. Returning False alone only resets
             # toolchange stats in the core and never pauses.
+            reason = f": {self._load_failure}" if self._load_failure else ""
             self.afc.error.handle_lane_failure(
-                cur_lane, f"OpenAMS load failed for {cur_lane.name}",
+                cur_lane, f"OpenAMS load failed for {cur_lane.name}{reason}",
                 pause=self.afc.function.in_print())
             return False
         return True
@@ -1590,6 +1735,10 @@ class afcAMS(afcUnit):
         cur_lane.disable_buffer()
         cur_lane.sync_to_extruder()
         cur_lane.select_lane()
+        # The cut and tip forming push and pull filament inside the buffer, out of the
+        # encoder's sight, which the clog check reads as a clog
+        if self._monitor:
+            self._monitor.stop()
         self.afc.do_tool_cut_tip_form(cur_lane, cur_extruder)
         success = self._oams_unload_sequence(cur_lane, cur_extruder)
         if not success:
@@ -1665,9 +1814,9 @@ class afcAMS(afcUnit):
         """
         Unload-start hook the upstream core actually calls.
         Upstream's unload invokes ``lane_unloading`` (for LEDs) but never
-        ``prepare_unload``, so stop the OAMS follower here too — otherwise it
+        ``prepare_unload``, so reverse the OAMS follower here too — otherwise it
         keeps feeding forward against the cut/park/tip before the hardware
-        unload reverses it.
+        unload.
 
         :param lane: the lane beginning to unload.
         """
@@ -1683,20 +1832,19 @@ class afcAMS(afcUnit):
         self, cur_lane: AFCLane, cur_hub: Optional[afc_hub], cur_extruder: AFCExtruder
     ) -> None:
         """
-        Stop the OAMS follower before AFC's unload begins.
-        We only STOP the forward-feeding follower here — the hardware unload
-        (unload_spool) drives the follower in reverse itself during the rewind.
-        Reversing it this early would pull filament back during the toolhead
-        cut/park/tip operations, before the tip is even formed.
+        Run the OAMS follower in reverse before AFC's unload begins.
+        A stopped follower holds the AMS motor locked, so the filament the
+        cut/park/tip pulls back piles up in the FPS buffer; in reverse the
+        follower takes it up.
 
         :param cur_lane: the lane being unloaded.
         :param cur_hub: the lane's hub object.
         :param cur_extruder: the lane's extruder object.
         """
         if self._follower:
-            self._follower.set_follower_state(
-                self._get_monitor_state(), self.oams, 0, 0,
-                "stop before unload", force=True)
+            self._follower.enable_follower(
+                self._get_monitor_state(), self.oams, 0,
+                "reverse before unload", force=True)
 
     def _oams_unload_inner(self, cur_lane: AFCLane, cur_extruder: AFCExtruder) -> bool:
         """
@@ -1743,6 +1891,7 @@ class afcAMS(afcUnit):
             return False
 
         spool_index = self._spool_map.get(cur_lane.name, 0)
+        self._load_failure = ""
 
         # Wait for OAMS idle
         self._wait_for_idle()
@@ -1871,21 +2020,23 @@ class afcAMS(afcUnit):
                 self.logger.info(
                     f"Engagement failed attempt {attempt+1}, cleaning up")
 
-                # Disable the follower (enable=0) — do NOT run it in reverse.
-                # The extruder still grips the loaded filament; driving the
-                # follower backward here makes the two motors fight and grinds
-                # the gears (constant tension). The original oams_manager used
-                # set_oams_follower(0, 0) here. The extruder retract below and
-                # the hardware unload_spool_with_retry() handle backing the
-                # filament out, not the follower.
-                if self._follower:
-                    self._follower.set_follower_state(
-                        self._get_monitor_state(), self.oams, 0, 0,
-                        "engagement cleanup — stop follower", force=True)
-
                 # Retract from extruder using tool_stn distance so
-                # filament clears the extruder gears before AMS unload.
+                # filament clears the extruder gears before AMS unload. The
+                # follower runs in reverse with the retract, as in
+                # _oams_unload: stopped, it holds the AMS motor locked and the
+                # gears cannot push the filament back past it. With no retract
+                # it only stops, since reversing alone would fight the gears.
                 retract_dist = getattr(cur_lane.extruder_obj, 'tool_stn_unload', 0)
+                if self._follower:
+                    if retract_dist and retract_dist > 0:
+                        self._follower.enable_follower(
+                            self._get_monitor_state(), self.oams, 0,
+                            "engagement cleanup — reverse follower", force=True)
+                        self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.5)
+                    else:
+                        self._follower.set_follower_state(
+                            self._get_monitor_state(), self.oams, 0, 0,
+                            "engagement cleanup — stop follower", force=True)
                 if retract_dist and retract_dist > 0:
                     unload_length = retract_dist + 10.0
                     retract_speed = getattr(cur_lane.extruder_obj, 'tool_unload_speed', 25.0) * 60.0
@@ -1901,8 +2052,10 @@ class afcAMS(afcUnit):
                     self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.5)
 
                 # Hardware cleanup — gate each command with idle wait
+                # force: the failed attempt already cleared action_status, but
+                # the unit may still be driving filament and needs the cancel.
                 self._wait_for_idle()
-                self.oams.abort_current_action(wait=True)
+                self.oams.abort_current_action(wait=True, force=True)
                 self._wait_for_idle()
                 self.oams.unload_spool_with_retry()
                 self._wait_for_idle()
@@ -1947,9 +2100,6 @@ class afcAMS(afcUnit):
 
         spool_index = self._spool_map.get(cur_lane.name, 0)
 
-        # prepare_unload() only STOPS the follower; the hardware unload
-        # (unload_spool, below) drives it in reverse itself during the rewind.
-
         # Wait for idle
         self._wait_for_idle()
 
@@ -1959,8 +2109,8 @@ class afcAMS(afcUnit):
 
         # Drive the follower in REVERSE before retracting the extruder so it
         # pulls filament back toward the spool IN SYNC with the retract. The
-        # follower was stopped by prepare_unload / the form-tip purge; left
-        # stopped (or feeding forward) it fights the extruder pull-back and
+        # form-tip purge can leave it stopped; left stopped (or feeding
+        # forward) it fights the extruder pull-back and
         # shoves filament back into the gears. The brief reactor pause lets the
         # follower actually spin up reverse before the extruder pulls (an M400
         # only waits on toolhead moves, not the follower MCU). The hardware
@@ -2177,7 +2327,9 @@ class afcAMS(afcUnit):
             self._monitor.stop()
 
         try:
-            self.oams.abort_current_action()
+            # force: a wedged unit has already answered, so action_status is
+            # clear but the firmware still needs the cancel.
+            self.oams.abort_current_action(force=True)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.1)
             self.oams.clear_errors()
             self.oams.current_spool = None
@@ -3667,6 +3819,8 @@ class OAMSMonitor:
             # Reset clog tracking so it doesn't accumulate during non-print
             st.clog_start_time = None
             st.clog_start_extruder = None
+            st.clog_start_encoder = None
+            st.clog_active = False
             return eventtime + MONITOR_INTERVAL_IDLE
 
         # Don't monitor during engagement verification
