@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import contextmanager
 from unittest.mock import MagicMock, call, patch
 import pytest
 
@@ -33,6 +34,7 @@ from extras.AFC_lane import AFCLaneState, AFCMoveWarning
 from klippy import Printer
 
 from tests.test_AFC_lane import _make_afc_lane
+from tests.test_AFC_moonraker_io import moonraker_io as moonraker_io
 
 
 def _build_gcmd(params=None, commandline=""):
@@ -127,7 +129,7 @@ def _make_afc():
     obj.logger = MockLogger()
     obj.reactor = inner.reactor
     obj.moonraker = None
-    obj._var_write_thread_wait = True
+    obj._var_writer_closed = False
     obj._var_write_thread = MagicMock()
     obj.function = MagicMock()
     obj.gcode = MagicMock()
@@ -4973,12 +4975,13 @@ class TestVarWriteWorker:
         assert result is None
         obj._write_vars_snapshot.assert_not_called()
 
-    def test_stops_looping_once_join_threads_clears_wait_flag(self):
-        """Simulates a real klippy:disconnect: join_threads flips the wait
-        flag and queues the sentinel, and the worker must exit its loop."""
+    def test_stops_looping_once_join_threads_queues_sentinel(self):
+        """Simulates a real klippy:disconnect: join_threads closes the writer
+        and queues the sentinel, and the worker must exit its loop."""
+        from queue import Queue
         obj = _make_afc()
-        obj._var_write_queue = MagicMock()
-        obj._var_write_queue.get.side_effect = [{"a": 1}]
+        obj._var_write_queue = Queue()
+        obj._var_write_queue.put_nowait({"a": 1})
         obj._write_vars_snapshot = MagicMock()
         obj.moonraker = None
 
@@ -4990,7 +4993,7 @@ class TestVarWriteWorker:
         obj._var_write_worker()
 
         obj._write_vars_snapshot.assert_called_once_with({"a": 1})
-        assert obj._var_write_thread_wait is False
+        assert obj._var_writer_closed is True
 
 
 class TestJoinThreads:
@@ -4999,14 +5002,47 @@ class TestJoinThreads:
 
     def _make_afc_for_join_threads(self):
         obj = _make_afc()
-        obj._var_write_thread_wait = True
         obj._var_write_queue = MagicMock()
         return obj
 
-    def test_clears_var_write_thread_wait_flag(self):
-        obj = self._make_afc_for_join_threads()
+    def test_closes_var_writer_after_draining_queued_saves(self, afc_owner, tmp_path):
+        obj = afc_owner
+        obj.VarFile = str(tmp_path / "AFC")
+        obj.prep_done = True
+        obj.function.get_current_lane.return_value = None
+        unit_file = tmp_path / "AFC.unit"
+        closing = threading.Event()
+        written = []
+        write = obj._write_vars_snapshot
+        join = obj._var_write_thread.join
+
+        def held_write(data):
+            # Hold the worker until disconnect begins, so later saves are still queued
+            assert closing.wait(5), "disconnect never reached the writer join"
+            write(data)
+            written.append(json.loads(unit_file.read_text())["system"]["num_lanes"])
+
+        def join_after_close(*args, **kwargs):
+            # Bounded, also at fixture teardown, so a lost sentinel fails instead of hanging
+            closing.set()
+            join(5)
+
+        def save(lane_count):
+            obj.lanes = {f"lane{i}": None for i in range(lane_count)}
+            obj.save_vars()
+
+        obj._write_vars_snapshot = held_write
+        obj._var_write_thread.join = join_after_close
+        save(1)
+        save(2)
+        save(3)
         obj.join_threads()
-        assert obj._var_write_thread_wait is False
+        assert not obj._var_write_thread.is_alive()
+        assert written == [1, 2, 3]
+        save(4)  # after disconnect
+        obj.join_threads()  # a repeated disconnect changes nothing
+        assert written == [1, 2, 3, 4]
+        assert json.loads(unit_file.read_text())["system"]["num_lanes"] == 4
 
     def test_puts_sentinel_on_var_write_queue(self):
         obj = self._make_afc_for_join_threads()
@@ -5039,6 +5075,304 @@ class TestJoinThreads:
         obj._var_write_thread.join.side_effect = lambda *a, **kw: order.append("join")
         obj.join_threads()
         assert order == ["put_nowait", "join"]
+
+
+@contextmanager
+def _real_afc(logger, reactor=None):
+    """Construct the real owner and join its file writer at teardown."""
+    from tests.conftest import MockConfig, MockPrinter
+
+    printer = MockPrinter()
+    if reactor is not None:
+        printer._reactor = printer.reactor = reactor
+    config = MockConfig(name="AFC", printer=printer)
+    obj = None
+    try:
+        with patch("extras.AFC.AFC_logger", return_value=logger), \
+             patch.object(afc, "print_version"):
+            obj = afc(config)
+        obj.toolhead = printer.lookup_object("toolhead")
+        yield obj
+    finally:
+        if obj is not None:
+            obj.join_threads()
+
+
+@pytest.fixture
+def afc_owner():
+    """Real owner for reactor-side bookkeeping, without a Moonraker server or worker."""
+    from tests.conftest import MockLogger
+    from tests.test_AFC_moonraker_io import DeferredReactor
+
+    with _real_afc(MockLogger(), DeferredReactor()) as obj:
+        yield obj
+
+
+@pytest.fixture
+def afc_connection(moonraker_io):
+    """Construct the real owner and retain all real workers for teardown."""
+    io = moonraker_io
+    with _real_afc(io.logger) as obj:
+        io.client.get_afc_stats = io.startup_stats
+        io.client.wait_for_moonraker = MagicMock(return_value=True)
+        io.client.delete_lane_data = MagicMock()
+        io.client.get_spoolman_server = MagicMock(return_value=None)
+        io.client.check_for_td1 = MagicMock(return_value=(True, True, True))
+        created = []
+
+        def new_client(*args):
+            client = io.client if not created else io.new_client()
+            created.append(client)
+            client.wait_for_moonraker = io.client.wait_for_moonraker
+            client.get_afc_stats = io.startup_stats
+            client.delete_lane_data = io.client.delete_lane_data
+            client.get_spoolman_server = io.client.get_spoolman_server
+            client.check_for_td1 = io.client.check_for_td1
+            return client
+
+        with patch("extras.AFC.AFC_moonraker", side_effect=new_client):
+            yield obj, io
+
+
+class TestAFCHandleMoonrakerConnect:
+    def test_repeated_prep_reuses_client_and_reloads_external_stat_edits(self, afc_connection):
+        from extras.AFC_assist import AFCEspoolerStats, EspoolerDir
+        from extras.AFC_extruder import AFCExtruderStats
+        from tests.test_AFC_extruder import _make_extruder_obj
+        from tests.test_AFC_lane import _make_real_afc_lane
+
+        obj, io = afc_connection
+        self._use_real_stats_read(io)
+        # Spoolman moves between the two PREPs
+        io.client.get_spoolman_server.side_effect = ["http://spoolman-a.invalid",
+                                                     "http://spoolman-b.invalid"]
+        lane = _make_real_afc_lane()
+        lane.afc = lane.espooler.afc = obj
+        lane.unit_obj = MagicMock(type="BoxTurtle")
+        lane.espooler.stats = AFCEspoolerStats(lane.name, lane.espooler)
+        extruder_stats = {}
+        for name in ("extruder", "extruder1"):
+            extruder = _make_extruder_obj(name)
+            extruder.afc = obj
+            extruder_stats[name] = AFCExtruderStats(name, extruder, 200)
+            obj.printer.register_event_handler("afc:moonraker_connect",
+                                               extruder_stats[name].handle_moonraker_stats)
+        obj.printer.register_event_handler("afc:moonraker_connect",
+                                           lane.handle_moonraker_connect)
+        keys = {
+            "system": "error_stats.changes_without_error",
+            "lane": "lane1.load_count",
+            "extruder": "extruder.cut.cut_total",
+            # A secondary extruder keeps its tool changes in its cut group
+            "extruder1": "extruder1.cut.total",
+            "espooler": "lane1.n20_runtime_fwd",
+        }
+        io.contents.update({
+            ("afc_stats", "error_stats.last_load_error"): "2026-11-01 10:00",
+            ("afc_stats", "average_time.new_average_calc"): "1",
+            ("afc_stats", "extruder.cut.last_blade_changed"): "2026-10-01 12:30",
+            ("afc_stats", "extruder.change_count.total"): "50",
+            ("afc_stats", "extruder1.cut.last_blade_changed"): "2026-10-01 12:30",
+            ("afc_stats", "extruder1.change_count.tool_selected"): "0",
+            ("afc_stats", keys["system"]): "8",
+            ("afc_stats", keys["lane"]): "20",
+            ("afc_stats", keys["extruder"]): "30",
+            ("afc_stats", keys["extruder1"]): "60",
+            ("afc_stats", keys["espooler"]): "40",
+        })
+
+        def counters():
+            return {
+                "system": obj.afc_stats.tc_without_error.value,
+                "lane": lane.lane_load_count.value,
+                "extruder": extruder_stats["extruder"].cut_total.value,
+                "extruder1": extruder_stats["extruder1"].tc_total.value,
+                "espooler": lane.espooler.stats._n20_runtime_fwd.value,
+            }
+
+        def count_once():
+            obj.afc_stats.tc_without_error.increase_count()
+            lane.lane_load_count.increase_count()
+            extruder_stats["extruder"].cut_total.increase_count()
+            extruder_stats["extruder1"].tc_total.increase_count()
+            runtime = lane.espooler.stats
+            runtime.direction = EspoolerDir.FWD
+            runtime.start_time = 10.0
+            runtime.end_time = 12.5
+            runtime.update_database()
+            io.wait_idle()
+
+        assert obj.handle_moonraker_connect() is None
+        client = obj.moonraker
+        assert counters() == {"system": 8, "lane": 20, "extruder": 30, "extruder1": 60,
+                              "espooler": 40}
+        assert obj.spoolman == "http://spoolman-a.invalid"
+        count_once()
+        for owner, value in {"system": "3", "lane": "5", "extruder": "6", "extruder1": "8",
+                             "espooler": "7"}.items():
+            io.external_edit(keys[owner], value)
+        # Second PREP lands well inside the retained client's 60s statistics cache
+        assert obj.handle_moonraker_connect() is None
+        assert obj.moonraker is client
+        assert io.workers == [client]
+        assert client._write_thread.is_alive()
+        assert counters() == {"system": 3, "lane": 5, "extruder": 6, "extruder1": 8,
+                              "espooler": 7}
+        assert obj.spoolman == "http://spoolman-b.invalid"
+        count_once()
+        assert {owner: io.contents[("afc_stats", key)] for owner, key in keys.items()} == {
+            "system": "4", "lane": "6", "extruder": "7", "extruder1": "9", "espooler": "9.5"}
+        assert [record[0] for record in io.records].count("GET") == 2
+        assert io.logger.messages == []
+
+    def test_readiness_failure_reuses_worker_and_retries_setup(self, afc_connection):
+        obj, io = afc_connection
+        io.client.wait_for_moonraker.side_effect = [False, True]
+        events = []
+        obj.printer.register_event_handler("afc:moonraker_connect",
+                                           lambda: events.append("connected"))
+        assert obj.handle_moonraker_connect() is False
+        first = obj.moonraker
+        assert events == []
+        assert obj.handle_moonraker_connect() is None
+        assert obj.moonraker is first
+        assert io.workers == [first]
+        assert events == ["connected"]
+        assert obj.afc_stats.moonraker is first
+        assert io.logger.messages == []
+
+    def test_statistics_exception_retries_without_replacing_client(self, afc_connection):
+        from extras.AFC_stats import AFCStats
+
+        obj, io = afc_connection
+        events = []
+        obj.printer.register_event_handler("afc:moonraker_connect",
+                                           lambda: events.append("connected"))
+        attempts = []
+
+        def initialize(*args):
+            attempts.append(args[0])
+            if len(attempts) == 1:
+                raise ValueError("controlled statistics initialization failure")
+            return AFCStats(*args)
+
+        with patch("extras.AFC.AFCStats", side_effect=initialize):
+            assert obj.handle_moonraker_connect() is None
+            assert obj.afc_stats is None
+            assert events == []
+            assert obj.handle_moonraker_connect() is None
+        assert attempts == [io.client, io.client]
+        assert obj.afc_stats.moonraker is io.client
+        assert events == ["connected"]
+        assert [level for level, _ in io.logger.messages] == ["debug"]
+
+    @staticmethod
+    def _use_real_stats_read(io):
+        from functools import partial
+        from extras.AFC_utils import AFC_moonraker
+
+        io.startup_stats = partial(AFC_moonraker.get_afc_stats, io.client)
+
+    def test_transient_stat_read_failure_reloads_persisted_counts_on_next_prep(
+            self, afc_connection):
+        obj, io = afc_connection
+        self._use_real_stats_read(io)
+        persisted = {"namespace": "afc_stats", "value": {
+            "error_stats": {"changes_without_error": 9, "last_load_error": "2026-11-01 10:00",
+                            "total_load_errors": 2, "total_unload_errors": 3},
+            "average_time": {"new_average_calc": 1, "tool_change": 50.0,
+                             "tool_unload": 20.0, "tool_load": 30.0},
+        }}
+        io.statuses[0] = 500
+        for index in range(1, 8):
+            io.responses[index] = persisted
+        assert obj.handle_moonraker_connect() is None  # Moonraker database read fails
+        io.wait_idle()
+        assert obj.handle_moonraker_connect() is None  # explicit PREP after recovery
+        stats = obj.afc_stats
+        stats.tc_without_error.increase_count()
+        io.wait_idle()
+        assert stats.tc_without_error.value == 10
+        assert stats.total_load_errors.value == 2
+        assert stats.tc_last_load_error.value == "2026-11-01 10:00"
+        assert io.contents[("afc_stats", "error_stats.changes_without_error")] == "10"
+
+    def test_repeated_prep_rediscovers_removed_lane_data(self, afc_connection):
+        from functools import partial
+        from extras.AFC_utils import AFC_moonraker
+
+        obj, io = afc_connection
+        io.client.check_for_td1 = partial(AFC_moonraker.check_for_td1, io.client)
+        # Stored statistics that need no default writes, so only config reads reach Moonraker
+        io.startup_values = {"error_stats": {"last_load_error": "2026-11-01 10:00"},
+                             "average_time": {"new_average_calc": 1}}
+        io.responses[0] = {"orig": {"lane_data": {}}}
+        io.responses[1] = {"orig": {}}
+        assert obj.handle_moonraker_connect() is None
+        client = obj.moonraker
+        assert obj.lane_data_enabled is True
+        # [lane_data] removed from moonraker.conf before the next PREP
+        assert obj.handle_moonraker_connect() is None
+        assert obj.moonraker is client
+        assert obj.lane_data_enabled is False
+        assert [request[0] for request in io.requests] == ["/server/config"] * 2
+        assert io.logger.messages == []
+
+
+class TestAFCResetStatsBackupOrder:
+    @pytest.mark.parametrize("failed", [False, True])
+    def test_backup_finishes_before_counters_reset(self, afc_connection, failed):
+        from extras.AFC_stats import AFCStats_var
+        obj, io = afc_connection
+        obj.moonraker = io.client
+        obj.reactor = io.reactor
+        lane = MagicMock()
+        lane.name = "lane1"
+        lane.lane_load_count = AFCStats_var(
+            "lane1", "load_count", {"lane1": {"load_count": 7}}, io.client)
+        obj.lanes = {"lane1": lane}
+        io.responses[0] = {"backup_path": "/tmp/afc-backup.db"}
+        if failed:
+            io.statuses[0] = 500
+        gate = io.gates[0] = threading.Event()
+        observed = []
+        observer_errors = []
+
+        def inspect_held_backup():
+            try:
+                io.wait_requests(1)
+                observed.append((lane.lane_load_count.value, obj.db_backup))
+            except BaseException as error:
+                observer_errors.append(error)
+            finally:
+                gate.set()
+
+        observer = threading.Thread(target=inspect_held_backup)
+        observer.start()
+        try:
+            obj.cmd_AFC_RESET_STATS(_build_gcmd({"LANE": "lane1"}))
+        finally:
+            gate.set()
+            observer.join(5)
+        assert not observer.is_alive()
+        assert observer_errors == []
+        assert observed == [(7, False)]
+        assert lane.lane_load_count.value == (7 if failed else 0)
+        assert obj.db_backup is (not failed)
+        io.wait_idle()
+        io.reactor.run_callbacks()
+        assert io.requests[0][0] == "/server/database/backup"
+        if failed:
+            assert io.logger.messages == [
+                ("error", "Error trying to backup moonraker database, "
+                 "check AFC.log for more information"),
+                ("error", io.client.ERROR_STRING),
+            ]
+        else:
+            assert io.logger.messages == [
+                ("info", "Moonrakers database backed up to /tmp/afc-backup.db"),
+                ("info", "Lane stats reset for lane1"),
+            ]
 
 
 class TestAFCLedColorValidation:

@@ -117,6 +117,7 @@ class afc:
         self.position_saved     = False
         self.spoolman           = None
         self.moonraker: Optional[AFC_moonraker] = None
+        self.afc_stats: Optional[AFCStats] = None
         self.print_data_metadata : Optional[AFC_PrintFileMetaData] = None
         self.td1_defined        = False
         self._td1_present       = False
@@ -173,7 +174,7 @@ class afc:
         # save_vars() only builds the state dict on the reactor thread; the actual file
         # write happens on this background thread so a slow disk can't stall Klipper.
         # A single worker is created rather than a thread per call to keep writes ordered.
-        self._var_write_thread_wait = True
+        self._var_writer_closed = False
         self._var_write_queue: Queue = Queue()
         self._var_write_thread = threading.Thread(target=self._var_write_worker, daemon=True,
                                                   name="afc_save_vars")
@@ -422,8 +423,12 @@ class afc:
         """
 
         try:
-            self.moonraker = AFC_moonraker(self.moonraker_host, self.moonraker_port, self.logger,
-                                           self.reactor)
+            if self.moonraker is None:
+                self.moonraker = AFC_moonraker(
+                    self.moonraker_host, self.moonraker_port, self.logger, self.reactor)
+            # Drop the statistics cached by an earlier PREP so external edits are read again
+            self.moonraker.afc_stats = None
+            self.moonraker.last_stats_time = None
             if not self.moonraker.wait_for_moonraker(toolhead=self.toolhead,
                                                      timeout=self.moonraker_connect_to):
                 return False
@@ -1345,26 +1350,31 @@ class afc:
                 extruder_entry = str["system"]["extruders"][cur_extruder.name]
                 extruder_entry['virtual_tool_start'] = bool(cur_extruder.tool_start_state)
 
+        if self._var_writer_closed:
+            # Writer already drained at disconnect, persist this final state directly
+            self._write_vars_snapshot(str)
+            return
         # Handing off to the background writer thread so a slow disk doesn't
         # block the reactor; queue.put_nowait never blocks the caller here
         self._var_write_queue.put_nowait(str)
 
     def join_threads(self) -> None:
         """
-        Method is called when a klipper:disconnect happens so that all threads can be cleaned up
-        correctly
+        Called on klipper:disconnect. Finishes every queued AFC.var.unit write, then attempts
+        admitted Moonraker work, after the reactor stops. Safe to call more than once.
         """
-        self._var_write_queue.put_nowait(self.sentinel)
-        self._var_write_thread_wait = False
+        if not self._var_writer_closed:
+            self._var_writer_closed = True
+            self._var_write_queue.put_nowait(self.sentinel)
         self._var_write_thread.join()
         if self.moonraker is not None:
             self.moonraker.join_thread()
 
     def _var_write_worker(self) -> None:
         """
-        Background thread loop that pulls queued save_vars() values and
-        writes them to VarFile.unit file in the order they were queued. Runs for
-        the life of the process (daemon thread) so it needs no explicit shutdown.
+        Background thread loop that pulls queued save_vars() values and writes them to
+        VarFile.unit file in the order they were queued, until the disconnect sentinel is
+        dequeued so every earlier snapshot is written first.
         """
         try:
             thread_name = threading.current_thread().name
@@ -1372,7 +1382,7 @@ class afc:
         except:
             pass
 
-        while self._var_write_thread_wait:
+        while True:
             data = self._var_write_queue.get()
             if data is self.sentinel:
                 return

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-07-2026]
+### Fixed
+- Prevent Moonraker requests from blocking the reactor.
+- Drain queued writes and discard late Moonraker callbacks on disconnect.
+
 ## [11-02-2026]
 ### Fixed
 - Fixed a bug where a lane without an extruder stepper could error out if the `QUERY_BUFFER` macro was run. 
