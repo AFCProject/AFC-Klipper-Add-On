@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [11-06-2026]
 ### Fixed
 - Fixed unload so that ACE units are no longer fighting toolhead extruder when unloading
+- Fixed ACE bowden calibration adding an unneeded 100mm pad to the measured unload distance
+- Fixed ACE 2 turning its factory per-slot identify back on after every reset by resetting it
+  on every connect and reconnect
+### Added
+- Added retries to ACE unload for a buffer that won't collapse to trailing and for a toolhead
+  sensor that doesn't clear, matching the stepper-based unload's existing retry behavior
+- Added ACE 2 rollback assist during the unload cut/tip-form so the unit reels in filament the
+  extruder pushes back instead of fighting it
+- Added `skip_factory_autostage`, `stage_initial_dist` and `eject_buffer` settings for ACE 2
+  staging, migrated from the legacy `AFC_ACE2_rfid` section when present
 
 ## [11-02-2026]
 ### Fixed

@@ -1237,9 +1237,10 @@ class afcACE2(afcACE):
         stage_dist = config.getfloat("stage_initial_dist", legacy_stage_dist, minval=0.0)
         self.stage_initial_dist = stage_dist if self.skip_factory_autostage else 0.0
         # Force eject buffer to same as stage_initial_dist - 25, but still allow for users to
-        # override
+        # override.
         if self.stage_initial_dist > 0.0:
-            self.eject_buffer = config.getfloat("eject_buffer", self.stage_initial_dist - 25, minval=0.0)
+            default_eject_buffer = max(25, self.stage_initial_dist - 25)
+            self.eject_buffer = config.getfloat("eject_buffer", default_eject_buffer, minval=0.0)
         # The unit turns the identify back on across a reset, so set it on every
         # connect and reconnect.
         self.printer.register_event_handler("afc_ace:connected", self._handle_ace_connected)
@@ -1381,17 +1382,22 @@ class afcACE2(afcACE):
         """
         Disable feed assist on a slot, ending a rollback assist there first.
 
+        The slot stays tracked active when the stop fails, so the next call
+        retries it instead of leaving rollback assist running against an unconfirmed stop.
+
         :param slot: 0-based ACE slot index.
         """
         if slot in self._rollback_assist_active:
-            self._rollback_assist_active.discard(slot)
             if (self._ace
                 and self._ace.connected):
                 try:
                     self._wait_for_ace_ready()
                     self._ace.stop_feed_assist_sync(slot)
+                    self._rollback_assist_active.discard(slot)
                 except Exception as e:
                     self.logger.error(f"Failed to stop rollback assist slot {slot}: {e}")
+            else:
+                self._rollback_assist_active.discard(slot)
         super()._stop_feed_assist(slot)
 
     def _make_connection(self, reactor: Reactor, serial_port: str, logger: logging.Logger,

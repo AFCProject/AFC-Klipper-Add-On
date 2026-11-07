@@ -2181,6 +2181,7 @@ class afc:
                     success = self.unload_sequence(cur_lane, cur_hub, cur_extruder)
                 finally:
                     self._set_display_status('retraction', False)
+                    cur_lane.unit_obj.finish_unload(cur_lane)
                 if not success:
                     return success
             finally:

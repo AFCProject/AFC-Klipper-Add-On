@@ -4950,14 +4950,16 @@ class TestAfcACEAceUnloadInner:
             ((-30.0, 25.0, "ACE STN unload"), {"wait_tool": True}),
             ((-60.0, 25.0, "ACE STN unload"), {"wait_tool": False})]
         # The ready check and the assist stop come first, and both retracts are
-        # sent before the unwind, so the async one overlaps it. The last three
-        # get_status are the unwind's completion polls.
+        # sent before the unwind (preceded by its own readiness check), so the
+        # async one overlaps it. The last three get_status are the unwind's
+        # completion polls.
         assert unit.printer.timeline == [
             ("send_command", ("get_status", {})),
             ("send_command", ("get_status", {})),
             ("send_command", ("stop_feed_assist", {"index": 3})),
             ("move_e_pos", (-30.0, 25.0, "ACE STN unload", True)),
             ("move_e_pos", (-60.0, 25.0, "ACE STN unload", False)),
+            ("send_command", ("get_status", {})),
             ("send_command", self.UNWIND),
             ("send_command", ("get_status", {})),
             ("send_command", ("get_status", {})),

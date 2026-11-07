@@ -2470,11 +2470,26 @@ class TestAfcACE2Staging:
     def test_defaults_skip_the_factory_autostage(self):
         unit = make_ace2_unit()
         assert (unit.skip_factory_autostage, unit.stage_initial_dist) == (True, 330.0)
+        # Derived default: stage_initial_dist - 25.
+        assert unit.eject_buffer == 305.0
+
+    def test_eject_buffer_override_wins_over_the_derived_default(self):
+        unit = make_ace2_unit(values={"eject_buffer": 200.0})
+        assert (unit.stage_initial_dist, unit.eject_buffer) == (330.0, 200.0)
+
+    def test_short_stage_initial_dist_clamps_eject_buffer_to_zero(self):
+        # stage_initial_dist - 25 would be negative; the derived default clamps
+        # to 0 instead of handing getfloat's minval=0.0 a rejected default.
+        unit = make_ace2_unit(values={"stage_initial_dist": 5.0})
+        assert (unit.stage_initial_dist, unit.eject_buffer) == (5.0, 25.0)
 
     def test_factory_staging_has_no_initial_load(self):
         unit = make_ace2_unit(values={"skip_factory_autostage": False,
                                       "stage_initial_dist": 300.0})
         assert unit.stage_initial_dist == 0.0
+        # Factory autostaging (stage_initial_dist 0) keeps afcACE's own eject_buffer
+        # default rather than deriving one from stage_initial_dist.
+        assert unit.eject_buffer == 475.0
 
     def test_the_rfid_section_still_sets_them_for_the_unit(self):
         printer = AcePrinter()
@@ -3029,7 +3044,9 @@ class TestAfcACE2StopFeedAssist:
 
         unit._stop_feed_assist(0)
 
-        assert unit._rollback_assist_active == set()
+        # Stays tracked active since the stop was never confirmed, so the next
+        # call (reconciliation, the next unload step, ...) retries it.
+        assert unit._rollback_assist_active == {0}
         # One failing call here, then another from super()._stop_feed_assist.
         assert [m for m, _p in unit._ace.commands if m != "get_status"] == (
             ["stop_feed_assist", "stop_feed_assist"])
@@ -3037,4 +3054,15 @@ class TestAfcACE2StopFeedAssist:
         assert unit.printer.logger.messages == [
             ("error", "Failed to stop rollback assist slot 0: boom"),
             ("error", "Failed to stop feed assist slot 0: boom")]
+
+    def test_retry_after_a_failed_stop_succeeds_and_discards(self):
+        unit = self._unit()
+        unit._rollback_assist_active.add(0)
+        unit._ace.set_reply("stop_feed_assist", RuntimeError("boom"), {})
+
+        unit._stop_feed_assist(0)
+        assert unit._rollback_assist_active == {0}
+
+        unit._stop_feed_assist(0)
+        assert unit._rollback_assist_active == set()
 
