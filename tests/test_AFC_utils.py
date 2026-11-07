@@ -25,6 +25,7 @@ from extras.AFC_utils import (
 )
 from configfile import error as ConfigError
 from tests.conftest import MockConfig, MockGCodeCommand
+from tests.test_AFC_moonraker_io import moonraker_io as moonraker_io
 
 
 # ── natural_sort_key ────────────────────────────────────────────────────────
@@ -439,9 +440,10 @@ class TestAFCMoonraker:
         # override this to inspect the raw callback instead.
         reactor.register_async_callback = lambda cb, waketime=None: cb(0.0)
         mr = AFC_moonraker(host, port, logger, reactor)
-        # The real background writer thread is already parked on the original
-        # queue at this point (blocked in queue.get()); swapping it out here
-        # keeps tests deterministic instead of racing the live thread.
+        # Stop the real worker before using a test-only queue for sync helpers.
+        mr._write_queue.put_nowait((mr.sentinel, ()))
+        mr._write_thread.join(timeout=5)
+        assert not mr._write_thread.is_alive()
         mr._write_queue = MagicMock()
         return mr
 
@@ -756,24 +758,33 @@ class TestAFCMoonraker:
 
     # ── send_lane_data ────────────────────────────────────────────────────────
 
-    def test_send_lane_data_queues_sync_write(self):
-        mr = self._make_moonraker()
+    def test_send_lane_data_queues_sync_write(self, moonraker_io):
+        io = moonraker_io
+        gate = io.gates[0] = threading.Event()
+        io.client.update_afc_stats("barrier", 1)
+        io.wait_requests(1)
         data = {"lane1": {"color": "red"}}
-        mr.send_lane_data(data)
-        mr._write_queue.put_nowait.assert_called_once_with(
-            (mr._send_lane_data_sync, (data,)))
+        io.client.send_lane_data(data)
+        data["lane1"]["color"] = "blue"
+        try:
+            assert len(io.requests) == 1
+        finally:
+            gate.set()
+        io.wait_idle()
+        assert io.requests[1] == (
+            "/server/database/item", {}, {"lane1": {"color": "red"}})
 
     def test_send_lane_data_sync_logs_error_on_failure(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value=None)
-        mr._send_lane_data_sync({"lane1": {"color": "red"}})
+        mr._send_lane_data_sync(json.dumps({"lane1": {"color": "red"}}).encode())
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) == 1
 
     def test_send_lane_data_sync_success_no_error(self):
         mr = self._make_moonraker()
         mr._get_results = MagicMock(return_value={"value": "ok"})
-        mr._send_lane_data_sync({"lane1": {"color": "red"}})
+        mr._send_lane_data_sync(json.dumps({"lane1": {"color": "red"}}).encode())
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) == 0
 
@@ -942,7 +953,7 @@ class TestAFCMoonraker:
         mr._get_results = MagicMock(
             side_effect=HTTPError(None, 500, "Internal Server Error", {}, None)
         )
-        mr._send_lane_data_sync({"lane1": {"color": "red"}})
+        mr._send_lane_data_sync(json.dumps({"lane1": {"color": "red"}}).encode())
         errors = [m for lvl, m in mr.logger.messages if lvl == "error"]
         assert len(errors) >= 1
 
@@ -1064,43 +1075,46 @@ class TestAFCMoonrakerBackgroundWriter:
 
         assert called == [(1, 2)]
 
-    def test_join_thread_clears_write_thread_wait_flag(self):
-        mr = self._make_moonraker_with_real_reactor_hook()
-        mr._write_thread_wait = True
-        mr.join_thread()
-        assert mr._write_thread_wait is False
+    def test_join_thread_closes_worker_admission(self, moonraker_io):
+        io = moonraker_io
+        io.client.join_thread()
+        with pytest.raises(RuntimeError, match="^AFC Moonraker worker is closed$"):
+            io.client.update_afc_stats("key", 1)
+        assert io.records == []
 
     def test_join_thread_puts_sentinel_on_write_queue(self):
         mr = self._make_moonraker_with_real_reactor_hook()
         mr.join_thread()
-        mr._write_queue.put_nowait.assert_called_once_with((mr.sentinel, ""))
+        mr._write_queue.put_nowait.assert_called_once_with((mr.sentinel, ()))
 
     def test_write_worker_returns_on_sentinel_without_calling_it(self):
-        """join_thread queues (sentinel, ""); the worker must return instead
+        """join_thread queues (sentinel, ()); the worker must return instead
         of trying to call the sentinel class as a function."""
         mr = self._make_moonraker_with_real_reactor_hook()
-        mr._write_queue.get.side_effect = [(mr.sentinel, "")]
+        mr._write_queue.get.side_effect = [(mr.sentinel, ())]
 
         result = mr._write_worker()
 
         assert result is None
 
-    def test_write_worker_stops_looping_once_join_thread_clears_wait_flag(self):
-        """Simulates a real klippy:disconnect: join_thread flips the wait
-        flag and queues the sentinel, and the worker must exit its loop."""
+    def test_write_worker_stops_looping_once_join_thread_queues_sentinel(self):
+        """Simulates a real klippy:disconnect: join_thread closes admission
+        and queues the sentinel, and the worker must exit its loop."""
+        from queue import Queue
         mr = self._make_moonraker_with_real_reactor_hook()
+        mr._write_queue = Queue()
         called = []
 
         def stop_after_call(a, b):
             called.append((a, b))
             mr.join_thread()
 
-        mr._write_queue.get.side_effect = [(stop_after_call, (1, 2))]
+        mr._write_queue.put_nowait((stop_after_call, (1, 2)))
 
         mr._write_worker()
 
         assert called == [(1, 2)]
-        assert mr._write_thread_wait is False
+        assert mr._closing is True
 
 
 # ── AFC_PrintFileMetaData ───────────────────────────────────────────────────
