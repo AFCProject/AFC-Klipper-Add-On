@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from queue import Empty, Queue
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 import pytest
 
@@ -21,10 +22,36 @@ from tests.conftest import MockLogger, MockReactor
 WAIT = 5
 
 
+class EventCompletion:
+    """Bounded unit bridge. Real cooperative scheduling is tested by the smoke script."""
+
+    def __init__(self):
+        self.event = threading.Event()
+        self.result = None
+
+    def complete(self, result):
+        assert not self.event.is_set(), "completion delivered twice"
+        self.result = result
+        self.event.set()
+
+    def test(self):
+        return self.event.is_set()
+
+    def wait(self):
+        assert self.event.wait(WAIT), "worker did not settle result"
+        return self.result
+
+
 class DeferredReactor(MockReactor):
     def __init__(self):
         super().__init__()
         self.callbacks = Queue()
+
+    def completion(self):
+        return EventCompletion()
+
+    def async_complete(self, completion, result):
+        completion.complete(result)
 
     def register_async_callback(self, callback, waketime=None):
         self.callbacks.put(callback)
@@ -81,6 +108,7 @@ class LoopbackIO:
         self.contents = {}
         self.statuses = {}
         self.responses = {}
+        self.raw_responses = {}
         self.gates = {}
         self.escaped = []
         self.condition = threading.Condition()
@@ -139,7 +167,8 @@ class LoopbackIO:
                     result = {"namespace": "afc_stats", "value": owner.stored_stats()}
                 else:
                     result = {"value": value}
-                payload = json.dumps({"result": result}).encode()
+                payload = owner.raw_responses.get(
+                    index, json.dumps({"result": result}).encode())
                 try:
                     self.send_response(status)
                     self.send_header("Content-Type", "application/json")
@@ -359,6 +388,7 @@ class TestAFCMoonrakerEnqueue:
         lambda client: client.get_spool(1, lambda result: None),
         lambda client: client.get_td1_data_async(lambda result: None),
         lambda client: client.send_lane_data({"lane1": {}}),
+        lambda client: client.get_td1_data(),
     ])
     def test_closed_worker_rejects_every_producer(self, moonraker_io, producer):
         io = moonraker_io
@@ -464,7 +494,131 @@ class TestAFCMoonrakerRemoveDatabaseEntrySync:
         assert io.logger.threads == [threading.get_ident(), threading.get_ident()]
 
 
+class TestAFCMoonrakerResultBridge:
+    def test_undecodable_body_settles_callback_and_later_work(self, moonraker_io):
+        io = moonraker_io
+        io.raw_responses[0] = b"not-json"
+        results = []
+        io.client.get_file_metadata("bad.gcode", results.append)
+        io.client.update_afc_stats("after", 2)
+        io.wait_idle()
+        io.reactor.run_callbacks()
+        assert results == [None]
+        assert io.contents[("afc_stats", "after")] == "2"
+        assert io.logger.messages == [("error", io.client.ERROR_STRING)]
+
+    def test_worker_exception_is_raised_to_waiter_and_queue_continues(self, moonraker_io):
+        io = moonraker_io
+
+        def fail():
+            raise ValueError("worker failure")
+
+        with pytest.raises(ValueError, match="^worker failure$"):
+            io.client._call_worker(fail, ())
+        io.client.update_afc_stats("after", 3)
+        io.wait_idle()
+        assert io.contents == {("afc_stats", "after"): "3"}
+        assert io.logger.messages == []
+
+    @pytest.mark.parametrize("ready", [
+        pytest.param({"ready": True}, id="mapping"),
+        # wait_for_moonraker treats any non-None result as connected
+        pytest.param({}, id="empty-mapping"),
+        pytest.param(None, id="null"),
+    ])
+    def test_mixed_reads_and_writes_share_fifo_without_self_wait(self, moonraker_io, ready):
+        io = moonraker_io
+        io.responses[2] = {"filament_change_count": 3}
+        io.responses[3] = {"id": 42}
+        io.responses[4] = {"devices": {"serial": {"color": "red"}}}
+        io.responses[5] = ready
+        callbacks = []
+        workers = []
+
+        def observed_open(*args, **kwargs):
+            workers.append(threading.get_ident())
+            return urlopen(*args, **kwargs)
+
+        with patch("extras.AFC_utils.urlopen", side_effect=observed_open):
+            io.client.update_afc_stats("first", 1)
+            io.client.remove_database_entry("afc_stats", "old")
+            io.client.get_file_metadata("file.gcode",
+                                        lambda value: callbacks.append(("meta", value)))
+            io.client.get_spool(42, lambda value: callbacks.append(("spool", value)))
+            io.client.get_td1_data_async(lambda value: callbacks.append(("td1", value)))
+            assert io.client._get_results(io.client.host + "/server/info") == ready
+            io.client.send_lane_data({"lane": "red"})
+            io.wait_idle()
+        io.reactor.run_callbacks()
+        assert [request[0] for request in io.requests] == [
+            "/server/database/item", "/server/database/item",
+            "/server/files/metadata?filename=file.gcode", "/server/spoolman/proxy",
+            "/machine/td1/data", "/server/info", "/server/database/item",
+        ]
+        assert workers == [io.client._write_thread.ident] * 7
+        assert callbacks == [
+            ("meta", {"filament_change_count": 3}), ("spool", {"id": 42}),
+            ("td1", {"serial": {"color": "red"}}),
+        ]
+        assert io.logger.messages == [("debug", "Removing old from afc_stats")]
+
+
 class TestAFCMoonrakerCallbackReads:
+    @pytest.mark.parametrize(
+        "submit, status, response, delivered, expected_request, messages", [
+        pytest.param(
+            lambda client, callback: client.get_file_metadata("sub dir/file.gcode", callback),
+            200, {"filament_change_count": 3}, {"filament_change_count": 3},
+            ("/server/files/metadata?filename=sub%20dir/file.gcode", {}, None), [],
+            id="metadata"),
+        pytest.param(
+            lambda client, callback: client.get_spool(42, callback),
+            200, {"id": 42, "filament": {"color_hex": "ff0000"}},
+            {"id": 42, "filament": {"color_hex": "ff0000"}},
+            ("/server/spoolman/proxy",
+             {"request_method": ["GET"], "path": ["/v1/spool/42"]}, None), [],
+            id="spool"),
+        pytest.param(
+            lambda client, callback: client.get_spool(42, callback),
+            500, None, None,
+            ("/server/spoolman/proxy",
+             {"request_method": ["GET"], "path": ["/v1/spool/42"]}, None),
+            [("error", AFC_moonraker.ERROR_STRING), ("info", "SpoolID: 42 not found")],
+            id="spool-http-error"),
+        # The consumer receives the devices map, not the enclosing TD-1 response
+        pytest.param(
+            lambda client, callback: client.get_td1_data_async(callback),
+            200, {"devices": {"serial1": {"color": "red"}}}, {"serial1": {"color": "red"}},
+            ("/machine/td1/data", {}, None), [],
+            id="td1"),
+        pytest.param(
+            lambda client, callback: client.get_td1_data_async(callback),
+            200, {"other": "data"}, None,
+            ("/machine/td1/data", {}, None), [],
+            id="td1-missing-devices"),
+        pytest.param(
+            lambda client, callback: client.get_td1_data_async(callback),
+            500, None, None,
+            ("/machine/td1/data", {}, None), [("error", AFC_moonraker.ERROR_STRING)],
+            id="td1-http-error"),
+    ])
+    def test_result_is_delivered_only_on_reactor_thread(self, moonraker_io, submit, status,
+                                                        response, delivered,
+                                                        expected_request,
+                                                        messages):
+        io = moonraker_io
+        io.statuses[0] = status
+        io.responses[0] = response
+        results = []
+        submit(io.client, lambda data: results.append((data, threading.get_ident())))
+        io.wait_idle()
+        assert results == []
+        assert io.logger.messages == []
+        io.reactor.run_callbacks()
+        assert results == [(delivered, threading.get_ident())]
+        assert io.requests == [expected_request]
+        assert io.logger.messages == messages
+
     @pytest.mark.parametrize("submit", [
         pytest.param(lambda client, callback: client.get_file_metadata("old.gcode", callback),
                      id="metadata"),
@@ -494,3 +648,31 @@ class TestAFCMoonrakerCallbackReads:
         io.reactor.run_callbacks()
         assert results == []
         assert len(io.records) == 1
+
+
+class TestAFCMoonrakerCleanupPublicationOrder:
+    def test_cleanup_deletes_precede_lane_publication(self, moonraker_io):
+        io = moonraker_io
+        io.responses[0] = {"value": {"old1": {}, "old2": {}}}
+        gate = io.gates[1] = threading.Event()
+        io.client.delete_lane_data()
+        io.wait_requests(2)
+        io.client.send_lane_data({"lane1": {"color": "red"}})
+        try:
+            assert len(io.requests) == 2
+            assert io.escaped == []
+        finally:
+            gate.set()
+        io.wait_idle()
+        assert io.records == [
+            ("GET", "", "", None),
+            ("DELETE", "lane_data", "old1", None),
+            ("DELETE", "lane_data", "old2", None),
+            ("POST", "", "", None),
+        ]
+        assert io.requests[-1][2] == {"lane1": {"color": "red"}}
+        io.reactor.run_callbacks()
+        assert io.logger.messages == [
+            ("debug", "Removing old1 from lane_data"),
+            ("debug", "Removing old2 from lane_data"),
+        ]

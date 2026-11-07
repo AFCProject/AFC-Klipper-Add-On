@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [11-07-2026]
 ### Fixed
+- Prevent Moonraker requests from blocking the reactor.
 - Drain queued writes and discard late Moonraker callbacks on disconnect.
 
 ## [11-02-2026]

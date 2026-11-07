@@ -638,9 +638,8 @@ class AFC_moonraker:
         self.logger.debug(f"Moonraker url: {self.host}")
         self.FILENAME_PATH: str = "server/files/metadata?filename="
 
-        # Fire-and-forget writes (stat updates, lane_data pushes, database
-        # deletes) run on this background thread so a slow/hung moonraker
-        # can't stall the reactor. A single worker keeps them ordered.
+        # All HTTP runs on one FIFO worker. Result-dependent reactor callers
+        # wait cooperatively; writes and callback-based reads stay asynchronous.
         self._closing = False
         self._pending_logs: Queue[tuple[Callable[..., Any], str, dict[str, Any]]] = Queue()
         self._write_queue: Queue[tuple[Any, tuple[Any, ...]]] = Queue()
@@ -692,6 +691,36 @@ class AFC_moonraker:
             raise RuntimeError(error_message)
         self._write_queue.put_nowait((func, args))
 
+    def _call_worker(self, func: Callable[..., Any], args: tuple[Any, ...]) -> Any:
+        """
+        Cooperatively wait for a FIFO worker operation on the reactor.
+
+        :param func: Worker-only operation to execute
+        :param args: Positional arguments for the operation
+        :return Any: Result returned by the operation
+        """
+        completion = self.reactor.completion()
+        self._enqueue(self._complete_worker_call, (completion, func, args))
+        result, exc = completion.wait()
+        if exc is not None:
+            raise exc
+        return result
+
+    def _complete_worker_call(self, completion: Any, func: Callable[..., Any],
+                              args: tuple[Any, ...]) -> None:
+        """
+        Post a worker result or exception to its suspended reactor caller.
+
+        :param completion: Reactor completion waiting for the result
+        :param func: Worker-only operation to execute
+        :param args: Positional arguments for the operation
+        """
+        try:
+            result, exc = func(*args), None
+        except Exception as error:
+            result, exc = None, error
+        self.reactor.async_complete(completion, (result, exc))
+
     def join_thread(self) -> None:
         """
         Close admission and attempt admitted work before disconnect returns.
@@ -723,13 +752,22 @@ class AFC_moonraker:
 
     def _get_results(self, url_string: Union[str, Request], print_error: bool=True) -> Optional[Any]:
         """
-        Helper function to get results, check for errors and return data if successful
+        Fetch a Moonraker result without blocking reactor dispatch.
 
-        :param url_string: URL encoded string or Request to fetch/post data to moonraker
-        :param print_error: Set to True for error to be displayed in console/mainsail panel, setting
-                            to False will still write error to log via debug message
+        :param url_string: URL or request to fetch on the FIFO worker
+        :param print_error: Report errors to the console instead of debug logging
+        :return Optional[Any]: Decoded result, or None if an error occurred
+        """
+        return self._call_worker(self._get_results_sync, (url_string, print_error))
 
-        :returns: Returns result dictionary if data is valid, returns None if and error occurred
+    def _get_results_sync(self, url_string: Union[str, Request],
+                          print_error: bool = True) -> Optional[Any]:
+        """
+        Fetch and decode a Moonraker response entirely on the FIFO worker.
+
+        :param url_string: URL or request to fetch
+        :param print_error: Report errors to the console instead of debug logging
+        :return Optional[Any]: Decoded result, or None if an error occurred
         """
         data = None
         # Only print error to console when set, else still print errors bug with debug
@@ -812,7 +850,8 @@ class AFC_moonraker:
         :param filename: Filename to query moonraker and pull metadata for
         :param callback: Called with the metadata dict (or None on failure)
         """
-        resp: Optional[dict[str, Any]] = self._get_results(urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}"))
+        url = urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}")
+        resp: Optional[dict[str, Any]] = self._get_results_sync(url)
         if self._closing:
             return
         self.reactor.register_async_callback(
@@ -882,7 +921,7 @@ class AFC_moonraker:
         }
         req = Request(self.database_url, urlencode(post_payload).encode())
 
-        resp = self._get_results(req)
+        resp = self._get_results_sync(req)
         if resp is None:
             self._log_async(self.logger.error,
                             f"Error when trying to update {key} in moonraker, see AFC.log for more info")
@@ -916,7 +955,7 @@ class AFC_moonraker:
         spool_url = urljoin(self.host, 'server/spoolman/proxy')
         req = Request( spool_url, urlencode(request_payload).encode() )
 
-        resp = self._get_results(req)
+        resp = self._get_results_sync(req)
         if resp is None:
             self._log_async(self.logger.info, f"SpoolID: {id} not found")
         if self._closing:
@@ -988,7 +1027,7 @@ class AFC_moonraker:
         """
         url = urljoin(self.host, "machine/td1/data")
         req = Request(url=url)
-        resp = self._get_results(req)
+        resp = self._get_results_sync(req)
         devices = resp["devices"] if resp is not None and "devices" in resp else None
         if self._closing:
             return
@@ -1037,7 +1076,7 @@ class AFC_moonraker:
         try:
             req = Request(url=self.database_url, data=payload, method="POST",
                           headers={"Content-Type": "application/json"})
-            if self._get_results(req) is None:
+            if self._get_results_sync(req) is None:
                 self._log_async(self.logger.error, "Error sending lane data, check AFC.log for more information")
         except HTTPError as e:
             self._log_async(self.logger.error, "Error occurred when trying to send lane data to moonraker database,"+

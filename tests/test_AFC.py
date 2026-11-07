@@ -5241,6 +5241,31 @@ class TestAFCHandleMoonrakerConnect:
         assert obj.afc_stats.moonraker is first
         assert io.logger.messages == []
 
+    def test_statistics_exception_retries_without_replacing_client(self, afc_connection):
+        from extras.AFC_stats import AFCStats
+
+        obj, io = afc_connection
+        events = []
+        obj.printer.register_event_handler("afc:moonraker_connect",
+                                           lambda: events.append("connected"))
+        attempts = []
+
+        def initialize(*args):
+            attempts.append(args[0])
+            if len(attempts) == 1:
+                raise ValueError("controlled statistics initialization failure")
+            return AFCStats(*args)
+
+        with patch("extras.AFC.AFCStats", side_effect=initialize):
+            assert obj.handle_moonraker_connect() is None
+            assert obj.afc_stats is None
+            assert events == []
+            assert obj.handle_moonraker_connect() is None
+        assert attempts == [io.client, io.client]
+        assert obj.afc_stats.moonraker is io.client
+        assert events == ["connected"]
+        assert [level for level, _ in io.logger.messages] == ["debug"]
+
     @staticmethod
     def _use_real_stats_read(io):
         from functools import partial
@@ -5292,6 +5317,62 @@ class TestAFCHandleMoonrakerConnect:
         assert obj.lane_data_enabled is False
         assert [request[0] for request in io.requests] == ["/server/config"] * 2
         assert io.logger.messages == []
+
+
+class TestAFCResetStatsBackupOrder:
+    @pytest.mark.parametrize("failed", [False, True])
+    def test_backup_finishes_before_counters_reset(self, afc_connection, failed):
+        from extras.AFC_stats import AFCStats_var
+        obj, io = afc_connection
+        obj.moonraker = io.client
+        obj.reactor = io.reactor
+        lane = MagicMock()
+        lane.name = "lane1"
+        lane.lane_load_count = AFCStats_var(
+            "lane1", "load_count", {"lane1": {"load_count": 7}}, io.client)
+        obj.lanes = {"lane1": lane}
+        io.responses[0] = {"backup_path": "/tmp/afc-backup.db"}
+        if failed:
+            io.statuses[0] = 500
+        gate = io.gates[0] = threading.Event()
+        observed = []
+        observer_errors = []
+
+        def inspect_held_backup():
+            try:
+                io.wait_requests(1)
+                observed.append((lane.lane_load_count.value, obj.db_backup))
+            except BaseException as error:
+                observer_errors.append(error)
+            finally:
+                gate.set()
+
+        observer = threading.Thread(target=inspect_held_backup)
+        observer.start()
+        try:
+            obj.cmd_AFC_RESET_STATS(_build_gcmd({"LANE": "lane1"}))
+        finally:
+            gate.set()
+            observer.join(5)
+        assert not observer.is_alive()
+        assert observer_errors == []
+        assert observed == [(7, False)]
+        assert lane.lane_load_count.value == (7 if failed else 0)
+        assert obj.db_backup is (not failed)
+        io.wait_idle()
+        io.reactor.run_callbacks()
+        assert io.requests[0][0] == "/server/database/backup"
+        if failed:
+            assert io.logger.messages == [
+                ("error", "Error trying to backup moonraker database, "
+                 "check AFC.log for more information"),
+                ("error", io.client.ERROR_STRING),
+            ]
+        else:
+            assert io.logger.messages == [
+                ("info", "Moonrakers database backed up to /tmp/afc-backup.db"),
+                ("info", "Lane stats reset for lane1"),
+            ]
 
 
 class TestAFCLedColorValidation:
