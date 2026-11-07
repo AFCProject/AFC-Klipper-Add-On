@@ -787,6 +787,16 @@ class TestAfcACEReconcileFeedAssist:
         assert unit._assist_suppressed == {0}
         assert unit.logger.messages == []
 
+    def test_reconcile_does_not_start_during_unload(self):
+        unit = self._unit(feed_assist_active=[1])
+        unit._operation_active = True
+
+        unit._reconcile_feed_assist("lane0")
+
+        assert unit._ace.commands == [("get_status", {}), ("stop_feed_assist", {"index": 1})]
+        assert unit._feed_assist_active == set()
+        assert unit.logger.messages == []
+
     def test_reconcile_already_active_does_not_restart(self):
         unit = self._unit(feed_assist_active=[0])
 
@@ -2401,17 +2411,18 @@ class TestAfcACEOnFilamentInsert:
             ("debug", "ACE Ace_1: slot 0 get_filament_info -> {}"),
             ("info", "ACE prep_post_load: lane0 staged at hub (dist_hub=60mm)")]
 
-    def test_spool_not_restored_without_a_staged_id_or_remember_spool(self):
+    def test_spool_not_restored_without_a_staged_id_or_remember_spool(self, monkeypatch):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
         lane = unit.lanes["lane0"]
         lane.spool_id = 5
         lane.remember_spool = False
         unit.afc.spool.clear_values = Hook(lambda cleared: setattr(cleared, "spool_id", None))
+        # _set_values only fires for V1 alongside applying RFID tag defaults.
+        monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", Recorder())
 
         unit.on_filament_insert(lane)
 
         assert unit.afc.spool.set_spoolID.calls == []
-        # No spool was restored, so the no-identity default-values branch must fire.
         assert unit.afc.spool._set_values.calls == [((lane,), {})]
         assert lane._afc_staged_spool_id is None
         assert unit.logger.messages == [("debug", "ACE Ace_1: slot 0 get_filament_info -> {}")]
@@ -2432,37 +2443,56 @@ class TestAfcACEOnFilamentInsert:
         assert lane._afc_staged_spool_id is None
         assert unit.logger.messages == [("debug", "ACE Ace_1: slot 0 get_filament_info -> {}")]
 
-    def test_spool_not_restored_when_lane_had_no_spool_id(self):
+    def test_spool_not_restored_when_lane_had_no_spool_id(self, monkeypatch):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
         lane = unit.lanes["lane0"]
         lane.spool_id = None
         lane.remember_spool = True
         lane._afc_staged_spool_id = 5
+        # _set_values only fires for V1 alongside applying RFID tag defaults.
+        monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", Recorder())
 
         unit.on_filament_insert(lane)
 
         assert unit.afc.spool.set_spoolID.calls == []
-        # saved_spool_id was falsy, so the no-identity default-values branch must fire.
         assert unit.afc.spool._set_values.calls == [((lane,), {})]
         assert lane._afc_staged_spool_id is None
         assert unit.logger.messages == [("debug", "ACE Ace_1: slot 0 get_filament_info -> {}")]
 
-    def test_spool_not_restored_when_lane_keeps_its_spool_id(self):
+    def test_spool_not_restored_when_lane_keeps_its_spool_id(self, monkeypatch):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
         lane = unit.lanes["lane0"]
         lane.spool_id = 5
         lane.remember_spool = True
         lane._afc_staged_spool_id = 5
+        # _set_values only fires for V1 alongside applying RFID tag defaults.
+        monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", Recorder())
 
         unit.on_filament_insert(lane)
 
         # The default clear_values leaves spool_id set.
         assert unit.afc.spool.clear_values.calls == [((lane,), {})]
         assert unit.afc.spool.set_spoolID.calls == []
-        # lane.spool_id never went falsy, so the no-identity default-values branch must fire.
         assert unit.afc.spool._set_values.calls == [((lane,), {})]
         assert lane.spool_id == 5
         assert unit.logger.messages == [("debug", "ACE Ace_1: slot 0 get_filament_info -> {}")]
+
+
+    def test_tag_not_applied_without_the_rfid_helper(self, monkeypatch):
+        monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", None)
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
+        lane = unit.lanes["lane0"]
+        unit._ace.set_reply("get_filament_info", {"type": "PETG", "rfid": 2})
+
+        unit.on_filament_insert(lane)
+
+        # The tag is still cached; only applying it to the lane needs AFC_RFID.
+        assert unit._slot_inventory[0]["material"] == "PETG"
+        assert lane.material is None
+        assert unit.logger.messages == [
+            ("debug", "ACE Ace_1: slot 0 get_filament_info -> {'type': 'PETG', 'rfid': 2}"),
+            ("info", "ACE Ace_1: slot 0 RFID read, sku='' brand='' type='PETG' rfid=2 "
+                     "nozzle=None-NoneC")]
 
     def test_prep_post_load_error_logged(self):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True))
@@ -3591,6 +3621,40 @@ class TestAfcACESystemTest:
                      "<span class=success--text> AND LOADED</span>"
                      "<span class=primary--text> in ToolHead</span>")]
 
+    LOADED_LINE = ("<span class=success--text>LOCKED</span>"
+                   "<span class=success--text> AND LOADED</span>")
+    LEFT_BEHIND = ("<span class=warning--text> extruder's toolhead sensor sees filament but "
+                   "no lane is loaded</span>")
+
+    def test_filament_at_the_sensor_with_no_lane_loaded_warns_once(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True), LaneSpec("lane1", prep=True))
+        lane0, lane1 = unit.lanes["lane0"], unit.lanes["lane1"]
+        assert lane0.extruder_obj is lane1.extruder_obj
+        lane0.extruder_obj.tool_start_state = True
+
+        assert unit.system_Test(lane0, 0.0, False, False) is True
+        assert unit.system_Test(lane1, 0.0, False, False) is True
+
+        # Said on the extruder's first lane only.
+        assert unit.logger.messages == [
+            ("info", f"lane0 tool cmd: T0  {self.LOADED_LINE}{self.LEFT_BEHIND}"),
+            ("info", f"lane1 tool cmd: T1  {self.LOADED_LINE}")]
+
+    def test_no_warning_with_a_lane_loaded_or_buffer_ramming(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True))
+        lane = unit.lanes["lane0"]
+        lane.extruder_obj.tool_start_state = True
+        lane.extruder_obj.lane_loaded = "lane5"
+        assert unit.system_Test(lane, 0.0, False, False) is True
+
+        lane.extruder_obj.lane_loaded = None
+        lane.extruder_obj.tool_start = "buffer"
+        lane.buffer_obj = types.SimpleNamespace(advance_state=True)
+        assert unit.system_Test(lane, 0.0, False, False) is True
+
+        assert unit.logger.messages == [
+            ("info", f"lane0 tool cmd: T0  {self.LOADED_LINE}")] * 2
+
     def test_non_dict_status_result_leaves_prep_state_unchanged(self):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
         lane = unit.lanes["lane0"]
@@ -3660,7 +3724,7 @@ class TestAfcACESystemTest:
 
         assert ok is True
         assert apply_defaults.calls == [((lane, unit._slot_inventory[0]), {
-            "color_converter": None,
+            "color_converter": afc_ace_module.rgb_array_to_hex,
             "afc_defaults": {"default_material_type": None, "default_color": None}})]
 
     def test_tooled_lane_not_current_goes_idle(self):
@@ -3916,7 +3980,7 @@ class TestAfcACECalibrateBowdenInner:
         assert (ok, dist) == (True, 500.0)
         assert msg == "afc_bowden_length calibration: 500.0mm (was 900.0mm)"
         assert hub.afc_bowden_length == 500.0
-        assert hub.afc_unload_bowden_length == 600.0
+        assert hub.afc_unload_bowden_length == 500.0
         # Ten 50mm steps reach the sensor, then 5mm past it is retracted.
         assert wire.moves() == [self.STEP] * 10 + [
             ("unwind_filament", {"index": 0, "length": 505.0, "speed": 100.0,
@@ -3924,8 +3988,8 @@ class TestAfcACECalibrateBowdenInner:
         assert unit.afc.function.ConfigRewrite.calls == [
             (("AFC_hub Ace_1_hub", "afc_bowden_length", 500.0,
               "\n afc_bowden_length: New: 500.0 Old: 900.0"), {}),
-            (("AFC_hub Ace_1_hub", "afc_unload_bowden_length", 600.0,
-              "\n afc_unload_bowden_length: 600.0"), {})]
+            (("AFC_hub Ace_1_hub", "afc_unload_bowden_length", 500.0,
+              "\n afc_unload_bowden_length: 500.0"), {})]
         assert unit.logger.messages == [
             ("raw", "Calibrating afc_bowden_length for lane0 (max 6000mm in 50.0mm steps)"),
             ("info", "ACE calibration: sensor triggered at 500.0mm"),
@@ -3943,7 +4007,7 @@ class TestAfcACECalibrateBowdenInner:
         assert (ok, dist) == (True, 560.0)
         assert msg == "afc_bowden_length calibration: 560.0mm (was 900.0mm)"
         assert hub.afc_bowden_length == 560.0
-        assert hub.afc_unload_bowden_length == 600.0
+        assert hub.afc_unload_bowden_length == 500.0
         # The retract is the measured 500mm + 5, not the staged total.
         assert wire.moves() == [self.STEP] * 10 + [
             ("unwind_filament", {"index": 0, "length": 505.0, "speed": 100.0,
@@ -3951,8 +4015,8 @@ class TestAfcACECalibrateBowdenInner:
         assert unit.afc.function.ConfigRewrite.calls == [
             (("AFC_hub Ace_1_hub", "afc_bowden_length", 560.0,
               "\n afc_bowden_length: New: 560.0 Old: 900.0"), {}),
-            (("AFC_hub Ace_1_hub", "afc_unload_bowden_length", 600.0,
-              "\n afc_unload_bowden_length: 600.0"), {})]
+            (("AFC_hub Ace_1_hub", "afc_unload_bowden_length", 500.0,
+              "\n afc_unload_bowden_length: 500.0"), {})]
         assert unit.logger.messages == [
             ("raw", "Calibrating afc_bowden_length for lane0 (max 6000mm in 50.0mm steps)"),
             ("info", "ACE calibration: sensor triggered at 500.0mm"),
@@ -4908,6 +4972,145 @@ class TestAfcACEAceUnloadInner:
         assert unit.afc.error.handle_lane_failure.calls == []
         assert unit.logger.messages == []
 
+    def test_sensor_still_triggered_retracts_again_until_clear(self):
+        unit, lane, wire = self._unit()
+        lane.extruder_obj.tool_stn_unload = 60.0
+        lane.extruder_obj.tool_start_state = True
+
+        def retract(*args: Any, **kwargs: Any) -> None:
+            """The tip comes off the sensor on the first retry's retract."""
+            if len(unit.afc.move_e_pos.calls) == 3:
+                lane.extruder_obj.tool_start_state = False
+        unit.afc.move_e_pos.func = retract
+
+        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+
+        assert unit.afc.move_e_pos.calls == [
+            ((-30.0, 25.0, "ACE STN unload"), {"wait_tool": True}),
+            ((-60.0, 25.0, "ACE STN unload"), {"wait_tool": False}),
+            ((-60.0, 25.0, "ACE STN unload"), {"wait_tool": True})]
+        # The freed tip is unwound the whole way again, back to the hub.
+        assert wire.moves() == [self.UNWIND, self.UNWIND]
+        assert unit._hub_load_suppressed == {"lane3"}
+        assert unit.afc.afcDeltaTime.messages == [
+            ("debug", "ACE unload: retracting tool_stn_unload/2 (pre-unwind)"),
+            ("debug", "ACE unload: retracting tool_stn_unload (overlaps unwind)"),
+            ("debug", "ACE unload: toolhead sensor still sees filament, Try:1"),
+            ("debug", "ACE unwind complete")]
+        assert unit.afc.error.handle_lane_failure.calls == []
+
+    def test_sensor_that_never_clears_fails_the_unload(self):
+        unit, lane, wire = self._unit()
+        lane.extruder_obj.tool_stn_unload = 60.0
+        lane.extruder_obj.tool_start_state = True
+        lane.loaded_to_hub = False
+
+        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+
+        # The two unload retracts and the unwind, then a retract and an unwind per
+        # attempt (tool_max_unload_attempts 4).
+        assert unit.afc.move_e_pos.calls[2:] == [
+            ((-60.0, 25.0, "ACE STN unload"), {"wait_tool": True})] * 4
+        assert wire.moves() == [self.UNWIND] * 5
+        # Never staged: AFC keeps the lane in the toolhead.
+        assert lane.loaded_to_hub is False
+        assert unit._hub_load_suppressed == set()
+        assert unit.afc.error.handle_lane_failure.calls == [
+            ((lane, "lane3 is still at extruder's toolhead sensor after the ACE unwind, so it "
+                    "never left the toolhead.\nRun TOOL_UNLOAD LANE=lane3 again, or clear the "
+                    "toolhead by hand."), {"pause": False})]
+        assert ("debug", "ACE unwind complete") not in unit.afc.afcDeltaTime.messages
+
+    def test_sensor_that_never_clears_pauses_during_a_print(self):
+        unit, lane, wire = self._unit(in_print=True)
+        lane.extruder_obj.tool_stn_unload = 60.0
+        lane.extruder_obj.tool_start_state = True
+        lane.loaded_to_hub = False
+
+        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+
+        assert lane.loaded_to_hub is False
+        assert unit._hub_load_suppressed == set()
+        assert unit.afc.error.handle_lane_failure.calls == [
+            ((lane, "lane3 is still at extruder's toolhead sensor after the ACE unwind, so it "
+                    "never left the toolhead.\nRun TOOL_UNLOAD LANE=lane3 again, or clear the "
+                    "toolhead by hand.\nOnce cleared, click resume to continue printing"),
+             {"pause": True})]
+
+    def test_sensor_retry_without_tool_stn_unload_unwinds_again(self):
+        unit, lane, wire = self._unit()
+        lane.extruder_obj.tool_stn_unload = 0
+        lane.extruder_obj.tool_start_state = True
+
+        def clear(now: float) -> None:
+            """The second unwind frees the tip."""
+            if len(wire.moves()) == 2:
+                lane.extruder_obj.tool_start_state = False
+        unit.printer.reactor.on_pause = clear
+
+        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+
+        assert unit.afc.move_e_pos.calls == []
+        assert wire.moves() == [self.UNWIND, self.UNWIND]
+        assert unit.afc.error.handle_lane_failure.calls == []
+
+    def test_buffer_ramming_unwinds_until_trailing_first(self):
+        unit, lane, wire = self._unit()
+        lane.extruder_obj.tool_start = "buffer"
+        lane.extruder_obj.tool_stn_unload = 0
+        lane.buffer_obj = types.SimpleNamespace(trailing_state=False, advance_state=True)
+
+        def collapse(now: float) -> None:
+            """The buffer collapses after the first short unwind."""
+            if len(wire.moves()) == 1:
+                lane.buffer_obj.trailing_state = True
+        unit.printer.reactor.on_pause = collapse
+
+        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+
+        # One short step, then the full unwind; the buffer is never read as a
+        # filament sensor after it.
+        assert wire.moves() == [
+            ("unwind_filament", {"index": 3, "length": 10.0, "speed": 100.0, "mode": "normal"}),
+            self.UNWIND]
+        assert unit.afc.afcDeltaTime.messages == [
+            ("debug", "ACE unload: retracting buffer, Try:1"),
+            ("debug", "ACE unwind complete")]
+        assert unit.afc.error.handle_lane_failure.calls == []
+
+    def test_buffer_that_never_collapses_fails_before_the_unwind(self):
+        unit, lane, wire = self._unit()
+        lane.extruder_obj.tool_start = "buffer"
+        lane.extruder_obj.tool_stn_unload = 0
+        lane.buffer_obj = types.SimpleNamespace(trailing_state=False, advance_state=False)
+
+        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+
+        assert wire.moves() == [(
+            "unwind_filament", {"index": 3, "length": 10.0, "speed": 100.0,
+                                "mode": "normal"})] * 4
+        assert unit._hub_load_suppressed == set()
+        assert unit.afc.error.handle_lane_failure.calls == [
+            ((lane, "Buffer did not collapse to trailing after 4 short ACE unwinds, so lane3 "
+                    "may not be held by the extruder.\nCheck the toolhead, then run "
+                    "TOOL_UNLOAD LANE=lane3 again. Raising tool_max_unload_attempts may "
+                    "help."), {"pause": False})]
+
+    def test_buffer_that_never_collapses_pauses_during_a_print(self):
+        unit, lane, wire = self._unit(in_print=True)
+        lane.extruder_obj.tool_start = "buffer"
+        lane.extruder_obj.tool_stn_unload = 0
+        lane.buffer_obj = types.SimpleNamespace(trailing_state=False, advance_state=False)
+
+        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+
+        assert unit._hub_load_suppressed == set()
+        assert unit.afc.error.handle_lane_failure.calls == [
+            ((lane, "Buffer did not collapse to trailing after 4 short ACE unwinds, so lane3 "
+                    "may not be held by the extruder.\nCheck the toolhead, then run "
+                    "TOOL_UNLOAD LANE=lane3 again. Raising tool_max_unload_attempts may "
+                    "help.\nOnce cleared, click resume to continue printing"), {"pause": True})]
+
     def test_no_retract_move_when_tool_stn_unload_zero_but_still_unwinds(self):
         unit, lane, wire = self._unit()
         lane.extruder_obj.tool_stn_unload = 0
@@ -4959,12 +5162,12 @@ class TestAfcACECmdAFCACECalibrate:
 
         assert gcmd.responses == ["afc_bowden_length calibration: 50.0mm (was 900.0mm)"]
         assert lane.hub_obj.afc_bowden_length == 50.0
-        assert lane.hub_obj.afc_unload_bowden_length == 150.0
+        assert lane.hub_obj.afc_unload_bowden_length == 50.0
         assert unit.afc.function.ConfigRewrite.calls == [
             (("AFC_hub Ace_1_hub", "afc_bowden_length", 50.0,
               "\n afc_bowden_length: New: 50.0 Old: 900.0"), {}),
-            (("AFC_hub Ace_1_hub", "afc_unload_bowden_length", 150.0,
-              "\n afc_unload_bowden_length: 150.0"), {})]
+            (("AFC_hub Ace_1_hub", "afc_unload_bowden_length", 50.0,
+              "\n afc_unload_bowden_length: 50.0"), {})]
         # The first 50mm step trips the sensor, then 5mm past it is retracted.
         assert unit.logger.messages == [
             ("raw", "Calibrating afc_bowden_length for lane0 (max 6000mm in 50.0mm steps)"),
@@ -8386,9 +8589,27 @@ class TestAfcACESyncSlotLoadedState:
         unit._sync_slot_loaded_state()
 
         assert lane.prep_state is True
-        # apply_filament_defaults is stubbed to None until real RFID/Spoolman
-        # identification is wired back in, so the inventory's material isn't
-        # applied to the lane yet.
+
+    def test_ace2_ready_slot_keeps_lane_values(self):
+        # The ACE 2 inventory holds no tag values; AFC_ACE2_rfid identifies its spools.
+        unit = make_ace2_unit(lanes=["lane1"], inventory={
+            0: {"status": "ready", "material": "PETG"}})
+        lane = unit.lanes["lane1"]
+
+        unit._sync_slot_loaded_state()
+
+        assert lane.prep_state is True
+        assert lane.material is None
+        assert unit.printer.logger.messages == []
+
+    def test_ready_slot_values_need_the_rfid_helper(self, monkeypatch):
+        monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", None)
+        unit = ace_p2_unit("lane1", inventory={0: {"status": "ready", "material": "PETG"}})
+        lane = unit.lanes["lane1"]
+
+        unit._sync_slot_loaded_state()
+
+        assert lane.prep_state is True
         assert lane.material is None
         assert unit.printer.logger.messages == []
 
@@ -8427,22 +8648,23 @@ class TestAfcACESyncSlotLoadedState:
         unit._sync_slot_loaded_state()
 
         assert apply_defaults.calls == [((lane, unit._slot_inventory[0]), {
-            "color_converter": None,
+            "color_converter": afc_ace_module.rgb_array_to_hex,
             "afc_defaults": {"default_material_type": None, "default_color": None}})]
 
     def test_ambiguous_shared_read_is_not_applied(self):
-        unit = make_ace2_unit(lanes=["lane1", "lane2"], inventory={
+        unit = ace_p2_unit("lane1", "lane2", inventory={
             0: {"status": "ready", "sku": "S", "material": "PLA"},
             1: {"status": "ready", "sku": "S", "material": "PLA"}})
+        unit._reader_sibling_slot = lambda slot: slot ^ 1
 
         unit._sync_slot_loaded_state()
 
         assert [unit.lanes[n].prep_state for n in ("lane1", "lane2")] == [True, True]
         assert [unit.lanes[n].material for n in ("lane1", "lane2")] == [None, None]
         assert unit.printer.logger.messages == [
-            ("info", "ACE Ace2_1: slot 0 RFID read is ambiguous (shared reader sibling "
+            ("info", "ACE Ace_1: slot 0 RFID read is ambiguous (shared reader sibling "
                      "reports the same tag), not applying to lane1 at startup"),
-            ("info", "ACE Ace2_1: slot 1 RFID read is ambiguous (shared reader sibling "
+            ("info", "ACE Ace_1: slot 1 RFID read is ambiguous (shared reader sibling "
                      "reports the same tag), not applying to lane2 at startup")]
 
 

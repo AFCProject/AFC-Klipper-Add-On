@@ -340,6 +340,13 @@ def method_to_v2(method: str, params: Optional[Dict[str, Any]]) -> Tuple[int, by
         speed = int(params.get('speed', 10))
         return Cmd.FEED_OR_ROLLBACK, (pb_uint32(1, slot) + pb_uint32(2, speed) + pb_uint32(3, 0)
                                       + pb_uint32(4, FEED_MODE_ASSIST))
+    if method == 'start_rollback_assist':
+        # Assist in reverse: the ACE reels in what the extruder pushes back into
+        # its buffer. STOP_FEED_OR_ROLLBACK (stop_feed_assist) ends it.
+        slot = int(params.get('index', 0))
+        speed = int(params.get('speed', 10))
+        return Cmd.FEED_OR_ROLLBACK, (pb_uint32(1, slot) + pb_uint32(2, speed) + pb_uint32(3, 0)
+                                      + pb_uint32(4, FEED_MODE_ROLLBACK_ASSIST))
     if method == 'stop_feed_assist':
         return Cmd.STOP_FEED_OR_ROLLBACK, pb_uint32(1, int(params.get('index', 0)))
     if method == 'feed_filament':
@@ -1121,22 +1128,34 @@ class ACE2Connection(ACEConnection):
             self._logger.debug(f"ACE2 RX: {response}")
             self._handle_response(response)
 
-    # The Pro 2 enables RFID per-slot (V1's global enable_rfid/disable_rfid don't
-    # exist). Best-effort enable/disable all slots; fire-and-forget so connect
-    # never blocks on it.
+    def start_rollback_assist(self, slot_index: int, timeout: float = 2.0) -> Any:
+        """
+        Enable rollback assist for a slot and wait for ACK.
+
+        :param slot_index: 0-based slot index.
+        :param timeout: Seconds to wait for the ACK.
+        :return Any: The response result payload.
+        """
+        return self.send_command("start_rollback_assist", params={"index": slot_index},
+                                 timeout=timeout)
+
     def enable_rfid(self) -> None:
         """
-        Best-effort enable per-slot RFID identification on every slot.
+        Nothing to turn on: the ACE 2 has no firmware tag reader (AFC_ACE2_rfid
+        reads tags host-side). Its per-slot "RFID enable" is the factory
+        identify, see set_identify.
         """
-        for slot in range(self.slot_count):
-            self.send_command_async("set_rfid_enable", {"index": slot, "enable": True})
 
-    def disable_rfid(self) -> None:
+    def set_identify(self, enable: bool) -> None:
         """
-        Best-effort disable per-slot RFID identification on every slot.
+        Turn the factory identify on or off on every slot, fire-and-forget.
+        On, an insert runs the unit's own slow identify cycle, which feeds and
+        stages the filament; off, AFC stages it.
+
+        :param enable: True for on.
         """
         for slot in range(self.slot_count):
-            self.send_command_async("set_rfid_enable", {"index": slot, "enable": False})
+            self.send_command_async("set_rfid_enable", {"index": slot, "enable": enable})
 
 class afcACE2(afcACE):
     """Anycubic ACE 2 Pro AFC unit. Reuses all of afcACE's AFC integration
@@ -1201,6 +1220,29 @@ class afcACE2(afcACE):
                 f"feed_check_length / {ACE2_ENCODER_SCALE:.4f}).")
             raise config.error(error_str)
         self._stuck_detection = config.getboolean("stuck_spool_detection", True)
+        # Slots running rollback assist for an unload (see _start_unload_assist).
+        self._rollback_assist_active: set[int] = set()
+        # Staging: skip_factory_autostage turns the factory identify off on
+        # every slot.  AFC then stages an insert itself, stage_initial_dist mm into the unit
+        # plus dist_hub.
+        legacy = config.getsection("AFC_ACE2_rfid") if config.has_section("AFC_ACE2_rfid") else None
+        skip_factory_stage = True
+        legacy_stage_dist = 330.0
+        if legacy:
+            skip_factory_stage = legacy.getboolean("skip_factory_autostage", True)
+            legacy_stage_dist = legacy.getfloat("stage_initial_dist", 330.0, minval=0.0)
+
+        self.skip_factory_autostage = config.getboolean("skip_factory_autostage",
+                                                        skip_factory_stage)
+        stage_dist = config.getfloat("stage_initial_dist", legacy_stage_dist, minval=0.0)
+        self.stage_initial_dist = stage_dist if self.skip_factory_autostage else 0.0
+        # Force eject buffer to same as stage_initial_dist - 25, but still allow for users to
+        # override
+        if self.stage_initial_dist > 0.0:
+            self.eject_buffer = config.getfloat("eject_buffer", self.stage_initial_dist - 25, minval=0.0)
+        # The unit turns the identify back on across a reset, so set it on every
+        # connect and reconnect.
+        self.printer.register_event_handler("afc_ace:connected", self._handle_ace_connected)
 
     def _apply_feed_check(self) -> None:
         """
@@ -1219,6 +1261,24 @@ class afcACE2(afcACE):
                 f"error_length={self.feed_error_length}")
         except Exception as e:
             self.logger.warning(f"ACE2 {self.name}: set_feed_check failed (non-fatal): {e}")
+
+    def _handle_ace_connected(self, unit: Any, reconnected: bool) -> None:
+        """
+        `afc_ace:connected` handler: set this unit's factory identify, off for
+        skip_factory_autostage, else on.
+
+        :param unit: the ACE unit that connected.
+        :param reconnected: True after a reset (unused).
+        """
+        if unit is not self or self._ace is None:
+            return
+        state = "off" if self.skip_factory_autostage else "on"
+        try:
+            self._ace.set_identify(not self.skip_factory_autostage)
+            self.logger.info(f"ACE2 {self.name}: factory identify {state} for every slot")
+        except Exception as e:
+            self.logger.warning(
+                f"ACE2 {self.name}: factory identify {state} failed (non-fatal): {e}")
 
     # ACE2 slot states that mean the encoder/odometer disagrees with the
     # commanded motor move, a real upstream jam, tangle, slip, or motor fault.
@@ -1295,6 +1355,44 @@ class afcACE2(afcACE):
         except Exception:
             self.logger.error(msg)
             self.gcode.run_script_from_command("PAUSE")
+
+    def _start_unload_assist(self, slot: int) -> None:
+        """
+        Run rollback assist through the cut and tip forming of an unload.
+
+        A stopped ACE holds the filament, so the tip forming's long retracts
+        stall the extruder against it; in rollback assist the ACE reels in what
+        the extruder pushes back. _stop_feed_assist ends it before the unwind.
+
+        :param slot: 0-based ACE slot index of the lane being unloaded.
+        """
+        if not (self._ace
+                and self._ace.connected):
+            return
+        try:
+            self._wait_for_ace_ready()
+            self._ace.start_rollback_assist(slot)
+            self._rollback_assist_active.add(slot)
+            self.logger.debug(f"ACE {self.name}: rollback assist on slot {slot} for the unload")
+        except Exception as e:
+            self.logger.warning(f"ACE {self.name}: rollback assist on slot {slot} failed: {e}")
+
+    def _stop_feed_assist(self, slot: int) -> None:
+        """
+        Disable feed assist on a slot, ending a rollback assist there first.
+
+        :param slot: 0-based ACE slot index.
+        """
+        if slot in self._rollback_assist_active:
+            self._rollback_assist_active.discard(slot)
+            if (self._ace
+                and self._ace.connected):
+                try:
+                    self._wait_for_ace_ready()
+                    self._ace.stop_feed_assist_sync(slot)
+                except Exception as e:
+                    self.logger.error(f"Failed to stop rollback assist slot {slot}: {e}")
+        super()._stop_feed_assist(slot)
 
     def _make_connection(self, reactor: Reactor, serial_port: str, logger: logging.Logger,
                          baud_rate: int) -> ACE2Connection:

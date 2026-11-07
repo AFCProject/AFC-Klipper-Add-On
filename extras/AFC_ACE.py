@@ -180,6 +180,7 @@ class afcACE(afcUnit):
     # V1 ACE reads tags through the firmware (get_filament_info); AFC_ACE2 sets
     # this False since it reads them host-side (AFC_ACE2_rfid).
     _uses_firmware_rfid = True
+    stage_initial_dist = 0.0
 
     def __init__(self, config: ConfigWrapper) -> None:
         """
@@ -452,7 +453,8 @@ class afcACE(afcUnit):
                                and active_lane.get_toolhead_pre_sensor_state())
             except Exception:
                 at_toolhead = False
-            if (active_lane is not None
+            if (not self._operation_active
+                and active_lane is not None
                 and self._use_feed_assist(active_lane)
                 and active_slot not in self._feed_assist_active
                 and active_slot not in self._assist_suppressed
@@ -1190,6 +1192,7 @@ class afcACE(afcUnit):
             self._refresh_slot_inventory(slot)
             slot_info = self._slot_inventory[slot]
             if apply_filament_defaults is not None:
+                self.afc.spool._set_values(lane)
                 apply_filament_defaults(
                     lane, slot_info,
                     color_converter=rgb_array_to_hex,
@@ -1206,7 +1209,8 @@ class afcACE(afcUnit):
                  or lane.remember_spool)):
             self.afc.spool.set_spoolID(lane, saved_spool_id)
         else:
-            self.afc.spool._set_values(lane)
+            if not self._uses_firmware_rfid:
+                self.afc.spool._set_values(lane)
         self.lane_illuminate_spool(lane)
         self._hub_load_suppressed.discard(lane.name)
         self.afc.save_vars()
@@ -1490,7 +1494,8 @@ class afcACE(afcUnit):
         """
         if self._ace is None:
             return False
-        ctx = {"active": False, "done": False, "initial": 0.0, "fed": 0.0, "removed": False}
+        ctx = {"active": False, "done": False, "initial": self.stage_initial_dist,
+               "fed": 0.0, "removed": False}
         try:
             self.printer.send_event("afc_ace:stage_probe_begin", lane, ctx)
         except Exception as e:
@@ -1822,6 +1827,16 @@ class afcACE(afcUnit):
                     if self._use_feed_assist(cur_lane):
                         self._start_feed_assist(slot, explicit=True)
 
+        extruder = cur_lane.extruder_obj
+        if (succeeded
+            and extruder.tool_start != "buffer"
+            and not extruder.lane_loaded
+            and next((lane for lane in extruder.lanes.values()
+                      if lane.unit_obj is self), None) is cur_lane
+            and cur_lane.get_toolhead_pre_sensor_state()):
+            msg += (f"<span class=warning--text> {extruder.name}'s toolhead sensor sees "
+                    f"filament but no lane is loaded</span>")
+
         if assignTcmd:
             self.afc.function.TcmdAssign(cur_lane)
         cur_lane.send_lane_data()
@@ -2000,8 +2015,7 @@ class afcACE(afcUnit):
         cur_lane.extruder_obj.clear_stale_sensor_state(cur_lane)
         self.afc.reactor.pause(self.afc.reactor.monotonic() + 2.0)
 
-        # Add 100mm extra to account for movement not being as accurate
-        unload_distance = distance + 100
+        unload_distance = distance
 
         if cur_lane.loaded_to_hub:
             dist_hub = cur_lane.dist_hub
@@ -2109,6 +2123,8 @@ class afcACE(afcUnit):
             afc.save_vars()
             return True
         finally:
+            # An unload that stops before the unwind leaves the unload assist on
+            self._stop_feed_assist(self._get_slot(cur_lane.name))
             self._operation_active = False
             self._prev_states_stale = True
 
@@ -2357,6 +2373,15 @@ class afcACE(afcUnit):
         self._operation_active = True
         slot = self._get_slot(cur_lane.name)
         self._stop_feed_assist(slot)
+        self._start_unload_assist(slot)
+
+    def _start_unload_assist(self, slot: int) -> None:
+        """
+        Assist the cut and tip forming of an unload. The V1 ACE has no reverse
+        assist, so its slot stays stopped; the ACE 2 runs rollback assist.
+
+        :param slot: 0-based ACE slot index of the lane being unloaded.
+        """
 
     def _ace_unload_sequence(self, cur_lane: AFCLane, cur_extruder: Any) -> bool:
         """
@@ -2374,6 +2399,82 @@ class afcACE(afcUnit):
         finally:
             self._operation_active = False
             self._prev_states_stale = True
+
+    def _unwind_short(self, cur_lane: AFCLane, slot: int) -> None:
+        """
+        Unwind one short_move_dis step and wait for it.
+
+        :param cur_lane: Lane being moved.
+        :param slot: Its ACE slot.
+        """
+        self._ace.unwind_filament(slot, cur_lane.short_move_dis, self.retract_speed)
+        self._wait_for_feed_complete(slot, cur_lane.short_move_dis, self.retract_speed)
+
+    def _collapse_buffer(self, cur_lane: AFCLane, slot: int) -> bool:
+        """
+        Buffer ramming: unwind in short steps until the buffer reads trailing, as
+        AFC's own TOOL_UNLOAD does with a lane stepper.
+
+        :param cur_lane: Lane being unloaded.
+        :param slot: Its ACE slot.
+        :return bool: True once trailing; False after tool_max_unload_attempts
+            (failure handled via handle_lane_failure).
+        """
+        afc = self.afc
+        num_tries = 0
+        while (not cur_lane.get_trailing()
+               and cur_lane.tool_max_unload_attempts > 0):
+            num_tries += 1
+            if num_tries > cur_lane.tool_max_unload_attempts:
+                message = (f"Buffer did not collapse to trailing after "
+                           f"{cur_lane.tool_max_unload_attempts} short ACE unwinds, so "
+                           f"{cur_lane.name} may not be held by the extruder.\n"
+                           f"Check the toolhead, then run TOOL_UNLOAD LANE={cur_lane.name} "
+                           f"again. Raising tool_max_unload_attempts may help.")
+                if afc.function.in_print():
+                    message += "\nOnce cleared, click resume to continue printing"
+                afc.error.handle_lane_failure(cur_lane, message, pause=afc.function.in_print())
+                return False
+            self._log_delta(f"ACE unload: retracting buffer, Try:{num_tries}")
+            self._unwind_short(cur_lane, slot)
+            afc.reactor.pause(afc.reactor.monotonic() + 0.5)
+        return True
+
+    def _clear_toolhead_sensor(self, cur_lane: AFCLane, cur_extruder: Any, slot: int,
+                               retract_dist: float) -> bool:
+        """
+        Retract and unwind again while the toolhead sensor still sees filament,
+        up to tool_max_unload_attempts, as AFC's own TOOL_UNLOAD retries. A tip
+        held in the gears kept the last unwind from moving it, so each retry
+        frees it with the extruder, then unwinds the whole way again.
+
+        :param cur_lane: Lane being unloaded.
+        :param cur_extruder: Its extruder.
+        :param slot: Its ACE slot.
+        :param retract_dist: The unwind that stages the tip at the hub.
+        :return bool: True once the sensor is clear; False when it never clears
+            (failure handled via handle_lane_failure).
+        """
+        afc = self.afc
+        num_tries = 0
+        while cur_lane.get_toolhead_pre_sensor_state():
+            num_tries += 1
+            if num_tries > cur_lane.tool_max_unload_attempts:
+                message = (f"{cur_lane.name} is still at {cur_extruder.name}'s toolhead "
+                           f"sensor after the ACE unwind, so it never left the toolhead.\n"
+                           f"Run TOOL_UNLOAD LANE={cur_lane.name} again, or clear the "
+                           f"toolhead by hand.")
+                if afc.function.in_print():
+                    message += "\nOnce cleared, click resume to continue printing"
+                afc.error.handle_lane_failure(cur_lane, message, pause=afc.function.in_print())
+                return False
+            self._log_delta(f"ACE unload: toolhead sensor still sees filament, Try:{num_tries}")
+            if cur_extruder.tool_stn_unload > 0:
+                afc.move_e_pos(cur_extruder.tool_stn_unload * -1, cur_extruder.tool_unload_speed,
+                               "ACE STN unload", wait_tool=True)
+            self._ace.unwind_filament(slot, retract_dist, self.retract_speed)
+            self._wait_for_feed_complete(slot, retract_dist, self.retract_speed)
+        return True
 
     def _ace_unload_inner(self, cur_lane: AFCLane, cur_extruder: Any) -> bool:
         """
@@ -2410,6 +2511,10 @@ class afcACE(afcUnit):
             self._wait_for_ace_ready()
             # Clear the tip from the gears
             self._stop_feed_assist(slot)
+
+            if (cur_extruder.tool_start == "buffer"
+                and not self._collapse_buffer(cur_lane, slot)):
+                return False
             if cur_extruder.tool_stn_unload > 0:
                 self._log_delta('ACE unload: retracting tool_stn_unload/2 (pre-unwind)')
                 afc.move_e_pos(cur_extruder.tool_stn_unload * -0.5, cur_extruder.tool_unload_speed,
@@ -2421,6 +2526,11 @@ class afcACE(afcUnit):
             self._wait_for_feed_complete(slot, retract_dist, self.retract_speed)
             if cur_extruder.tool_stn_unload > 0:
                 afc.function.log_toolhead_pos("ACE STN unload after ")
+
+            if (cur_extruder.tool_start != "buffer"
+                and not self._clear_toolhead_sensor(cur_lane, cur_extruder, slot,
+                                                    retract_dist)):
+                return False
         except Exception as e:
             afc.error.handle_lane_failure(cur_lane, f"ACE unwind failed for {cur_lane.name}: {e}",
                                           pause=afc.function.in_print())
@@ -4303,6 +4413,11 @@ class afcACE(afcUnit):
                 if not slot_loaded:
                     lane.loaded_to_hub = False
                     self._set_hub_state(lane, False)
+
+                # Only the V1 firmware read fills the inventory with tag values;
+                # the ACE 2 identifies its spools through AFC_ACE2_rfid.
+                if not self._uses_firmware_rfid:
+                    continue
 
                 # A shared-reader slot's static read can be the neighbour's tag, so
                 # leave identification to the persisted spool or an insert read.
