@@ -613,6 +613,8 @@ class AFC_moonraker:
     """
     ERROR_STRING = "Error getting data from moonraker, check AFC.log for more information"
     REQUEST_TIMEOUT = 10
+    # Best-effort budget for attempting queued work once disconnect starts
+    SHUTDOWN_DRAIN_TIMEOUT = 15.0
     # Unique marker queued to signal the write thread to shut down, compared
     # only by identity. A plain object() (rather than a nested class) avoids
     # coverage.py treating the class statement's own tiny code object as an
@@ -641,6 +643,7 @@ class AFC_moonraker:
         # All HTTP runs on one FIFO worker. Result-dependent reactor callers
         # wait cooperatively; writes and callback-based reads stay asynchronous.
         self._closing = False
+        self._shutdown_deadline: Optional[float] = None
         self._pending_logs: Queue[tuple[Callable[..., Any], str, dict[str, Any]]] = Queue()
         self._write_queue: Queue[tuple[Any, tuple[Any, ...]]] = Queue()
         self._write_thread = threading.Thread(target=self._write_worker, daemon=True,
@@ -724,8 +727,11 @@ class AFC_moonraker:
     def join_thread(self) -> None:
         """
         Close admission and attempt admitted work before disconnect returns.
+
+        Work not started within `SHUTDOWN_DRAIN_TIMEOUT` of the first call is dropped.
         """
         if not self._closing:
+            self._shutdown_deadline = self.reactor.monotonic() + self.SHUTDOWN_DRAIN_TIMEOUT
             self._closing = True
             self._write_queue.put_nowait((self.sentinel, ()))
         self._write_thread.join()
@@ -734,16 +740,28 @@ class AFC_moonraker:
     def _write_worker(self) -> None:
         """
         Attempt queued operations in FIFO order until the sentinel is dequeued.
+
+        Operations dequeued after the shutdown deadline are skipped and counted.
         """
         try:
             thread_name = threading.current_thread().name
             chelper.get_ffi()[1].set_thread_name(thread_name.encode("utf-8"))
         except:
             pass
+        dropped = 0
         while True:
             func, args = self._write_queue.get()
             if func is self.sentinel:
+                if dropped:
+                    self._log_async(self.logger.error,
+                                    f"Moonraker shutdown budget expired, dropped {dropped} "
+                                    "queued operations")
                 return
+            deadline = self._shutdown_deadline
+            if (deadline is not None
+                and self.reactor.monotonic() >= deadline):
+                dropped += 1
+                continue
             try:
                 func(*args)
             except Exception:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -379,6 +380,44 @@ class TestAFCMoonrakerJoinThread:
             ("afc_stats", "second"): "2",
             ("afc_stats", "last"): "3",
         }
+
+    def test_expired_budget_skips_only_operations_not_yet_started(self, moonraker_io):
+        io = moonraker_io
+        first_gate = io.gates[0] = threading.Event()
+        second_gate = io.gates[1] = threading.Event()
+        io.client.update_afc_stats("first", 1)
+        io.wait_requests(1)
+        io.client.update_afc_stats("second", 2)
+        io.client.remove_database_entry("afc_stats", "third")
+        io.client.update_afc_stats("fourth", 4)
+        # Idle time before disconnect must not consume the shutdown budget
+        io.reactor._monotonic = 1000.0
+        try:
+            with joining(io.client):
+                # The second update starts just inside the 15 s budget
+                io.reactor._monotonic = 1014.999
+                first_gate.set()
+                io.wait_requests(2)
+                # At the budget while the second update is still in flight
+                io.reactor._monotonic = 1015.0
+                # A repeated disconnect must not restart the budget
+                with joining(io.client):
+                    second_gate.set()
+        finally:
+            first_gate.set()
+            second_gate.set()
+        assert io.records == [
+            ("POST", "afc_stats", "first", "1"),
+            ("POST", "afc_stats", "second", "2"),
+        ]
+        assert io.contents == {
+            ("afc_stats", "first"): "1",
+            ("afc_stats", "second"): "2",
+        }
+        assert io.escaped == []
+        assert io.logger.messages == []
+        [(_, message, _)] = io.logger.handler.records
+        assert re.search(r"\b2\b", message)
 
 
 class TestAFCMoonrakerEnqueue:
