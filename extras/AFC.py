@@ -58,7 +58,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_stats import AFCStats
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-AFC_VERSION="1.2.10"
+AFC_VERSION="1.2.11"
 
 # Class for holding different states so its clear what all valid states are
 class State(str, Enum):
@@ -2181,6 +2181,7 @@ class afc:
                     success = self.unload_sequence(cur_lane, cur_hub, cur_extruder)
                 finally:
                     self._set_display_status('retraction', False)
+                    cur_lane.unit_obj.finish_unload(cur_lane)
                 if not success:
                     return success
             finally:
