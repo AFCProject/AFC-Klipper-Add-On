@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `skip_factory_autostage`, `stage_initial_dist` and `eject_buffer` settings for ACE 2
   staging, migrated from the legacy `AFC_ACE2_rfid` section when present
 
+## [11-04-2026]
+### Added
+- Added a `SET_FILAMENT_INFO` macro to optionally set filament vendor and name when not using spoolman. 
+
 ## [11-02-2026]
 ### Fixed
 - Fixed a bug where a lane without an extruder stepper could error out if the `QUERY_BUFFER` macro was run. 
