@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-08-2026]
+### Fixed
+- Fixed lane homing raising a `TypeError` on Kalico builds past PR #1052, which made `manual_home`'s `gcmd` parameter required.
+
 ## [11-07-2026]
 ### Fixed
 - Fixed unload retries getting stuck on OAMS units by stopping the unit's motor via the bay error-LED state and retracting the extruder repeatedly to help free the jam between attempts.
