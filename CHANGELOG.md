@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-07-2026]
+### Fixed
+- Fixed unload retries getting stuck on OAMS units by stopping the unit's motor via the bay error-LED state and retracting the extruder repeatedly to help free the jam between attempts.
+- Fixed a stuck OAMS unit continuing to drive filament after all unload retries were exhausted, by force-aborting and stopping the unit's motor on final give-up.
+- Fixed the OAMS unload operation's fixed 40-second timeout always reporting "MCU unresponsive" even when filament was simply jammed, by replacing it with encoder-stall detection plus a separate overall timeout backstop.
+- Fixed OpenAMS engagement verification sometimes reporting a false failure (and false jam) by reading the "before" encoder count after the FPS-settle pause instead of before it.
+- Fixed OpenAMS clog detection sometimes falsely triggering during tip-forming/cutting by stopping the clog monitor before that step during unload.
+- Fixed the OpenAMS follower being left stopped and fighting the extruder before unload begins, by running it in reverse so filament pulled back during cut/park/tip-forming is taken up into the buffer.
+- Fixed chattery OpenAMS f1s/hub-HES sensor readings being able to fire spurious runout/insert or load-state events, by debouncing both signals.
+
+### Added
+- Added a new `OAMS_SET_LED_ERROR` gcode command to manually set or clear a bay's error LED; setting the error state also stops the unit's motor for that bay, and clearing it does not restart the motor.
+- Added `engagement_min_fps_drop` and `engagement_min_clicks` config options so OpenAMS engagement verification can be tuned per setup.
+- Added extended `get_status()` fields exposing live OpenAMS state (connection, spool, sensors, action, clog/stuck detection) for macros and dashboards.
+
 ## [11-06-2026]
 ### Fixed
 - Fixed unload so that ACE units are no longer fighting toolhead extruder when unloading
