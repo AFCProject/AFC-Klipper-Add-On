@@ -668,6 +668,16 @@ class afcUnit:
         if not self._check_led_state(lane, "unloaded"): return
         self._trigger_led_state(lane, static_color=lane.led_not_ready, effect_suffix="unloaded")
 
+    def finish_unload(self, lane: AFCLane) -> None:
+        """
+        AFC calls this after every unload_sequence exit, success, failure, or a
+        custom_unload_cmd/heating-error path that bypasses unit_unload_lane, so a
+        unit can release any state it set up in lane_unloading/prepare_unload.
+        No-op here; override for units that need guaranteed cleanup.
+
+        :param lane: Lane that finished (or aborted) an unload.
+        """
+
     def lane_loading(self, lane: AFCLane) -> None:
         """
         Common function for setting a lanes led when lane is loading, this can be called when

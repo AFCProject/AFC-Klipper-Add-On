@@ -1927,15 +1927,20 @@ class TestGetStatusSpoolVendor:
         response = lane.get_status()
         assert response["spool_vendor"] == ""
 
-    def test_spool_vendor_omitted_when_saving_to_file(self):
-        """Vendor is re-fetched from Spoolman, so it is not persisted -- the
-        same treatment filament_name already gets."""
+    def test_vendor_and_name_persisted_when_saving_to_file(self):
         lane = _make_lane_for_get_status(["T0"])
-        lane.spool_vendor = "Overture"
+        lane.spool_vendor = "Polymaker"
+        lane.filament_name = "PolyTerra PLA"
         lane.td1_data = {"td": "", "color": "", "scan_time": ""}
         response = lane.get_status(save_to_file=True)
-        assert "spool_vendor" not in response
-        assert "filament_name" not in response
+        assert response["spool_vendor"] == "Polymaker"
+        assert response["filament_name"] == "PolyTerra PLA"
+
+    def test_filament_name_reported_live(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.filament_name = "Overture Gray ASA"
+        response = lane.get_status()
+        assert response["filament_name"] == "Overture Gray ASA"
 
 
 class TestSendLaneDataExtruderIndex:
