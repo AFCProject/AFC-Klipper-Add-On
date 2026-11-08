@@ -2172,8 +2172,8 @@ class TestGetStatus:
     def test_oams_present_populates_sensor_and_failure_fields(self):
         oams = types.SimpleNamespace(
             current_spool=1, fps_value=0.5, f1s_hes_value=[1, 0, 0, 0],
-            hub_hes_value=[0, 1, 0, 0], load_retry_failures=2,
-            unload_retry_failures=3, action_status=OAMSStatus.UNLOADING)
+            hub_hes_value=[0, 1, 0, 0], _load_retry_failures=2,
+            _unload_retry_failures=3, action_status=OAMSStatus.UNLOADING)
         ams, afc, printer, reactor = _make_ams(oams=oams)
         response = ams.get_status()
         assert response["oams_connected"] is True
@@ -5006,6 +5006,32 @@ class TestClearLaneInfo:
         assert lane.material == ""
         assert lane.color == ""
 
+    def test_clears_spool_vendor_and_filament_name(self):
+        ams, afc, printer, reactor = _make_ams()
+        lane = _make_lane("lane1", spool_vendor="Prusament", filament_name="PLA Galaxy",
+                          spool_id=None)
+        ams._clear_lane_info(lane)
+        assert lane.spool_vendor == ""
+        assert lane.filament_name == ""
+
+    def test_removal_without_spool_id_still_clears_and_persists_filament_metadata(self):
+        # Follow-up from #893: a lane can carry stale spool_vendor/filament_name
+        # from a prior insert even once spool_id has already been cleared (e.g.
+        # not using Spoolman), so clearing must not be gated on spool_id being
+        # set, and the clear must be persisted so it doesn't return after a
+        # restart (verified here via save_vars being called, the persistence
+        # hook this test harness can observe).
+        ams, afc, printer, reactor = _make_ams()
+        lane = _make_lane("lane1", spool_vendor="Prusament", filament_name="PLA Galaxy",
+                          material="PLA", color="#FF0000", spool_id=None)
+        ams._clear_lane_info(lane)
+        assert lane.spool_vendor == ""
+        assert lane.filament_name == ""
+        assert lane.material == ""
+        assert lane.color == ""
+        afc.spool.set_spoolID.assert_not_called()
+        afc.save_vars.assert_called_once()
+
     def test_no_spool_id_skips_spoolman_clear(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=None)
@@ -5022,7 +5048,13 @@ class TestClearLaneInfo:
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=42)
         ams._clear_lane_info(lane)
-        afc.spool.set_spoolID.assert_called_once_with(lane, "")
+        afc.spool.set_spoolID.assert_called_once_with(lane, "", save_vars=False)
+
+    def test_calls_save_vars(self):
+        ams, afc, printer, reactor = _make_ams()
+        lane = _make_lane("lane1", spool_id=42)
+        ams._clear_lane_info(lane)
+        afc.save_vars.assert_called_once()
 
     def test_spoolman_clear_failure_logged_as_warning(self):
         ams, afc, printer, reactor = _make_ams()

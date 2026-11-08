@@ -794,8 +794,8 @@ class afcAMS(afcUnit):
             response["oams_fps_value"] = getattr(oams, "fps_value", None)
             response["oams_f1s_hes"] = list(getattr(oams, "f1s_hes_value", []) or [])
             response["oams_hub_hes"] = list(getattr(oams, "hub_hes_value", []) or [])
-            response["oams_load_failures"] = getattr(oams, "load_retry_failures", 0)
-            response["oams_unload_failures"] = getattr(oams, "unload_retry_failures", 0)
+            response["oams_load_failures"] = getattr(oams, "_load_retry_failures", 0)
+            response["oams_unload_failures"] = getattr(oams, "_unload_retry_failures", 0)
         response["oams_action"] = self._current_oams_action() or "idle"
         response["oams_busy"] = bool(self._operation_active)
         st = getattr(self._monitor, "state", None) if self._monitor else None
@@ -2616,12 +2616,15 @@ class afcAMS(afcUnit):
         """
         lane.material = ""
         lane.color = ""
+        lane.spool_vendor = ""
+        lane.filament_name = ""
         if getattr(lane, 'spool_id', None) not in (None, "", 0):
             try:
-                self.afc.spool.set_spoolID(lane, "")
+                self.afc.spool.set_spoolID(lane, "", save_vars=False)
             except Exception as e:
                 self.logger.warning(
                     f"OAMS: failed to clear spool_id on {lane.name}: {e}")
+        self.afc.save_vars()
         try:
             lane.send_lane_data()
         except Exception:
