@@ -35,6 +35,7 @@ TERMBIN_HOST = "termbin.com"
 TERMBIN_PORT = 9999
 SEPARATOR = "=" * 64
 USB_SYS_ROOT = "/sys/bus/usb/devices"
+U1_INIT_SCRIPT = "/etc/init.d/S60klipper"
 REDACTED = "<redacted>"
 PUBLIC_IP = "<public-ip>"
 SECRET_LABEL = "secret value"
@@ -240,6 +241,35 @@ def file_section(section_name: str, path: Path) -> str:
     return text + data.replace(b"\0", b"").decode("utf-8", errors="replace")
 
 
+def is_snapmaker_u1() -> bool:
+    """
+    Check for the Snapmaker U1 Klipper init script.
+
+    :return bool: True if the init script exists
+    """
+    return Path(U1_INIT_SCRIPT).exists()
+
+
+def _u1_init(action: str) -> None:
+    """
+    Run the U1 Klipper init script, escalating with `su` when not root.
+
+    :param action: init script action, e.g. `start` or `stop`
+    """
+    if os.geteuid() != 0:
+        cmd = ["su", "root", "-c", f"{U1_INIT_SCRIPT} {action}"]
+    else:
+        cmd = [U1_INIT_SCRIPT, action]
+    try:
+        proc = subprocess.run(cmd)
+    except OSError as exc:
+        error_str = f"Unable to run {cmd[0]}: {exc}"
+        raise DebugError(error_str)
+    if proc.returncode != 0:
+        error_str = f"Command failed: {' '.join(cmd)}"
+        raise DebugError(error_str)
+
+
 def _sudo(cmd: Sequence[str]) -> None:
     """
     Run a command with sudo, attached to the terminal.
@@ -281,11 +311,14 @@ def is_klipper_running_service(service: str) -> bool:
 
 def stop_klipper(service: str) -> None:
     """
-    Stop Klipper using systemd or `service`.
+    Stop Klipper using the U1 init script, systemd or `service`.
 
     :param service: Klipper service name
     """
-    if shutil.which("systemctl"):
+    if is_snapmaker_u1():
+        print("Stopping Klipper using the Snapmaker U1 init script...")
+        _u1_init("stop")
+    elif shutil.which("systemctl"):
         if is_klipper_running_systemd(service):
             print("Stopping Klipper using systemd...")
             _sudo(["systemctl", "stop", service])
@@ -303,11 +336,14 @@ def stop_klipper(service: str) -> None:
 
 def start_klipper(service: str) -> None:
     """
-    Start Klipper using systemd or `service`.
+    Start Klipper using the U1 init script, systemd or `service`.
 
     :param service: Klipper service name
     """
-    if shutil.which("systemctl"):
+    if is_snapmaker_u1():
+        print("Starting Klipper using the Snapmaker U1 init script...")
+        _u1_init("start")
+    elif shutil.which("systemctl"):
         print("Starting Klipper using systemd...")
         _sudo(["systemctl", "start", service])
     elif shutil.which("service"):

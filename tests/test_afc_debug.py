@@ -290,11 +290,71 @@ class TestIsKlipperRunningService:
         assert dbg.is_klipper_running_service("klipper") is False
 
 
+REAL_IS_SNAPMAKER_U1 = dbg.is_snapmaker_u1
+
+
+@pytest.fixture(autouse=True)
+def not_u1(monkeypatch):
+    monkeypatch.setattr(dbg, "is_snapmaker_u1", lambda: False)
+
+
 def which_only(*names: str):
     return lambda name: f"/bin/{name}" if name in names else None
 
 
+class TestIsSnapmakerU1:
+    def test_script_exists(self, monkeypatch, tmp_path):
+        script = tmp_path / "S60klipper"
+        script.write_text("")
+        monkeypatch.setattr(dbg, "U1_INIT_SCRIPT", str(script))
+        assert REAL_IS_SNAPMAKER_U1() is True
+
+    def test_script_missing(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dbg, "U1_INIT_SCRIPT", str(tmp_path / "missing"))
+        assert REAL_IS_SNAPMAKER_U1() is False
+
+
+class TestU1Init:
+    def test_root_runs_script_directly(self, monkeypatch):
+        fake = FakeRun()
+        monkeypatch.setattr(dbg.os, "geteuid", lambda: 0)
+        monkeypatch.setattr(dbg.subprocess, "run", fake)
+        dbg._u1_init("stop")
+        assert fake.calls == [["/etc/init.d/S60klipper", "stop"]]
+
+    def test_non_root_uses_su(self, monkeypatch):
+        fake = FakeRun()
+        monkeypatch.setattr(dbg.os, "geteuid", lambda: 1000)
+        monkeypatch.setattr(dbg.subprocess, "run", fake)
+        dbg._u1_init("start")
+        assert fake.calls == [["su", "root", "-c", "/etc/init.d/S60klipper start"]]
+
+    def test_nonzero_raises(self, monkeypatch):
+        monkeypatch.setattr(dbg.os, "geteuid", lambda: 0)
+        monkeypatch.setattr(dbg.subprocess, "run",
+                            FakeRun({"/etc/init.d/S60klipper stop": (1, "")}))
+        with pytest.raises(dbg.DebugError,
+                           match="Command failed: /etc/init.d/S60klipper stop"):
+            dbg._u1_init("stop")
+
+    def test_oserror_raises(self, monkeypatch):
+        monkeypatch.setattr(dbg.os, "geteuid", lambda: 0)
+        monkeypatch.setattr(dbg.subprocess, "run",
+                            FakeRun({"/etc/init.d/S60klipper stop": OSError("boom")}))
+        with pytest.raises(dbg.DebugError, match="Unable to run /etc/init.d/S60klipper: boom"):
+            dbg._u1_init("stop")
+
+
 class TestStopKlipper:
+    def test_u1(self, monkeypatch, capsys):
+        monkeypatch.setattr(dbg, "is_snapmaker_u1", lambda: True)
+        monkeypatch.setattr(dbg.shutil, "which", which_only("systemctl"))
+        actions: List[str] = []
+        monkeypatch.setattr(dbg, "_u1_init", actions.append)
+        dbg.stop_klipper("klipper")
+        assert actions == ["stop"]
+        assert capsys.readouterr().out == "Stopping Klipper using the Snapmaker U1 init script...\n"
+
     def test_systemd_running(self, monkeypatch, capsys):
         monkeypatch.setattr(dbg.shutil, "which", which_only("systemctl", "service"))
         monkeypatch.setattr(dbg, "is_klipper_running_systemd", lambda s: True)
@@ -338,6 +398,15 @@ class TestStopKlipper:
 
 
 class TestStartKlipper:
+    def test_u1(self, monkeypatch, capsys):
+        monkeypatch.setattr(dbg, "is_snapmaker_u1", lambda: True)
+        monkeypatch.setattr(dbg.shutil, "which", which_only("systemctl"))
+        actions: List[str] = []
+        monkeypatch.setattr(dbg, "_u1_init", actions.append)
+        dbg.start_klipper("kl")
+        assert actions == ["start"]
+        assert capsys.readouterr().out == "Starting Klipper using the Snapmaker U1 init script...\n"
+
     def test_systemd(self, monkeypatch, capsys):
         monkeypatch.setattr(dbg.shutil, "which", which_only("systemctl", "service"))
         sudo: List[List[str]] = []
