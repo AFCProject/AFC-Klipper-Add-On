@@ -15,7 +15,6 @@ template to something else.
 - [ ] I have performed a self-review of my code
 - [ ] CHANGELOG.md is updated (if end-user facing)
 - [ ] Documentation updated in AT-Documentation repository
-- [ ] Sent notification to pr-review channel requesting review
 - [ ] If this PR address a GitHub issue, the issue number is referenced in the PR description
 
 **NOTE**: Coderabbitai may be used for automated code reviews.
