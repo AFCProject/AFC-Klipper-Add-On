@@ -22,7 +22,7 @@ import sys
 import importlib.util
 import configparser
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import pytest
 
 from extras.AFC_buffer import (
@@ -265,14 +265,14 @@ class TestAFCBufferInit:
     def test_led_colors_config_overrides_afc_defaults(self):
         buf, afc, printer = _build_real_buffer(values={
             "led_buffer_advancing": "1,1,1,1",
-            "led_buffer_trailing": "2,2,2,2",
-            "led_buffer_neutral": "3,3,3,3",
-            "led_buffer_disable": "4,4,4,4",
+            "led_buffer_trailing": "0.2,0.2,0.2,0.2",
+            "led_buffer_neutral": "0.3,0.3,0.3,0.3",
+            "led_buffer_disable": "0.4,0.4,0.4,0.4",
         })
         assert buf.led_advancing == "1,1,1,1"
-        assert buf.led_trailing == "2,2,2,2"
-        assert buf.led_neutral == "3,3,3,3"
-        assert buf.led_buffer_disabled == "4,4,4,4"
+        assert buf.led_trailing == "0.2,0.2,0.2,0.2"
+        assert buf.led_neutral == "0.3,0.3,0.3,0.3"
+        assert buf.led_buffer_disabled == "0.4,0.4,0.4,0.4"
 
     def test_led_index_config_reread_after_enabling_led(self):
         buf, afc, printer = _build_real_buffer(values={"led_index": "afc_led:3"})
@@ -1410,14 +1410,53 @@ class TestCmdQueryBufferBase:
         assert "18.7500" in msg
         assert lane.name in msg
 
+    def _enabled_buf_with_lane(self):
+        buf = _make_buffer()
+        buf.enable = True
+        buf.last_state = NEUTRAL_STATE_NAME
+        buf.error_sensitivity = 4.0
+        buf.logger = MagicMock()
+        lane = _make_lane(buf)
+        lane.name = "lane1"
+        buf.current_lane = lane
+        return buf, lane
+
+    def test_lane_without_extruder_stepper_skips_rotation_distance(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = None
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
+    def test_lane_with_none_stepper_skips_rotation_distance(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = MagicMock()
+        lane.extruder_stepper.stepper = None
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
+    def test_lane_with_stepper_reports_rotation_distance_exact(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = MagicMock()
+        lane.extruder_stepper.stepper.get_rotation_distance.return_value = [18.75]
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nlane1 Rotation distance: 18.7500"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
     def test_enabled_no_lane_skips_rotation_distance(self):
         buf = _make_buffer()
         buf.enable = True
         buf.current_lane = None
+        buf.error_sensitivity = 0
+        buf.last_state = NEUTRAL_STATE_NAME
         buf.logger = MagicMock()
         buf.cmd_QUERY_BUFFER(_make_gcmd())
-        msg = buf.logger.info.call_args[0][0]
-        assert "Rotation distance" not in msg
+        assert buf.logger.info.call_args_list == [call(f"{buf.name} : {NEUTRAL_STATE_NAME}")]
 
     def test_enabled_with_fault_detection_reports_sensitivity(self):
         buf = _make_buffer()
@@ -4023,3 +4062,26 @@ class TestModuleImportGuard:
             _exec_afc_buffer_with_blocked_dependency("extras.AFC_utils")
         assert str(exc_info.value).startswith(
             "Error when trying to import AFC_utils.add_filament_switch")
+
+
+class TestAFCBufferLedColorValidation:
+    OPTIONS = {
+        "led_buffer_advancing": "led_advancing",
+        "led_buffer_trailing": "led_trailing",
+        "led_buffer_neutral": "led_neutral",
+        "led_buffer_disable": "led_buffer_disabled",
+    }
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_invalid_color_raises_at_init(self, option):
+        from configfile import error
+        with pytest.raises(error) as exc:
+            _build_real_buffer(values={option: "0.1.0,0,0"})
+        assert str(exc.value) == (
+            f"[AFC_buffer TN] option '{option}' has invalid LED color '0.1.0,0,0', "
+            f"expected 3 or 4 comma separated numbers from 0 to 1 (R,G,B[,W])")
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_valid_color_stored_on_attribute(self, option):
+        buf, _, _ = _build_real_buffer(values={option: "0.2,0.4,0.6,0.8"})
+        assert getattr(buf, self.OPTIONS[option]) == "0.2,0.4,0.6,0.8"

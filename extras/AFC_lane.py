@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from pins import PrinterPins
     from query_endstops import QueryEndstops
 
-try: from extras.AFC_utils import ERROR_STR, add_filament_switch, natural_sort_key
+try: from extras.AFC_utils import ERROR_STR, add_filament_switch, natural_sort_key, get_led_color
 except: raise error("Error when trying to import AFC_utils.ERROR_STR, add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
 
 try: from extras import AFC_assist
@@ -175,18 +175,18 @@ class AFCLane:
         # LED SETTINGS
         # All variables use: (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.led_index: str       = config.get('led_index', None)                       # LED index of lane in chain of lane LEDs
-        self.led_fault: str       = config.get('led_fault',None)                        # LED color to set when faults occur in lane
-        self.led_ready: str       = config.get('led_ready',None)                        # LED color to set when lane is ready
-        self.led_not_ready        = config.get('led_not_ready',None)                    # LED color to set when lane not ready
-        self.led_loading          = config.get('led_loading',None)                      # LED color to set when lane is loading
-        self.led_prep_loaded      = config.get('led_loading',None)                      # LED color to set when lane is loaded
-        self.led_unloading        = config.get('led_unloading',None)                    # LED color to set when lane is unloading
-        self.led_tool_loaded      = config.get('led_tool_loaded',None)                  # LED color to set when lane is loaded into tool
-        self.led_tool_loaded_idle = config.get('led_tool_loaded_idle',None)             # LED color to set when lane is loaded into tool and idle
-        self.led_tool_unloaded    = config.get('led_tool_unloaded', None)               # LED color to set when lanes extruder is unloaded
-        self.led_spool_index      = config.get('led_spool_index', None)                 # LED index to illuminate under spool
-        self.led_spool_illum      = config.get('led_spool_illuminate', None)            # LED color to illuminate under spool
-        self.led_use_filament_color: bool = config.getboolean('led_use_filament_color', None)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
+        self.led_fault: str       = get_led_color(config, 'led_fault',None)                        # LED color to set when faults occur in lane
+        self.led_ready: str       = get_led_color(config, 'led_ready',None)                        # LED color to set when lane is ready
+        self.led_not_ready        = get_led_color(config, 'led_not_ready',None)                    # LED color to set when lane not ready
+        self.led_loading          = get_led_color(config, 'led_loading',None)                      # LED color to set when lane is loading
+        self.led_prep_loaded      = get_led_color(config, 'led_loading',None)                      # LED color to set when lane is loaded
+        self.led_unloading        = get_led_color(config, 'led_unloading',None)                    # LED color to set when lane is unloading
+        self.led_tool_loaded      = get_led_color(config, 'led_tool_loaded',None)                  # LED color to set when lane is loaded into tool
+        self.led_tool_loaded_idle = get_led_color(config, 'led_tool_loaded_idle',None)             # LED color to set when lane is loaded into tool and idle
+        self.led_tool_unloaded    = get_led_color(config, 'led_tool_unloaded', None)               # LED color to set when lanes extruder is unloaded
+        self.led_spool_index      = config.get('led_spool_index', None)                            # LED index to illuminate under spool
+        self.led_spool_illum      = get_led_color(config, 'led_spool_illuminate', None)            # LED color to illuminate under spool
+        self.led_use_filament_color: bool = config.getboolean('led_use_filament_color', None)      # When True, uses filament color from color field for lane LEDs instead of configured LED colors
         self.current_led_state: str = ""
 
         self.long_moves_speed: float   = config.getfloat("long_moves_speed", None)             # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section

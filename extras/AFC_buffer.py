@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from mcu import MCU_adc
 
-try: from extras.AFC_utils import add_filament_switch, VirtualFilamentSensor, PollingEndstopWrapper
+try: from extras.AFC_utils import (add_filament_switch, VirtualFilamentSensor,
+                                  PollingEndstopWrapper, get_led_color)
 except: raise error("Error when trying to import AFC_utils.add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
 
 TRAILING_STATE_NAME = "Trailing"
@@ -74,10 +75,10 @@ class AFCBuffer:
         # LED SETTINGS
         self.led                    = False
         self.led_index              = config.get('led_index', None)
-        self.led_advancing          = config.get('led_buffer_advancing', self.afc.led_buffer_advancing)
-        self.led_trailing           = config.get('led_buffer_trailing', self.afc.led_buffer_trailing)
-        self.led_neutral            = config.get('led_buffer_neutral', self.afc.led_buffer_neutral)
-        self.led_buffer_disabled    = config.get('led_buffer_disable', self.afc.led_buffer_disabled)
+        self.led_advancing          = get_led_color(config, 'led_buffer_advancing', self.afc.led_buffer_advancing)
+        self.led_trailing           = get_led_color(config, 'led_buffer_trailing', self.afc.led_buffer_trailing)
+        self.led_neutral            = get_led_color(config, 'led_buffer_neutral', self.afc.led_buffer_neutral)
+        self.led_buffer_disabled    = get_led_color(config, 'led_buffer_disable', self.afc.led_buffer_disabled)
 
         if self.led_index is not None:
             self.led = True
@@ -594,7 +595,7 @@ class AFCBuffer:
 
     cmd_QUERY_BUFFER_help = "Report Buffer sensor state"
     cmd_QUERY_BUFFER_options = {"BUFFER": {"type": "string", "default": "Turtle_1"}}
-    def cmd_QUERY_BUFFER(self, gcmd):
+    def cmd_QUERY_BUFFER(self, gcmd: GCodeCommand) -> None:
         """
         Reports the current state of the buffer sensor and, if applicable, the rotation
         distance of the current AFC stepper motor.
@@ -604,6 +605,7 @@ class AFCBuffer:
         - If the `turtleneck` feature is enabled and a tool is loaded, the rotation
           distance of the current AFC stepper motor is reported, along with the
           current state of the buffer sensor.
+        - If the loaded lane has no extruder stepper, the rotation distance is omitted.
         - If the `turtleneck` feature is not enabled, only the buffer state is reported.
         - Both the buffer state and, if applicable, the stepper motor's rotation
           distance are sent back as G-code responses.
@@ -624,18 +626,20 @@ class AFCBuffer:
         }
 
         buffer_status = self.buffer_status()
-        state_info = "{}{}".format(buffer_status, state_mapping.get(buffer_status, ''))
+        state_info = f"{buffer_status}{state_mapping.get(buffer_status, '')}"
 
         if self.enable:
-            if self.current_lane is not None:
-                stepper = self.current_lane.extruder_stepper.stepper
-                rotation_dist = stepper.get_rotation_distance()[0]
-                state_info += ("\n{} Rotation distance: {:.4f}".format(self.current_lane.name,
-                                                                       rotation_dist))
+            lane = self.current_lane
+            if (lane is not None
+                and lane.extruder_stepper is not None
+                and lane.extruder_stepper.stepper is not None):
+                rotation_dist = lane.extruder_stepper.stepper.get_rotation_distance()[0]
+                state_info += f"\n{lane.name} Rotation distance: {rotation_dist:.4f}"
             if self.error_sensitivity > 0:
-                state_info += "\nFault detection enabled, sensitivity {}".format(self.error_sensitivity)
+                state_info += (f"\nFault detection enabled, "
+                               f"sensitivity {self.error_sensitivity}")
 
-        self.logger.info("{} : {}".format(self.name, state_info))
+        self.logger.info(f"{self.name} : {state_info}")
 
     def cmd_ENABLE_BUFFER(self, gcmd: GCodeCommand):
         """
