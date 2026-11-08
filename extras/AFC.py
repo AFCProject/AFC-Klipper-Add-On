@@ -310,6 +310,7 @@ class afc:
         self.testing                = config.getboolean('testing', False)           # Set to true for testing only so that failure states can be tested without stats being reset
         self.enable_multiple_mapping = config.getboolean("enable_multiple_mapping",False)
         self.manual_home_has_probe_pos_param: bool = False
+        self.manual_home_requires_gcmd: bool = False
 
         # Klippy debuginput start_args can only be passed in when doing tests, this way AFC
         # knows if its running on a printer or a klippy test. This way we can bypass some
@@ -460,14 +461,10 @@ class afc:
         self.idle       = self.printer.lookup_object('idle_timeout')
         self.gcode_move: GCodeMove = self.printer.lookup_object('gcode_move')
 
-        # Looking up to see if manual_home has probe_pos, this is to make AFC work with klipper
-        # starting with new homing update git hash(57c2e0c960f8e25f56a66ba3a1e90e124f207001)
+        # Inspect manual_home's signature to detect optional/required parameters added
+        # by different Klipper/Kalico forks, so AFC passes the right keyword arguments.
         phoming = self.printer.lookup_object('homing')
-        try:
-            phoming_sig = inspect.signature(phoming.manual_home)
-            self.manual_home_has_probe_pos_param = True if "probe_pos" in phoming_sig.parameters.keys() else False
-        except:
-            pass
+        self._detect_manual_home_signature(phoming)
 
         # Check if hardware bypass is configured, if not create a virtual bypass sensor
         try:
@@ -494,6 +491,24 @@ class afc:
         self._rename_macros()
 
         self.current_state = State.IDLE
+
+    def _detect_manual_home_signature(self, phoming) -> None:
+        """
+        Inspect `manual_home`'s signature to detect optional/required parameters
+        added by different Klipper/Kalico forks, so AFC passes the right keyword
+        arguments when calling it. `probe_pos` was added by upstream Klipper's
+        probing-context homing update (git hash 57c2e0c), while Kalico PR #1052
+        made `gcmd` a required parameter so nested gcode contexts can be tracked.
+
+        :param phoming: the printer's `homing` object.
+        """
+        try:
+            sig_params = inspect.signature(phoming.manual_home).parameters
+        except (TypeError, ValueError):
+            return
+        self.manual_home_has_probe_pos_param = "probe_pos" in sig_params
+        self.manual_home_requires_gcmd = ("gcmd" in sig_params
+                                          and sig_params["gcmd"].default is inspect.Parameter.empty)
 
     def handle_ready(self):
         """

@@ -597,6 +597,8 @@ class MockAFC:
 
         self.snapmaker_printer = False
         self.enable_multiple_mapping = False
+        self.manual_home_has_probe_pos_param = False
+        self.manual_home_requires_gcmd = False
 
 
 class MockPrinter:
