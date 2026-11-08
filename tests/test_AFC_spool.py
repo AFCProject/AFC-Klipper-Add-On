@@ -879,6 +879,76 @@ class TestSetMaterial:
         assert lane.filament_density == 1.24
 
 
+# ── cmd_SET_FILAMENT_INFO ──────────────────────────────────────────────────────
+
+class TestSetFilamentInfo:
+    def _setup(self, vendor="", name=""):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        lane.spool_vendor = vendor
+        lane.filament_name = name
+        spool.afc.lanes = {"lane1": lane}
+        spool.afc.save_vars = MagicMock()
+        spool.set_snapmaker_filament_params = MagicMock()
+        return spool, lane
+
+    def test_sets_vendor_and_name(self):
+        spool, lane = self._setup()
+        gcmd = _make_gcmd(LANE="lane1", VENDOR="Polymaker", NAME="PolyTerra PLA")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.spool_vendor == "Polymaker"
+        assert lane.filament_name == "PolyTerra PLA"
+        assert spool.logger.messages == []
+
+    def test_sends_lane_data_saves_vars_and_updates_snapmaker(self):
+        spool, lane = self._setup()
+        gcmd = _make_gcmd(LANE="lane1", VENDOR="Elegoo", NAME="PLA")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        lane.send_lane_data.assert_called_once_with()
+        spool.afc.save_vars.assert_called_once_with()
+        spool.set_snapmaker_filament_params.assert_called_once_with(lane)
+
+    def test_vendor_only_keeps_existing_name(self):
+        spool, lane = self._setup(vendor="Old", name="Keep Me")
+        gcmd = _make_gcmd(LANE="lane1", VENDOR="Elegoo")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.spool_vendor == "Elegoo"
+        assert lane.filament_name == "Keep Me"
+
+    def test_name_only_keeps_existing_vendor(self):
+        spool, lane = self._setup(vendor="Keep Me", name="Old")
+        gcmd = _make_gcmd(LANE="lane1", NAME="PLA+")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.spool_vendor == "Keep Me"
+        assert lane.filament_name == "PLA+"
+
+    def test_empty_values_clear_fields(self):
+        spool, lane = self._setup(vendor="Old", name="Old Name")
+        gcmd = _make_gcmd(LANE="lane1", VENDOR="", NAME="")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.spool_vendor == ""
+        assert lane.filament_name == ""
+
+    def test_no_lane_param_raises_gcmd_error(self):
+        spool, lane = self._setup(vendor="Old", name="Old Name")
+        gcmd = _make_gcmd(VENDOR="Elegoo")
+        with pytest.raises(Exception):
+            spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.spool_vendor == "Old"
+        assert lane.filament_name == "Old Name"
+        spool.afc.save_vars.assert_not_called()
+        assert spool.logger.messages == []
+
+    def test_lane_not_in_lanes_logs_info(self):
+        spool = _make_spool()
+        spool.afc.lanes = {}
+        spool.afc.save_vars = MagicMock()
+        gcmd = _make_gcmd(LANE="ghost", VENDOR="Elegoo", NAME="PLA")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert spool.logger.messages == [("info", "ghost Unknown")]
+        spool.afc.save_vars.assert_not_called()
+
+
 # ── cmd_SET_WEIGHT ─────────────────────────────────────────────────────────────
 
 class TestSetWeight:
@@ -1337,12 +1407,12 @@ class TestHandleConnect:
 
 
 class TestRegisterLaneMacros:
-    def test_registers_seven_mux_commands(self):
+    def test_registers_eight_mux_commands(self):
         spool = _make_spool()
         spool.gcode.register_mux_command = MagicMock()
         lane = _make_lane("lane1")
         spool.register_lane_macros(lane)
-        assert spool.gcode.register_mux_command.call_count == 7
+        assert spool.gcode.register_mux_command.call_count == 8
 
     def test_all_commands_use_correct_lane_name(self):
         spool = _make_spool()

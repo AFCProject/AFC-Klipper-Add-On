@@ -168,3 +168,96 @@ class TestTd1Prep:
         prep.afc.lanes = {"lane1": lane}
         prep._td1_prep(overrall_status=False)
         lane.get_td1_data.assert_not_called()
+
+
+class TestPrepRestoreFilamentInfo:
+    def _run_prep(self, lane_vars, spoolman=None, tmp_path=None):
+        from tests.conftest import MockConfig, MockPrinter, MockAFC
+
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        printer.state_message = "Printer is ready"
+        prep = afcPrep(MockConfig(name="AFC_prep", printer=printer))
+        prep.handle_connect = MagicMock()
+        prep.afc = afc
+        prep.logger = afc.logger
+        prep._rename_macros = MagicMock()
+        prep._td1_prep = MagicMock()
+
+        (tmp_path / "vars.unit").write_text(json.dumps({"unit1": {"lane1": lane_vars}}))
+        afc.VarFile = str(tmp_path / "vars")
+        afc.spoolman = spoolman
+        afc.tools = {}
+        afc.buffers = {}
+        afc.snapmaker_printer = False
+        afc.current = "lane1"
+        afc.bypass = MagicMock()
+        afc.bypass.name = "bypass"
+        afc.bypass.filament_present = False
+        for attr in ("handle_moonraker_connect", "print_version", "save_vars",
+                     "get_bypass_state", "spool"):
+            setattr(afc, attr, MagicMock())
+        afc.verify_macro_positions = MagicMock(return_value="")
+        afc.function.get_current_lane_obj.return_value = None
+
+        lane_stub = MagicMock()
+        lane_stub.multi_hubs_found = False
+
+        class _Lanes(dict):
+            def append(self, name):
+                self[name] = lane_stub
+
+        unit = MagicMock()
+        unit.lanes = _Lanes()
+        unit.full_name = ["unit1"]
+        unit.system_Test.return_value = True
+        lane = MagicMock()
+        lane.name = "lane1"
+        lane.unit = "unit1"
+        lane.spool_id = None
+        lane.spool_vendor = ""
+        lane.filament_name = ""
+        lane.runout_lane = None
+        lane.map = None
+        lane.unit_obj = unit
+        afc.units = {"unit1": unit}
+        afc.lanes = {"lane1": lane}
+
+        prep.PREP(MagicMock())
+        return lane, afc
+
+    def test_restores_vendor_and_name_without_spoolman(self, tmp_path):
+        lane, _ = self._run_prep({"spool_vendor": "Polymaker",
+                               "filament_name": "PolyTerra PLA"}, tmp_path=tmp_path)
+        assert lane.spool_vendor == "Polymaker"
+        assert lane.filament_name == "PolyTerra PLA"
+
+    def test_missing_keys_leave_vendor_and_name_unchanged(self, tmp_path):
+        lane, _ = self._run_prep({"material": "PLA"}, tmp_path=tmp_path)
+        assert lane.spool_vendor == ""
+        assert lane.filament_name == ""
+
+    def test_vendor_key_alone_does_not_set_name(self, tmp_path):
+        lane, _ = self._run_prep({"spool_vendor": "Elegoo"}, tmp_path=tmp_path)
+        assert lane.spool_vendor == "Elegoo"
+        assert lane.filament_name == ""
+
+    def test_name_key_alone_does_not_set_vendor(self, tmp_path):
+        lane, _ = self._run_prep({"filament_name": "PLA"}, tmp_path=tmp_path)
+        assert lane.spool_vendor == ""
+        assert lane.filament_name == "PLA"
+
+    def test_spoolman_with_spool_id_defers_to_spoolman(self, tmp_path):
+        lane, afc = self._run_prep({"spool_id": 5, "spool_vendor": "Stale",
+                                    "filament_name": "Stale"},
+                                   spoolman=MagicMock(), tmp_path=tmp_path)
+        afc.spool.set_spoolID.assert_called_once_with(lane, 5, save_vars=False)
+        assert lane.spool_vendor == ""
+        assert lane.filament_name == ""
+
+    def test_spoolman_without_spool_id_restores_saved_values(self, tmp_path):
+        lane, afc = self._run_prep({"spool_vendor": "Elegoo", "filament_name": "PLA"},
+                                   spoolman=MagicMock(), tmp_path=tmp_path)
+        afc.spool.set_spoolID.assert_not_called()
+        assert lane.spool_vendor == "Elegoo"
+        assert lane.filament_name == "PLA"
