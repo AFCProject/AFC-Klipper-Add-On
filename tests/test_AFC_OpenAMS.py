@@ -2137,6 +2137,78 @@ class TestAfcAMSInit:
             desc="Internal: auto-recover from a stuck spool via unload+reload")
 
 
+# ── _current_oams_action / get_status ─────────────────────────────────────
+
+class TestCurrentOamsAction:
+    def test_no_oams_returns_empty(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        assert ams._current_oams_action() == ""
+
+    def test_oams_with_no_action_status_returns_empty(self):
+        oams = types.SimpleNamespace(action_status=None)
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        assert ams._current_oams_action() == ""
+
+    def test_known_action_maps_to_its_name(self):
+        oams = types.SimpleNamespace(action_status=OAMSStatus.LOADING)
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        assert ams._current_oams_action() == "loading"
+
+    def test_unknown_action_maps_to_busy(self):
+        oams = types.SimpleNamespace(action_status=12345)
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        assert ams._current_oams_action() == "busy"
+
+
+class TestGetStatus:
+    def test_no_oams_reports_disconnected_and_idle(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        response = ams.get_status()
+        assert response["oams_connected"] is False
+        assert "oams_current_spool" not in response
+        assert response["oams_action"] == "idle"
+        assert response["oams_busy"] is False
+
+    def test_oams_present_populates_sensor_and_failure_fields(self):
+        oams = types.SimpleNamespace(
+            current_spool=1, fps_value=0.5, f1s_hes_value=[1, 0, 0, 0],
+            hub_hes_value=[0, 1, 0, 0], load_retry_failures=2,
+            unload_retry_failures=3, action_status=OAMSStatus.UNLOADING)
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        response = ams.get_status()
+        assert response["oams_connected"] is True
+        assert response["oams_current_spool"] == 1
+        assert response["oams_fps_value"] == 0.5
+        assert response["oams_f1s_hes"] == [1, 0, 0, 0]
+        assert response["oams_hub_hes"] == [0, 1, 0, 0]
+        assert response["oams_load_failures"] == 2
+        assert response["oams_unload_failures"] == 3
+        assert response["oams_action"] == "unloading"
+
+    def test_busy_reflects_operation_active(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        ams._operation_active = True
+        assert ams.get_status()["oams_busy"] is True
+
+    def test_monitor_without_state_skips_load_state_fields(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        ams._monitor = types.SimpleNamespace(state=None)
+        response = ams.get_status()
+        assert "oams_load_state" not in response
+
+    def test_monitor_state_populates_load_state_fields(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        ams._monitor = types.SimpleNamespace(state=types.SimpleNamespace(
+            state=FPSLoadState.LOADED, current_lane="lane1",
+            current_spool_idx=2, clog_start_time=123.0, stuck_start_time=None))
+        response = ams.get_status()
+        assert response["oams_load_state"] == "loaded"
+        assert response["oams_current_lane"] == "lane1"
+        assert response["oams_current_spool_idx"] == 2
+        assert response["oams_clog_detecting"] is True
+        assert response["oams_stuck_detecting"] is False
+
+
 # ── Small pure-logic helpers ──────────────────────────────────────────────
 
 class TestCalibrationLaneMessage:
@@ -3665,6 +3737,77 @@ class TestSyncLanesFromHardware:
         assert lane._load_state is False
         assert ams._last_f1s[2] is None  # never touched
         assert ams._last_hub[2] is None
+
+
+class TestUpdateF1sDebounced:
+    def test_lazy_inits_pending_state_when_missing(self):
+        # Shim-built test units bypass __init__, so this must self-heal
+        # rather than crash with "_f1s_pending_since not found".
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        lane = _make_lane("lane1")
+        del ams._f1s_pending_since
+        ams._update_f1s_debounced(lane, "lane1", 0, True, 100.0, resync_prev=True)
+        assert ams._f1s_pending_since == [None, None, None, None]
+
+    def test_an_edge_still_pending_keeps_reporting_the_committed_value(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        lane = _make_lane("lane1")
+        ams._last_f1s[0] = False
+        ams._update_f1s_debounced(lane, "lane1", 0, True, 100.0, resync_prev=False)
+
+        ams._update_f1s_debounced(lane, "lane1", 0, True, 100.3, resync_prev=False)
+
+        # f1s_debounce defaults to 0.75s; only 0.3s has elapsed.
+        assert lane.prep_state is False
+        assert lane.loaded_to_hub is False
+        assert ams._f1s_pending_since[0] == 100.0
+        assert ams._last_f1s[0] is False
+        lane.handle_load_runout.assert_not_called()
+
+
+class TestUpdateHubDebounced:
+    def test_lazy_inits_pending_state_when_missing(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        lane = _make_lane("lane1")
+        del ams._hub_pending_since
+        ams._update_hub_debounced(lane, 0, True, 100.0, resync_prev=True)
+        assert ams._hub_pending_since == [None, None, None, None]
+
+    def test_an_edge_starts_the_pending_window(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        lane = _make_lane("lane1")
+        ams._last_hub[0] = False
+
+        ams._update_hub_debounced(lane, 0, True, 100.0, resync_prev=False)
+
+        assert ams._hub_pending_since[0] == 100.0
+        assert lane._load_state is False
+        assert ams._last_hub[0] is False
+
+    def test_an_edge_still_pending_keeps_reporting_the_committed_value(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        lane = _make_lane("lane1")
+        ams._last_hub[0] = False
+        ams._update_hub_debounced(lane, 0, True, 100.0, resync_prev=False)
+
+        ams._update_hub_debounced(lane, 0, True, 100.2, resync_prev=False)
+
+        # hub_debounce defaults to 0.5s; only 0.2s has elapsed.
+        assert lane._load_state is False
+        assert ams._hub_pending_since[0] == 100.0
+        assert ams._last_hub[0] is False
+
+    def test_an_edge_held_long_enough_commits(self):
+        ams, afc, printer, reactor = _make_ams(oams=None)
+        lane = _make_lane("lane1")
+        ams._last_hub[0] = False
+        ams._update_hub_debounced(lane, 0, True, 100.0, resync_prev=False)
+
+        ams._update_hub_debounced(lane, 0, True, 100.6, resync_prev=False)
+
+        assert lane._load_state is True
+        assert ams._hub_pending_since[0] is None
+        assert ams._last_hub[0] is True
 
 
 class TestPollOamsSensors:

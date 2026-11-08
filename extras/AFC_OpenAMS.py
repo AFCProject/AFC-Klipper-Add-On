@@ -674,8 +674,8 @@ class afcAMS(afcUnit):
         # compressed (FPS ~1.0, ~0.46 slack), so the gears pull the 20 mm out of
         # it (good loads fell 0.05-0.16) and the encoder does not turn at all; a
         # jammed filament leaves it flat.
-        self._engagement_min_fps_drop = config.getfloat(
-            "engagement_min_fps_drop", 0.03, minval=0.0, maxval=1.0)
+        self._engagement_min_fps_drop = config.getfloat("engagement_min_fps_drop", 0.03,
+                                                        minval=0.0, maxval=1.0)
         self._engagement_params: Dict[str, tuple[float, float]] = {}
         # Why the last load failed, for the pause message.
         self._load_failure = ""
@@ -714,15 +714,12 @@ class afcAMS(afcUnit):
 
         # Sensor polling rate. The poll only reads host-cached values, so a
         # fast rate adds no bus traffic.
-        self.sensor_poll_interval = config.getfloat(
-            "sensor_poll_interval", 0.25, minval=0.05)
+        self.sensor_poll_interval = config.getfloat("sensor_poll_interval", 0.25, minval=0.05)
         # A raw f1s change must hold this long before the host acts on it, so
         # a chattering sensor does not fire false runout or insert events.
-        self.f1s_debounce = config.getfloat(
-            "f1s_debounce", 0.75, minval=0.0)
+        self.f1s_debounce = config.getfloat("f1s_debounce", 0.75, minval=0.0)
         # Same for the hub HES as seen by the virtual hub; live reads stay raw.
-        self.hub_debounce = config.getfloat(
-            "hub_debounce", 0.5, minval=0.0)
+        self.hub_debounce = config.getfloat("hub_debounce", 0.5, minval=0.0)
 
         # Sensor polling state
         self._last_f1s: list[Optional[bool]] = [None] * 4
@@ -989,9 +986,8 @@ class afcAMS(afcUnit):
         # Log action transitions, before the gate so loads/unloads are seen.
         action = self._current_oams_action()
         if action != self._current_action:
-            self.logger.info(
-                f"OpenAMS {self.name}: {self._current_action or 'idle'} -> "
-                f"{action or 'idle'}")
+            self.logger.info(f"OpenAMS {self.name}: {self._current_action or 'idle'} -> "
+                             f"{action or 'idle'}")
             self._current_action = action
 
         poll_iv = getattr(self, 'sensor_poll_interval', 0.25)
@@ -1011,17 +1007,16 @@ class afcAMS(afcUnit):
 
             # F1S -> prep_state and loaded_to_hub, debounced.
             if slot < len(f1s_values):
-                self._update_f1s_debounced(
-                    lane, lane_name, slot, bool(f1s_values[slot]),
-                    eventtime, resync_prev)
+                self._update_f1s_debounced(lane, lane_name, slot, bool(f1s_values[slot]),
+                                           eventtime, resync_prev)
 
             # Hub HES -> raw_load_state: live hub-junction occupancy aggregated by
             # the native virtual hub (any(lane.raw_load_state)). 0 at idle is
             # correct — filament is staged clear of the junction.
             # Debounced like f1s; load and scan paths read the live values.
             if slot < len(hub_values):
-                self._update_hub_debounced(
-                    lane, slot, bool(hub_values[slot]), eventtime, resync_prev)
+                self._update_hub_debounced(lane, slot, bool(hub_values[slot]), eventtime,
+                                           resync_prev)
 
         return eventtime + poll_iv
 
@@ -1045,8 +1040,7 @@ class afcAMS(afcUnit):
         if getattr(self, '_f1s_pending_since', None) is None:
             self._f1s_pending_since = [None] * 4
         debounce = getattr(self, 'f1s_debounce', 0.75)
-        committed = (self._last_f1s[slot]
-                     if slot < len(self._last_f1s) else None)
+        committed = (self._last_f1s[slot] if slot < len(self._last_f1s) else None)
 
         if resync_prev or committed is None:
             self._last_f1s[slot] = raw_f1s
@@ -1081,8 +1075,8 @@ class afcAMS(afcUnit):
         lane.handle_load_runout(eventtime, raw_f1s)
         self._last_f1s[slot] = raw_f1s
 
-    def _update_hub_debounced(self, lane: AFCLane, slot: int, raw_hub: bool,
-                              eventtime: float, resync_prev: bool) -> None:
+    def _update_hub_debounced(self, lane: AFCLane, slot: int, raw_hub: bool, eventtime: float,
+                              resync_prev: bool) -> None:
         """
         Debounced hub-HES handling for one lane: a change commits to
         ``lane._load_state`` only after holding for ``hub_debounce`` seconds.
@@ -1096,8 +1090,7 @@ class afcAMS(afcUnit):
         if getattr(self, '_hub_pending_since', None) is None:
             self._hub_pending_since = [None] * 4
         debounce = getattr(self, 'hub_debounce', 0.5)
-        committed = (self._last_hub[slot]
-                     if slot < len(self._last_hub) else None)
+        committed = (self._last_hub[slot] if slot < len(self._last_hub) else None)
 
         if resync_prev or committed is None:
             self._last_hub[slot] = raw_hub
@@ -1146,9 +1139,8 @@ class afcAMS(afcUnit):
         """
         engagement_length, engagement_speed = self.get_engagement_params(cur_lane.name)
 
-        self.logger.info(
-            f"Verifying engagement for {cur_lane.name}: "
-            f"{engagement_length:.1f}mm at {engagement_speed:.0f}mm/min")
+        self.logger.info(f"Verifying engagement for {cur_lane.name}: "
+                         f"{engagement_length:.1f}mm at {engagement_speed:.0f}mm/min")
 
         if self._monitor:
             self._monitor.notify_engagement_start()
@@ -1159,10 +1151,10 @@ class afcAMS(afcUnit):
             # encoder registers movement. Without this the follower may be
             # idle and the encoder won't move, producing a false engagement
             # failure even after a physically successful load.
-            if self._follower and self.oams:
-                self._follower.enable_follower(
-                    self._get_monitor_state(), self.oams, 1,
-                    "engagement verification", force=True)
+            if (self._follower
+                and self.oams):
+                self._follower.enable_follower(self._get_monitor_state(), self.oams, 1,
+                                               "engagement verification", force=True)
 
             # Wait for FPS pressure to normalize
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 1.5)
@@ -1171,7 +1163,8 @@ class afcAMS(afcUnit):
             # load can still be missing the load's last clicks, which would count as
             # engagement
             encoder_before = 0
-            if self.oams and hasattr(self.oams, 'encoder_clicks'):
+            if (self.oams
+                and hasattr(self.oams, 'encoder_clicks')):
                 encoder_before = self.oams.encoder_clicks or 0
             fps_before = self._oams_fps_value()
 
@@ -1186,39 +1179,40 @@ class afcAMS(afcUnit):
             # Check encoder movement, once a status has carried the count
             self.afc.reactor.pause(self.afc.reactor.monotonic() + ENGAGEMENT_SETTLE)
             encoder_after = 0
-            if self.oams and hasattr(self.oams, 'encoder_clicks'):
+            if (self.oams
+                and hasattr(self.oams, 'encoder_clicks')):
                 encoder_after = self.oams.encoder_clicks or 0
 
             encoder_delta = abs(encoder_after - encoder_before)
             min_movement = self._engagement_min_clicks
 
             if encoder_delta >= min_movement:
-                self.logger.info(
-                    f"Engagement verified: encoder moved {encoder_delta} clicks")
+                self.logger.info(f"Engagement verified: encoder moved {encoder_delta} clicks")
                 return True
 
             fps_after = self._oams_fps_value()
             if (self._engagement_min_fps_drop > 0
-                    and fps_before is not None and fps_after is not None
-                    and fps_before - fps_after >= self._engagement_min_fps_drop):
-                self.logger.info(
-                    f"Engagement verified: FPS fell {fps_before:.2f} -> {fps_after:.2f} "
-                    f"(encoder moved {encoder_delta} clicks)")
+                and fps_before is not None
+                and fps_after is not None
+                and fps_before - fps_after >= self._engagement_min_fps_drop):
+                self.logger.info(f"Engagement verified: FPS fell {fps_before:.2f} -> {fps_after:.2f} "
+                                 f"(encoder moved {encoder_delta} clicks)")
                 return True
 
             # Brief retry
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.3)
             encoder_retry = 0
-            if self.oams and hasattr(self.oams, 'encoder_clicks'):
+            if (self.oams
+                and hasattr(self.oams, 'encoder_clicks')):
                 encoder_retry = abs((self.oams.encoder_clicks or 0) - encoder_before)
             if encoder_retry >= min_movement:
-                self.logger.info(
-                    f"Engagement verified on retry: encoder moved {encoder_retry} clicks")
+                self.logger.info(f"Engagement verified on retry: encoder moved {encoder_retry} clicks")
                 return True
 
             self._load_failure = (f"encoder moved only {encoder_delta} clicks of the "
                                   f"{min_movement} needed")
-            if fps_before is not None and fps_after is not None:
+            if (fps_before is not None
+                and fps_after is not None):
                 self._load_failure += f", FPS {fps_before:.2f} -> {fps_after:.2f}"
             self.logger.error(f"Engagement verification failed: {self._load_failure}")
             return False
@@ -1842,9 +1836,8 @@ class afcAMS(afcUnit):
         :param cur_extruder: the lane's extruder object.
         """
         if self._follower:
-            self._follower.enable_follower(
-                self._get_monitor_state(), self.oams, 0,
-                "reverse before unload", force=True)
+            self._follower.enable_follower(self._get_monitor_state(), self.oams, 0,
+                                           "reverse before unload", force=True)
 
     def _oams_unload_inner(self, cur_lane: AFCLane, cur_extruder: AFCExtruder) -> bool:
         """
@@ -2028,27 +2021,27 @@ class afcAMS(afcUnit):
                 # it only stops, since reversing alone would fight the gears.
                 retract_dist = getattr(cur_lane.extruder_obj, 'tool_stn_unload', 0)
                 if self._follower:
-                    if retract_dist and retract_dist > 0:
-                        self._follower.enable_follower(
-                            self._get_monitor_state(), self.oams, 0,
-                            "engagement cleanup — reverse follower", force=True)
+                    if (retract_dist
+                        and retract_dist > 0):
+                        self._follower.enable_follower(self._get_monitor_state(), self.oams, 0,
+                                                       "engagement cleanup — reverse follower",
+                                                       force=True)
                         self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.5)
                     else:
-                        self._follower.set_follower_state(
-                            self._get_monitor_state(), self.oams, 0, 0,
-                            "engagement cleanup — stop follower", force=True)
-                if retract_dist and retract_dist > 0:
+                        self._follower.set_follower_state(self._get_monitor_state(), self.oams, 0,
+                                                          0, "engagement cleanup — stop follower",
+                                                          force=True)
+                if (retract_dist
+                    and retract_dist > 0):
                     unload_length = retract_dist + 10.0
                     retract_speed = getattr(cur_lane.extruder_obj, 'tool_unload_speed', 25.0) * 60.0
-                    self._oams_extrude(
-                        -unload_length, retract_speed, "engagement_cleanup_retract")
+                    self._oams_extrude(-unload_length, retract_speed, "engagement_cleanup_retract")
 
                 # Stop follower before hardware cleanup — MCU rejects
                 # commands while follower is active.
                 if self._follower:
-                    self._follower.set_follower_state(
-                        self._get_monitor_state(), self.oams, 0, 0,
-                        "stop before cleanup", force=True)
+                    self._follower.set_follower_state(self._get_monitor_state(), self.oams, 0, 0,
+                                                      "stop before cleanup", force=True)
                     self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.5)
 
                 # Hardware cleanup — gate each command with idle wait
@@ -2072,11 +2065,9 @@ class afcAMS(afcUnit):
                     self.afc.reactor.pause(self.afc.reactor.monotonic() + 2.0)
                     # Re-enable follower forward for next attempt
                     if self._follower:
-                        self._follower.enable_follower(
-                            self._get_monitor_state(), self.oams, 1,
-                            "before retry", force=True)
-                        self.afc.reactor.pause(
-                            self.afc.reactor.monotonic() + 0.5)
+                        self._follower.enable_follower(self._get_monitor_state(), self.oams, 1,
+                                                       "before retry", force=True)
+                        self.afc.reactor.pause(self.afc.reactor.monotonic() + 0.5)
 
             except Exception as e:
                 self.logger.error(f"OAMS load error attempt {attempt+1}: {e}")

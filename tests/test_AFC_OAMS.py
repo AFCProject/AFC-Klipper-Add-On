@@ -1111,6 +1111,53 @@ class TestTheErrorStateIsWhatActuallyStopsTheUnit:
         oams.set_led_error.assert_called_once_with(3, 0)
 
 
+class TestBayFlags:
+    def test_creates_and_caches_the_set_when_missing(self):
+        oams = _make_oams()
+        del oams._flagged_bays
+        flags = oams._bay_flags()
+        assert flags == set()
+        assert oams._flagged_bays is flags
+
+    def test_returns_the_existing_set_when_present(self):
+        oams = _make_oams()
+        oams._flagged_bays = {2}
+        assert oams._bay_flags() is oams._flagged_bays
+
+
+class TestFlagBay:
+    def test_ignores_none(self):
+        oams = _make_oams()
+        oams._flag_bay(None)
+        assert oams._bay_flags() == set()
+
+    def test_ignores_out_of_range(self):
+        oams = _make_oams()
+        oams._flag_bay(4)
+        oams._flag_bay(-1)
+        assert oams._bay_flags() == set()
+
+    def test_flags_a_valid_bay(self):
+        oams = _make_oams()
+        oams._flag_bay(2)
+        assert oams._bay_flags() == {2}
+
+
+class TestCmdOamsSetLedError:
+    def test_missing_spool_raises(self):
+        oams = _make_oams()
+        gcmd = _make_gcmd({"VALUE": 1})
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_SET_LED_ERROR(gcmd)
+
+    def test_out_of_range_spool_raises(self):
+        oams = _make_oams()
+        gcmd = _make_gcmd({"SPOOL": 4, "VALUE": 1})
+        with pytest.raises(Exception):
+            oams.cmd_OAMS_SET_LED_ERROR(gcmd)
+        gcmd.error.assert_called_once_with("SPOOL index (0-3) is required")
+
+
 class TestWeOnlyClearWhatWeLit:
     """
     The clear runs on the ordinary load and unload paths, so it must not write
@@ -1247,6 +1294,22 @@ class TestWorkingTheExtruderFree:
         oams.current_spool = None
         assert oams._stall_retract_mm() == 40.0
 
+    def test_a_lane_lookup_failure_falls_back_too(self):
+        # afc.lanes (or _resolve_lane_name) raising must not break the retry
+        # loop; the fallback distance is still worth trying.
+        oams = self._oams()
+        oams.current_spool = 1
+        oams._resolve_lane_name = MagicMock(side_effect=Exception("no hardware service"))
+        assert oams._stall_retract_mm() == 40.0
+
+    def test_zero_from_a_stubbed_distance_skips_the_loop_body(self):
+        # dist can only be <= 0 here if something overrides _stall_retract_mm
+        # itself, since every real source (config, lane, fallback) is positive.
+        oams = self._oams()
+        oams._stall_retract_mm = MagicMock(return_value=0.0)
+        oams._work_the_extruder_free()
+        oams.gcode.run_script_from_command.assert_not_called()
+
     def test_zero_skips_retracting_entirely(self):
         oams = self._oams(unload_stall_retract_mm=0.0,
                           unload_stall_retract_tries=0)
@@ -1345,6 +1408,26 @@ class TestAWedgedUnitIsActuallyCancelled:
         oams.unload_spool_with_retry(max_retries=3)
 
         assert oams.abort_current_action.call_args_list[0].kwargs.get("force") is True
+
+    def test_a_failed_final_abort_still_stops_the_unit(self):
+        # The give-up abort can itself fail (e.g. the MCU is wedged harder
+        # than expected); stop_unit_motion must still run rather than leave
+        # the unit driving filament with nothing left to catch the error.
+        oams = _make_oams()
+        oams.abort_current_action = MagicMock(side_effect=Exception("mcu offline"))
+        oams.stop_unit_motion = MagicMock()
+        oams.reactor.pause = MagicMock()
+        oams.gcode = MagicMock()
+        oams.unload_spool = MagicMock(return_value=(False, "OAMS is busy"))
+
+        success, _ = oams.unload_spool_with_retry(max_retries=1)
+
+        assert success is False
+        oams.stop_unit_motion.assert_called_once()
+        assert (
+            "warning",
+            "OAMS[0]: Failed to abort after giving up on the unload: mcu offline",
+        ) in oams.logger.messages
 
 
 class TestUnloadSpoolWithRetry:
@@ -2561,6 +2644,26 @@ class TestAbortCurrentAction:
             ("debug", "OAMS[0]: Abort without waiting - status cleared"),
         ]
 
+    def test_forced_wait_with_nothing_in_flight_still_completes(self):
+        # had_action is False here (nothing was tracked when the abort
+        # started, only force+_unit_busy let it proceed), so the wait loop's
+        # own status-clearing block must be skipped; the abort still reports
+        # completion rather than getting stuck.
+        oams = _make_oams()
+        oams.action_status = None
+        oams.action_status_code = OAMSOpCode.ERROR_BUSY
+        oams._unit_busy = True
+        oams.reactor.pause = MagicMock()
+        oams.logger.messages.clear()
+
+        oams.abort_current_action(wait=True, force=True)
+
+        oams.oams_load_spool_cancel_cmd.send.assert_called_once_with()
+        oams.reactor.pause.assert_not_called()
+        # Unchanged: had_action was False, so the code-recording block never ran.
+        assert oams.action_status_code == OAMSOpCode.ERROR_BUSY
+        assert ("info", "OAMS[0]: Abort complete") in oams.logger.messages
+
 
 # ── cmd_OAMS_FOLLOWER ──────────────────────────────────────────────────────────
 
@@ -2918,6 +3021,29 @@ class TestOamsActionStatus:
             "debug",
             "OAMS status update (non-action): forward following (success)",
         ) in oams.logger.messages
+
+    def test_follower_status_records_motion_status(self):
+        oams = _make_oams()
+        oams.reactor._monotonic = 42.0
+        oams._oams_action_status(
+            {"action": OAMSStatus.REVERSE_FOLLOWING, "code": OAMSOpCode.SUCCESS}
+        )
+        assert oams.motion_status == OAMSStatus.REVERSE_FOLLOWING
+        assert oams.motion_status_code == OAMSOpCode.SUCCESS
+        assert oams.motion_status_time == 42.0
+
+    def test_a_monotonic_failure_still_records_the_motion_state(self):
+        # Timestamping the update is best-effort; a reactor error must not
+        # stop the motor-state fields themselves from being recorded.
+        oams = _make_oams()
+        oams.motion_status_time = 7.0
+        oams.reactor.monotonic = MagicMock(side_effect=Exception("reactor gone"))
+        oams._oams_action_status(
+            {"action": OAMSStatus.STOPPED, "code": OAMSOpCode.SUCCESS}
+        )
+        assert oams.motion_status == OAMSStatus.STOPPED
+        assert oams.motion_status_code == OAMSOpCode.SUCCESS
+        assert oams.motion_status_time == 7.0
 
     def test_unhandled_status_logged_as_debug(self):
         oams = _make_oams()
