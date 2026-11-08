@@ -42,7 +42,7 @@ IP_LABEL = "public IP address"
 _SECRET_KEYS = r"(?:api[_-]?key|token|secret|passw(?:or)?d|passphrase|authorization|credential)"
 SECRET_KV_RE = re.compile(
     rf"(?P<key>[\w.\-]*{_SECRET_KEYS}[\w.\-]*[\"']?[ \t]*[:=][ \t]*)\S[^\r\n]*", re.I)
-URL_SECRET_RE = re.compile(r"(?P<key>\burl[ \t]*[:=][ \t]*)(?!https?://)\S[^\r\n]*", re.I)
+URL_SECRET_RE = re.compile(r"(?P<key>\burl[ \t]*[:=][ \t]*)\S[^\r\n]*", re.I)
 URL_CRED_RE = re.compile(r"(?P<head>\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]+:)[^\s/@]+@")
 BEARER_RE = re.compile(r"(?P<head>\bBearer[ \t]+)[\w.~+/=\-]{8,}")
 TOKEN_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}"

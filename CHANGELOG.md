@@ -11,8 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `afc-debug.sh` now saves a zip archive of the logs if the upload to termbin.com fails, instead of discarding them.
 
 ### Added
-- `afc-debug.sh` now redacts secrets (API keys, passwords, tokens, credentials in URLs) and public IP addresses before 
-  uploading or zipping. Private and reserved addresses such as `192.168.x.x` and `10.x.x.x` are kept. Use `--no-redact` to disable.
+- `afc-debug.sh` now redacts secrets (API keys, passwords, tokens, credentials in URLs) and public IP addresses before uploading or zipping. Private and reserved addresses such as `192.168.x.x` and `10.x.x.x` are kept. Use `--no-redact` to disable.
 
 ## [11-02-2026]
 ### Fixed

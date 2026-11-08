@@ -941,9 +941,12 @@ class TestRedactText:
         assert dbg.redact_text("url: tgram://12345:AAEbot/9876") == (
             "url: <redacted>", {"secret value": 1})
 
-    def test_http_url_kept(self):
-        text = "url: https://example.com/hook"
-        assert dbg.redact_text(text) == (text, {})
+    @pytest.mark.parametrize("url", [
+        "https://discord.com/api/webhooks/1/abc",
+        "http://hooks.example.com/services/T0/B0/xyz",
+    ])
+    def test_http_webhook_url_redacted(self, url):
+        assert dbg.redact_text(f"url: {url}") == ("url: <redacted>", {"secret value": 1})
 
     def test_stream_url_key_not_treated_as_url_secret(self):
         text = "stream_url: rtsp://cam/stream"
