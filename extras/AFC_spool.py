@@ -577,10 +577,7 @@ class AFCSpool:
         SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyTerra PLA"
         ```
         """
-        lane = gcmd.get('LANE', None)
-        if lane is None:
-            self.logger.info("No LANE Defined")
-            return
+        lane = gcmd.get('LANE')
         if lane not in self.afc.lanes:
             self.logger.info(f"{lane} Unknown")
             return

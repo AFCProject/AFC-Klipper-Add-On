@@ -929,11 +929,15 @@ class TestSetFilamentInfo:
         assert lane.spool_vendor == ""
         assert lane.filament_name == ""
 
-    def test_no_lane_param_logs_info(self):
-        spool = _make_spool()
+    def test_no_lane_param_raises_gcmd_error(self):
+        spool, lane = self._setup(vendor="Old", name="Old Name")
         gcmd = _make_gcmd(VENDOR="Elegoo")
-        spool.cmd_SET_FILAMENT_INFO(gcmd)
-        assert spool.logger.messages == [("info", "No LANE Defined")]
+        with pytest.raises(Exception):
+            spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.spool_vendor == "Old"
+        assert lane.filament_name == "Old Name"
+        spool.afc.save_vars.assert_not_called()
+        assert spool.logger.messages == []
 
     def test_lane_not_in_lanes_logs_info(self):
         spool = _make_spool()
