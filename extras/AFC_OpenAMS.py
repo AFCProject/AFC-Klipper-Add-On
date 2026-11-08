@@ -1224,6 +1224,8 @@ class afcAMS(afcUnit):
     def _oams_fps_value(self) -> Optional[float]:
         """
         Last FPS reading the OAMS reported, or None when it has none.
+
+        :return float: the last FPS reading, or `None` when unavailable.
         """
         value = getattr(self.oams, 'fps_value', None) if self.oams else None
         return value if isinstance(value, (int, float)) else None
