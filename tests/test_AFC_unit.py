@@ -301,6 +301,17 @@ class TestOnFilamentRemove:
         unit.printer.send_event.assert_not_called()
 
 
+class TestFinishUnload:
+    def test_returns_none_and_has_no_side_effects(self):
+        unit = _make_unit()
+        lane = MagicMock()
+
+        result = unit.finish_unload(lane)
+
+        assert result is None
+        assert lane.method_calls == []
+
+
 # ── LED helpers ───────────────────────────────────────────────────────────────
 
 class TestLaneStatusLeds:
