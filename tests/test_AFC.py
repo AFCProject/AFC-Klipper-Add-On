@@ -4576,6 +4576,82 @@ class TestToolUnloadDisplayStatusLifecycle:
         afc.restore_toolhead_temp.assert_not_called()
 
 
+class TestToolLoadFailureState:
+    """TOOL_LOAD leaves LOADING when load_sequence fails without pausing."""
+
+    def _make(self):
+        return TestToolLoadDisplayStatusLifecycle()._make()
+
+    def test_unpaused_failure_returns_state_to_idle(self):
+        afc, lane, _ = self._make()
+        afc.load_sequence = MagicMock(return_value=False)
+
+        assert not afc.TOOL_LOAD(lane)
+
+        assert afc.current_state == State.IDLE
+
+    def test_paused_failure_keeps_error_state(self):
+        afc, lane, _ = self._make()
+
+        def fail_with_pause(*args):
+            afc.current_state = State.ERROR
+            return False
+        afc.load_sequence = MagicMock(side_effect=fail_with_pause)
+
+        assert not afc.TOOL_LOAD(lane)
+
+        assert afc.current_state == State.ERROR
+
+    def test_state_is_loading_while_load_sequence_runs(self):
+        afc, lane, _ = self._make()
+        seen = []
+        afc.load_sequence = MagicMock(
+            side_effect=lambda *args: seen.append(afc.current_state) or False)
+
+        assert not afc.TOOL_LOAD(lane)
+
+        assert seen == [State.LOADING]
+        assert afc.current_state == State.IDLE
+
+
+class TestToolUnloadFailureState:
+    """TOOL_UNLOAD leaves UNLOADING when unload_sequence fails without pausing."""
+
+    def _make(self):
+        return TestToolUnloadDisplayStatusLifecycle()._make()
+
+    def test_unpaused_failure_returns_state_to_idle(self):
+        afc, lane, _ = self._make()
+        afc.unload_sequence = MagicMock(return_value=False)
+
+        assert not afc.TOOL_UNLOAD(lane, force_unload=True)
+
+        assert afc.current_state == State.IDLE
+
+    def test_paused_failure_keeps_error_state(self):
+        afc, lane, _ = self._make()
+
+        def fail_with_pause(*args):
+            afc.current_state = State.ERROR
+            return False
+        afc.unload_sequence = MagicMock(side_effect=fail_with_pause)
+
+        assert not afc.TOOL_UNLOAD(lane, force_unload=True)
+
+        assert afc.current_state == State.ERROR
+
+    def test_state_is_unloading_while_unload_sequence_runs(self):
+        afc, lane, _ = self._make()
+        seen = []
+        afc.unload_sequence = MagicMock(
+            side_effect=lambda *args: seen.append(afc.current_state) or False)
+
+        assert not afc.TOOL_UNLOAD(lane, force_unload=True)
+
+        assert seen == [State.UNLOADING]
+        assert afc.current_state == State.IDLE
+
+
 class TestBypassUnloadDisplayStatus:
     """The manual bypass-unload path (_check_bypass) doesn't go through
     TOOL_UNLOAD's normal unload_sequence wrapping, so it needs its own
