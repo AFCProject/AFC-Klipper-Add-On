@@ -663,6 +663,20 @@ class MockPrinter:
             self._objects[name] = val
         return val
 
+    def lookup_objects(self, module=None):
+        """Mirrors real Klipper's Printer.lookup_objects: with no module,
+        every registered object; with one, every "<module> <name>" section
+        plus a bare "<module>" section if one was registered under that
+        exact name."""
+        if module is None:
+            return list(self._objects.items())
+        prefix = module + ' '
+        objs = [(name, self._objects[name]) for name in self._objects
+                if name.startswith(prefix)]
+        if module in self._objects:
+            return [(module, self._objects[module])] + objs
+        return objs
+
     _NO_DEFAULT = object()
 
     def load_object(self, config, name, default=_NO_DEFAULT):
