@@ -780,6 +780,18 @@ class MockConfig:
         val = self._require(option, default)
         return val if val is not None else ()
 
+    def getfloatlist(self, option, default=_MOCK_CONFIG_SENTINEL, sep=',', count=None, **kwargs):
+        val = self._require(option, default)
+        if val is None:
+            return None
+        parts = [p.strip() for p in val.split(sep)] if isinstance(val, str) else list(val)
+        result = tuple(float(p) for p in parts if str(p).strip())
+        if count is not None and len(result) != count:
+            from configfile import error as KlipperError
+            error_str = f"Option '{option}' in section '{self.section}' must have {count} elements"
+            raise KlipperError(error_str)
+        return result
+
     def error(self, msg):
         from configfile import error as KlipperError
         raise KlipperError(msg)

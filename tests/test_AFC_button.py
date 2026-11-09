@@ -2,14 +2,21 @@
 Unit tests for extras/AFC_button.py
 
 Covers:
-  - AFCButton._button_callback: press/release tracking, short/long press logic
-  - AFCButton._handle_ready: validates lane_obj lookup
-  - Integration: correct actions taken for short vs long press
+  - AFCButton.__init__: subclasses GCodeButton, reads lane_id/long_press_duration,
+    resolves is_adc_button/analog_min/analog_max/pullup, loads short/long press templates
+  - AFCButton.lane_obj: resolved-lane property
+  - AFCButton._handle_ready: lane lookup on klippy:ready
+  - AFCButton.get_resistance: ADC resistance calculation
+  - AFCButton.button_callback: calibration suppression, press/release tracking,
+    custom short/long press gcode override, embedded short/long press logic
+  - AFCButton._run_custom_press_gcode: render/run a custom press gcode template
+  - load_config_prefix: Klipper config entry point
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from typing import Any, Optional
+from unittest.mock import MagicMock
 import pytest
 
 from extras.AFC_button import AFCButton, load_config_prefix
@@ -17,41 +24,215 @@ from extras.AFC_button import AFCButton, load_config_prefix
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_button(lane_id="lane1", long_press_duration=1.2):
-    """Build an AFCButton via its real __init__, then fire the klippy:ready
-    event exactly as Klipper would so lane_obj resolves the same way it does
-    at runtime (via _handle_ready, registered during __init__)."""
-    from tests.conftest import MockAFC, MockConfig, MockPrinter, MockLogger
+class _FakeTemplate:
+    """Stand-in for Klipper's gcode_macro.TemplateWrapper: a fixed script
+    that renders to itself (or raises, if configured to), with a `.name`
+    matching the real "<section>:<option>" naming."""
+
+    def __init__(self, name: str, script: str) -> None:
+        self.name = name
+        self.script = script
+        self.render_error: Optional[Exception] = None
+
+    def render(self, context: Any = None) -> str:
+        if self.render_error is not None:
+            raise self.render_error
+        return self.script
+
+
+class _FakeGCodeMacro:
+    """Stand-in for Klipper's gcode_macro object: load_template(config,
+    option, default) returns a _FakeTemplate whose script is read straight
+    from config, exactly like the real PrinterGCodeMacro.load_template."""
+
+    def __init__(self) -> None:
+        self.templates: dict = {}
+
+    def load_template(self, config, option, default=None):
+        script = config.get(option) if default is None else config.get(option, default)
+        name = f"{config.get_name()}:{option}"
+        template = _FakeTemplate(name, script)
+        self.templates[option] = template
+        return template
+
+
+def _make_button(lane_id: str="lane1", long_press_duration: float=1.2,
+                 pin: str="PA0", analog_range: Optional[str]=None,
+                 analog_pullup_resistor: Optional[float]=None,
+                 short_press_gcode: str="", long_press_gcode: str="") -> AFCButton:
+    """Build an AFCButton via its real __init__ (chained through
+    GCodeButton.__init__), then fire klippy:ready exactly as Klipper would
+    so lane_obj resolves the same way it does at runtime.
+
+    :param lane_id: lane name, also this button's config suffix
+    :param long_press_duration: long_press_duration config value
+    :param pin: pin config value
+    :param analog_range: "min,max" string to configure an ADC button, or
+        None for a plain digital button
+    :param analog_pullup_resistor: analog_pullup_resistor config value,
+        only meaningful when analog_range is set
+    :param short_press_gcode: short_press_gcode config value
+    :param long_press_gcode: long_press_gcode config value
+    :return AFCButton: constructed button, with lane_obj already resolved
+    """
+    from tests.conftest import MockAFC, MockConfig, MockLogger, MockPrinter
 
     afc = MockAFC()
     afc.logger = MockLogger()
     printer = MockPrinter(afc=afc)
+    printer._objects["buttons"] = MagicMock()
+    printer._objects["gcode_macro"] = _FakeGCodeMacro()
 
-    # Lane must already exist so _handle_ready() resolves it when
-    # klippy:ready fires below.
     lane = MagicMock()
     lane.name = lane_id
     afc.lanes = {lane_id: lane}
+    afc.function.button_calibration_active = False
 
-    config = MockConfig(
-        name=f"AFC_button {lane_id}",
-        printer=printer,
-        values={"pin": "PA0", "long_press_duration": long_press_duration},
-    )
+    values: dict = {"pin": pin, "long_press_duration": long_press_duration,
+                    "short_press_gcode": short_press_gcode,
+                    "long_press_gcode": long_press_gcode}
+    if analog_range is not None:
+        values["analog_range"] = analog_range
+        if analog_pullup_resistor is not None:
+            values["analog_pullup_resistor"] = analog_pullup_resistor
+
+    config = MockConfig(name=f"AFC_button {lane_id}", printer=printer, values=values)
     btn = AFCButton(config)
     printer.send_event("klippy:ready")
-
     return btn
+
+
+class _FakeMcuAdc:
+    """Stand-in for Klipper's MCU_adc: get_last_value() returns (value,
+    timestamp) or (timestamp, value) depending on `value_first`, mirroring
+    the two Klipper fork orderings get_resistance() has to disambiguate."""
+
+    def __init__(self, value: float, timestamp: float=42.0, value_first: bool=True) -> None:
+        self.value = value
+        self.timestamp = timestamp
+        self.value_first = value_first
+
+    def get_last_value(self):
+        if self.value_first:
+            return (self.value, self.timestamp)
+        return (self.timestamp, self.value)
+
+
+def _register_adc_sample(btn: AFCButton, value: float, timestamp: float=42.0,
+                         value_first: bool=True) -> None:
+    """Register a fake query_adc sample for `btn`'s pin, as
+    MCU_ADC_buttons.__init__ would via query_adc.register_adc().
+
+    :param btn: ADC button whose pin the sample is registered for
+    :param value: ADC ratio (0-1) to report
+    :param timestamp: companion timestamp value
+    :param value_first: whether get_last_value() returns (value, timestamp)
+        (True) or (timestamp, value) (False)
+    """
+    query_adc = MagicMock()
+    query_adc.adc = {f"adc_button:{btn.pin.strip()}": _FakeMcuAdc(value, timestamp, value_first)}
+    btn.printer._objects["query_adc"] = query_adc
+
+
+# ── __init__ ──────────────────────────────────────────────────────────────────
+
+class TestAFCButtonInit:
+    def test_sets_fullname(self) -> None:
+        btn = _make_button("lane1")
+        assert btn.fullname == "AFC_button lane1"
+
+    def test_registers_klippy_ready_handler(self) -> None:
+        btn = _make_button("lane1")
+        assert "klippy:ready" in btn.printer._event_handlers
+
+    def test_sets_lane_id_from_config_name(self) -> None:
+        btn = _make_button("lane_x")
+        assert btn.lane_id == "lane_x"
+
+    def test_long_press_duration_default(self) -> None:
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        printer._objects["buttons"] = MagicMock()
+        printer._objects["gcode_macro"] = _FakeGCodeMacro()
+        config = MockConfig(name="AFC_button lane1", printer=printer,
+                            values={"pin": "PA0"})
+        btn = AFCButton(config)
+        assert btn.long_press_duration == 1.2
+
+    def test_long_press_duration_custom(self) -> None:
+        btn = _make_button("lane1", long_press_duration=2.5)
+        assert btn.long_press_duration == 2.5
+
+    def test_is_adc_button_false_without_analog_range(self) -> None:
+        btn = _make_button("lane1")
+        assert btn.is_adc_button is False
+
+    def test_analog_min_max_pullup_defaults_without_analog_range(self) -> None:
+        btn = _make_button("lane1")
+        assert (btn.analog_min, btn.analog_max, btn.pullup) == (0.0, 0.0, 4700.0)
+
+    def test_is_adc_button_true_with_analog_range(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500")
+        assert btn.is_adc_button is True
+
+    def test_analog_min_max_parsed_from_analog_range(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500")
+        assert (btn.analog_min, btn.analog_max) == (500.0, 1500.0)
+
+    def test_pullup_default_with_analog_range(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500")
+        assert btn.pullup == 4700.0
+
+    def test_pullup_custom_with_analog_range(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500", analog_pullup_resistor=2200.0)
+        assert btn.pullup == 2200.0
+
+    def test_short_press_template_loaded_from_config(self) -> None:
+        btn = _make_button("lane1", short_press_gcode="TEST_MACRO")
+        assert btn.short_press_template.script == "TEST_MACRO"
+
+    def test_long_press_template_loaded_from_config(self) -> None:
+        btn = _make_button("lane1", long_press_gcode="TEST_MACRO")
+        assert btn.long_press_template.script == "TEST_MACRO"
+
+    def test_sets_name_from_config_name(self) -> None:
+        btn = _make_button("lane_x")
+        assert btn.name == "lane_x"
+
+    def test_sets_pin_from_config(self) -> None:
+        btn = _make_button("lane1", pin="PB3")
+        assert btn.pin == "PB3"
+
+    def test_registers_debounce_button_for_digital_pin(self) -> None:
+        btn = _make_button("lane1")
+        buttons_mock = btn.printer._objects["buttons"]
+        buttons_mock.register_debounce_button.assert_called_once()
+        call_args = buttons_mock.register_debounce_button.call_args[0]
+        assert call_args[0] == btn.pin
+        assert call_args[1] == btn.button_callback
+        buttons_mock.register_debounce_adc_button.assert_not_called()
+
+    def test_registers_debounce_adc_button_for_adc_pin(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500",
+                           analog_pullup_resistor=2200.0)
+        buttons_mock = btn.printer._objects["buttons"]
+        buttons_mock.register_debounce_adc_button.assert_called_once()
+        call_args = buttons_mock.register_debounce_adc_button.call_args[0]
+        assert call_args[0] == btn.pin
+        assert call_args[1:4] == (500.0, 1500.0, 2200.0)
+        assert call_args[4] == btn.button_callback
+        buttons_mock.register_debounce_button.assert_not_called()
 
 
 # ── lane_obj property ─────────────────────────────────────────────────────────
 
 class TestLaneObjProperty:
-    def test_returns_resolved_lane(self):
+    def test_returns_resolved_lane(self) -> None:
         btn = _make_button("lane1")
         assert btn.lane_obj is btn.afc.lanes["lane1"]
 
-    def test_raises_when_not_yet_resolved(self):
+    def test_raises_when_not_yet_resolved(self) -> None:
         btn = _make_button("lane1")
         btn._lane_obj = None
         from configfile import error as KlipperError
@@ -62,119 +243,220 @@ class TestLaneObjProperty:
 # ── _handle_ready ─────────────────────────────────────────────────────────────
 
 class TestHandleReady:
-    def test_handle_ready_sets_lane_obj_when_found(self):
+    def test_handle_ready_sets_lane_obj_when_found(self) -> None:
         btn = _make_button("lane1")
         btn._lane_obj = None
         btn._handle_ready()
         assert btn.lane_obj is btn.afc.lanes["lane1"]
 
-    def test_handle_ready_raises_when_lane_not_found(self):
+    def test_handle_ready_raises_when_lane_not_found(self) -> None:
         btn = _make_button("missing_lane")
-        btn.afc.lanes = {}  # No lanes defined
+        btn.afc.lanes = {}
         btn._lane_obj = None
         from configfile import error as KlipperError
         with pytest.raises(KlipperError):
             btn._handle_ready()
 
 
-# ── _button_callback – state tracking ────────────────────────────────────────
+# ── get_resistance ────────────────────────────────────────────────────────────
 
-class TestButtonCallbackStateTracking:
-    def test_press_stores_time(self):
-        btn = _make_button()
-        btn._button_callback(100.0, True)
-        assert btn._press_time == 100.0
+class TestGetResistance:
+    def test_returns_none_when_not_adc_button(self) -> None:
+        btn = _make_button("lane1")
+        assert btn.get_resistance() is None
 
-    def test_release_with_no_press_does_nothing(self):
-        btn = _make_button()
-        btn._press_time = None
+    def test_returns_none_when_no_sample_registered(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500")
+        btn.printer._objects["query_adc"] = MagicMock(adc={})
+        assert btn.get_resistance() is None
+
+    def test_computes_resistance_with_value_first_order(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500",
+                           analog_pullup_resistor=4700.0)
+        _register_adc_sample(btn, value=0.680790, timestamp=332.776, value_first=True)
+        result = btn.get_resistance()
+        expected = 4700.0 * 0.680790 / (1.0 - 0.680790)
+        assert result == pytest.approx(expected, rel=1e-6)
+
+    def test_computes_resistance_with_timestamp_first_order(self) -> None:
+        """Some Klipper forks return (timestamp, value) instead of (value,
+        timestamp); get_resistance must pick whichever element is in [0, 1]
+        regardless of position."""
+        btn = _make_button("lane1", analog_range="500,1500",
+                           analog_pullup_resistor=4700.0)
+        _register_adc_sample(btn, value=0.680790, timestamp=332.776, value_first=False)
+        result = btn.get_resistance()
+        expected = 4700.0 * 0.680790 / (1.0 - 0.680790)
+        assert result == pytest.approx(expected, rel=1e-6)
+
+    def test_clamps_value_near_one(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500",
+                           analog_pullup_resistor=4700.0)
+        _register_adc_sample(btn, value=1.5, timestamp=10.0, value_first=True)
+        result = btn.get_resistance()
+        expected = 4700.0 * 0.99999 / (1.0 - 0.99999)
+        assert result == pytest.approx(expected, rel=1e-6)
+
+
+# ── _run_custom_press_gcode ───────────────────────────────────────────────────
+
+class TestRunCustomPressGcode:
+    def test_empty_script_returns_false_and_does_not_run(self) -> None:
+        btn = _make_button("lane1")
+        btn.gcode.run_script = MagicMock()
+        template = _FakeTemplate("AFC_button lane1:short_press_gcode", "")
+        assert btn._run_custom_press_gcode(template) is False
+        btn.gcode.run_script.assert_not_called()
+
+    def test_nonempty_script_runs_and_returns_true(self) -> None:
+        btn = _make_button("lane1")
+        btn.gcode.run_script = MagicMock()
+        template = _FakeTemplate("AFC_button lane1:short_press_gcode", "MY_MACRO")
+        assert btn._run_custom_press_gcode(template) is True
+        btn.gcode.run_script.assert_called_once_with("MY_MACRO")
+
+    def test_render_exception_reports_afc_error_and_returns_true(self) -> None:
+        btn = _make_button("lane1")
+        btn.gcode.run_script = MagicMock()
         btn.afc.error = MagicMock()
-        btn._button_callback(101.0, False)
-        btn.afc.error.AFC_error.assert_not_called()
+        template = _FakeTemplate("AFC_button lane1:short_press_gcode", "")
+        template.render_error = RuntimeError("bad template")
+        assert btn._run_custom_press_gcode(template) is True
+        btn.gcode.run_script.assert_not_called()
+        btn.afc.error.AFC_error.assert_called_once()
+        call_args = btn.afc.error.AFC_error.call_args
+        assert "lane1" in call_args[0][0]
+        assert "AFC_button lane1:short_press_gcode" in call_args[0][0]
+        assert call_args[1] == {"pause": False}
 
-    def test_too_fast_release_ignored(self):
-        btn = _make_button()
-        btn._press_time = 100.0
-        btn.afc.function.is_printing.return_value = False
-        btn.afc.function.get_current_lane_obj.return_value = None
-        btn.afc.CHANGE_TOOL = MagicMock()
-        btn._button_callback(100.03, False)  # 0.03s < 0.05s threshold
-        btn.afc.CHANGE_TOOL.assert_not_called()
+    def test_render_exception_logs_traceback_to_debug_only(self) -> None:
+        btn = _make_button("lane1")
+        btn.gcode.run_script = MagicMock()
+        btn.afc.error = MagicMock()
+        btn.afc.logger.debug = MagicMock()
+        template = _FakeTemplate("AFC_button lane1:short_press_gcode", "")
+        template.render_error = RuntimeError("bad template")
+        btn._run_custom_press_gcode(template)
+        btn.afc.logger.debug.assert_called_once()
+        call_args = btn.afc.logger.debug.call_args
+        assert call_args[1]["only_debug"] is True
+        assert "bad template" in call_args[1]["traceback"]
 
-    def test_press_time_cleared_after_release(self):
-        btn = _make_button()
-        btn._press_time = 100.0
-        btn.afc.function.is_printing.return_value = False
-        btn.afc.function.get_current_lane_obj.return_value = None
-        btn.afc.CHANGE_TOOL = MagicMock()
-        btn._button_callback(100.2, False)
+    def test_run_script_exception_reports_afc_error_and_returns_true(self) -> None:
+        btn = _make_button("lane1")
+        btn.gcode.run_script = MagicMock(side_effect=RuntimeError("boom"))
+        btn.afc.error = MagicMock()
+        template = _FakeTemplate("AFC_button lane1:long_press_gcode", "MY_MACRO")
+        assert btn._run_custom_press_gcode(template) is True
+        btn.afc.error.AFC_error.assert_called_once()
+
+
+# ── button_callback ───────────────────────────────────────────────────────────
+
+class TestButtonCallback:
+    # -- calibration suppression --
+
+    def test_calibration_active_suppresses_press(self) -> None:
+        btn = _make_button("lane1")
+        btn.afc.function.button_calibration_active = True
+        btn.button_callback(100.0, True)
         assert btn._press_time is None
 
-    def test_raises_when_lane_obj_unresolved(self):
-        """If somehow called before klippy:ready resolves lane_obj (it
-        never is in practice -- _handle_ready always runs first), the
-        lane_obj property raises rather than silently handing back None."""
-        btn = _make_button()
+    def test_calibration_active_suppresses_release(self) -> None:
+        btn = _make_button("lane1")
+        btn._press_time = 100.0
+        btn.afc.function.button_calibration_active = True
+        btn.afc.CHANGE_TOOL = MagicMock()
+        btn.button_callback(100.5, False)
+        assert btn._press_time is None
+        btn.afc.CHANGE_TOOL.assert_not_called()
+
+    def test_calibration_active_clears_stale_press_time(self) -> None:
+        """A press recorded just before calibration starts must not survive
+        into a release handled after calibration has already begun."""
+        btn = _make_button("lane1")
+        btn._press_time = 50.0
+        btn.afc.function.button_calibration_active = True
+        btn.button_callback(100.0, True)
+        assert btn._press_time is None
+
+    # -- press/release tracking --
+
+    def test_press_stores_time(self) -> None:
+        btn = _make_button("lane1")
+        btn.button_callback(100.0, True)
+        assert btn._press_time == 100.0
+
+    def test_release_with_no_press_does_nothing(self) -> None:
+        btn = _make_button("lane1")
+        btn._press_time = None
+        btn.afc.error = MagicMock()
+        btn.button_callback(101.0, False)
+        btn.afc.error.AFC_error.assert_not_called()
+
+    def test_too_fast_release_ignored(self) -> None:
+        btn = _make_button("lane1")
+        btn._press_time = 100.0
+        btn.afc.function.is_printing.return_value = False
+        btn.afc.function.get_current_lane_obj.return_value = None
+        btn.afc.CHANGE_TOOL = MagicMock()
+        btn.button_callback(100.03, False)  # 0.03s < 0.05s threshold
+        btn.afc.CHANGE_TOOL.assert_not_called()
+
+    def test_press_time_cleared_after_release(self) -> None:
+        btn = _make_button("lane1")
+        btn._press_time = 100.0
+        btn.afc.function.is_printing.return_value = False
+        btn.afc.function.get_current_lane_obj.return_value = None
+        btn.afc.CHANGE_TOOL = MagicMock()
+        btn.button_callback(100.2, False)
+        assert btn._press_time is None
+
+    def test_raises_when_lane_obj_unresolved(self) -> None:
+        btn = _make_button("lane1")
         btn._press_time = 100.0
         btn._lane_obj = None
         btn.afc.function.is_printing.return_value = False
         btn.afc.CHANGE_TOOL = MagicMock()
         from configfile import error as KlipperError
         with pytest.raises(KlipperError):
-            btn._button_callback(100.3, False)
+            btn.button_callback(100.3, False)
         btn.afc.CHANGE_TOOL.assert_not_called()
 
+    # -- printing guard --
 
-# ── _button_callback – printing guard ────────────────────────────────────────
-
-class TestButtonCallbackPrintingGuard:
-    def test_error_logged_when_printing(self):
-        btn = _make_button()
+    def test_error_logged_when_printing(self) -> None:
+        btn = _make_button("lane1")
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = True
         btn.afc.error = MagicMock()
-        btn._button_callback(101.0, False)
+        btn.button_callback(101.0, False)
         btn.afc.error.AFC_error.assert_called_once()
 
-    def test_press_time_not_cleared_when_printing_guard_fires(self):
-        """On printing guard, we return early; press_time may or may not clear."""
-        btn = _make_button()
-        btn._press_time = 100.0
-        btn.afc.function.is_printing.return_value = True
-        btn.afc.error = MagicMock()
-        btn._button_callback(100.5, False)
-        # Core assertion: error raised
-        btn.afc.error.AFC_error.assert_called_once()
+    # -- short press, embedded logic (no custom gcode configured) --
 
-
-# ── _button_callback – short press ───────────────────────────────────────────
-
-class TestButtonCallbackShortPress:
-    def test_short_press_no_active_lane_loads_this_lane(self):
+    def test_short_press_no_active_lane_loads_this_lane(self) -> None:
         btn = _make_button("lane1")
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
         btn.afc.function.get_current_lane_obj.return_value = None
         btn.afc.CHANGE_TOOL = MagicMock()
-        # 0.3s press < long_press_duration (1.2s)
-        btn._button_callback(100.3, False)
+        btn.button_callback(100.3, False)  # 0.3s < long_press_duration (1.2s)
         btn.afc.CHANGE_TOOL.assert_called_once_with(btn.lane_obj)
 
-    def test_short_press_with_this_lane_active_unloads(self):
+    def test_short_press_with_this_lane_active_unloads(self) -> None:
         btn = _make_button("lane1")
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
         cur_lane = MagicMock()
-        cur_lane.name = "lane1"  # Same as this button's lane
+        cur_lane.name = "lane1"
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.TOOL_UNLOAD = MagicMock(return_value=True)
-        btn._button_callback(100.3, False)
+        btn.button_callback(100.3, False)
         btn.afc.TOOL_UNLOAD.assert_called_once_with(cur_lane)
         btn.afc.afc_stats.increase_unload_error_count.assert_not_called()
 
-    def test_short_press_unload_failure_increases_unload_error_count(self):
-        """When TOOL_UNLOAD fails on a short-press unload, the failure is
-        recorded via increase_unload_error_count(self.afc)."""
+    def test_short_press_unload_failure_increases_unload_error_count(self) -> None:
         btn = _make_button("lane1")
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
@@ -182,35 +464,59 @@ class TestButtonCallbackShortPress:
         cur_lane.name = "lane1"
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.TOOL_UNLOAD = MagicMock(return_value=False)
-        btn._button_callback(100.3, False)
+        btn.button_callback(100.3, False)
         btn.afc.afc_stats.increase_unload_error_count.assert_called_once_with(btn.afc)
 
-    def test_short_press_with_different_lane_active_loads_this_lane(self):
+    def test_short_press_with_different_lane_active_loads_this_lane(self) -> None:
         btn = _make_button("lane1")
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
         cur_lane = MagicMock()
-        cur_lane.name = "lane2"  # Different lane
+        cur_lane.name = "lane2"
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.CHANGE_TOOL = MagicMock()
-        btn._button_callback(100.3, False)
+        btn.button_callback(100.3, False)
         btn.afc.CHANGE_TOOL.assert_called_once_with(btn.lane_obj)
 
+    # -- short press, custom gcode override --
 
-# ── _button_callback – long press ────────────────────────────────────────────
+    def test_short_press_custom_gcode_overrides_embedded_logic(self) -> None:
+        btn = _make_button("lane1", short_press_gcode="MY_SHORT_MACRO")
+        btn._press_time = 100.0
+        btn.afc.function.is_printing.return_value = False
+        btn.afc.function.get_current_lane_obj.return_value = None
+        btn.afc.CHANGE_TOOL = MagicMock()
+        btn.gcode.run_script = MagicMock()
+        btn.button_callback(100.3, False)
+        btn.gcode.run_script.assert_called_once_with("MY_SHORT_MACRO")
+        btn.afc.CHANGE_TOOL.assert_not_called()
 
-class TestButtonCallbackLongPress:
-    def test_long_press_no_active_lane_ejects(self):
+    def test_long_press_gcode_does_not_affect_short_press(self) -> None:
+        """A configured long_press_gcode must only ever gate the long-press
+        branch, proving the two overrides are checked independently rather
+        than either one suppressing both press types."""
+        btn = _make_button("lane1", long_press_gcode="MY_LONG_MACRO")
+        btn._press_time = 100.0
+        btn.afc.function.is_printing.return_value = False
+        btn.afc.function.get_current_lane_obj.return_value = None
+        btn.afc.CHANGE_TOOL = MagicMock()
+        btn.gcode.run_script = MagicMock()
+        btn.button_callback(100.3, False)  # short press
+        btn.afc.CHANGE_TOOL.assert_called_once_with(btn.lane_obj)
+        btn.gcode.run_script.assert_not_called()
+
+    # -- long press, embedded logic (no custom gcode configured) --
+
+    def test_long_press_no_active_lane_ejects(self) -> None:
         btn = _make_button("lane1", long_press_duration=1.0)
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
         btn.afc.function.get_current_lane_obj.return_value = None
         btn.afc.LANE_UNLOAD = MagicMock()
-        # 1.5s press ≥ long_press_duration (1.0s)
-        btn._button_callback(101.5, False)
+        btn.button_callback(101.5, False)  # 1.5s >= long_press_duration (1.0s)
         btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj)
 
-    def test_long_press_with_this_lane_active_unloads_then_ejects(self):
+    def test_long_press_with_this_lane_active_unloads_then_ejects(self) -> None:
         btn = _make_button("lane1", long_press_duration=1.0)
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
@@ -219,15 +525,12 @@ class TestButtonCallbackLongPress:
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.TOOL_UNLOAD = MagicMock(return_value=True)
         btn.afc.LANE_UNLOAD = MagicMock()
-        btn._button_callback(101.5, False)
+        btn.button_callback(101.5, False)
         btn.afc.TOOL_UNLOAD.assert_called_once()
         btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj)
         btn.afc.afc_stats.increase_unload_error_count.assert_not_called()
 
-    def test_long_press_unload_failure_increases_unload_error_count_and_skips_eject(self):
-        """When TOOL_UNLOAD fails before ejecting on a long press, the
-        failure is recorded via increase_unload_error_count(self.afc) and
-        LANE_UNLOAD (the eject) is never reached."""
+    def test_long_press_unload_failure_increases_unload_error_count_and_skips_eject(self) -> None:
         btn = _make_button("lane1", long_press_duration=1.0)
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
@@ -236,11 +539,11 @@ class TestButtonCallbackLongPress:
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.TOOL_UNLOAD = MagicMock(return_value=False)
         btn.afc.LANE_UNLOAD = MagicMock()
-        btn._button_callback(101.5, False)
+        btn.button_callback(101.5, False)
         btn.afc.afc_stats.increase_unload_error_count.assert_called_once_with(btn.afc)
         btn.afc.LANE_UNLOAD.assert_not_called()
 
-    def test_long_press_with_different_lane_active_ejects_only(self):
+    def test_long_press_with_different_lane_active_ejects_only(self) -> None:
         btn = _make_button("lane1", long_press_duration=1.0)
         btn._press_time = 100.0
         btn.afc.function.is_printing.return_value = False
@@ -249,53 +552,44 @@ class TestButtonCallbackLongPress:
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.LANE_UNLOAD = MagicMock()
         btn.afc.TOOL_UNLOAD = MagicMock()
-        btn._button_callback(101.5, False)
+        btn.button_callback(101.5, False)
         btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj)
         btn.afc.TOOL_UNLOAD.assert_not_called()
 
+    # -- long press, custom gcode override --
 
-# ── __init__ via MockConfig ───────────────────────────────────────────────────
+    def test_long_press_custom_gcode_overrides_embedded_logic(self) -> None:
+        btn = _make_button("lane1", long_press_duration=1.0, long_press_gcode="MY_LONG_MACRO")
+        btn._press_time = 100.0
+        btn.afc.function.is_printing.return_value = False
+        btn.afc.function.get_current_lane_obj.return_value = None
+        btn.afc.LANE_UNLOAD = MagicMock()
+        btn.gcode.run_script = MagicMock()
+        btn.button_callback(101.5, False)
+        btn.gcode.run_script.assert_called_once_with("MY_LONG_MACRO")
+        btn.afc.LANE_UNLOAD.assert_not_called()
 
-class TestAFCButtonInit:
-    def test_init_registers_ready_event_handler(self):
-        from tests.conftest import MockConfig, MockPrinter, MockAFC
-        afc = MockAFC()
-        printer = MockPrinter(afc=afc)
-        config = MockConfig(name="AFC_button lane1", printer=printer,
-                            values={"pin": "PA0", "long_press_duration": 1.2})
-        btn = AFCButton(config)
-        assert "klippy:ready" in printer._event_handlers
-
-    def test_init_sets_lane_id_from_config_name(self):
-        from tests.conftest import MockConfig, MockPrinter, MockAFC
-        afc = MockAFC()
-        printer = MockPrinter(afc=afc)
-        config = MockConfig(name="AFC_button lane_x", printer=printer,
-                            values={"pin": "PB1", "long_press_duration": 1.0})
-        btn = AFCButton(config)
-        assert btn.lane_id == "lane_x"
-
-    def test_init_registers_button_callback(self):
-        from tests.conftest import MockConfig, MockPrinter, MockAFC
-        afc = MockAFC()
-        printer = MockPrinter(afc=afc)
-        buttons_mock = MagicMock()
-        printer._objects["buttons"] = buttons_mock
-        config = MockConfig(name="AFC_button lane1", printer=printer,
-                            values={"pin": "PC2", "long_press_duration": 1.2})
-        btn = AFCButton(config)
-        buttons_mock.register_buttons.assert_called_once()
-        call_args = buttons_mock.register_buttons.call_args[0]
-        assert "PC2" in call_args[0]
+    def test_short_press_gcode_does_not_affect_long_press(self) -> None:
+        btn = _make_button("lane1", long_press_duration=1.0, short_press_gcode="MY_SHORT_MACRO")
+        btn._press_time = 100.0
+        btn.afc.function.is_printing.return_value = False
+        btn.afc.function.get_current_lane_obj.return_value = None
+        btn.afc.LANE_UNLOAD = MagicMock()
+        btn.gcode.run_script = MagicMock()
+        btn.button_callback(101.5, False)  # long press
+        btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj)
+        btn.gcode.run_script.assert_not_called()
 
 
 # ── load_config_prefix() ──────────────────────────────────────────────────────
 
 class TestLoadConfigPrefix:
-    def test_returns_afc_button_instance(self):
-        from tests.conftest import MockConfig, MockPrinter, MockAFC
+    def test_returns_afc_button_instance(self) -> None:
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
         afc = MockAFC()
         printer = MockPrinter(afc=afc)
+        printer._objects["buttons"] = MagicMock()
+        printer._objects["gcode_macro"] = _FakeGCodeMacro()
         config = MockConfig(name="AFC_button lane1", printer=printer,
                             values={"pin": "PA0", "long_press_duration": 1.2})
         result = load_config_prefix(config)

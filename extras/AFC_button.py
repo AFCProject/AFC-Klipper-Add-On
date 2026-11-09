@@ -9,16 +9,16 @@ from __future__ import annotations
 import traceback
 
 from configfile import error
-from extras.gcode_button import GCodeButton
 from typing import Any, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
+    from extras.buttons import PrinterButtons
     from extras.query_adc import QueryADC
 
-class AFCButton(GCodeButton):
+class AFCButton:
     """
     This class is used for lane based button controls.
     """
@@ -30,27 +30,22 @@ class AFCButton(GCodeButton):
 
         :param config: Klipper config wrapper for the AFC_button section
         """
-        press_template = config.get('press_gcode', None)
-        if press_template is None:
-            config.fileconfig.set(config.section, 'press_gcode', '')
-
-        super().__init__(config)
         self.fullname = config.get_name()
-        # self.printer: Printer = config.get_printer()
-        # self.gcode: GCodeDispatch = self.printer.load_object(config, 'gcode')
+        self.printer = config.get_printer()
+        self.gcode = self.printer.lookup_object('gcode')
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
         self.reactor = self.printer.get_reactor()
 
         self.afc: afc = self.printer.load_object(config, 'AFC')
         self.lane_id = config.get_name().split()[-1]
+        self.name = self.lane_id
+        self.pin = config.get('pin')
         self._lane_obj: Optional[AFCLane] = None
         self.long_press_duration = config.getfloat('long_press_duration', 1.2)
 
         # Internal state for press timing
         self._press_time: Optional[float] = None
 
-        # analog_range presence is also what super().__init__ used to decide whether
-        # to register this pin as a debounced ADC button instead of a digital one.
         self.is_adc_button: bool = config.get("analog_range", None) is not None
         self.analog_min: float = 0.0
         self.analog_max: float = 0.0
@@ -59,9 +54,15 @@ class AFCButton(GCodeButton):
             self.analog_min, self.analog_max = config.getfloatlist("analog_range", count=2)
             self.pullup = config.getfloat("analog_pullup_resistor", 4700.0, above=0.0)
 
+        buttons: PrinterButtons = self.printer.load_object(config, 'buttons')
+        if self.is_adc_button:
+            buttons.register_debounce_adc_button(self.pin, self.analog_min, self.analog_max,
+                                                  self.pullup, self.button_callback, config)
+        else:
+            buttons.register_debounce_button(self.pin, self.button_callback, config)
+
         # Custom short_press_gcode/long_press_gcode take priority over the
-        # embedded load/unload/eject logic below when configured, the same
-        # way press_gcode overrides nothing being run in gcode_button.py.
+        # embedded load/unload/eject logic below when configured.
         gcode_macro = self.printer.load_object(config, 'gcode_macro')
         self.short_press_template: Any = gcode_macro.load_template(config, 'short_press_gcode', '')
         self.long_press_template: Any = gcode_macro.load_template(config, 'long_press_gcode', '')
@@ -184,11 +185,10 @@ class AFCButton(GCodeButton):
 
     def _run_custom_press_gcode(self, template: Any) -> bool:
         """
-        Render and run a custom short_press_gcode/long_press_gcode override,
-        the same way GCodeButton.button_callback runs press_gcode: render,
-        then run it via self.gcode.run_script. A failure is reported through
-        AFC_error, naming the lane and the failing macro, with the exception
-        itself going only to the debug log.
+        Render and run a custom short_press_gcode/long_press_gcode override:
+        render, then run it via self.gcode.run_script. A failure is reported
+        through AFC_error, naming the lane and the failing macro, with the
+        exception itself going only to the debug log.
 
         :param template: loaded short_press_template or long_press_template
         :return bool: True when the override had non-empty gcode configured
