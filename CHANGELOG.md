@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-08-2026]
+### Changed
+- The `afc-debug.sh` script now runs completely on python and no longer requires any 3rd party dependencies.
+- `afc-debug.sh` now saves a zip archive of the logs if the upload to termbin.com fails, instead of discarding them.
+
+### Added
+- `afc-debug.sh` now redacts secrets (API keys, passwords, tokens, credentials in URLs) and public IP addresses before uploading or zipping. Private and reserved addresses such as `192.168.x.x` and `10.x.x.x` are kept. Use `--no-redact` to disable.
+
 ## [11-07-2026]
 ### Fixed
 - Fixed unload retries getting stuck on OAMS units by stopping the unit's motor via the bay error-LED state and retracting the extruder repeatedly to help free the jam between attempts.
