@@ -755,18 +755,22 @@ class AFCExtruderStepper(AFCLane):
         try:
             start_mcu_pos = self.extruder_stepper.stepper.get_mcu_position()
             with self.assist_move(speed, rewind, assist_active=assist_active):
+                manual_home_kwargs = dict(toolhead=self, endstops=[endstop], pos=pos, speed=speed,
+                                          triggered=triggered, check_triggered=check_trigger)
                 if self.afc.manual_home_has_probe_pos_param:
                     # Explicitly set probe_pos=False to use normal homing coordinates even when
                     # homing is initiated from a "probing" context. AFC lanes are not bed/Z
                     # probes, and we do not want Klipper's probe-position bookkeeping here.
                     # This argument is passed explicitly to remain compatible with newer
                     # Klipper versions that added the probe_pos parameter.
-                    phoming.manual_home(toolhead=self, endstops=[endstop], pos=pos, speed=speed,
-                                        probe_pos=False, triggered=triggered,
-                                        check_triggered=check_trigger)
-                else:
-                    phoming.manual_home(toolhead=self, endstops=[endstop], pos=pos, speed=speed,
-                                        triggered=triggered, check_triggered=check_trigger)
+                    manual_home_kwargs["probe_pos"] = False
+                if self.afc.manual_home_requires_gcmd:
+                    # Kalico PR #1052 made gcmd a required parameter on manual_home so nested
+                    # gcode contexts can be tracked. manual_home only stores/forwards it and
+                    # never reads it back, so an empty placeholder is enough for AFC's
+                    # internal homing moves, which aren't driven by a live gcmd.
+                    manual_home_kwargs["gcmd"] = self.gcode.create_gcode_command("", "", {})
+                phoming.manual_home(**manual_home_kwargs)
             end_ts = reactor.monotonic()
             try:
                 # Log distance at trigger using homing trigger positions

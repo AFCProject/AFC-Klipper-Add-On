@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `afc-debug.sh` now redacts secrets (API keys, passwords, tokens, credentials in URLs) and public IP addresses before uploading or zipping. Private and reserved addresses such as `192.168.x.x` and `10.x.x.x` are kept. Use `--no-redact` to disable.
 
+### Fixed
+- Fixed lane homing raising a `TypeError` on Kalico builds past PR #1052, which made `manual_home`'s `gcmd` parameter required.
+
 ## [11-07-2026]
 ### Fixed
 - Fixed unload retries getting stuck on OAMS units by stopping the unit's motor via the bay error-LED state and retracting the extruder repeatedly to help free the jam between attempts.
