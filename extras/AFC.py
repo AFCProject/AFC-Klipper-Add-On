@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeDispatch, GCodeCommand
     from extras.gcode_move import GCodeMove
+    from extras.homing import PrinterHoming
     from extras.AFC_lane import AFCLane
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_functions import afcFunction
@@ -463,7 +464,7 @@ class afc:
 
         # Inspect manual_home's signature to detect optional/required parameters added
         # by different Klipper/Kalico forks, so AFC passes the right keyword arguments.
-        phoming = self.printer.lookup_object('homing')
+        phoming: PrinterHoming = self.printer.lookup_object('homing')
         self._detect_manual_home_signature(phoming)
 
         # Check if hardware bypass is configured, if not create a virtual bypass sensor
@@ -492,7 +493,7 @@ class afc:
 
         self.current_state = State.IDLE
 
-    def _detect_manual_home_signature(self, phoming) -> None:
+    def _detect_manual_home_signature(self, phoming: PrinterHoming) -> None:
         """
         Inspect `manual_home`'s signature to detect optional/required parameters
         added by different Klipper/Kalico forks, so AFC passes the right keyword
