@@ -54,6 +54,16 @@
    error_str = f"Lane {self.name}: [filament_feed {self.feed_module}] not found"
    raise error(error_str)
    ```
+- **Never call `gcode.run_script_from_command` or `gcode.run_script` directly** —
+   always call `self.afc.run_script(script, gcmd)` instead. `afc.run_script`
+   is the single place that decides, via the gcode mutex's real state,
+   whether a script can run reentrantly (`run_script_from_command`) or must
+   acquire the mutex itself (`gcode.run_script`); calling either method
+   directly bypasses that check and can deadlock Klipper or raise
+   `CommandError` depending on whether the mutex happens to be held. Thread
+   `gcmd` through to the call site wherever a real command context is
+   available, defaulting to `None` only where none exists (hardware
+   callbacks, reactor timers).
 - **Keep comments short and succinct** — Keep comments succinct and to the point.
    They should only be used when the code does not adequately explain itself.
 - **No decorative dashes on section-divider comments** — write `# Calibration
