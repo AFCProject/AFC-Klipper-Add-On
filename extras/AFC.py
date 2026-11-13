@@ -1726,6 +1726,10 @@ class afc:
                     finally:
                         self._set_display_status('pushing', False)
                     if not success:
+                        # A failure that didn't pause (outside a print) would
+                        # otherwise leave AFC stuck in LOADING.
+                        if self.current_state == State.LOADING:
+                            self.current_state = State.IDLE
                         return success
 
                     # Activate the tool-loaded LED and handle filament operations if enabled.
@@ -2183,6 +2187,10 @@ class afc:
                     self._set_display_status('retraction', False)
                     cur_lane.unit_obj.finish_unload(cur_lane)
                 if not success:
+                    # A failure that didn't pause (outside a print) would
+                    # otherwise leave AFC stuck in UNLOADING.
+                    if self.current_state == State.UNLOADING:
+                        self.current_state = State.IDLE
                     return success
             finally:
                 if restore_temp: self.restore_toolhead_temp(temp_state)
