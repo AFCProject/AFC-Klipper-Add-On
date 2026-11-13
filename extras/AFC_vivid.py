@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
+    from gcode import GCodeCommand
     from extras.AFC_lane import AFCLane, AFCMoveWarning
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.stepper_enable import PrinterStepperEnable
@@ -352,7 +353,8 @@ class AFC_vivid(afcBoxTurtle):
                                              endstop=lane.load_es, use_homing=use_homing)
         return homed, distance, warn
 
-    def calibrate_lane(self, cur_lane: AFCLane, tol: float) -> tuple[bool, str, float]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float,
+                      gcmd: GCodeCommand) -> tuple[bool, str, float]:
         """
         Method to calibrate lane for ViViD units. Since ViViD units are unique, this method ejects
         filament and sets calibration flag to False. Once user reinserts filament lane will be
@@ -360,6 +362,7 @@ class AFC_vivid(afcBoxTurtle):
 
         :param cur_lane: Lane object to eject
         :param tol: Unused for this method
+        :param gcmd: command context, unused here but accepted for interface parity
         :return tuple: Always returns True, lane name, 0
         """
         self.eject_lane(cur_lane)

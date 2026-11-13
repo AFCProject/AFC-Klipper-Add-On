@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from gcode import GCodeCommand
     from extras.AFC_lane import AFCLane, MoveDirection
     from extras.AFC_stepper import AFCExtruderStepper
 
@@ -532,7 +533,8 @@ class afcBoxTurtle(afcUnit):
 
         return pos, checkpoint, True
 
-    def calibrate_lane(self, cur_lane: AFCLane, tol: float) -> tuple[bool, str, float]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float,
+                       gcmd: GCodeCommand) -> tuple[bool, str, float]:
         # function to calibrate distance from secondary extruder to hub
         cur_hub = cur_lane.hub_obj
         if cur_hub.state:

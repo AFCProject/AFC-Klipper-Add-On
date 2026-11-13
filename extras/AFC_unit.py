@@ -518,7 +518,7 @@ class afcUnit:
                 continue
             try:
                 script = f'SET_LED_EFFECT EFFECT={effect} STOP=1'
-                self.gcode.run_script_from_command(script)
+                self.afc.run_script(script)
             except Exception:
                 pass
 
@@ -535,7 +535,7 @@ class afcUnit:
         try:
             effect_name = f"{name}_{effect_suffix}"
             if f"led_effect {effect_name}" in self.printer.objects:
-                self.gcode.run_script_from_command(f"SET_LED_EFFECT EFFECT={effect_name}")
+                self.afc.run_script(f"SET_LED_EFFECT EFFECT={effect_name}")
                 self.afc.active_led_effects.append(effect_name)
         except Exception:
             pass
@@ -801,7 +801,7 @@ class afcUnit:
         self._print_function_not_defined(self.system_Test.__name__)
         return False
 
-    def calibrate_bowden(self, cur_lane, dis, tol):
+    def calibrate_bowden(self, cur_lane, dis, tol, gcmd):
         self._print_function_not_defined(self.calibrate_bowden.__name__)
 
     def calibrate_td1(self, cur_lane, dis, tol):
@@ -816,7 +816,7 @@ class afcUnit:
     def calc_position(self, cur_lane, state, pos, short_move, tolerance):
         self._print_function_not_defined(self.calc_position.__name__)
 
-    def calibrate_lane(self, cur_lane, tol):
+    def calibrate_lane(self, cur_lane, tol, gcmd):
         self._print_function_not_defined(self.calibrate_lane.__name__)
 
     def unselect_lane(self, move_distance: float=50):

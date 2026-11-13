@@ -1355,7 +1355,7 @@ class afcACE2(afcACE):
             self.afc.error.AFC_error(msg, pause=True)
         except Exception:
             self.logger.error(msg)
-            self.gcode.run_script_from_command("PAUSE")
+            self.afc.run_script("PAUSE")
 
     def _start_unload_assist(self, slot: int) -> None:
         """

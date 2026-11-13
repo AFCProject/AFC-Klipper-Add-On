@@ -193,7 +193,7 @@ class afcError:
         """
         self.set_error_state( True )
         self.logger.info ('PAUSING')
-        self.afc.gcode.run_script_from_command('PAUSE')
+        self.afc.run_script('PAUSE')
         self.logger.debug("After User Pause")
         self.afc.function.log_toolhead_pos()
 
@@ -296,9 +296,8 @@ class afcError:
 
         self.logger.debug("AFC_RESUME: Before User Restore")
         self.afc.function.log_toolhead_pos()
-        self.afc.gcode.run_script_from_command(
-            f"{self.AFC_RENAME_RESUME_NAME} {gcmd.get_raw_command_parameters()}"
-        )
+        resume_script = f"{self.AFC_RENAME_RESUME_NAME} {gcmd.get_raw_command_parameters()}"
+        self.afc.run_script(resume_script, gcmd)
 
         # The only time our resume should restore position is if there was an error that caused the pause
         if (self.afc.error_state
@@ -353,22 +352,19 @@ class afcError:
             else:
                 self.logger.debug(f"AFC_PAUSE: not moving in z cur_pos:{self.afc.gcode_move.last_position} move_z_pos:{move_z_pos}")
             # Call users PAUSE
-            self.afc.gcode.run_script_from_command(
-                f"{self.AFC_RENAME_PAUSE_NAME} {gcmd.get_raw_command_parameters()}"
-            )
+            renamed_pause_script = f"{self.AFC_RENAME_PAUSE_NAME} {gcmd.get_raw_command_parameters()}"
+            self.afc.run_script(renamed_pause_script, gcmd)
 
             timeout_to_use = max(self.error_timeout, self.idle_timeout_val)
-            self.afc.gcode.run_script_from_command(f"SET_IDLE_TIMEOUT TIMEOUT={timeout_to_use}")
+            self.afc.run_script(f"SET_IDLE_TIMEOUT TIMEOUT={timeout_to_use}", gcmd)
 
         else:
             self.logger.debug("AFC_PAUSE: Not Pausing")
 
-        self.logger.debug(
-            f"PAUSE-Error State: {self.afc.error_state}, "
-            f"Is Paused {self.afc.function.is_paused()}, "
-            f"Position_saved {self.afc.position_saved}, "
-            f"in toolchange: {self.afc.in_toolchange}"
-        )
+        self.logger.debug(f"PAUSE-Error State: {self.afc.error_state}, "
+                          f"Is Paused {self.afc.function.is_paused()}, "
+                          f"Position_saved {self.afc.position_saved}, "
+                          f"in toolchange: {self.afc.in_toolchange}")
 
 
     handle_lane_failure_help = "Get load errors, stop stepper and respond error"

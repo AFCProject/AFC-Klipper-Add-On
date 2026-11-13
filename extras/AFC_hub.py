@@ -21,6 +21,7 @@ except: raise config_error(ERROR_STR.format(import_lib="AFC_unit", trace=traceba
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
+    from gcode import GCodeCommand
     from klippy import Printer
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
@@ -177,7 +178,7 @@ class afc_hub:
         """
         self._state = bool(state)
 
-    def hub_cut(self, cur_lane: AFCLane) -> None:
+    def hub_cut(self, cur_lane: AFCLane, gcmd: Optional[GCodeCommand]=None) -> None:
         """
         Run the hub's filament-cutting sequence: feed the lane until the hub
         sensor triggers, jog back and forth to find the trigger point
@@ -187,11 +188,12 @@ class afc_hub:
         retracting the lane by cut_clear.
 
         :param cur_lane: lane object being fed into the hub for the cut
+        :param gcmd: command context to run the servo moves through, if any
         """
         servo_string = 'SET_SERVO SERVO={servo} ANGLE={{angle}}'.format(servo=self.cut_servo_name)
 
         # Prep the servo for cutting.
-        self.gcode.run_script_from_command(servo_string.format(angle=self.cut_servo_prep_angle))
+        self.afc.run_script(servo_string.format(angle=self.cut_servo_prep_angle), gcmd)
         # Load the lane until the hub is triggered.
         while not self.state:
             cur_lane.move(self.move_dis, cur_lane.short_moves_speed, cur_lane.short_moves_accel)
@@ -210,18 +212,18 @@ class afc_hub:
 
 
         # Choppy Chop
-        self.gcode.run_script_from_command(servo_string.format(angle=self.cut_servo_clip_angle))
+        self.afc.run_script(servo_string.format(angle=self.cut_servo_clip_angle), gcmd)
         if self.cut_confirm:
             self.reactor.pause(self.reactor.monotonic() + 0.5)
             # ReChop, To be doubly choppy sure.
-            self.gcode.run_script_from_command(servo_string.format(angle=self.cut_servo_prep_angle))
+            self.afc.run_script(servo_string.format(angle=self.cut_servo_prep_angle), gcmd)
 
             self.reactor.pause(self.reactor.monotonic() + 1)
-            self.gcode.run_script_from_command(servo_string.format(angle=self.cut_servo_clip_angle))
+            self.afc.run_script(servo_string.format(angle=self.cut_servo_clip_angle), gcmd)
         # Longer Snooze
         self.reactor.pause(self.reactor.monotonic() + 1)
         # Align bowden tube (reset)
-        self.gcode.run_script_from_command(servo_string.format(angle=self.cut_servo_pass_angle))
+        self.afc.run_script(servo_string.format(angle=self.cut_servo_pass_angle), gcmd)
 
         # Retract lane by `hub_cut_clear`.
         cur_lane.move(-self.cut_clear, cur_lane.short_moves_speed, cur_lane.short_moves_accel, self.assisted_retract)

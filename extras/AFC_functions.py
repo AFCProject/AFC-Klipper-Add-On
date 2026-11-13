@@ -391,19 +391,23 @@ class afcFunction:
         except Exception:
             return False
 
-    def check_homed(self, error_msg=None):
+    def check_homed(self, error_msg: Optional[str]=None,
+                    gcmd: Optional[GCodeCommand]=None) -> bool:
         """
         Helper function to determine if printer is currently homed, if not, then apply G28
 
+        :param error_msg: Error message to report when the printer isn't homed and
+            auto_home is disabled, defaults to a generic message
+        :param gcmd: command context to run the homing/leveling macros through, if any
         :return boolean: True if xyz is homed
         """
         if not self.is_homed():
             if self.afc.auto_home:
-                self.afc.gcode.run_script_from_command("G28")
+                self.afc.run_script("G28", gcmd)
                 self.afc.toolhead.wait_moves()
                 if self.afc.auto_level_macro is not None:
                     if self.check_macro_present(self.afc.auto_level_macro):
-                        self.afc.gcode.run_script_from_command(self.afc.auto_level_macro)
+                        self.afc.run_script(self.afc.auto_level_macro, gcmd)
                         self.afc.toolhead.wait_moves()
                     else:
                         self.afc.error.AFC_error("Auto level macro defined, but not found in printer configuration.",
@@ -646,20 +650,24 @@ class afcFunction:
             return 'Prep:{}'.format(self.HexConvert(cur_lane.led_prep_loaded).split(':')[-1])
         return 'Not Ready:{}'.format(self.HexConvert(cur_lane.led_not_ready).split(':')[-1])
 
-    def handle_activate_extruder(self):
+    def handle_activate_extruder(self, gcmd: Optional[GCodeCommand]=None):
         """
         Function used to deactivate lanes motors and buffers, then enables current extruders lane
 
         This will also be tied to a callback once multiple extruders are implemented
+
+        :param gcmd: command context to run the current-change macros through, if any
         """
         # Wait until printer is not moving so klipper does not crash
         # self.reactor.update_timer( self.activate_extruder_cb, self.reactor.monotonic() + 5 )
-        self._handle_activate_extruder(0)
+        self._handle_activate_extruder(0, gcmd)
 
-    def _handle_activate_extruder(self, eventtime):
+    def _handle_activate_extruder(self, eventtime, gcmd: Optional[GCodeCommand]=None):
         """
         Supposed to be a callback function from timer, currently this is not called from timer event.
         TODO: Update this functionality before pushing to main/dev or once fully moved away from KTC
+
+        :param gcmd: command context to run the current-change macros through, if any
         """
 
         cur_lane_loaded = self.get_current_lane_obj()
@@ -674,7 +682,7 @@ class afcFunction:
                 if (cur_lane_loaded is None
                     or (obj.unit_obj.name != cur_lane_loaded.unit_obj.name)):
                     obj.unit_obj.return_to_home()
-                obj.unsync_to_extruder()
+                obj.unsync_to_extruder(gcmd=gcmd)
                 if obj.prep_state and obj.load_state:
                     if obj.tool_loaded:
                         # If tool is loaded, set led to tool loaded color
@@ -696,35 +704,40 @@ class afcFunction:
         cur_lane_loaded.do_enable(True)
         # Enable buffer
         cur_lane_loaded.enable_buffer()
-        cur_lane_loaded.sync_to_extruder()
+        cur_lane_loaded.sync_to_extruder(gcmd=gcmd)
         cur_lane_loaded.unit_obj.select_lane( cur_lane_loaded )
         self.logger.debug("Activate extruder done")
         # TODO: Remove or add back once fully moved away from KTC
         # return self.reactor.NEVER
 
-    def unset_lane_loaded(self):
+    def unset_lane_loaded(self, gcmd: GCodeCommand):
         """
         Helper function to get current lane and unsync lane from toolhead extruder
+
+        :param gcmd: command context to run the current-change macro through
         """
         cur_lane_loaded = self.get_current_lane_obj()
         if cur_lane_loaded is not None:
-            cur_lane_loaded.unsync_to_extruder()
+            cur_lane_loaded.unsync_to_extruder(gcmd=gcmd)
             cur_lane_loaded.set_tool_unloaded(normal_toolchange=True)
             cur_lane_loaded.unit_obj.return_to_home()
-            self.afc.function.handle_activate_extruder()
+            self.afc.function.handle_activate_extruder(gcmd)
             self.logger.info("Manually removing {} loaded from toolhead".format(cur_lane_loaded.name))
             self.afc.save_vars()
 
-    def select_loaded_lane(self):
+    def select_loaded_lane(self, gcmd: Optional[GCodeCommand]=None):
         """
         Function looks up what the current lane loaded is and calls a common `select_lane` function so
         that units that have selectors this makes sure the correct lane is selected if user moves other
         lanes outside of printing
+
+        :param gcmd: command context to run the current-change macro through, if any
         """
         current_lane = self.get_current_lane_obj()
         if current_lane is not None:
             current_lane.unit_obj.select_lane(current_lane)
-            current_lane.set_print_current() # Set current back to print current after lane move
+            # Set current back to print current after lane move
+            current_lane.set_print_current(gcmd)
 
     def log_toolhead_pos(self, move_pre: str = "") -> None:
         """
@@ -1000,24 +1013,24 @@ class afcFunction:
                     self.config.access_tracking[(name.lower(), option.lower())] = 1
             self.printer.load_object(self.config, name)
 
-    def _safe_extrude(self, amount_mm, feedrate=100):
+    def _safe_extrude(self, amount_mm, feedrate=100, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to safely extrude a given amount of filament, checking if the lane is loaded and
         if the toolhead is in absolute mode.
 
         :param amount_mm: Amount of filament to extrude in mm
         :param feedrate: Feedrate for extrusion in mm/min
+        :param gcmd: command context to run the extrude moves through, if any
         """
-        self.afc.gcode.run_script_from_command("M400")  # Finish queued moves
-        self.afc.gcode.run_script_from_command("M83")  # Relative extrusion mode
-        self.afc.gcode.run_script_from_command("G92 E0")  # Zero extruder
+        self.afc.run_script("M400", gcmd)  # Finish queued moves
+        self.afc.run_script("M83", gcmd)  # Relative extrusion mode
+        self.afc.run_script("G92 E0", gcmd)  # Zero extruder
         self.afc.logger.info(f"Extruding {amount_mm}mm")
-        self.afc.gcode.run_script_from_command(f"G1 E{amount_mm} F{feedrate}")
-        self.afc.gcode.run_script_from_command("M82")
+        self.afc.run_script(f"G1 E{amount_mm} F{feedrate}", gcmd)
+        self.afc.run_script("M82", gcmd)
 
-    def _lane_calibration(
-            self, lanes: str, unit: Optional[str], tol: float, dis: float
-        ) -> tuple[bool, list[str], list[str]]:
+    def _lane_calibration(self, lanes: str, unit: Optional[str], tol: float, dis: float,
+                          gcmd: GCodeCommand) -> tuple[bool, list[str], list[str]]:
         """
         Helper method for calibrating lanes specified by user
 
@@ -1026,6 +1039,7 @@ class afcFunction:
                      calibrated
         :param tol: Tolerance to use when calibrating lanes.
         :param dis: Distance to move filament when calibrating direct lanes for bowden length
+        :param gcmd: command context to run the calibration macro through
         :return tuple: True/False if calibration was successful,
                        List of strings for lanes that were successfully calibrated,
                        Any additional messages to be displayed on popup to user.
@@ -1060,9 +1074,9 @@ class afcFunction:
                 continue
             # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
             if lane.is_direct_hub():
-                checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol)
+                checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol, gcmd=gcmd)
             else:
-                checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol)
+                checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol, gcmd=gcmd)
             if(not checked):
                 self.afc.error.AFC_error(msg, False)
 
@@ -1294,7 +1308,7 @@ class afcFunction:
         text = f"Loading {lane.name} into toolhead"
         prompt.create_custom_p("Loading Lane", text, None, False, None, None)
         try:
-            self.afc.CHANGE_TOOL(lane)
+            self.afc.CHANGE_TOOL(lane, gcmd=prompt.gcode)
             if self.afc.current != lane.name:
                 self.afc.error.AFC_error(
                     f"Lane '{lane.name}' did not load for toolhead calibration.", pause=False)
@@ -1435,7 +1449,7 @@ class afcFunction:
         if lane is not None:
             if (self.afc.park
                 and self.afc.park_cmd):
-                self.afc.gcode.run_script_from_command(self.afc.park_cmd)
+                self.afc.run_script(self.afc.park_cmd, gcmd)
             self.logger.info('Starting test for lane(s): {}'.format(lane))
             lane_obj = self.afc.lanes.get(lane)
             if lane != 'all':
@@ -1443,7 +1457,7 @@ class afcFunction:
                 for i in range(iterations):
                     self.afc.save_pos()
                     self.afc.logger.info('Loading lane: {}'.format(lane))
-                    self.afc.CHANGE_TOOL(lane_obj)
+                    self.afc.CHANGE_TOOL(lane_obj, gcmd=gcmd)
 
                     if not self.afc.error_state:
                         self.afc.logger.info("Lane {} loaded successfully (Iteration {})".format(lane, i + 1))
@@ -1452,9 +1466,9 @@ class afcFunction:
                         self.afc.error.reset_failure()
                         break
 
-                    self._safe_extrude(self.afc.test_extrude_amt)
+                    self._safe_extrude(self.afc.test_extrude_amt, gcmd=gcmd)
                     self.logger.info("Unloading lane {}".format(lane))
-                    if not self.afc.TOOL_UNLOAD(lane_obj):
+                    if not self.afc.TOOL_UNLOAD(lane_obj, gcmd=gcmd):
                         self.afc.afc_stats.increase_unload_error_count(self.afc)
 
                     if not self.afc.error_state:
@@ -1474,20 +1488,20 @@ class afcFunction:
                     random.shuffle(loaded_lanes)
                     for lane_obj in loaded_lanes:
                         self.afc.logger.info('Loading lane: {}'.format(lane_obj))
-                        self.afc.CHANGE_TOOL(lane_obj)
+                        self.afc.CHANGE_TOOL(lane_obj, gcmd=gcmd)
                         if not self.afc.error_state:
                             self.afc.logger.info("Lane {} loaded successfully".format(lane_obj))
                         else:
                             self.afc.logger.error("Failed to load lane {}".format(lane_obj))
                             self.afc.error.reset_failure()
                             return
-                        self._safe_extrude(self.afc.test_extrude_amt)
+                        self._safe_extrude(self.afc.test_extrude_amt, gcmd=gcmd)
                         self.logger.info("Unloading lane {}".format(lane_obj))
                     if i == iterations - 1:
                         self.afc.logger.info(
                             "Finished testing with {} iterations for all loaded lanes".format(iterations)
                         )
-                        if not self.afc.TOOL_UNLOAD(lane_obj):
+                        if not self.afc.TOOL_UNLOAD(lane_obj, gcmd=gcmd):
                             self.afc.afc_stats.increase_unload_error_count(self.afc)
         prompt.p_end()
 
@@ -1698,7 +1712,7 @@ class afcFunction:
             prompt.create_custom_p("Loading Lane", text, None, False, None, None)
 
             try:
-                if not self.afc.TOOL_LOAD(lane, load_to_gears=True, restore_temp=False):
+                if not self.afc.TOOL_LOAD(lane, load_to_gears=True, restore_temp=False, gcmd=gcmd):
                     prompt.p_end()
                     self.afc.error.AFC_error(
                         f"Lane '{lane.name}' did not load to the extruder gears or sensor.",
@@ -1760,7 +1774,7 @@ class afcFunction:
                 self.afc.save_pos()
                 text = f"Unloading {lane.name} from toolhead"
                 prompt.create_custom_p("Unloading Lane", text, None, False, None, None)
-                if not self.afc.TOOL_UNLOAD(lane, restore_temp=False):
+                if not self.afc.TOOL_UNLOAD(lane, restore_temp=False, gcmd=gcmd):
                     self._reset_stn_calibration_values()
                     prompt.p_end()
                     self.afc.error.AFC_error(
@@ -1769,7 +1783,7 @@ class afcFunction:
 
                 text = f"Loading {lane.name} into toolhead"
                 prompt.create_custom_p("Loading Lane", text, None, False, None, None)
-                if not self.afc.TOOL_LOAD(lane, restore_temp=False):
+                if not self.afc.TOOL_LOAD(lane, restore_temp=False, gcmd=gcmd):
                     extruder._update_tool_stn(self.stn_calibration_original)
                     self._reset_stn_calibration_values()
                     prompt.p_end()
@@ -1887,7 +1901,7 @@ class afcFunction:
             self._check_and_set_temp_for_calibration_lane(lane, prompt)
 
             cutter_command = getattr(self.afc, "tool_cut_cmd", None) or "AFC_CUT"
-            self.afc.gcode.run_script_from_command(f"{cutter_command} EXTRUDER={extruder_name}")
+            self.afc.run_script(f"{cutter_command} EXTRUDER={extruder_name}", gcmd)
             self.afc.toolhead.wait_moves()
             self.stn_unload_calibration_active = True
             self.stn_unload_calibration_distance = 0.0
@@ -2112,9 +2126,9 @@ class afcFunction:
             per_tool_object = self.printer.lookup_object(f"gcode_macro {per_tool_macro}", None)
             if per_tool_object is not None:
                 macro_name = per_tool_macro
-            self.afc.gcode.run_script_from_command(f"SET_GCODE_VARIABLE MACRO={macro_name} "
-                                                   f"VARIABLE=retract_length "
-                                                   f"VALUE={retract_length}")
+            self.afc.run_script(f"SET_GCODE_VARIABLE MACRO={macro_name} "
+                                f"VARIABLE=retract_length "
+                                f"VALUE={retract_length}", gcmd)
             section_name = f"gcode_macro {macro_name}"
             self.ConfigRewrite(section_name, 'variable_retract_length', retract_length, '')
 
@@ -2288,7 +2302,8 @@ class afcFunction:
         # Determine if a specific lane is provided
         try:
             if lanes is not None:
-                checked, calibrated, additional_msg = self._lane_calibration(lanes, unit, tol, dis)
+                checked, calibrated, additional_msg = self._lane_calibration(
+                    lanes, unit, tol, dis, gcmd)
                 if not checked:
                     # _lane_calibration already popped its own fail prompt; stop here
                     # instead of running Bowden/TD-1 against a lane that just failed.
@@ -2319,10 +2334,11 @@ class afcFunction:
                         and self.afc.park_pre_load):
                         error_msg = ("Printer needs to be homed before calibrating PTFE length "
                                     "to toolhead")
-                        if not self.check_homed(error_msg):
+                        if not self.check_homed(error_msg, gcmd=gcmd):
                             checked = False
                             return
-                        self.afc.gcode.run_script_from_command(f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}")
+                        select_tool_cmd = f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}"
+                        self.afc.run_script(select_tool_cmd, gcmd)
                         snapmaker_tool_selected = True
                         selected_tool = self.get_current_extruder_obj()
                         if (selected_tool is None
@@ -2334,11 +2350,12 @@ class afcFunction:
                             checked = False
                             return
                         if self.afc.park_pre_load_cmd:
-                            self.afc.gcode.run_script_from_command(f"{self.afc.park_pre_load_cmd}")
+                            self.afc.run_script(f"{self.afc.park_pre_load_cmd}", gcmd)
 
                     self.logger.info('Starting AFC distance Calibrations')
 
-                    checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(cur_lane, dis, tol)
+                    checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(
+                        cur_lane, dis, tol, gcmd=gcmd)
                     if not checked:
                         msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
                         self.afc.error.AFC_error(msg, pause=False)
@@ -2356,7 +2373,7 @@ class afcFunction:
                     if set_tool_start_back_to_none:
                         cur_lane.extruder_obj.tool_start = None
                     if snapmaker_tool_selected:
-                        self.afc.gcode.run_script_from_command("AFC_UNSELECT_TOOL")
+                        self.afc.run_script("AFC_UNSELECT_TOOL", gcmd)
 
             # Calibration for TD-1 bowden length
             if (td1 is not None
@@ -2374,7 +2391,9 @@ class afcFunction:
                 if td1_lane.hub_obj.state:
                     msg = f"{td1_lane.hub_obj.name} hub is triggered, make sure hub is clear before trying to calibrate TD-1 bowden length"
                     self.afc.error.AFC_error(msg, pause=False)
-                    self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE=0 msg='{msg}' RESET=0")
+                    fail_cmd = (f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE=0 "
+                               f"msg='{msg}' RESET=0")
+                    self.afc.run_script(fail_cmd, gcmd)
                     checked = False
                     return
 
@@ -2382,7 +2401,9 @@ class afcFunction:
                 if not checked:
                     fail_string = f"{td1} failed to calibrate TD-1 bowden length, {msg}"
                     self.afc.error.AFC_error(fail_string, pause=False)
-                    self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE={pos} msg='{fail_string}' RESET=1")
+                    fail_cmd = (f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE={pos} "
+                               f"msg='{fail_string}' RESET=1")
+                    self.afc.run_script(fail_cmd, gcmd)
                     return
                 else:
                     calibrated.append(f"'TD1_Bowden_length: {td1}'")
@@ -2584,7 +2605,7 @@ class afcFunction:
         if hasattr(cur_lane.unit_obj, 'get_lane_reset_command'):
             reset_cmd = cur_lane.unit_obj.get_lane_reset_command(cur_lane, long_dis)
             if reset_cmd is not None:
-                self.afc.gcode.run_script_from_command(reset_cmd)
+                self.afc.run_script(reset_cmd, gcmd)
             else:
                 self.logger.info(f"{lane} does not support distance-based reset for its unit type")
             return
@@ -2702,7 +2723,9 @@ class afcFunction:
                     and cur_lane.prep_state):
                     success, msg = cur_lane.get_td1_data()
                     if not success:
-                        self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='Get TD-1 data Failed' FAIL={cur_lane} DISTANCE=0 msg='{msg}' RESET=0")
+                        fail_cmd = (f"AFC_CALI_FAIL TITLE='Get TD-1 data Failed' FAIL={cur_lane} "
+                                   f"DISTANCE=0 msg='{msg}' RESET=0")
+                        self.afc.run_script(fail_cmd, gcmd)
                         return
 
             lanes_captured = "'TD-1 Data captured for all lanes'"
@@ -2713,15 +2736,19 @@ class afcFunction:
                 success, msg = cur_lane.get_td1_data()
                 if not success:
                     msg = msg.replace("\n", " ")
-                    self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='Get TD-1 data Failed' FAIL={cur_lane} DISTANCE=0 msg='{msg}' RESET=0")
+                    fail_cmd = (f"AFC_CALI_FAIL TITLE='Get TD-1 data Failed' FAIL={cur_lane} "
+                               f"DISTANCE=0 msg='{msg}' RESET=0")
+                    self.afc.run_script(fail_cmd, gcmd)
                     return
                 lanes_captured = f"'TD-1 Data captured for {cur_lane.name}'"
             else:
                 fail_message = f"'{lane} not valid lane, cannot capture TD-1 data'"
                 self.afc.error.AFC_error(fail_message, pause=False)
-                self.afc.gcode.run_script_from_command(f"AFC_CALI_FAIL TITLE='Get TD-1 data Completed' FAIL={lane} msg='{fail_message}' RESET=0")
+                fail_cmd = (f"AFC_CALI_FAIL TITLE='Get TD-1 data Completed' FAIL={lane} "
+                           f"msg='{fail_message}' RESET=0")
+                self.afc.run_script(fail_cmd, gcmd)
                 return
-        self.afc.gcode.run_script_from_command('AFC_HAPPY_P STEP={}'.format(lanes_captured))
+        self.afc.run_script('AFC_HAPPY_P STEP={}'.format(lanes_captured), gcmd)
 
     cmd_AFC_RESET_TD1_help = "Sends reboot command to specified TD-1 device"
     def cmd_AFC_RESET_TD1(self, gcmd):
@@ -2846,7 +2873,7 @@ class afcFunction:
             return
         cur_lane = self.afc.lanes[lane]
         CUR_HUB = cur_lane.hub_obj
-        CUR_HUB.hub_cut(cur_lane)
+        CUR_HUB.hub_cut(cur_lane, gcmd=gcmd)
         self.logger.info('Hub cut Done!')
 
     cmd_TEST_help = "Test Assist Motors, spins spoolers like rewinding spool"
