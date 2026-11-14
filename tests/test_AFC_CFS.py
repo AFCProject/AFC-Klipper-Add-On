@@ -8,6 +8,7 @@ from those captures, not from the code under test.
 """
 from __future__ import annotations
 
+import ast
 import configparser
 import errno
 import importlib.util
@@ -25,7 +26,7 @@ import jinja2
 import pytest
 
 from extras.AFC_lane import AFCLaneState, AFCMoveWarning
-from tests.conftest import MockConfig, MockLogger
+from tests.conftest import CommandError, MockConfig, MockLogger
 from extras import AFC_CFS as P
 from extras.AFC_CFS import (
     CFSBus,
@@ -35,7 +36,6 @@ from extras.AFC_CFS import (
     load_config_prefix,
 )
 from tests.cfs_helpers import (
-    CommandError,
     FakeMutex,
     RecTrace,
     Recorder,
@@ -51,9 +51,7 @@ from tests.cfs_helpers import (
 )
 
 
-# ============================================================================
 # Wire protocol: frames, CRC, field decoding
-# ============================================================================
 
 CAPTURED = [
     (0x01, 0x00, 0xA3, b"", "f7010300a3dd"),
@@ -394,9 +392,7 @@ def _read(path):
         return [json.loads(line) for line in fh if line.strip()]
 
 
-# ============================================================================
 # CFSTrace, CFSTransport, CFSBus and set_lane_sensors
-# ============================================================================
 
 # Fakes
 
@@ -1604,7 +1600,36 @@ class TestCFSBusDiscover:
         bus.box.reply(P.CMD_GET_SLAVE_INFO, *[slave_info(u) for u in uids])
         assigned = bus.discover()
         assert [a for _, a in assigned] == [1, 2, 3, 4]
-        assert bus.box.fns().count(P.CMD_GET_SLAVE_INFO) == 4
+        # The fifth answer has no free address left: discovery stops there
+        assert bus.box.fns().count(P.CMD_GET_SLAVE_INFO) == 5
+        assert bus.logger.messages[-1] == (
+            "warning", f"CFS bus /dev/a: no free address for box uid {uids[4].hex()}")
+
+    def test_resends_an_address_the_box_missed(self):
+        unit = FakeUnit("CFS_1", 1, UID_A)
+        bus = self._bus(unit)
+        # The box answers twice: its first CMD_SET_SLAVE_ADDR was lost
+        bus.box.reply(P.CMD_GET_SLAVE_INFO, slave_info(UID_A), slave_info(UID_A))
+        assert bus.discover() == [(UID_A, 1)]
+        assert bus.box.keys() == [
+            (P.BROADCAST_BOXES, P.CMD_GET_SLAVE_INFO, b"\xfe\xfe"),
+            (P.BROADCAST_BOXES, P.CMD_SET_SLAVE_ADDR, b"\x01" + UID_A),
+            (P.BROADCAST_BOXES, P.CMD_GET_SLAVE_INFO, b"\xfe\xfe"),
+            (P.BROADCAST_BOXES, P.CMD_SET_SLAVE_ADDR, b"\x01" + UID_A),
+            (P.BROADCAST_BOXES, P.CMD_GET_SLAVE_INFO, b"\xfe\xfe"),
+        ]
+        assert ("debug", f"CFS bus /dev/a: box uid {UID_A.hex()} answered again; resending "
+                         f"address 1") in bus.logger.messages
+
+    def test_box_that_keeps_answering(self):
+        unit = FakeUnit("CFS_1", 1, UID_A)
+        bus = self._bus(unit)
+        bus.box.reply(P.CMD_GET_SLAVE_INFO, *[slave_info(UID_A)] * 8)
+        assert bus.discover() == [(UID_A, 1)]
+        assert bus.box.fns().count(P.CMD_GET_SLAVE_INFO) == 8
+        assert bus.logger.messages[-1] == (
+            "warning", "CFS bus /dev/a: boxes still answering discovery after 8 rounds; some "
+                       "may be unaddressed")
 
 
 # set_lane_sensors
@@ -1639,9 +1664,7 @@ class TestSetLaneSensors:
         assert lane._load_state is False
 
 
-# ============================================================================
 # afcCFS setup, connection, polling, PREP, lane setup and presence
-# ============================================================================
 
 def unit_with(values=None, lanes=(1,), do_connect=True, printer=None, name="CFS_1"):
     """A connected unit with real lanes and a recording trace."""
@@ -1660,12 +1683,6 @@ def online_check(uid=None):
 
 def msgs(unit):
     return unit.logger.messages
-
-
-def tool_cmd(lane):
-    """The lane's T command as the PREP line shows it: AFC DEV's map_to_string(), or
-    AFC main's plain string map."""
-    return lane.map_to_string() if hasattr(lane, "map_to_string") else str(lane.map)
 
 
 # Construction and config
@@ -1729,7 +1746,7 @@ class TestAfcCFSLoadCfsConfig:
             "stage5_reply_timeout": 2.0, "stage5_timeout": 60.0, "stage5_stall_time": 8.0,
             "stage5_stall_distance": 2.0, "prime1_length": 10.0, "prime1_speed": 300.0,
             "prime2_length": 5.0, "prime2_speed": 600.0, "stage7_arg": 3,
-            "clear_mode_after_load": False, "unload_retract_steps": [(15.0, 600.0), (45.0, 1800.0)],
+            "clear_mode_after_load": False, "unload_retract_steps": [(12.0, 300.0)],
             "unload_tip_wiggle": False, "unload_timeout": 30.0, "cutter_wait_time": 3.0,
             "cutter_require_trigger": True, "cutter_sensor_pin": None, "rfid_read": False,
             "rfid_insert_delay": 10.0, "rfid_spin": True, "rfid_busy_timeout": 150.0,
@@ -1956,20 +1973,22 @@ class TestAfcCFSTraceSettings:
             "stage5_timeout": 60.0, "stage5_stall_time": 8.0, "stage5_stall_distance": 2.0,
             "prime1_length": 10.0, "prime1_speed": 300.0, "prime2_length": 5.0,
             "prime2_speed": 600.0, "stage7_arg": 3, "clear_mode_after_load": False,
-            "unload_retract_steps": [(15.0, 600.0), (45.0, 1800.0)],
+            "unload_retract_steps": [(12.0, 300.0)],
             "unload_tip_wiggle": False, "unload_timeout": 30.0}
 
 
 class TestAfcCFSHeartbeat:
     def test_answer_resets_failures(self):
         unit, _ = unit_with()
+        unit.online = True                  # the poll only sends heartbeats to an online box
         unit._consecutive_failures = 2
         unit._quiet_requests = True
         assert unit.heartbeat() == frame(P.CMD_ONLINE_CHECK)
         assert unit._consecutive_failures == 0
         (req,) = unit.box.sent
         assert req.key == (1, P.CMD_ONLINE_CHECK, b"")
-        assert req.kwargs == {"status": P.REQ_STATUS_ADDRESSING, "timeout": 0.8, "quiet": True}
+        assert req.kwargs == {"status": P.REQ_STATUS_ADDRESSING, "timeout": 0.8, "retries": 1,
+                              "motor": False, "quiet": True}
 
     def test_missed_answer_counts(self):
         unit, _ = unit_with()
@@ -1986,7 +2005,7 @@ class TestAfcCFSHeartbeat:
         unit.box.reply(P.CMD_ONLINE_CHECK, None)
         unit.heartbeat()
         assert unit.online is False
-        assert msgs(unit) == [("warning", "CFS CFS_1: offline (no reply to heartbeat)")]
+        assert msgs(unit) == [("warning", "CFS CFS_1: offline (no reply to CMD_ONLINE_CHECK)")]
 
 
 class PrintStats:
@@ -1999,27 +2018,6 @@ class PrintStats:
         if self.raises:
             raise RuntimeError("stats not ready")
         return {"state": self.state, "filename": self.filename}
-
-
-class TestAfcCFSIsPrinting:
-    def test_no_print_stats(self):
-        unit, _ = unit_with()
-        assert unit._is_printing() is False
-
-    def test_printing(self):
-        unit, _ = unit_with()
-        unit.printer._objects["print_stats"] = PrintStats("printing")
-        assert unit._is_printing() is True
-
-    def test_paused_is_not_printing(self):
-        unit, _ = unit_with()
-        unit.printer._objects["print_stats"] = PrintStats("paused")
-        assert unit._is_printing() is False
-
-    def test_stats_error(self):
-        unit, _ = unit_with()
-        unit.printer._objects["print_stats"] = PrintStats(raises=True)
-        assert unit._is_printing() is False
 
 
 class TestAfcCFSTracePrintState:
@@ -2226,14 +2224,16 @@ class TestAfcCFSRequest:
         assert unit.request(P.GET_BOX_STATE) == frame(P.GET_BOX_STATE)
         assert unit._consecutive_failures == 0
         (req,) = unit.box.sent
-        assert req.kwargs == {"timeout": 0.8, "retries": 1, "motor": False, "quiet": False}
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL,
+                              "timeout": 0.8, "retries": 1, "motor": False, "quiet": False}
 
     def test_passes_options(self):
         unit, _ = unit_with()
         unit.online = True
         unit._quiet_requests = True
         unit.request(P.EXTRUDE_PROCESS, b"\x01\x00\x00", timeout=12.0, retries=0, motor=True)
-        assert unit.box.sent[0].kwargs == {"timeout": 12.0, "retries": 0, "motor": True,
+        assert unit.box.sent[0].kwargs == {"status": P.REQ_STATUS_NORMAL,
+                                           "timeout": 12.0, "retries": 0, "motor": True,
                                            "quiet": True}
 
     def test_reply_while_offline_brings_it_online(self):
@@ -2304,6 +2304,30 @@ class TestAfcCFSTightenUp:
         assert unit.box.keys() == [(1, P.TIGHTEN_UP_ENABLE, b"\x00")]
 
 
+class TestAfcCFSStageRequest:
+    def test_motor_command_waits_stage_timeout(self):
+        unit, _ = ready_unit()
+        unit._stage_request(P.EXTRUDE_PROCESS, b"\x01\x00\x00", motor=True, timeout=None,
+                            quick_timeout=2.0)
+        (req,) = unit.box.sent
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL, "timeout": 30.0, "retries": 0,
+                              "motor": True, "quiet": False}
+
+    def test_quick_command_waits_quick_timeout(self):
+        unit, _ = ready_unit()
+        unit._stage_request(P.EXTRUDE_PROCESS, b"\x01\x05\x00", motor=False, timeout=None,
+                            quick_timeout=2.0, retries=1)
+        (req,) = unit.box.sent
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL, "timeout": 2.0, "retries": 1,
+                              "motor": False, "quiet": False}
+
+    def test_explicit_timeout_wins(self):
+        unit, _ = ready_unit()
+        unit._stage_request(P.RETRUDE_PROCESS, b"\x01\x01", motor=True, timeout=7.0,
+                            quick_timeout=5.0)
+        assert unit.box.sent[0].kwargs["timeout"] == 7.0
+
+
 class TestAfcCFSPreLoading:
     def test_run_is_a_motor_command(self):
         unit, _ = unit_with()
@@ -2311,7 +2335,8 @@ class TestAfcCFSPreLoading:
         unit.pre_loading(P.PRELOAD_RUN, 0x02)
         (req,) = unit.box.sent
         assert req.key == (1, P.SET_PRE_LOADING, b"\x02\x02")
-        assert req.kwargs == {"timeout": 30.0, "retries": 1, "motor": True, "quiet": False}
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL,
+                              "timeout": 30.0, "retries": 1, "motor": True, "quiet": False}
 
     def test_tight_is_a_motor_command(self):
         unit, _ = unit_with()
@@ -2325,13 +2350,15 @@ class TestAfcCFSPreLoading:
         unit.pre_loading(P.PRELOAD_CLOSE)
         (req,) = unit.box.sent
         assert req.key == (1, P.SET_PRE_LOADING, b"\x0f\x00")
-        assert req.kwargs == {"timeout": 0.8, "retries": 1, "motor": False, "quiet": False}
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL,
+                              "timeout": 0.8, "retries": 1, "motor": False, "quiet": False}
 
     def test_explicit_timeout_and_retries(self):
         unit, _ = unit_with()
         unit.online = True
         unit.pre_loading(P.PRELOAD_RUN, 0x01, timeout=150.0, retries=0)
-        assert unit.box.sent[0].kwargs == {"timeout": 150.0, "retries": 0, "motor": True,
+        assert unit.box.sent[0].kwargs == {"status": P.REQ_STATUS_NORMAL,
+                                           "timeout": 150.0, "retries": 0, "motor": True,
                                            "quiet": False}
 
 
@@ -2342,7 +2369,8 @@ class TestAfcCFSExtrudeStage:
         unit.extrude_stage(0x01, 0x05)
         (req,) = unit.box.sent
         assert req.key == (1, P.EXTRUDE_PROCESS, b"\x01\x05\x00")
-        assert req.kwargs == {"timeout": 2.0, "retries": 0, "motor": False, "quiet": False}
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL,
+                              "timeout": 2.0, "retries": 0, "motor": False, "quiet": False}
 
     def test_stage_5_explicit_timeout(self):
         unit, _ = unit_with()
@@ -2356,7 +2384,8 @@ class TestAfcCFSExtrudeStage:
         unit.extrude_stage(0x08, 0x07, 0x03)
         (req,) = unit.box.sent
         assert req.key == (1, P.EXTRUDE_PROCESS, b"\x08\x07\x03")
-        assert req.kwargs == {"timeout": 30.0, "retries": 0, "motor": True, "quiet": False}
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL,
+                              "timeout": 30.0, "retries": 0, "motor": True, "quiet": False}
 
     def test_other_stage_explicit_timeout(self):
         unit, _ = unit_with()
@@ -2372,13 +2401,15 @@ class TestAfcCFSRetrudeStage:
         unit.retrude_stage(0x02, 0x01)
         (req,) = unit.box.sent
         assert req.key == (1, P.RETRUDE_PROCESS, b"\x02\x01")
-        assert req.kwargs == {"timeout": 30.0, "retries": 0, "motor": True, "quiet": False}
+        assert req.kwargs == {"status": P.REQ_STATUS_NORMAL,
+                              "timeout": 30.0, "retries": 0, "motor": True, "quiet": False}
 
     def test_check_in(self):
         unit, _ = unit_with()
         unit.online = True
         unit.retrude_stage(0x00, 0x01)
-        assert unit.box.sent[0].kwargs == {"timeout": 5.0, "retries": 0, "motor": False,
+        assert unit.box.sent[0].kwargs == {"status": P.REQ_STATUS_NORMAL,
+                                           "timeout": 5.0, "retries": 0, "motor": False,
                                            "quiet": False}
 
     def test_explicit_timeout(self):
@@ -2604,7 +2635,8 @@ class TestAfcCFSPoll:
         assert unit._quiet_requests is False
         assert unit._last_heartbeat == 500.0
         assert unit.present_last == {"lane1": True, "lane2": False}
-        assert (lanes[0]._load_state, lanes[1]._load_state) == (False, True)
+        # One connection reading is only remembered; the next poll that agrees applies it
+        assert unit._connection_reading == 0b0010
         assert unit.buffer_state == P.BUFFER_MIDDLE
         assert unit._queue_startup_tag_reads.called
         assert unit._trace_print_state.called
@@ -2629,7 +2661,7 @@ class TestAfcCFSPoll:
 
     def test_heartbeat_interval_while_printing(self):
         unit, _ = self._unit()
-        unit.printer._objects["print_stats"] = PrintStats("printing")
+        unit.afc.function.is_printing.return_value = True
         unit._last_heartbeat = 492.0                        # 8 s ago: under the 10 s
         unit._poll(500.0)
         assert P.CMD_ONLINE_CHECK not in unit.box.fns()
@@ -2701,18 +2733,26 @@ class TestAfcCFSMirrorPresence:
         assert unit.trace.events == [("presence", {"mask": 5, "slots": "AC", "previous": None})]
         assert unit._traced_mask == 5
 
-    def test_lane_with_a_bad_slot_is_skipped(self):
-        unit, (lane1, lane2) = unit_with(lanes=(1, 2))
-        lane1.index = 7
-        seen = []
-        unit.update_lane_presence = lambda lane, present: seen.append(lane.name)
-        unit._mirror_presence(0b0011)
-        assert seen == ["lane2"]
-
 
 class TestAfcCFSMirrorConnections:
-    def test_sets_load_sensors(self):
+    def test_first_reading_only_remembered(self):
         unit, lanes = unit_with(lanes=(1, 2))
+        lanes[0]._load_state = True
+        unit._mirror_connections(0b0010)
+        assert [lane._load_state for lane in lanes] == [True, False]
+        assert unit._connection_reading == 0b0010
+
+    def test_sets_load_sensors_when_two_readings_agree(self):
+        unit, lanes = unit_with(lanes=(1, 2))
+        unit._mirror_connections(0b0010)
+        unit._mirror_connections(0b0010)
+        assert [lane._load_state for lane in lanes] == [False, True]
+
+    def test_one_noisy_reading_changes_nothing(self):
+        unit, lanes = unit_with(lanes=(1, 2))
+        unit._mirror_connections(0b0010)
+        unit._mirror_connections(0b0010)
+        unit._mirror_connections(0b0000)            # a glitch
         unit._mirror_connections(0b0010)
         assert [lane._load_state for lane in lanes] == [False, True]
 
@@ -2740,7 +2780,7 @@ class TestAfcCFSSystemTest:
         unit.afc.function.TcmdAssign.assert_called_once_with(lane)
         assert lane._afc_prep_done is True
         assert unit._boot_wait_done is True
-        assert msgs(unit) == [("info", f"lane1 tool cmd: {tool_cmd(lane):3} "
+        assert msgs(unit) == [("info", f"lane1 tool cmd: {lane.map_to_string():3} "
                                        f"<span>READY</span>")]
         assert not unit.connect.called
         assert unit.box.sent == []
@@ -2774,7 +2814,7 @@ class TestAfcCFSSystemTest:
         assert unit._wait_for_box.call_count == 1
         assert unit.present_last["lane1"] is None
         assert unit.lane_not_ready.calls == [((lane,), {})]
-        assert msgs(unit) == [("info", f"lane1 tool cmd: {tool_cmd(lane):3} "
+        assert msgs(unit) == [("info", f"lane1 tool cmd: {lane.map_to_string():3} "
                                        f"<span class=error--text>CFS NOT RESPONDING</span>")]
         unit.system_Test(lane, 0, False, False)
         assert unit._wait_for_box.call_count == 1        # boot wait only once
@@ -2785,15 +2825,6 @@ class TestAfcCFSSystemTest:
         assert unit.system_Test(lane, 0, False, False) is True
         assert not unit._wait_for_box.called
         assert unit.apply_lane_state.called
-
-    def test_map_as_a_plain_string(self):
-        # AFCProject main keeps lane.map as a string, without map_to_string()
-        unit, lane = self._unit()
-        lane.map_to_string = None
-        lane.map = "T0"
-        lane.send_lane_data = Recorder()
-        unit.system_Test(lane, 0, False, False)
-        assert msgs(unit) == [("info", "lane1 tool cmd: T0  <span>READY</span>")]
 
 
 class TestAfcCFSEnsurePrintMode:
@@ -3167,9 +3198,7 @@ class TestAfcCFSUpdateLanePresence:
         assert not lane._perform_pause_runout.called
 
 
-# ============================================================================
 # Tool load, cut, unload and eject
-# ============================================================================
 
 def ready_unit(values=None, lanes=(1,), printer=None, name="CFS_1"):
     unit = make_unit(name=name, values=values, printer=printer)
@@ -3258,6 +3287,26 @@ class TestAfcCFSStage5Feed:
         ok, detail = unit._stage5_feed(lane)
         assert ok is False
         assert detail.startswith("measuring wheel stalled at ")
+
+    def test_bouncing_wheel_is_still_a_stall(self):
+        unit, lane = self._unit()
+        # Swings of 3 mm between polls (more than stage5_stall_distance) but no net progress
+        bounce = iter([42.0, 45.0] * 500)
+        unit.box.on(P.EXTRUDE_PROCESS, lambda req: frame(P.EXTRUDE_PROCESS, wheel(next(bounce))))
+        ok, detail = unit._stage5_feed(lane)
+        assert ok is False
+        assert detail.startswith("measuring wheel stalled at ")
+        # 42 -> 45 is the only progress (3 mm from the start); stalled 8 s after that
+        assert unit.reactor.now - 1000.0 == pytest.approx(8.8)
+
+    def test_wheel_counting_down_is_progress(self):
+        unit, lane = self._unit()
+        # The wheel reads negative and falling on a real box (-515 -> -1550 over a load)
+        positions = iter([-515.0, -540.0, -565.0])
+        unit.box.on(P.EXTRUDE_PROCESS,
+                    lambda req: frame(P.EXTRUDE_PROCESS, wheel(next(positions))))
+        unit.reactor.on_pause.append(lambda now: sensor(lane, len(unit.box.sent) >= 3))
+        assert unit._stage5_feed(lane) == (True, "toolhead sensor triggered after 3 polls")
 
     def test_stall_but_sensor_just_triggered(self):
         unit, lane = self._unit()
@@ -3376,7 +3425,19 @@ class TestAfcCFSLoadAttempt:
         unit.box.reply(P.CTRL_CONNECTION_MOTOR_ACTION, None)
         assert unit._load_attempt(lane, 0) == (
             False, "box did not answer CTRL_CONNECTION_MOTOR_ACTION")
-        assert unit.box.fns()[-1] == P.CTRL_CONNECTION_MOTOR_ACTION
+        assert unit.box.keys()[-4:] == [(1, P.CTRL_CONNECTION_MOTOR_ACTION, b"\x01")] + CLEANUP
+
+    def test_tighten_silent(self):
+        unit, lane = self._unit()
+        unit.box.reply(P.TIGHTEN_UP_ENABLE, None)
+        assert unit._load_attempt(lane, 0) == (False, "box did not answer TIGHTEN_UP_ENABLE")
+        assert unit.box.keys()[-4:] == [(1, P.TIGHTEN_UP_ENABLE, b"\x01")] + CLEANUP
+
+    def test_tighten_error(self):
+        unit, lane = self._unit()
+        unit.box.reply(P.TIGHTEN_UP_ENABLE, frame(P.TIGHTEN_UP_ENABLE, status=P.ST_STATE_ERR))
+        assert unit._load_attempt(lane, 0) == (False, "TIGHTEN_UP_ENABLE returned STATE_ERR")
+        assert unit.box.keys()[-4:] == [(1, P.TIGHTEN_UP_ENABLE, b"\x01")] + CLEANUP
 
     @pytest.mark.parametrize("stage,before", [(0x00, 0), (0x04, 1)])
     def test_stage_no_reply(self, stage, before):
@@ -3501,9 +3562,10 @@ class TestAfcCFSCmdToolLoad:
         unit, lane = self._unit()
         unit.afc.park = True
         unit.afc.park_cmd = "AFC_CFS_PARK"
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
-        unit.afc.gcode.run_script_from_command.assert_called_once_with(
-            "AFC_CFS_PARK EXTRUDER=extruder")
+        unit.afc.run_script = Recorder()
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
+        assert unit.afc.run_script.calls == [(("AFC_CFS_PARK EXTRUDER=extruder", cmd), {})]
 
     def test_park_on_without_a_macro(self):
         unit, lane = self._unit()
@@ -3649,13 +3711,15 @@ class TestAfcCFSRunCutterSequence:
     def test_cutting_off(self):
         unit, lane = self._unit()
         unit.afc.tool_cut = False
-        assert unit._run_cutter_sequence(lane) is None
+        assert unit._run_cutter_sequence(lane, gcmd()) is None
         assert not unit.afc.gcode.run_script_from_command.called
 
     def test_no_switch_cut_once_unverified(self):
         unit, lane = self._unit()
-        assert unit._run_cutter_sequence(lane) is None
-        unit.afc.gcode.run_script_from_command.assert_called_once_with("AFC_CUT EXTRUDER=extruder")
+        unit.afc.run_script = Recorder()
+        cmd = gcmd()
+        assert unit._run_cutter_sequence(lane, cmd) is None
+        assert unit.afc.run_script.calls == [(("AFC_CUT EXTRUDER=extruder", cmd), {})]
         assert lane.extruder_obj.estats.increase_cut_total.call_count == 1
         assert unit.trace.events == [("cut", {"lane": "lane1", "slot": "A", "attempt": 1,
                                               "verified": False})]
@@ -3664,7 +3728,7 @@ class TestAfcCFSRunCutterSequence:
     def test_switch_fired_and_released(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         self._cuts(unit, (1, 0))
-        assert unit._run_cutter_sequence(lane) is None
+        assert unit._run_cutter_sequence(lane, gcmd()) is None
         assert unit.afc.toolhead.wait_moves.called
         assert self._cut_events(unit) == [("cut", {"lane": "lane1", "slot": "A", "attempt": 1,
                                               "verified": True, "fired": True, "released": True,
@@ -3676,14 +3740,14 @@ class TestAfcCFSRunCutterSequence:
         self._cuts(unit, (1,))
         unit.reactor.on_pause.append(
             lambda now: unit._cutter_callback(0.0, 0) if len(unit.reactor.pauses) == 3 else None)
-        assert unit._run_cutter_sequence(lane) is None
+        assert unit._run_cutter_sequence(lane, gcmd()) is None
         assert self._cut_events(unit)[-1][1]["released"] is True
 
     def test_switch_never_released(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1", "cutter_wait_time": 0.2})
         self._cuts(unit, (1,))
         reason = "cutter sensor did not release after cutting"
-        assert unit._run_cutter_sequence(lane) == reason
+        assert unit._run_cutter_sequence(lane, gcmd()) == reason
         # load_attempts (2) + 1 cuts, each one warned
         assert msgs(unit) == [("warning", f"CFS lane1: cut {n} not confirmed: {reason}")
                               for n in (1, 2, 3)]
@@ -3693,18 +3757,18 @@ class TestAfcCFSRunCutterSequence:
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         reason = ("cutter switch never fired during the cut (blade did not reach the end of its "
                   "travel; check pin_loc_xy / cut_move_dist)")
-        assert unit._run_cutter_sequence(lane) == reason
+        assert unit._run_cutter_sequence(lane, gcmd()) == reason
         assert msgs(unit)[0] == ("warning", f"CFS lane1: cut 1 not confirmed: {reason}")
 
     def test_fired_on_a_retry(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         self._cuts(unit, (), (1, 0))
-        assert unit._run_cutter_sequence(lane) is None
+        assert unit._run_cutter_sequence(lane, gcmd()) is None
         assert [e[1]["fired"] for e in self._cut_events(unit)] == [False, True]
 
     def test_trigger_not_required(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1", "cutter_require_trigger": False})
-        assert unit._run_cutter_sequence(lane) is None
+        assert unit._run_cutter_sequence(lane, gcmd()) is None
         assert self._cut_events(unit)[-1][1]["fired"] is False
 
     def test_uses_the_chains_switch(self):
@@ -3713,28 +3777,29 @@ class TestAfcCFSRunCutterSequence:
         b, lane = self._unit({"box_addr": 2}, printer=printer, name="CFS_2")
         b.cutter_source = a
         self._cuts(b, (1, 0))
-        assert b._run_cutter_sequence(lane) is None
+        assert b._run_cutter_sequence(lane, gcmd()) is None
         assert a.cutter_trigger_count == 1
 
 
 class TestAfcCFSRunPostCutMacros:
     def test_nothing_enabled(self):
         unit, (lane,) = ready_unit()
-        unit._run_post_cut_macros(lane)
+        unit._run_post_cut_macros(lane, gcmd())
         assert not unit.afc.gcode.run_script_from_command.called
 
     def test_park(self):
         unit, (lane,) = ready_unit()
         unit.afc.park = True
         unit.afc.park_cmd = "AFC_CFS_PARK"
-        unit._run_post_cut_macros(lane)
-        unit.afc.gcode.run_script_from_command.assert_called_once_with(
-            "AFC_CFS_PARK EXTRUDER=extruder")
+        unit.afc.run_script = Recorder()
+        cmd = gcmd()
+        unit._run_post_cut_macros(lane, cmd)
+        assert unit.afc.run_script.calls == [(("AFC_CFS_PARK EXTRUDER=extruder", cmd), {})]
 
     def test_park_without_macro(self):
         unit, (lane,) = ready_unit()
         unit.afc.park = True
-        unit._run_post_cut_macros(lane)
+        unit._run_post_cut_macros(lane, gcmd())
         assert not unit.afc.gcode.run_script_from_command.called
 
     def test_afc_tip_forming(self):
@@ -3743,7 +3808,7 @@ class TestAfcCFSRunPostCutMacros:
         unit.afc.form_tip_cmd = "AFC"
         tip = type("Tip", (), {"tip_form": Recorder()})()
         unit.printer._objects["AFC_form_tip"] = tip
-        unit._run_post_cut_macros(lane)
+        unit._run_post_cut_macros(lane, gcmd())
         assert tip.tip_form.called
         assert not unit.afc.gcode.run_script_from_command.called
 
@@ -3751,13 +3816,15 @@ class TestAfcCFSRunPostCutMacros:
         unit, (lane,) = ready_unit()
         unit.afc.form_tip = True
         unit.afc.form_tip_cmd = "MY_TIP"
-        unit._run_post_cut_macros(lane)
-        unit.afc.gcode.run_script_from_command.assert_called_once_with("MY_TIP")
+        unit.afc.run_script = Recorder()
+        cmd = gcmd()
+        unit._run_post_cut_macros(lane, cmd)
+        assert unit.afc.run_script.calls == [(("MY_TIP", cmd), {})]
 
     def test_tip_forming_without_macro(self):
         unit, (lane,) = ready_unit()
         unit.afc.form_tip = True
-        unit._run_post_cut_macros(lane)
+        unit._run_post_cut_macros(lane, gcmd())
         assert not unit.afc.gcode.run_script_from_command.called
 
 
@@ -3786,16 +3853,13 @@ class TestAfcCFSRetractToBox:
         assert unit.box.keys() == RETRACT_START + [(1, P.RETRUDE_PROCESS, b"\x01\x01"),
                                                    (1, P.SET_BOX_MODE, b"\x00\x01")]
         assert unit.afc.move_e_pos.calls == [
-            ((-15.0, 10.0, "CFS unload retract 1"), {"wait_tool": True}),
-            ((-45.0, 30.0, "CFS unload retract 2"), {"wait_tool": True}),
+            ((-12.0, 5.0, "CFS unload retract 1"), {"wait_tool": True}),
         ]
         assert unit.trace.events == [
             ("retrude_start", {"lane": "lane1", "slot": "A", "status": "OK", "seconds": 0.0,
                                "toolhead_sensor": True}),
-            ("retract_step", {"lane": "lane1", "slot": "A", "step": 1, "mm": 15.0,
-                              "speed": 600.0, "toolhead_sensor": True}),
-            ("retract_step", {"lane": "lane1", "slot": "A", "step": 2, "mm": 45.0,
-                              "speed": 1800.0, "toolhead_sensor": True}),
+            ("retract_step", {"lane": "lane1", "slot": "A", "step": 1, "mm": 12.0,
+                              "speed": 300.0, "toolhead_sensor": True}),
             ("reel", {"lane": "lane1", "slot": "A", "done": True, "replies": ["OK", "OK"],
                       "seconds": 12.4, "toolhead_sensor": False}),
         ]
@@ -3874,12 +3938,13 @@ class TestAfcCFSCmdToolUnload:
     def test_unloads(self):
         unit, lane = self._unit()
         lane._load_state = True
-        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, cmd)
         assert unit.wait_for_tag_reads.called
         assert lane.select_lane.called and lane.disable_buffer.called
         unit.afc._check_extruder_temp.assert_called_once_with(lane)
-        assert unit._run_cutter_sequence.calls == [((lane,), {})]
-        assert unit._run_post_cut_macros.calls == [((lane,), {})]
+        assert unit._run_cutter_sequence.calls == [((lane, cmd), {})]
+        assert unit._run_post_cut_macros.calls == [((lane, cmd), {})]
         assert lane._load_state is False
         assert unit._mark_tool_state.calls == [((lane,), {"loaded": False})]
         assert unit.trace.events == [
@@ -4009,9 +4074,7 @@ class TestAfcCFSCmdEject:
         assert str(e.value) == "CFS lane1: eject did not finish cleanly: box answered RETRUDE_ERR7"
 
 
-# ============================================================================
 # RFID tag reads
-# ============================================================================
 
 def rfid_unit(values=None, lanes=(1,), printer=None, name="CFS_1"):
     unit = make_unit(name=name, values=values, printer=printer)
@@ -4198,24 +4261,6 @@ class TestAfcCFSQueueTagRead:
         assert unit._rfid_queue == {"lane1": 1000.0}
 
 
-class TestAfcCFSJobActive:
-    @pytest.mark.parametrize("state,active", [("printing", True), ("paused", True),
-                                              ("standby", False), ("complete", False)])
-    def test_states(self, state, active):
-        unit, _ = rfid_unit()
-        unit.printer._objects["print_stats"] = PrintStats(state)
-        assert unit._job_active() is active
-
-    def test_no_print_stats(self):
-        unit, _ = rfid_unit()
-        assert unit._job_active() is False
-
-    def test_stats_error(self):
-        unit, _ = rfid_unit()
-        unit.printer._objects["print_stats"] = PrintStats(raises=True)
-        assert unit._job_active() is False
-
-
 class TestAfcCFSTagReadBlocker:
     def _unit(self):
         unit, lanes = rfid_unit(lanes=(1, 2))
@@ -4235,7 +4280,7 @@ class TestAfcCFSTagReadBlocker:
 
     def test_printing(self):
         unit, (lane, _) = self._unit()
-        unit.printer._objects["print_stats"] = PrintStats("printing")
+        unit.afc.function.in_print.return_value = True
         assert unit.tag_read_blocker(lane) == "a print is running"
 
     def test_offline(self):
@@ -4309,6 +4354,7 @@ class TestAfcCFSRfidTick:
     def test_reads_and_applies_the_tag(self):
         unit, (lane, _) = self._unit()
         unit.read_tag = Recorder(result=tag())
+        unit.afc.gcode.get_mutex().test.return_value = False   # timer: mutex not held
         unit._rfid_queue = {"lane1": 990.0}
         assert unit._rfid_tick(1000.0) == unit.reactor.NEVER
         assert unit.read_tag.calls == [((lane,), {})]
@@ -4338,7 +4384,7 @@ class TestAfcCFSRfidTick:
 
     def test_retried_later_when_busy(self):
         unit, _ = self._unit()
-        unit.printer._objects["print_stats"] = PrintStats("printing")
+        unit.afc.function.in_print.return_value = True
         unit._rfid_queue = {"lane1": 990.0}
         assert unit._rfid_tick(1000.0) == 1010.0
         assert unit._rfid_queue == {"lane1": 1010.0}
@@ -4371,7 +4417,8 @@ class TestAfcCFSReadTag:
         assert unit.box.keys() == [(1, P.SET_PRE_LOADING, b"\x08\x02"),
                                    (1, P.GET_RFID, b"\x08"),
                                    (1, P.SET_PRE_LOADING, b"\x0f\x00")]
-        assert unit.box.sent[0].kwargs == {"timeout": 150.0, "retries": 0, "motor": True,
+        assert unit.box.sent[0].kwargs == {"status": P.REQ_STATUS_NORMAL,
+                                           "timeout": 150.0, "retries": 0, "motor": True,
                                            "quiet": False}
         assert unit.box.sent[1].kwargs["timeout"] == 2.0
         assert busy == [True, True]
@@ -4440,37 +4487,44 @@ class TestAfcCFSTagSummary:
 class TestAfcCFSApplyTag:
     def _unit(self):
         unit, (lane,) = rfid_unit()
-        return unit, lane, Recorder()
+        unit.afc.run_script = Recorder()
+        return unit, lane, unit.afc.run_script
 
     def test_color_material_weight(self):
         unit, lane, run = self._unit()
-        cmds = unit.apply_tag(lane, tag(), run)
+        cmd = gcmd()
+        cmds = unit.apply_tag(lane, tag(), cmd)
         assert cmds == ["SET_COLOR LANE=lane1 COLOR=E7A18E",
                         "SET_MATERIAL LANE=lane1 MATERIAL=PLA",
                         "SET_WEIGHT LANE=lane1 WEIGHT=1000"]
-        assert [c[0][0] for c in run.calls] == cmds
+        assert run.calls == [((c, cmd), {}) for c in cmds]
+
+    def test_timer_has_no_command(self):
+        unit, lane, run = self._unit()
+        cmds = unit.apply_tag(lane, tag())
+        assert run.calls == [((c, None), {}) for c in cmds]
         assert msgs(unit) == []
 
     def test_spoolman_id_wins(self):
         unit, lane, run = self._unit()
         unit.afc.spoolman = "http://spoolman"
-        assert unit.apply_tag(lane, tag(spool_id=7), run) == [
+        assert unit.apply_tag(lane, tag(spool_id=7)) == [
             "SET_SPOOL_ID LANE=lane1 SPOOL_ID=7"]
 
     def test_spool_id_without_spoolman(self):
         unit, lane, run = self._unit()
-        assert unit.apply_tag(lane, tag(spool_id=7), run)[0] == "SET_COLOR LANE=lane1 COLOR=E7A18E"
+        assert unit.apply_tag(lane, tag(spool_id=7))[0] == "SET_COLOR LANE=lane1 COLOR=E7A18E"
 
     def test_lane_already_has_a_spool(self):
         unit, lane, run = self._unit()
         lane.spool_id = 1
-        assert unit.apply_tag(lane, tag(), run) == []
+        assert unit.apply_tag(lane, tag()) == []
         assert not run.called
         assert msgs(unit) == [("info", "CFS lane1: lane has Spoolman spool 1; tag not applied")]
 
     def test_unknown_material_code(self):
         unit, lane, run = self._unit()
-        cmds = unit.apply_tag(lane, tag(material=None, material_code="09999"), run)
+        cmds = unit.apply_tag(lane, tag(material=None, material_code="09999"))
         assert cmds == ["SET_COLOR LANE=lane1 COLOR=E7A18E", "SET_WEIGHT LANE=lane1 WEIGHT=1000"]
         assert msgs(unit) == [("info", "CFS lane1: material code 09999 isn't known; add it to "
                                        "rfid_materials in [AFC_CFS CFS_1], e.g. rfid_materials: "
@@ -4479,7 +4533,7 @@ class TestAfcCFSApplyTag:
     def test_nothing_usable(self):
         unit, lane, run = self._unit()
         empty = tag(material=None, material_code="", color=None, weight=None)
-        assert unit.apply_tag(lane, empty, run) == []
+        assert unit.apply_tag(lane, empty) == []
         assert msgs(unit) == []
 
 
@@ -4539,9 +4593,7 @@ class TestAfcCFSApplyLaneState:
         assert not unit.ensure_print_mode.called
 
 
-# ============================================================================
 # G-code commands, calibration and config loading
-# ============================================================================
 
 def raw(unit):
     return [m for lvl, m in msgs(unit) if lvl == "raw"]
@@ -4716,13 +4768,31 @@ NOTHING = "CFS lanes are fed by the box itself; there is nothing to calibrate."
 class TestAfcCFSCalibrateLane:
     def test_nothing_to_calibrate(self):
         unit, (lane,) = ready_unit()
-        assert unit.calibrate_lane(lane, 1.0) == (False, NOTHING, 0.0)
+        assert unit.calibrate_lane(lane, 1.0, gcmd()) == (False, NOTHING, 0.0)
 
 
 class TestAfcCFSCalibrateBowden:
     def test_nothing_to_calibrate(self):
         unit, (lane,) = ready_unit()
-        assert unit.calibrate_bowden(lane, 900.0, 1.0) == (False, NOTHING, 0.0)
+        assert unit.calibrate_bowden(lane, 900.0, 1.0, gcmd()) == (False, NOTHING, 0.0)
+
+
+class TestAfcCFSPrepCaptureTd1:
+    def test_says_not_supported(self):
+        unit, (lane,) = unit_with()
+        assert unit.prep_capture_td1(lane) == (
+            False, "CFS lane1: TD-1 capture isn't supported on CFS lanes")
+        assert msgs(unit) == [("info", "CFS lane1: TD-1 capture isn't supported on CFS lanes; "
+                                       "ignoring capture_td1_when_loaded")]
+
+    def test_afc_skips_its_stepper_path(self):
+        unit, (lane,) = unit_with()
+        lane.td1_when_loaded = True
+        lane.get_td1_data = MagicMock()
+        lane._prep_capture_td1()
+        assert not lane.get_td1_data.called
+        assert msgs(unit) == [("info", "CFS lane1: TD-1 capture isn't supported on CFS lanes; "
+                                       "ignoring capture_td1_when_loaded")]
 
 
 class TestAfcCFSCalibrateTd1:
@@ -5074,9 +5144,7 @@ class TestLoadConfigPrefix:
         assert unit.name == "CFS_1"
 
 
-# ============================================================================
 # Config template macros
-# ============================================================================
 
 # Only the CFS templates: inside AFC's repo the folder also holds every other unit's
 TEMPLATES = sorted((pathlib.Path(__file__).resolve().parent.parent / "templates")
@@ -5127,9 +5195,43 @@ def _render_leave_purge(y=230.0, homed="xyz", next_lane=None, current_load=None)
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def _render_park(x=50.0, y=230.0, z=0.2):
+    """Render AFC_CFS_PARK from AFC_CFS_1.cfg with its default variables and return its lines."""
+    path = next(p for p in TEMPLATES if p.name == "AFC_CFS_1.cfg")
+    cp = configparser.RawConfigParser(strict=False, inline_comment_prefixes=None,
+                                      comment_prefixes=("#", ";"))
+    cp.read(path)
+    section = "gcode_macro AFC_CFS_PARK"
+    # Klipper parses macro variables with ast.literal_eval
+    variables = {k[len("variable_"):]: ast.literal_eval(v.split("#")[0].strip())
+                 for k, v in cp.items(section) if k.startswith("variable_")}
+    env = jinja2.Environment("{%", "%}", "{", "}")
+    template = env.from_string(cp.get(section, "gcode"))
+    printer = {"gcode_move": {"gcode_position": {"x": x, "y": y, "z": z}},
+               "toolhead": {"axis_maximum": {"z": 300.0}}}
+    text = template.render(printer=printer, params={}, **variables)
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+class TestAfcCFSParkMacro:
+    def test_parks_from_behind_safe_y(self):
+        assert _render_park() == ["G90", "AFC_DISABLE_SKEW", "G1 Z30.0 F900",
+                                  "G1 Y215.0 F15000", "G1 X148.0 F15000",
+                                  "G1 Y225.3 F15000", "M400", "AFC_ENABLE_SKEW"]
+
+    def test_already_high_and_in_front(self):
+        assert _render_park(y=200.0, z=50.0) == ["G90", "AFC_DISABLE_SKEW", "G1 X148.0 F15000",
+                                                 "G1 Y225.3 F15000", "M400", "AFC_ENABLE_SKEW"]
+
+    def test_already_lined_up_in_x(self):
+        assert _render_park(x=148.0, z=50.0) == ["G90", "AFC_DISABLE_SKEW", "G1 Y225.3 F15000",
+                                                 "M400", "AFC_ENABLE_SKEW"]
+
+
 class TestAfcCFSLeavePurgeMacro:
-    LEAVES = ["SAVE_GCODE_STATE NAME=_afc_cfs_leave", "G90", "G1 Y215.0 F15000", "M400",
-              "G4 P1000", "RESTORE_GCODE_STATE NAME=_afc_cfs_leave"]
+    LEAVES = ["SAVE_GCODE_STATE NAME=_afc_cfs_leave", "G90", "AFC_DISABLE_SKEW",
+              "G1 Y215.0 F15000", "M400", "AFC_ENABLE_SKEW", "G4 P1000",
+              "RESTORE_GCODE_STATE NAME=_afc_cfs_leave"]
 
     def test_leaves_the_chute(self):
         assert _render_leave_purge() == self.LEAVES

@@ -33,7 +33,8 @@ import termios
 import threading
 import time
 import traceback
-from typing import (TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple, Optional, Set,
+from enum import Enum
+from typing import (TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Set,
                     Tuple)
 
 import configfile
@@ -49,17 +50,20 @@ except Exception:
 try:
     from extras.AFC_unit import afcUnit
 except Exception:
-    raise CONFIG_ERROR(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
+    error_str = ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc())
+    raise CONFIG_ERROR(error_str)
 
 try:
     from extras.AFC_lane import AFCLaneState, AFCMoveWarning
 except Exception:
-    raise CONFIG_ERROR(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
+    error_str = ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc())
+    raise CONFIG_ERROR(error_str)
 
 try:
     from extras.AFC_respond import AFCprompt
 except Exception:
-    raise CONFIG_ERROR(ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc()))
+    error_str = ERROR_STR.format(import_lib="AFC_respond", trace=traceback.format_exc())
+    raise CONFIG_ERROR(error_str)
 
 
 
@@ -185,6 +189,21 @@ SENSOR_BANK_CONNECTIONS = 0x01
 BUFFER_MIDDLE = 0x00
 BUFFER_FULL = 0x01
 BUFFER_EMPTY = 0x02
+
+class TagReadBlocker(str, Enum):
+    """Why a tag read has to wait (tag_read_blocker); the value is shown to the user."""
+    PRINTING      = "a print is running"
+    OFFLINE       = "box offline"
+    BUSY          = "box busy"
+    LOADED        = "lane is loaded"
+    OTHER_LOADED  = "another slot of this box is loaded"
+    EMPTY         = "slot is empty"
+
+
+# Blockers that won't clear on their own: the queued read is dropped, not retried
+BLOCKS_FOR_GOOD = (TagReadBlocker.EMPTY, TagReadBlocker.LOADED)
+
+DISCOVERY_ROUNDS = 8   # two per possible box: room to resend an address whose ack was lost
 
 # Slot bits, physical left-to-right. AFC lane index 1..4 maps to A..D.
 SLOT_BITS = (0x01, 0x02, 0x04, 0x08)
@@ -1075,14 +1094,17 @@ class CFSBus:
         """
         Address every unaddressed box on the chain. Each GET_SLAVE_INFO
         broadcast is answered by one unaddressed box; giving it an address
-        silences it, so repeat until nobody answers.
+        silences it, so repeat until nobody answers. A box that answers again
+        missed its address (a dropped CMD_SET_SLAVE_ADDR), so it is sent again;
+        rounds allow for that on every one of the four addresses.
 
         :param timeout: seconds to wait for each broadcast
         :return List[Tuple[Any, ...]]: (uid, address) for each box addressed
         """
         assigned: List[Tuple[Any, ...]] = []
         taken: Set[Any] = set()
-        for _ in range(4):
+        sent: Dict[bytes, int] = {}
+        for _ in range(DISCOVERY_ROUNDS):
             reply = self.transport.request(P.BROADCAST_BOXES, P.CMD_GET_SLAVE_INFO,
                                            bytes([P.BROADCAST_BOXES, P.BROADCAST_BOXES]),
                                            status=P.REQ_STATUS_ADDRESSING,
@@ -1091,6 +1113,13 @@ class CFSBus:
                 or len(reply.data) < 14):
                 break
             uid = bytes(reply.data[2:14])
+            if uid in sent:
+                self.logger.debug(f"CFS bus {self.transport.path}: box uid {uid.hex()} answered "
+                                  f"again; resending address {sent[uid]}")
+                self.transport.request(P.BROADCAST_BOXES, P.CMD_SET_SLAVE_ADDR,
+                                       bytes([sent[uid]]) + uid, status=P.REQ_STATUS_ADDRESSING,
+                                       timeout=timeout)
+                continue
             unit = self.unit_for_uid(uid)
             if unit is None:
                 # Single-box setups don't set box_uid: the one unit without a
@@ -1114,10 +1143,14 @@ class CFSBus:
                                    bytes([addr]) + uid, status=P.REQ_STATUS_ADDRESSING,
                                    timeout=timeout)
             taken.add(addr)
+            sent[uid] = addr
             assigned.append((uid, addr))
             owner = f" ({unit.name})" if unit is not None else ""
             self.logger.debug(f"CFS bus {self.transport.path}: box uid {uid.hex()} -> "
                              f"address {addr}{owner}")
+        else:
+            self.logger.warning(f"CFS bus {self.transport.path}: boxes still answering discovery "
+                                f"after {DISCOVERY_ROUNDS} rounds; some may be unaddressed")
         return assigned
 
 
@@ -1270,7 +1303,7 @@ class afcCFS(afcUnit):
         # pulling out of the gears before the box reels. 60mm total like stock's
         # Tn_retrude -60; the first 15mm slower while the cut end is still warm.
         self.unload_retract_steps = self._parse_steps(config.get(
-            "unload_retract_steps", "15:600, 45:1800"))
+            "unload_retract_steps", "12:300"))
         # Optional tip-forming wiggle before retracting. Not needed with a cutter.
         self.unload_tip_wiggle = config.getboolean("unload_tip_wiggle", False)
         self.unload_timeout = config.getfloat("unload_timeout", 30.0, minval=1.)
@@ -1331,6 +1364,7 @@ class afcCFS(afcUnit):
             self.trace.event("trace_start", unit=self.name, serial=self.serial_path,
                              box_addr=self.box_addr, settings=self._trace_settings())
         self._traced_mask: Optional[int] = None
+        self._connection_reading: Optional[int] = None
         self._traced_print_state: Optional[str] = None
 
         # Box state, as last seen
@@ -1473,32 +1507,7 @@ class afcCFS(afcUnit):
         The stock host's periodic CMD_ONLINE_CHECK, which keeps the box's
         connection light happy.
         """
-        reply = self.transport.request(self.box_addr, P.CMD_ONLINE_CHECK, b"",
-                                       status=P.REQ_STATUS_ADDRESSING,
-                                       timeout=self.request_timeout,
-                                       quiet=self._quiet_requests)
-        if reply is None:
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= self.offline_after:
-                self._set_offline("no reply to heartbeat")
-        else:
-            self._consecutive_failures = 0
-        return reply
-
-    def _is_printing(self) -> bool:
-        """
-        Whether a print is running.
-
-        :return bool: True if printing
-        """
-        stats = self.printer.lookup_object("print_stats", None)
-        if stats is None:
-            return False
-        try:
-            state = stats.get_status(self.reactor.monotonic()).get("state")
-            return bool(state == "printing")
-        except Exception:
-            return False
+        return self.request(P.CMD_ONLINE_CHECK, status=P.REQ_STATUS_ADDRESSING)
 
     def _trace_print_state(self) -> None:
         """
@@ -1607,7 +1616,8 @@ class afcCFS(afcUnit):
     # Box requests (used by lanes)
 
     def request(self, fn: int, data: bytes = b"", timeout: Optional[float] = None,
-                retries: int = 1, motor: bool = False) -> Optional[Frame]:
+                retries: int = 1, motor: bool = False,
+                status: int = P.REQ_STATUS_NORMAL) -> Optional[Frame]:
         """
         Send one request to this box and track whether it is online.
 
@@ -1616,9 +1626,10 @@ class afcCFS(afcUnit):
         :param timeout: seconds to wait, default request_timeout
         :param retries: extra attempts after a timeout
         :param motor: the box answers only when a motion ends
+        :param status: request status byte
         :return Optional[Frame]: the reply, or None
         """
-        reply = self.transport.request(self.box_addr, fn, data,
+        reply = self.transport.request(self.box_addr, fn, data, status=status,
                                        timeout=timeout or self.request_timeout,
                                        retries=retries, motor=motor,
                                        quiet=self._quiet_requests)
@@ -1675,10 +1686,28 @@ class afcCFS(afcUnit):
         :param retries: extra attempts after a timeout
         :return Optional[Frame]: the reply, or None
         """
-        motor = action in (P.PRELOAD_RUN, P.PRELOAD_TIGHT)
-        return self.request(P.SET_PRE_LOADING, bytes([slot_bits, action]),
-                            timeout=timeout or (self.stage_timeout if motor else None),
-                            retries=retries, motor=motor)
+        return self._stage_request(P.SET_PRE_LOADING, bytes([slot_bits, action]),
+                                   motor=action in (P.PRELOAD_RUN, P.PRELOAD_TIGHT),
+                                   timeout=timeout, quick_timeout=None, retries=retries)
+
+    def _stage_request(self, fn: int, data: bytes, motor: bool, timeout: Optional[float],
+                       quick_timeout: Optional[float], retries: int = 0) -> Optional[Frame]:
+        """
+        Send a box process command. A motor command is answered only when its motion ends, so
+        it waits stage_timeout; anything else is answered at once and waits quick_timeout.
+
+        :param fn: function code
+        :param data: payload bytes
+        :param motor: the box answers only when a motion ends
+        :param timeout: seconds to wait, None for the default by kind
+        :param quick_timeout: default for a command that isn't a motor command (None:
+            request_timeout)
+        :param retries: extra attempts after a timeout
+        :return Optional[Frame]: the reply, or None
+        """
+        if timeout is None:
+            timeout = self.stage_timeout if motor else quick_timeout
+        return self.request(fn, data, timeout=timeout, retries=retries, motor=motor)
 
     def extrude_stage(self, slot_bits: int, stage: int, arg: int = 0x00,
                       timeout: Optional[float] = None) -> Optional[Frame]:
@@ -1693,11 +1722,9 @@ class afcCFS(afcUnit):
         :param timeout: seconds to wait, default by stage
         :return Optional[Frame]: the reply, or None
         """
-        if stage == 0x05:
-            return self.request(P.EXTRUDE_PROCESS, bytes([slot_bits, stage, arg]),
-                                timeout=timeout or self.stage5_reply_timeout, retries=0)
-        return self.request(P.EXTRUDE_PROCESS, bytes([slot_bits, stage, arg]),
-                            timeout=timeout or self.stage_timeout, retries=0, motor=True)
+        return self._stage_request(P.EXTRUDE_PROCESS, bytes([slot_bits, stage, arg]),
+                                   motor=stage != 0x05, timeout=timeout,
+                                   quick_timeout=self.stage5_reply_timeout)
 
     def retrude_stage(self, slot_bits: int, stage: int,
                       timeout: Optional[float] = None) -> Optional[Frame]:
@@ -1709,10 +1736,9 @@ class afcCFS(afcUnit):
         :param timeout: seconds to wait, default by kind
         :return Optional[Frame]: the reply, or None
         """
-        if timeout is None:
-            timeout = self.stage_timeout if slot_bits else self.checkin_timeout
-        return self.request(P.RETRUDE_PROCESS, bytes([slot_bits, stage]),
-                            timeout=timeout, retries=0, motor=bool(slot_bits))
+        return self._stage_request(P.RETRUDE_PROCESS, bytes([slot_bits, stage]),
+                                   motor=bool(slot_bits), timeout=timeout,
+                                   quick_timeout=self.checkin_timeout)
 
     def read_material_mask(self) -> Optional[int]:
         """
@@ -1867,7 +1893,7 @@ class afcCFS(afcUnit):
 
         self._quiet_requests = not self.trace_polls
         try:
-            interval = (self.heartbeat_interval_printing if self._is_printing()
+            interval = (self.heartbeat_interval_printing if self.afc.function.is_printing()
                         else self.heartbeat_interval)
             if eventtime - self._last_heartbeat >= interval:
                 self._last_heartbeat = eventtime
@@ -1899,17 +1925,19 @@ class afcCFS(afcUnit):
                              previous=self._traced_mask)
             self._traced_mask = mask
         for lane in self.lanes.values():
-            try:
-                self.update_lane_presence(lane, bool(mask & P.slot_bit(lane.index)))
-            except ValueError:
-                pass
+            self.update_lane_presence(lane, bool(mask & P.slot_bit(lane.index)))
 
     def _mirror_connections(self, mask: int) -> None:
         """
-        Set each lane's load sensor from the connection sensors.
+        Set each lane's load sensor from the connection sensors once two polls in a row agree,
+        so a single noisy reading can't change what AFC's virtual hub reports. Loads and
+        unloads set the load sensor themselves as they finish.
 
         :param mask: connection bitmask
         """
+        if mask != self._connection_reading:
+            self._connection_reading = mask
+            return
         for lane in self.lanes.values():
             lane._load_state = bool(mask & P.slot_bit(lane.index))
 
@@ -1955,11 +1983,7 @@ class afcCFS(afcUnit):
             self.afc.function.TcmdAssign(cur_lane)
         cur_lane.send_lane_data()
         cur_lane.do_enable(False)
-        # AFCProject main keeps lane.map as a string; newer AFC makes it a list
-        # with map_to_string(). Support both.
-        to_string = getattr(cur_lane, "map_to_string", None)
-        tcmd = to_string() if callable(to_string) else str(cur_lane.map)
-        self.logger.info(f"{cur_lane.name} tool cmd: {tcmd:3} {msg}")
+        self.logger.info(f"{cur_lane.name} tool cmd: {cur_lane.map_to_string():3} {msg}")
         cur_lane.set_afc_prep_done()
         return self.online
 
@@ -2209,7 +2233,9 @@ class afcCFS(afcUnit):
         """
         Poll EXTRUDE_PROCESS stage 5 (the box motor runs while we poll) until
         the toolhead sensor trips. Stops early on timeout or when the measuring
-        wheel stops moving.
+        wheel has made no new progress for stage5_stall_time. Progress is the
+        distance from the first reading, so a wheel bouncing back and forth
+        doesn't count as moving.
 
         :param lane: lane to act on
         :return tuple: (reached the sensor, detail)
@@ -2217,7 +2243,8 @@ class afcCFS(afcUnit):
         bits = P.slot_bit(lane.index)
         start = self.reactor.monotonic()
         last_progress_time = start
-        last_wheel: Optional[float] = None
+        first_wheel: Optional[float] = None
+        best_progress = 0.0
         polls = 0
         while True:
             if self._toolhead_sensor(lane):
@@ -2234,9 +2261,11 @@ class afcCFS(afcUnit):
                 self.logger.debug(f"CFS {lane.name}: stage 5 status {reply.status_name()}")
             wheel = P.decode_float_be(reply.data) if reply is not None else None
             if wheel is not None:
-                if (last_wheel is None
-                    or abs(wheel - last_wheel) >= self.stage5_stall_distance):
-                    last_wheel = wheel
+                if first_wheel is None:
+                    first_wheel = wheel
+                progress = abs(wheel - first_wheel)
+                if progress >= best_progress + self.stage5_stall_distance:
+                    best_progress = progress
                     last_progress_time = now
                 elif now - last_progress_time > self.stage5_stall_time:
                     if self._toolhead_sensor(lane):
@@ -2275,9 +2304,17 @@ class afcCFS(afcUnit):
 
         reply = self.connection_motor(P.CONN_EXTRUDE)
         if reply is None:
+            # It may have started anyway: stop it like any other failed step
+            self._box_cleanup()
             return False, "box did not answer CTRL_CONNECTION_MOTOR_ACTION"
         self._pause(0.5)
-        self.tighten_up(True)
+        reply = self.tighten_up(True)
+        if reply is None:
+            self._box_cleanup()
+            return False, "box did not answer TIGHTEN_UP_ENABLE"
+        if not reply.ok:
+            self._box_cleanup()
+            return False, f"TIGHTEN_UP_ENABLE returned {reply.status_name()}"
         self._pause(settle)
 
         for stage in (0x00, 0x04):
@@ -2380,8 +2417,8 @@ class afcCFS(afcUnit):
 
         if (self.afc.park
             and self.afc.park_cmd):
-            self.afc.gcode.run_script_from_command(
-                f"{self.afc.park_cmd} EXTRUDER={lane.extruder_obj.name}")
+            self.afc.run_script(
+                f"{self.afc.park_cmd} EXTRUDER={lane.extruder_obj.name}", gcmd)
 
         attempts_used = 0
         detail = ""
@@ -2427,7 +2464,7 @@ class afcCFS(afcUnit):
 
     # Tool unload
 
-    def _run_cutter_sequence(self, lane: AFCLane) -> Optional[str]:
+    def _run_cutter_sequence(self, lane: AFCLane, gcmd: Any) -> Optional[str]:
         """
         Run AFC's cut macro. With a cutter switch configured, verify it: the
         switch must have fired during the cut (blade reached the end of its
@@ -2435,6 +2472,7 @@ class afcCFS(afcUnit):
         the cut.
 
         :param lane: lane to act on
+        :param gcmd: command context the macro runs through
         :return Optional[str]: None, or why the cut failed
         """
         if not self.afc.tool_cut:
@@ -2444,8 +2482,8 @@ class afcCFS(afcUnit):
         for attempt in range(max(self.load_attempts, 1) + 1):
             triggers_before = cutter.cutter_trigger_count
             lane.extruder_obj.estats.increase_cut_total()
-            self.afc.gcode.run_script_from_command(
-                f"{self.afc.tool_cut_cmd} EXTRUDER={lane.extruder_obj.name}")
+            self.afc.run_script(
+                f"{self.afc.tool_cut_cmd} EXTRUDER={lane.extruder_obj.name}", gcmd)
             if not cutter.cutter_sensor_pin:
                 self._lane_trace(lane, "cut", attempt=attempt + 1, verified=False)
                 return None
@@ -2472,21 +2510,22 @@ class afcCFS(afcUnit):
             self.logger.warning(f"CFS {lane.name}: cut {attempt + 1} not confirmed: {reason}")
         return reason
 
-    def _run_post_cut_macros(self, lane: AFCLane) -> None:
+    def _run_post_cut_macros(self, lane: AFCLane, gcmd: Any) -> None:
         """
         Park and form a tip after the cut, if enabled.
 
         :param lane: lane to act on
+        :param gcmd: command context the macros run through
         """
         if (self.afc.park
             and self.afc.park_cmd):
-            self.afc.gcode.run_script_from_command(
-                f"{self.afc.park_cmd} EXTRUDER={lane.extruder_obj.name}")
+            self.afc.run_script(
+                f"{self.afc.park_cmd} EXTRUDER={lane.extruder_obj.name}", gcmd)
         if self.afc.form_tip:
             if self.afc.form_tip_cmd == "AFC":
                 self.printer.lookup_object("AFC_form_tip").tip_form()
             elif self.afc.form_tip_cmd:
-                self.afc.gcode.run_script_from_command(self.afc.form_tip_cmd)
+                self.afc.run_script(self.afc.form_tip_cmd, gcmd)
 
     def _retract_to_box(self, lane: AFCLane) -> Tuple[Any, ...]:
         """
@@ -2494,8 +2533,10 @@ class afcCFS(afcUnit):
           1. RETRUDE stage 0 (START) while the extruder gears still hold the
              filament: the box pulls the buffer to its empty limit. With the
              end already free it reels slack and fails RETRUDE_ERR2.
-          2. Extruder retract out of the gears (unload_retract_steps); the
-             now-empty buffer takes up the slack, so the gears don't click.
+          2. Extruder retract, just far enough to clear the gears
+             (unload_retract_steps). The box doesn't reel and the buffer
+             only takes up slack toward the toolhead, so retracting further
+             makes the gears click.
           3. RETRUDE stage 1 (FINISH): the box reels the slot back and
              answers when it has finished.
 
@@ -2517,6 +2558,10 @@ class afcCFS(afcUnit):
         self._lane_trace(lane, "retrude_start", status=start_status,
                          seconds=round(self.reactor.monotonic() - started, 2),
                          toolhead_sensor=self._toolhead_sensor(lane))
+        # No reply in stage_timeout means the box may not have pulled the buffer back at all,
+        # and the buffer can't take filament pushed back toward the box, so retracting out of
+        # the gears could jam: stop. An error status is an answer (e.g. RETRUDE_ERR2, end
+        # already free), and FINISH can recover it.
         if reply is None:
             return False, "box did not answer RETRUDE start"
         if not reply.ok:
@@ -2573,11 +2618,11 @@ class afcCFS(afcUnit):
         if self._cutter_engaged():
             self._lane_fail(lane, "cutter sensor is engaged before cutting; check the cutter lever")
             return
-        cut_problem = self._run_cutter_sequence(lane)
+        cut_problem = self._run_cutter_sequence(lane, gcmd)
         if cut_problem:
             self._lane_fail(lane, cut_problem)
             return
-        self._run_post_cut_macros(lane)
+        self._run_post_cut_macros(lane, gcmd)
 
         with self.operation():
             try:
@@ -2657,7 +2702,7 @@ class afcCFS(afcUnit):
             raise gcmd.error(error_str)
         blocker = self.tag_read_blocker(lane)
         if blocker is not None:
-            error_str = f"CFS {lane.name}: can't read the tag now ({blocker})"
+            error_str = f"CFS {lane.name}: can't read the tag now ({blocker.value})"
             raise gcmd.error(error_str)
         spin = gcmd.get_int("SPIN", 1 if self.rfid_spin else 0, minval=0, maxval=1)
         tag = self.read_tag(lane, spin=bool(spin))
@@ -2668,7 +2713,7 @@ class afcCFS(afcUnit):
         gcmd.respond_info(f"CFS {lane.name} (slot {slot}) tag: {self._tag_summary(tag)}\n"
                           f"  record {record}")
         if gcmd.get_int("APPLY", 1, minval=0, maxval=1):
-            for cmd in self.apply_tag(lane, tag, self.afc.gcode.run_script_from_command):
+            for cmd in self.apply_tag(lane, tag, gcmd):
                 gcmd.respond_info("  " + cmd)
 
     # RFID tags
@@ -2724,46 +2769,32 @@ class afcCFS(afcUnit):
         else:
             self.reactor.update_timer(self._rfid_timer, min(self._rfid_queue.values()))
 
-    def _job_active(self) -> bool:
-        """
-        Whether a print is running or paused.
-
-        :return bool: True during a job
-        """
-        stats = self.printer.lookup_object("print_stats", None)
-        if stats is None:
-            return False
-        try:
-            return stats.get_status(self.reactor.monotonic()).get("state") in ("printing", "paused")
-        except Exception:
-            return False
-
-    def tag_read_blocker(self, lane: AFCLane) -> Optional[str]:
+    def tag_read_blocker(self, lane: AFCLane) -> Optional[TagReadBlocker]:
         """
         Why this lane's tag can't be read right now, or None.
 
         :param lane: lane to act on
-        :return Optional[str]: reason, or None
+        :return Optional[TagReadBlocker]: reason, or None
         """
-        if self._job_active():
-            return "a print is running"
+        if self.afc.function.in_print():
+            return TagReadBlocker.PRINTING
         if not self.online:
-            return "box offline"
+            return TagReadBlocker.OFFLINE
         if (self.bus.operation_active
             or self.transport.busy):
-            return "box busy"
+            return TagReadBlocker.BUSY
         if (lane.tool_loaded
             or (self.connected_mask is not None
                 and self.connected_mask & P.slot_bit(lane.index))):
-            return "lane is loaded"
+            return TagReadBlocker.LOADED
         # Untested: turning one slot while another of this box is loaded
         # (that slot is in print mode). Wait until the box is unloaded.
         if (self.connected_mask
             or any(other.tool_loaded for other in self.lanes.values())):
-            return "another slot of this box is loaded"
+            return TagReadBlocker.OTHER_LOADED
         if (self.material_mask is not None
             and not self.material_mask & P.slot_bit(lane.index)):
-            return "slot is empty"
+            return TagReadBlocker.EMPTY
         return None
 
     def _rfid_tick(self, eventtime: float) -> float:
@@ -2784,7 +2815,7 @@ class afcCFS(afcUnit):
             self._rfid_queue.pop(name, None)
             return eventtime
         blocker = self.tag_read_blocker(lane)
-        if blocker in ("slot is empty", "lane is loaded"):
+        if blocker in BLOCKS_FOR_GOOD:
             self._rfid_queue.pop(name, None)
         elif blocker is not None:
             # Try again later (after the print, once the box is free)
@@ -2794,7 +2825,7 @@ class afcCFS(afcUnit):
             try:
                 tag = self.read_tag(lane)
                 if tag is not None:
-                    self.apply_tag(lane, tag, self.afc.gcode.run_script)
+                    self.apply_tag(lane, tag)
             except Exception:
                 self.logger.warning(f"CFS {lane.name}: tag read failed\n{traceback.format_exc()}")
         if not self._rfid_queue:
@@ -2866,14 +2897,14 @@ class afcCFS(afcUnit):
         return ", ".join(parts)
 
     def apply_tag(self, lane: AFCLane, tag: Dict[str, Any],
-                  run_gcode: Callable[[str], Any]) -> List[str]:
+                  gcmd: Optional[Any] = None) -> List[str]:
         """
         Set the lane from its tag with AFC's own commands. A Spoolman ID on
         the tag wins; a lane that already has a Spoolman spool is left alone.
 
         :param lane: lane to act on
         :param tag: decoded tag
-        :param run_gcode: function that runs a gcode line
+        :param gcmd: command context to run them through, or None from a timer
         :return List[str]: the commands run
         """
         cmds = []
@@ -2896,7 +2927,7 @@ class afcCFS(afcUnit):
             if tag.get("weight"):
                 cmds.append(f'SET_WEIGHT LANE={lane.name} WEIGHT={tag["weight"]}')
         for cmd in cmds:
-            run_gcode(cmd)
+            self.afc.run_script(cmd, gcmd)
         return cmds
 
     def apply_lane_state(self, cur_lane: AFCLane, present: bool) -> str:
@@ -2926,7 +2957,6 @@ class afcCFS(afcUnit):
         return msg
 
     def prep_load(self, lane: AFCLane) -> None:
-        # The box pre-loads a newly inserted spool on its own.
         """
         Nothing to do: the box draws an inserted spool in itself.
 
@@ -3040,26 +3070,41 @@ class afcCFS(afcUnit):
         self.logger.debug(f"CFS {self.name}: load_then_home not supported, box handles feeding")
         return False, 0, AFCMoveWarning.ERROR
 
-    def calibrate_lane(self, cur_lane: AFCLane, tol: float) -> Tuple[Any, ...]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float, gcmd: Any) -> Tuple[Any, ...]:
         """
         CFS lanes have nothing to calibrate.
 
         :param cur_lane: lane to act on
         :param tol: unused
+        :param gcmd: unused
         :return tuple: (False, message, 0.0)
         """
         return False, self.CALIBRATION_UNSUPPORTED, 0.0
 
-    def calibrate_bowden(self, cur_lane: AFCLane, dis: float, tol: float) -> Tuple[Any, ...]:
+    def calibrate_bowden(self, cur_lane: AFCLane, dis: float, tol: float,
+                         gcmd: Any) -> Tuple[Any, ...]:
         """
         CFS lanes have nothing to calibrate.
 
         :param cur_lane: lane to act on
         :param dis: unused
         :param tol: unused
+        :param gcmd: unused
         :return tuple: (False, message, 0.0)
         """
         return False, self.CALIBRATION_UNSUPPORTED, 0.0
+
+    def prep_capture_td1(self, cur_lane: AFCLane) -> Tuple[Any, ...]:
+        """
+        AFC's hook for capture_td1_when_loaded during PREP. The box feeds the filament and can't
+        stop it at a TD-1, so say so instead of letting AFC try its stepper path.
+
+        :param cur_lane: lane to act on
+        :return tuple: (False, message), which tells AFC the capture was handled here
+        """
+        message = f"CFS {cur_lane.name}: TD-1 capture isn't supported on CFS lanes"
+        self.logger.info(f"{message}; ignoring capture_td1_when_loaded")
+        return False, message
 
     def calibrate_td1(self, cur_lane: AFCLane, dis: float, tol: float) -> Tuple[Any, ...]:
         """
