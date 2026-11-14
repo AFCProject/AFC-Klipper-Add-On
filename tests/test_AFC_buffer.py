@@ -3096,8 +3096,8 @@ class TestAFCFPSBufferInit:
         assert buf.reversed is False
         assert buf.fps_value == 0.0
         assert buf.raw_value == 0.0
-        assert buf.adc_min_val == 0.1
-        assert buf.adc_max_val == 0.9
+        assert buf.adc_min_val == 0.0
+        assert buf.adc_max_val == 1.0
         assert buf._homing_high_point == 0.7
         assert buf._last_logged_integral == 0.0
         assert buf.integral_extrusion_threshold == 0.02
@@ -3119,11 +3119,11 @@ class TestAFCFPSBufferInit:
     def test_adc_min_val_config_override(self):
         buf, afc, printer, adc = _build_real_fps_buffer(values={"adc_min_val": 0.05})
         assert buf.adc_min_val == 0.05
-        assert buf.adc_max_val == 0.9
+        assert buf.adc_max_val == 1.0
 
     def test_adc_max_val_config_override(self):
         buf, afc, printer, adc = _build_real_fps_buffer(values={"adc_max_val": 0.95})
-        assert buf.adc_min_val == 0.1
+        assert buf.adc_min_val == 0.0
         assert buf.adc_max_val == 0.95
 
     def test_kalico_adc_logs_setup_message(self):

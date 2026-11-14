@@ -66,7 +66,7 @@ class TestBuildBufferConfig:
         text = build_buffer_config("Compensator", "Buf", adc_pin="U:PSF")
         assert text.startswith("[AFC_buffer Buf]\ntype: FPS_PSF\nadc_pin: U:PSF\n")
         assert "reversed: true  #Test slide by hand" in text
-        assert text.endswith("adc_min_val: 0.652\nadc_max_val: 0.823")
+        assert text.endswith("adc_min_val: 0.0\nadc_max_val: 1.0")
 
     def test_there_is_no_trailing_newline_like_command_substitution(self) -> None:
         for kind in ("TurtleNeck", "TurtleNeckV2", "FPS_PSF", "Compensator"):
