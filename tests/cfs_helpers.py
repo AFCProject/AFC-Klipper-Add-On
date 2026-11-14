@@ -325,6 +325,25 @@ def make_printer() -> MockPrinter:
     return printer
 
 
+class CfsConfig(MockConfig):
+    """MockConfig that also lists [AFC_lane] sections (the CFS registers lane commands from them)."""
+
+    def __init__(self, *args: Any, lane_units: Optional[Dict[str, str]] = None,
+                 cfs_units: Optional[List[str]] = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._lane_units = lane_units or {}
+        self._cfs_units = cfs_units or [self._name.split()[-1]]   # this unit alone by default
+
+    def get_prefix_sections(self, prefix: str) -> List[MockConfig]:
+        if prefix == "AFC_CFS ":
+            return [MockConfig(name=f"AFC_CFS {unit}", printer=self._printer)
+                    for unit in self._cfs_units]
+        if prefix != "AFC_lane ":
+            return []
+        return [MockConfig(name=f"AFC_lane {lane}", printer=self._printer, values={"unit": unit})
+                for lane, unit in self._lane_units.items()]
+
+
 def make_unit(name: str = "CFS_1", values: Optional[Dict[str, Any]] = None,
               printer: Optional[MockPrinter] = None,
               box: Optional[ScriptedBox] = None) -> afcCFS:
@@ -341,7 +360,7 @@ def make_unit(name: str = "CFS_1", values: Optional[Dict[str, Any]] = None,
     printer._objects.setdefault(f"AFC_hub {name}", CfsHub(name))
     opts: Dict[str, Any] = {"serial": SERIAL, "hub": name, "extruder": "extruder"}
     opts.update(values or {})
-    unit = afcCFS(MockConfig(name=f"AFC_CFS {name}", printer=printer, values=opts))
+    unit = afcCFS(CfsConfig(name=f"AFC_CFS {name}", printer=printer, values=opts))
     unit.box = box or ScriptedBox()
     unit.transport.request = unit.box.request
     printer._objects[f"AFC_CFS {name}"] = unit

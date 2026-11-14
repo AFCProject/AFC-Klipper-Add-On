@@ -26,7 +26,7 @@ import jinja2
 import pytest
 
 from extras.AFC_lane import AFCLaneState, AFCMoveWarning
-from tests.conftest import CommandError, MockConfig, MockLogger
+from tests.conftest import CommandError, MockLogger
 from extras import AFC_CFS as P
 from extras.AFC_CFS import (
     CFSBus,
@@ -36,6 +36,7 @@ from extras.AFC_CFS import (
     load_config_prefix,
 )
 from tests.cfs_helpers import (
+    CfsConfig,
     FakeMutex,
     RecTrace,
     Recorder,
@@ -1690,7 +1691,7 @@ def msgs(unit):
 class TestAfcCFSInit:
     def test_builds_through_afc_unit(self):
         printer = make_printer()
-        printer._gcode.register_mux_command = Recorder()
+        printer._afc.function.register_mux_command = Recorder()
         unit = make_unit(printer=printer)
         assert (unit.name, unit.type) == ("CFS_1", "CFS")
         assert unit.reactor is printer.get_reactor()
@@ -1698,16 +1699,26 @@ class TestAfcCFSInit:
         assert unit.bus.units == [unit]
         assert printer._event_handlers["klippy:ready"][-1] == unit._cfs_handle_ready
         assert printer._event_handlers["klippy:disconnect"][-1] == unit._cfs_handle_disconnect
-        assert printer._gcode.register_mux_command.calls == [
-            (("AFC_CFS_STATUS", "UNIT", "CFS_1", unit.cmd_AFC_CFS_STATUS),
-             {"desc": unit.cmd_AFC_CFS_STATUS_help}),
-            (("AFC_CFS_RECONNECT", "UNIT", "CFS_1", unit.cmd_AFC_CFS_RECONNECT),
-             {"desc": unit.cmd_AFC_CFS_RECONNECT_help}),
-            (("AFC_CFS_RAW", "UNIT", "CFS_1", unit.cmd_AFC_CFS_RAW),
-             {"desc": unit.cmd_AFC_CFS_RAW_help}),
-            (("AFC_CFS_TRACE", "UNIT", "CFS_1", unit.cmd_AFC_CFS_TRACE),
-             {"desc": unit.cmd_AFC_CFS_TRACE_help}),
-        ]
+        unit_opt = {"UNIT": {"type": "string", "default": "CFS_1"}}
+        show = printer._afc.show_macros
+        expected = []
+        for cmd, extra in (("STATUS", {}), ("RECONNECT", {}),
+                           ("RAW", unit.cmd_AFC_CFS_RAW_options), ("TRACE", {})):
+            for value in ("CFS_1", None):   # the first CFS also answers without UNIT
+                expected.append(((show, f"AFC_CFS_{cmd}", "UNIT", value,
+                                  getattr(unit, f"cmd_AFC_CFS_{cmd}"),
+                                  getattr(unit, f"cmd_AFC_CFS_{cmd}_help"),
+                                  {**unit_opt, **extra}), {}))
+        assert printer._afc.function.register_mux_command.calls == expected
+
+    def test_only_the_first_unit_is_the_unit_default(self):
+        printer = make_printer()
+        printer._afc.function.register_mux_command = Recorder()
+        printer._objects["AFC_hub CFS_2"] = object()
+        afcCFS(CfsConfig(name="AFC_CFS CFS_2", printer=printer, cfs_units=["CFS_1", "CFS_2"],
+                         values={"serial": SERIAL, "hub": "CFS_2", "extruder": "extruder"}))
+        assert [c[0][3] for c in printer._afc.function.register_mux_command.calls] == [
+            "CFS_2"] * 4
 
     def test_type_can_be_set(self):
         assert make_unit(values={"type": "CFS2"}).type == "CFS2"
@@ -1797,7 +1808,7 @@ class TestAfcCFSInitCfsRuntime:
             "_operation_depth": 0, "_quiet_requests": False, "_poll_timer": None,
             "_offline_warned": False, "_rfid_timer": None, "_rfid_busy": False,
             "_rfid_startup_queued": False, "_traced_mask": None, "_traced_print_state": None}
-        assert (unit._lane_commands, unit.present_last, unit.load_reports) == (set(), {}, {})
+        assert (unit.present_last, unit.load_reports) == ({}, {})
         assert (unit.lane_tags, unit._rfid_queue) == ({}, {})
 
     def test_resync_timeout_raised_to_the_units(self):
@@ -2906,10 +2917,65 @@ class TestAfcCFSSetupLanes:
         assert seen == ["lane1", "lane2"]
 
 
+class TestAfcCFSLaneCommands:
+    LANE_OPT = {"LANE": {"type": "string", "default": "lane1"}}
+
+    def _unit(self):
+        printer = make_printer()
+        printer._afc.function.register_mux_command = Recorder()
+        printer._objects["AFC_hub CFS_1"] = object()
+        config = CfsConfig(name="AFC_CFS CFS_1", printer=printer,
+                           values={"serial": SERIAL, "hub": "CFS_1", "extruder": "extruder"},
+                           lane_units={"lane1": "CFS_1:1", "lane5": "CFS_2:1",
+                                       "lane9": "CFS_10:1"})
+        unit = afcCFS(config)
+        lane_calls = [c for c in printer._afc.function.register_mux_command.calls
+                      if c[0][2] == "LANE"]
+        return unit, lane_calls
+
+    def test_registered_at_config_time_for_this_unit_only(self):
+        unit, calls = self._unit()
+        show = unit.afc.show_macros
+        assert [c[0][:4] for c in calls] == [
+            (show, "AFC_CFS_TOOL_LOAD", "LANE", "lane1"),
+            (show, "AFC_CFS_TOOL_UNLOAD", "LANE", "lane1"),
+            (show, "AFC_CFS_EJECT", "LANE", "lane1"),
+            (show, "AFC_CFS_READ_TAG", "LANE", "lane1")]
+        assert [c[0][5] for c in calls] == [
+            "Load a CFS lane into the toolhead",
+            "Unload a CFS lane from the toolhead back to the box",
+            "Reel a CFS lane's filament back into the box (box motors only)",
+            "Read a CFS lane's RFID tag and set its color/material"]
+        assert [c[0][6] for c in calls] == [
+            self.LANE_OPT, self.LANE_OPT, self.LANE_OPT,
+            {**self.LANE_OPT, "SPIN": {"type": "int", "default": 1},
+             "APPLY": {"type": "int", "default": 1}}]
+
+    def test_commands_run_on_the_attached_lane(self):
+        unit, _ = self._unit()
+        lane = object()
+        unit.lanes = {"lane1": lane}
+        handlers = {}
+        for name in ("TOOL_LOAD", "TOOL_UNLOAD", "EJECT", "READ_TAG"):
+            handlers[name] = Recorder()
+            setattr(unit, f"cmd_AFC_CFS_{name}", handlers[name])
+        unit._register_lane_commands("lane1")
+        calls = unit.function.register_mux_command.calls[-4:]
+        for (args, _), name in zip(calls, handlers):
+            args[4]("gcmd")
+            assert handlers[name].calls == [((lane, "gcmd"), {})]
+
+    def test_lane_not_attached(self):
+        unit, calls = self._unit()
+        unit.lanes = {}
+        with pytest.raises(CommandError, match="lane1 isn't attached to this unit"):
+            calls[0][0][4](gcmd())
+
+
 class TestAfcCFSSetupLane:
     def _unit(self):
         unit, (lane,) = unit_with(do_connect=False)
-        unit.gcode.register_mux_command = Recorder()
+        unit.function.register_mux_command = Recorder()
         return unit, lane
 
     def test_plain_lane_becomes_a_cfs_lane(self):
@@ -2920,26 +2986,7 @@ class TestAfcCFSSetupLane:
         assert (unit.present_last, unit.load_reports) == ({"lane1": None}, {"lane1": {}})
         assert lane.custom_load_cmd == "AFC_CFS_TOOL_LOAD LANE=lane1"
         assert lane.custom_unload_cmd == "AFC_CFS_TOOL_UNLOAD LANE=lane1"
-        assert [c[0][:3] for c in unit.gcode.register_mux_command.calls] == [
-            ("AFC_CFS_TOOL_LOAD", "LANE", "lane1"), ("AFC_CFS_TOOL_UNLOAD", "LANE", "lane1"),
-            ("AFC_CFS_EJECT", "LANE", "lane1"), ("AFC_CFS_READ_TAG", "LANE", "lane1")]
-        assert [c[1]["desc"] for c in unit.gcode.register_mux_command.calls] == [
-            "Load a CFS lane into the toolhead",
-            "Unload a CFS lane from the toolhead back to the box",
-            "Reel a CFS lane's filament back into the box (box motors only)",
-            "Read a CFS lane's RFID tag and set its color/material"]
-
-    def test_registered_commands_call_the_handlers(self):
-        unit, lane = self._unit()
-        handlers = {}
-        for name in ("TOOL_LOAD", "TOOL_UNLOAD", "EJECT", "READ_TAG"):
-            rec = Recorder()
-            handlers[name] = rec
-            setattr(unit, f"cmd_AFC_CFS_{name}", rec)
-        unit._setup_lane(lane)
-        for (args, _), name in zip(unit.gcode.register_mux_command.calls, handlers):
-            args[3]("gcmd")
-            assert handlers[name].calls == [((lane, "gcmd"), {})]
+        assert unit.function.register_mux_command.calls == []   # registered at config time
 
     def test_users_own_commands_kept(self):
         unit, lane = self._unit()
@@ -2947,13 +2994,6 @@ class TestAfcCFSSetupLane:
         lane.custom_unload_cmd = "MY_UNLOAD"
         unit._setup_lane(lane)
         assert (lane.custom_load_cmd, lane.custom_unload_cmd) == ("MY_LOAD", "MY_UNLOAD")
-
-    def test_commands_registered_once(self):
-        unit, lane = self._unit()
-        unit._setup_lane(lane)
-        unit._setup_lane(lane)
-        assert unit.gcode.register_mux_command.call_count == 4
-        assert unit._lane_commands == {"lane1"}
 
     def test_prep_pin_refused(self):
         unit, lane = self._unit()
@@ -5137,8 +5177,8 @@ class TestLoadConfigPrefix:
     def test_builds_a_unit(self):
         printer = make_printer()
         printer._objects["AFC_hub CFS_1"] = object()
-        config = MockConfig(name="AFC_CFS CFS_1", printer=printer,
-                            values={"serial": SERIAL, "hub": "CFS_1", "extruder": "extruder"})
+        config = CfsConfig(name="AFC_CFS CFS_1", printer=printer,
+                           values={"serial": SERIAL, "hub": "CFS_1", "extruder": "extruder"})
         unit = load_config_prefix(config)
         assert isinstance(unit, afcCFS)
         assert unit.name == "CFS_1"
