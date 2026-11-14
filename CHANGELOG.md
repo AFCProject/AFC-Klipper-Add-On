@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [11-14-2026]
 ### Added
 - Added a Compensator buffer, with support in the installer and an `adc_min_val`/`adc_max_val` pair so PSF-type buffers whose ADC values don't span the full 0.0-1.0 range are scaled to the correct FPS value.
+- Added the ability to run button calibration when AFC_button is setup to use ADC buttons(multiple buttons on a single ADC pin).
 
 ### Changed
 - `QUERY_BUFFER` now reports the raw, prescaled ADC value for PSF-type buffers.
