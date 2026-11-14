@@ -567,35 +567,35 @@ class TestCalibrateLane:
         unit = _make_vivid()
         lane = MagicMock()
         unit.eject_lane = MagicMock()
-        result = unit.calibrate_lane(lane, 0)
+        result = unit.calibrate_lane(lane, 0, MagicMock())
         assert result == (True, "calibration_lane", 0)
 
     def test_sets_loaded_to_hub_false(self):
         unit = _make_vivid()
         lane = MagicMock()
         unit.eject_lane = MagicMock()
-        unit.calibrate_lane(lane, 0)
+        unit.calibrate_lane(lane, 0, MagicMock())
         assert lane.loaded_to_hub is False
 
     def test_sets_calibrated_lane_false(self):
         unit = _make_vivid()
         lane = MagicMock()
         unit.eject_lane = MagicMock()
-        unit.calibrate_lane(lane, 0)
+        unit.calibrate_lane(lane, 0, MagicMock())
         assert lane.calibrated_lane is False
 
     def test_calls_eject_lane(self):
         unit = _make_vivid()
         lane = MagicMock()
         unit.eject_lane = MagicMock()
-        unit.calibrate_lane(lane, 5.0)
+        unit.calibrate_lane(lane, 5.0, MagicMock())
         unit.eject_lane.assert_called_once_with(lane)
 
     def test_calls_lane_unloaded(self):
         unit = _make_vivid()
         lane = MagicMock()
         unit.eject_lane = MagicMock()
-        unit.calibrate_lane(lane, 0)
+        unit.calibrate_lane(lane, 0, MagicMock())
         lane.unit_obj.lane_unloaded.assert_called_once_with(lane)
 
 

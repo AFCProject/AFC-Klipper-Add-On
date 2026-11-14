@@ -30,6 +30,7 @@ except:
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
+    from gcode import GCodeCommand
     from extras.AFC_lane import AFCLane, AFCMoveWarning
 
 class AFC_Claymore(AFC_vivid):
@@ -56,8 +57,7 @@ class AFC_Claymore(AFC_vivid):
         self.logo = f'<span class=success--text>{self.type} Ready\n</span>'
         self.logo_error = f'<span class=error--text>{self.type} Not Ready</span>\n'
 
-    def _move_lane(self, lane: AFCLane, delay: float=1,
-            enable_movement: bool=True) -> bool:
+    def _move_lane(self, lane: AFCLane, delay: float=1, enable_movement: bool=True) -> bool:
         """
         Method to check if filament is loaded into lane. Claymore lanes
         report their current load_state directly, without moving filament.
@@ -135,19 +135,19 @@ class AFC_Claymore(AFC_vivid):
         return afcBoxTurtle.move_to_hub(self, lane, dist, dir, use_homing,
                                         speed_mode, assist_active)
 
-    def calibrate_lane(
-            self, cur_lane: AFCLane, tol: float|int
-        ) -> tuple[bool, str, float|int]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float|int,
+                       gcmd: GCodeCommand) -> tuple[bool, str, float|int]:
         """
         Method to calibrate lane for Claymore units. Delegates to afcBoxTurtle calibration logic.
 
         :param cur_lane: Lane object to eject
         :param tol: Unused for this method
+        :param gcmd: command context, unused here but accepted for interface parity
         :return tuple: bool: Returns True/False if calibration succeed or failed,
                        str: Calibration message for when calibration failed,
                        float: Calibration distance for when calibration failed
         """
-        return afcBoxTurtle.calibrate_lane(self, cur_lane, tol)
+        return afcBoxTurtle.calibrate_lane(self, cur_lane, tol, gcmd)
 
     def calibration_lane_message(self) -> str:
         """

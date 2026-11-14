@@ -298,7 +298,7 @@ class TestCalibrateBowdenNegativeDistance:
             (3, "retract from toolhead sensor", True),
         ])
 
-        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1)
+        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         assert success is False
         assert bowden_dist < 0
@@ -326,7 +326,7 @@ class TestCalibrateBowdenU1Sensor:
         lane.extruder_obj.fila_tool_start = MagicMock()
         unit.calc_position = MagicMock(return_value=(10, "retract from toolhead sensor", True))
 
-        unit.calibrate_bowden(lane, dis=1, tol=1)
+        unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         # The retry loop's homed move only runs when the presence check
         # passes; with tool_start None this proves fila_tool_start was
@@ -344,7 +344,7 @@ class TestCalibrateBowdenU1Sensor:
         lane.extruder_obj.fila_tool_start = None
         unit.calc_position = MagicMock(return_value=(0, "retract from toolhead sensor", True))
 
-        unit.calibrate_bowden(lane, dis=1, tol=1)
+        unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         lane.move_to.assert_not_called()
 
@@ -368,7 +368,7 @@ class TestCalibrateBowdenBufferExtended:
         lane.buffer_obj.advance_state = True
         unit.calc_position = MagicMock(return_value=(0, "retract to extruder", True))
 
-        success, message, pos = unit.calibrate_bowden(lane, dis=1, tol=1)
+        success, message, pos = unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         msg = "TN1 buffer is already extended, please check buffer sensors and rerun calibration"
 
@@ -390,7 +390,7 @@ class TestCalibrateBowdenBufferExtended:
         lane.buffer_obj.advance_state = False
         unit.calc_position = MagicMock(return_value=(10, "retract from toolhead sensor", True))
 
-        unit.calibrate_bowden(lane, dis=1, tol=1)
+        unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         lane.move_to.assert_called()
 
@@ -406,7 +406,7 @@ class TestCalibrateBowdenBufferExtended:
         lane.buffer_obj.advance_state = True
         unit.calc_position = MagicMock(return_value=(10, "retract from toolhead sensor", True))
 
-        unit.calibrate_bowden(lane, dis=1, tol=1)
+        unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         lane.move_to.assert_called()
 
@@ -435,7 +435,7 @@ class TestCalibrateBowdenFaultDistance:
         lane.move_to.return_value = (True, 1400, AFCMoveWarning.NONE)
         lane.get_toolhead_pre_sensor_state.side_effect = [False, True]
 
-        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1)
+        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         assert success is True
         assert message == "dist_hub successful"
@@ -453,7 +453,7 @@ class TestCalibrateBowdenFaultDistance:
         lane.move_to.return_value = (True, 1400, AFCMoveWarning.NONE)
         lane.get_toolhead_pre_sensor_state.side_effect = [False, False]
 
-        success, message, bow_pos = unit.calibrate_bowden(lane, dis=1, tol=1)
+        success, message, bow_pos = unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         assert success is False
         assert "while moving to toolhead" in message
@@ -473,7 +473,7 @@ class TestCalibrateBowdenFaultDistance:
         # the fault fires purely off homed being False, via the `and` short-circuit.
         lane.get_toolhead_pre_sensor_state.side_effect = [False, True]
 
-        success, message, bow_pos = unit.calibrate_bowden(lane, dis=1, tol=1)
+        success, message, bow_pos = unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         assert success is False
         assert "while moving to toolhead" in message
@@ -496,7 +496,7 @@ class TestCalibrateBowdenFaultDistance:
         lane.move_to.return_value = (True, 1600, AFCMoveWarning.NONE)
         lane.get_toolhead_pre_sensor_state.side_effect = [False, True]
 
-        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1)
+        success, message, bowden_dist = unit.calibrate_bowden(lane, dis=1, tol=1, gcmd=None)
 
         assert success is True
         assert message == "dist_hub successful"

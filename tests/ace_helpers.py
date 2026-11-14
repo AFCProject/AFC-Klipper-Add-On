@@ -31,6 +31,7 @@ from typing import (Any, Callable, Dict, Iterable, Iterator, List, Mapping, Name
 import pytest
 from gcode import CommandError
 
+from extras.AFC import afc as _AFC
 import extras.AFC_ACE as afc_ace_module
 from extras.AFC_ACE import (MAX_PAYLOAD_SIZE, REQUEST_TIMEOUT, ACEConnection, ACESerialError,
                             ACETimeoutError, afcACE)
@@ -868,6 +869,11 @@ class AceGcode:
         self.messages: List[Tuple[str, str]] = []
         self.run_script_from_command = Hook(self._run_script_from_command)
         self.run_script = Hook(self._run_script)
+        # Defaults held=True: the common case these methods are actually
+        # called in is from inside an already-dispatched gcode command.
+        # Tests simulating a non-reentrant call (a button press or other
+        # hardware/reactor callback) should set .mutex.is_locked = False.
+        self.mutex = AceMutex(is_locked=True)
 
     def _run_script_from_command(self, script: str) -> None:
         """
@@ -923,6 +929,12 @@ class AceGcode:
         :param msg: console line
         """
         self.messages.append(("raw", msg))
+
+    def get_mutex(self) -> AceMutex:
+        """
+        :return AceMutex: the shared mutex stand-in
+        """
+        return self.mutex
 
 
 class AceGcmd:
@@ -1289,6 +1301,10 @@ class AceAFC:
         :param wait_tool: wait for the toolhead
         """
         self.timeline.append(("move_e_pos", (e_amount, speed, log_string, wait_tool)))
+
+    # Real afc.run_script only touches self.gcode, so it runs unmodified here
+    # instead of being duplicated.
+    run_script = _AFC.run_script
 
 
 class AceHub:

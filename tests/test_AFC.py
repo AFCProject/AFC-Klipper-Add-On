@@ -446,6 +446,66 @@ def _make_afc_for_check_extruder_temp(
     return obj, heater, extruder, pheaters, lane
 
 
+class TestRunScript:
+    """Covers afc.run_script's three-way mutex dispatch.
+
+    `gcmd.run_script` (newer Kalico) is preferred whenever `gcmd` has it.
+    Otherwise, whether the gcode mutex is already held decides between
+    `run_script_from_command` (reentrant: must not re-acquire it, or it
+    deadlocks) and `self.gcode.run_script` (not reentrant: must acquire it,
+    or a legacy/unprotected call can fail outright -- e.g. a macro that
+    itself calls other macros).
+    """
+
+    def test_gcmd_with_run_script_uses_it(self):
+        obj = _make_afc()
+        gcmd = MagicMock(spec=["run_script"])
+
+        obj.run_script("G28", gcmd)
+
+        gcmd.run_script.assert_called_once_with("G28")
+        obj.gcode.run_script_from_command.assert_not_called()
+        obj.gcode.run_script.assert_not_called()
+
+    def test_gcmd_without_run_script_and_mutex_held_uses_run_script_from_command(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = True
+        gcmd = MagicMock(spec=[])
+
+        obj.run_script("G28", gcmd)
+
+        obj.gcode.run_script_from_command.assert_called_once_with("G28")
+        obj.gcode.run_script.assert_not_called()
+
+    def test_gcmd_without_run_script_and_mutex_not_held_uses_gcode_run_script(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = False
+        gcmd = MagicMock(spec=[])
+
+        obj.run_script("G28", gcmd)
+
+        obj.gcode.run_script.assert_called_once_with("G28")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_no_gcmd_and_mutex_held_uses_run_script_from_command(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = True
+
+        obj.run_script("PAUSE")
+
+        obj.gcode.run_script_from_command.assert_called_once_with("PAUSE")
+        obj.gcode.run_script.assert_not_called()
+
+    def test_no_gcmd_and_mutex_not_held_uses_gcode_run_script(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = False
+
+        obj.run_script("PAUSE")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+
 class TestCheckExtruderTemp:
     """Tests for afc._check_extruder_temp().
 
@@ -1309,7 +1369,7 @@ class TestChangeTool_SameLane:
         """_handle_activate_extruder(0) is called to re-sync the lane."""
         obj, cur_lane = self._make()
         obj.CHANGE_TOOL(cur_lane)
-        obj.function._handle_activate_extruder.assert_called_once_with(0)
+        obj.function._handle_activate_extruder.assert_called_once_with(0, None)
 
     def test_save_pos_not_called(self):
         """save_pos is NOT called when the lane is already loaded."""
@@ -2018,7 +2078,7 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
         and since it succeeds, no unload error is recorded."""
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         obj.TOOL_LOAD(target_lane)
-        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False)
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
         obj.afc_stats.increase_unload_error_count.assert_not_called()
 
     def test_aborts_if_unload_fails(self):
@@ -2067,7 +2127,7 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
         target_lane.tool_swap = MagicMock()
 
         call_order = []
-        target_lane.tool_swap.side_effect = lambda: call_order.append("swap")
+        target_lane.tool_swap.side_effect = lambda gcmd=None: call_order.append("swap")
         obj.TOOL_UNLOAD.side_effect = lambda *a, **kw: (call_order.append("unload"), True)[1]
 
         obj.TOOL_LOAD(target_lane)
@@ -2077,7 +2137,7 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
         assert call_order.index("swap") < call_order.index("unload"), (
             f"tool_swap must precede TOOL_UNLOAD; order was {call_order}"
         )
-        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False)
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
 
 
 # ── td1_present property ─────────────────────────────────────────────────────
@@ -2293,7 +2353,7 @@ class TestCmdToolLoad_LaneLoadedGuard:
         obj.cmd_TOOL_LOAD(gcmd)
 
         obj.error.AFC_error.assert_not_called()
-        obj.TOOL_LOAD.assert_called_once_with(lane, None)
+        obj.TOOL_LOAD.assert_called_once_with(lane, None, gcmd=gcmd)
 
     def test_increase_load_error_count_called_with_afc_instance(self):
         """increase_load_error_count() now takes the afc instance itself (it,
@@ -2320,7 +2380,7 @@ class TestCmdToolLoad_LaneLoadedGuard:
         obj.cmd_TOOL_LOAD(gcmd)
 
         obj.error.AFC_error.assert_not_called()
-        obj.TOOL_LOAD.assert_called_once_with(lane, None)
+        obj.TOOL_LOAD.assert_called_once_with(lane, None, gcmd=gcmd)
 
 
 class TestCmdToolLoad_UnknownLane:
@@ -3786,7 +3846,7 @@ class TestLoadSequenceDefaultPathSuccess:
     def test_sync_to_extruder_called(self):
         afc, lane, hub, extruder = self._make()
         afc.load_sequence(lane, hub, extruder)
-        lane.sync_to_extruder.assert_called_once_with()
+        lane.sync_to_extruder.assert_called_once_with(gcmd=None)
 
     def test_status_set_to_tool_loaded(self):
         """status passes through TOOL_LOADED right after sync_to_extruder,
@@ -3896,7 +3956,7 @@ class TestToolLoadNeedPurge:
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length)
+                                                      purge_length=purge_length, gcmd=None)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_not_called()
@@ -3914,7 +3974,7 @@ class TestToolLoadNeedPurge:
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length)
+                                                      purge_length=purge_length, gcmd=None)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_not_called()
@@ -3929,7 +3989,7 @@ class TestToolLoadNeedPurge:
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_not_called()
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length)
+                                                      purge_length=purge_length, gcmd=None)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_not_called()
@@ -3945,7 +4005,7 @@ class TestToolLoadNeedPurge:
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length)
+                                                      purge_length=purge_length, gcmd=None)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_called_once_with(afc.post_load_macro)
@@ -4164,7 +4224,7 @@ class TestLoadSequenceUnitLoadLane:
         result = afc.load_sequence(lane, hub, extruder)
 
         assert result is True
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=None)
         lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
         afc.save_vars.assert_called_once_with()
@@ -4176,7 +4236,7 @@ class TestLoadSequenceUnitLoadLane:
         result = afc.load_sequence(lane, hub, extruder)
 
         assert result is False
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=None)
         lane.set_tool_loaded.assert_not_called()
         afc.save_vars.assert_not_called()
 
@@ -4237,7 +4297,7 @@ class TestLoadSequenceUnitLoadLane:
         result = afc.load_sequence(lane, hub, extruder, load_to_gears=True)
 
         assert result is True
-        lane.sync_to_extruder.assert_called_once_with()
+        lane.sync_to_extruder.assert_called_once_with(gcmd=None)
         afc.move_e_pos.assert_not_called()
         lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
@@ -4266,7 +4326,7 @@ class TestUnloadSequenceUnitUnloadLane:
         result = afc.unload_sequence(lane, hub, extruder)
 
         assert result is False
-        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder)
+        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder, gcmd=None)
 
     def test_unit_unload_lane_success_does_not_return_false(self):
         afc, lane, hub, extruder = self._make()
@@ -4276,7 +4336,7 @@ class TestUnloadSequenceUnitUnloadLane:
 
         result = afc.unload_sequence(lane, hub, extruder)
 
-        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder)
+        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder, gcmd=None)
         assert result is True
         lane.disable_buffer.assert_called_once_with()
 
@@ -4491,7 +4551,7 @@ class TestToolLoadDisplayStatusLifecycle:
 
         events = []
         afc._set_display_status = MagicMock(
-            side_effect=lambda var, val: events.append(('display', var, val)))
+            side_effect=lambda var, val, gcmd=None: events.append(('display', var, val)))
         return afc, lane, events
 
     def test_pushing_true_then_false_around_successful_load(self):
@@ -4530,7 +4590,7 @@ class TestToolLoadDisplayStatusLifecycle:
         assert afc.TOOL_LOAD(lane, load_to_gears=True)
 
         afc.load_sequence.assert_called_once_with(
-            lane, lane.hub_obj, lane.extruder_obj, True)
+            lane, lane.hub_obj, lane.extruder_obj, True, gcmd=None)
         lane.espooler.do_assist_move.assert_not_called()
         afc.do_poop_kick_wipe.assert_not_called()
         lane.get_td1_data_load.assert_not_called()
@@ -4547,10 +4607,10 @@ class TestToolLoadDisplayStatusLifecycle:
         assert afc.TOOL_LOAD(lane)
 
         afc.load_sequence.assert_called_once_with(
-            lane, lane.hub_obj, lane.extruder_obj, False)
+            lane, lane.hub_obj, lane.extruder_obj, False, gcmd=None)
         lane.espooler.do_assist_move.assert_called_once_with()
         afc.do_poop_kick_wipe.assert_called_once_with(
-            cur_lane=lane, cur_extruder=lane.extruder_obj, purge_length=None)
+            cur_lane=lane, cur_extruder=lane.extruder_obj, purge_length=None, gcmd=None)
         lane.get_td1_data_load.assert_called_once_with()
         lane.extruder_obj.estats.tc_tool_load.increase_count.assert_called_once_with()
         lane.lane_load_count.increase_count.assert_called_once_with()
@@ -4598,7 +4658,7 @@ class TestToolUnloadDisplayStatusLifecycle:
 
         events = []
         afc._set_display_status = MagicMock(
-            side_effect=lambda var, val: events.append(('display', var, val)))
+            side_effect=lambda var, val, gcmd=None: events.append(('display', var, val)))
         return afc, lane, events
 
     def test_retraction_true_then_false_around_successful_unload(self):
@@ -4667,7 +4727,7 @@ class TestToolLoadFailureState:
     def test_paused_failure_keeps_error_state(self):
         afc, lane, _ = self._make()
 
-        def fail_with_pause(*args):
+        def fail_with_pause(*args, **kwargs):
             afc.current_state = State.ERROR
             return False
         afc.load_sequence = MagicMock(side_effect=fail_with_pause)
@@ -4680,7 +4740,7 @@ class TestToolLoadFailureState:
         afc, lane, _ = self._make()
         seen = []
         afc.load_sequence = MagicMock(
-            side_effect=lambda *args: seen.append(afc.current_state) or False)
+            side_effect=lambda *args, **kwargs: seen.append(afc.current_state) or False)
 
         assert not afc.TOOL_LOAD(lane)
 
@@ -4705,7 +4765,7 @@ class TestToolUnloadFailureState:
     def test_paused_failure_keeps_error_state(self):
         afc, lane, _ = self._make()
 
-        def fail_with_pause(*args):
+        def fail_with_pause(*args, **kwargs):
             afc.current_state = State.ERROR
             return False
         afc.unload_sequence = MagicMock(side_effect=fail_with_pause)
@@ -4718,7 +4778,7 @@ class TestToolUnloadFailureState:
         afc, lane, _ = self._make()
         seen = []
         afc.unload_sequence = MagicMock(
-            side_effect=lambda *args: seen.append(afc.current_state) or False)
+            side_effect=lambda *args, **kwargs: seen.append(afc.current_state) or False)
 
         assert not afc.TOOL_UNLOAD(lane, force_unload=True)
 
@@ -4738,19 +4798,19 @@ class TestBypassUnloadDisplayStatus:
 
         events = []
         afc._set_display_status = MagicMock(
-            side_effect=lambda var, val: events.append(('display', var, val)))
+            side_effect=lambda var, val, gcmd=None: events.append(('display', var, val)))
         return afc, events
 
     def test_retraction_true_then_false_around_bypass_unload(self):
         afc, events = self._make()
         afc.gcode.run_script_from_command = MagicMock(
-            side_effect=_recorder(events, 'run_script_from_command'))
+            side_effect=_recorder(events, 'run_script'))
 
         result = afc._check_bypass(unload=True)
 
         assert result is True
         assert events == [
-            ('display', 'retraction', True), 'run_script_from_command', ('display', 'retraction', False)]
+            ('display', 'retraction', True), 'run_script', ('display', 'retraction', False)]
         afc.gcode.run_script_from_command.assert_called_once_with(afc.RENAMED_UNLOAD_FILAMENT)
 
     def test_retraction_false_still_called_when_bypass_unload_raises(self):
@@ -4758,13 +4818,13 @@ class TestBypassUnloadDisplayStatus:
         # returns False - the inner finally must still fire before that happens.
         afc, events = self._make()
         afc.gcode.run_script_from_command = MagicMock(
-            side_effect=_recorder(events, 'run_script_from_command', exc=Exception("boom")))
+            side_effect=_recorder(events, 'run_script', exc=Exception("boom")))
 
         result = afc._check_bypass(unload=True)
 
         assert result is False
         assert events == [
-            ('display', 'retraction', True), 'run_script_from_command', ('display', 'retraction', False)]
+            ('display', 'retraction', True), 'run_script', ('display', 'retraction', False)]
 
 
 # ── LANE_UNLOAD: eject paths and refusal reporting ────────────────────────────

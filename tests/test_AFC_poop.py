@@ -163,7 +163,7 @@ class TestPoopMethod:
         p = _make_poop({"full_fan": True, "purge_length": 40.0, "max_iteration_length": 40.0})
         self._run_poop(p)
         scripts = [
-            c[0][0] for c in p.gcode.run_script_from_command.call_args_list
+            c[0][0] for c in p.afc.gcode.run_script_from_command.call_args_list
         ]
         # Fan on + fan off
         assert any("M106" in s for s in scripts)
@@ -174,7 +174,7 @@ class TestPoopMethod:
         p = _make_poop({"full_fan": False})
         self._run_poop(p)
         scripts = [
-            c[0][0] for c in p.gcode.run_script_from_command.call_args_list
+            c[0][0] for c in p.afc.gcode.run_script_from_command.call_args_list
         ]
         assert not any("M106" in s for s in scripts)
 
