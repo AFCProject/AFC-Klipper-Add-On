@@ -353,6 +353,7 @@ class TestAdditionalBufferRules:
             "TurtleNeck",
             "TurtleNeckV2",
             "TurtleNeck2Remastered",
+            "Compensator",
             "FPS_PSF",
         )
 
@@ -363,6 +364,7 @@ class TestAdditionalBufferRules:
             "TurtleNeck",
             "TurtleNeckV2",
             "TurtleNeck2Remastered",
+            "Compensator",
             "FPS_PSF",
         )
         assert force_additional_buffer_default("Nope") is False
