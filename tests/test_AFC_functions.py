@@ -21,7 +21,8 @@ from extras.AFC_functions import (
     afcFunction, afcDeltaTime, round_floats, get_gcode_absolute_extrude,
     set_gcode_absolute_extrude, BUTTON_CALIBRATION_POLL_TIME,
     BUTTON_CALIBRATION_PRESS_DELTA, BUTTON_CALIBRATION_RANGE,
-    BUTTON_CALIBRATION_SAMPLE_COUNT,
+    BUTTON_CALIBRATION_SAMPLE_COUNT, BUTTON_CALIBRATION_SATURATION_MIN_RATIO,
+    BUTTON_CALIBRATION_SATURATION_MAX_RATIO,
 )
 from extras.AFC_respond import AFCprompt
 
@@ -531,8 +532,9 @@ def _make_adc_button(name: str, resistance_sequence: Any=None,
     """
     Build a lightweight stand-in for an ADC-capable AFC_button, as
     _get_adc_buttons()/button calibration see it: name, fullname,
-    is_adc_button, analog_min/max, and a get_resistance() that feeds
-    successive calls from `resistance_sequence`.
+    is_adc_button, analog_min/max, a get_resistance() that feeds successive
+    calls from `resistance_sequence`, and is_adc_saturated() defaulting to
+    False (override per-test for saturation-fallback cases).
 
     :param name: button/lane name
     :param resistance_sequence: iterable of resistance values returned by
@@ -547,6 +549,7 @@ def _make_adc_button(name: str, resistance_sequence: Any=None,
     button.is_adc_button = is_adc
     button.analog_min = 0.0
     button.analog_max = 0.0
+    button.is_adc_saturated.return_value = False
     if resistance_sequence is not None:
         button.get_resistance.side_effect = list(resistance_sequence)
     else:
@@ -1992,6 +1995,69 @@ class TestFinishButtonMeasurement:
         assert any("Button calibration complete" in m for m in raw_messages)
         assert any("Restart Klipper|BUTTON_CALIBRATION_RESTART|primary" in m
                    for m in raw_messages)
+
+    def _make_saturated_button(self, name: str) -> MagicMock:
+        """ADC button stand-in whose resistance_at_ratio() returns distinct,
+        easy-to-assert-on sentinel values for the two ratios
+        _finish_button_measurement's saturated branch is expected to use."""
+        button = _make_adc_button(name)
+        button.is_adc_saturated.return_value = True
+        button.resistance_at_ratio = MagicMock(side_effect=lambda ratio: {
+            BUTTON_CALIBRATION_SATURATION_MIN_RATIO: 50000.0,
+            BUTTON_CALIBRATION_SATURATION_MAX_RATIO: 9999900.0,
+        }[ratio])
+        return button
+
+    def test_saturated_reading_derives_min_from_saturation_min_ratio(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        button.resistance_at_ratio.assert_any_call(BUTTON_CALIBRATION_SATURATION_MIN_RATIO)
+        assert button.analog_min == pytest.approx(50000.0)
+
+    def test_saturated_reading_derives_max_from_saturation_max_ratio_plus_range(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        button.resistance_at_ratio.assert_any_call(BUTTON_CALIBRATION_SATURATION_MAX_RATIO)
+        expected_max = 9999900.0 + BUTTON_CALIBRATION_RANGE
+        assert button.analog_max == pytest.approx(expected_max)
+
+    def test_saturated_reading_saves_derived_range_to_config(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        expected_max = 9999900.0 + BUTTON_CALIBRATION_RANGE
+        call_args = func.ConfigRewrite.call_args[0]
+        assert call_args[2] == f"{50000.0:.1f},{expected_max:.1f}"
+
+    def test_saturated_reading_logs_info_message(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        info_messages = [m for level, m in func.logger.messages if level == "debug"]
+        assert any("lane7 press reading is maxed out" in m for m in info_messages)
+
 
 class TestCmdAfcToolheadCalibration:
     def test_toolhead_menu_includes_both_stn_values(self) -> None:

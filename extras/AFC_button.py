@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from extras.buttons import PrinterButtons
     from extras.query_adc import QueryADC
 
+# Raw ADC ratio (0-1) at/above which a reading is treated as maxed out/saturated
+# (e.g. an open circuit) rather than a real press resistance.
+ADC_SATURATION_RATIO = 0.99
+
 class AFCButton:
     """
     This class is used for lane based button controls.
@@ -32,7 +36,6 @@ class AFCButton:
         """
         self.fullname = config.get_name()
         self.printer = config.get_printer()
-        self.gcode = self.printer.lookup_object('gcode')
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
         self.reactor = self.printer.get_reactor()
 
@@ -56,10 +59,17 @@ class AFCButton:
 
         buttons: PrinterButtons = self.printer.load_object(config, 'buttons')
         if self.is_adc_button:
-            buttons.register_debounce_adc_button(self.pin, self.analog_min, self.analog_max,
-                                                  self.pullup, self.button_callback, config)
+            if hasattr(buttons, "register_debounce_adc_button"):
+                buttons.register_debounce_adc_button(self.pin, self.analog_min, self.analog_max,
+                                                      self.pullup, self.button_callback, config)
+            else:
+                buttons.register_adc_button(self.pin, self.analog_min, self.analog_max,
+                                            self.pullup, self.button_callback)
         else:
-            buttons.register_debounce_button(self.pin, self.button_callback, config)
+            if hasattr(buttons, "register_debounce_button"):
+                buttons.register_debounce_button(self.pin, self.button_callback, config)
+            else:
+                buttons.register_buttons([self.pin], self.button_callback)
 
         # Custom short_press_gcode/long_press_gcode take priority over the
         # embedded load/unload/eject logic below when configured.
@@ -94,14 +104,13 @@ class AFCButton:
             )
             raise error(error_str)
 
-    def get_resistance(self) -> Optional[float]:
+    def _get_adc_ratio(self) -> Optional[float]:
         """
-        Read this button's current ADC resistance, calculated the same way
-        QUERY_ADC reports it (pin voltage ratio combined with the configured
-        pullup resistor). Used by button calibration to find press/release
-        thresholds.
+        Read this button's current raw ADC ratio (0-1), the same sample
+        get_resistance() and is_adc_saturated() both derive their result
+        from.
 
-        :return Optional[float]: resistance in ohms, or None if this isn't an
+        :return Optional[float]: raw ADC ratio, or None if this isn't an
             ADC button or no sample has been read yet
         """
         if not self.is_adc_button:
@@ -116,9 +125,47 @@ class AFCButton:
         # running a moment, so pick whichever of the two is in range instead
         # of assuming a fixed order.
         first, second = mcu_adc.get_last_value()
-        value = first if 0.0 <= first <= 1.0 else second
+        return first if 0.0 <= first <= 1.0 else second
+
+    def resistance_at_ratio(self, ratio: float) -> float:
+        """
+        Convert an ADC ratio (0-1) to the resistance get_resistance() would
+        report for that ratio, using this button's configured pullup.
+
+        :param ratio: ADC ratio to convert
+        :return float: corresponding resistance in ohms
+        """
+        return self.pullup * ratio / (1.0 - ratio)
+
+    def get_resistance(self) -> Optional[float]:
+        """
+        Read this button's current ADC resistance, calculated the same way
+        QUERY_ADC reports it. Used by button calibration to find press/release
+        thresholds.
+
+        :return Optional[float]: resistance in ohms, or None if this isn't an
+            ADC button or no sample has been read yet
+        """
+        value = self._get_adc_ratio()
+        if value is None:
+            return None
         value = max(0.00001, min(0.99999, value))
-        return self.pullup * value / (1.0 - value)
+        return self.resistance_at_ratio(value)
+
+    def is_adc_saturated(self) -> bool:
+        """
+        Check whether this button's current raw ADC ratio is at/near its
+        ceiling, indicating a maxed-out/saturated reading (e.g. an open
+        circuit) rather than a real press resistance. Used by button
+        calibration to detect an unusable measurement before it's trusted.
+
+        :return bool: True when the raw ADC ratio is at/above
+            ADC_SATURATION_RATIO, else False (including when it can't be read)
+        """
+        value = self._get_adc_ratio()
+        if value is None:
+            return False
+        return value >= ADC_SATURATION_RATIO
 
     def button_callback(self, eventtime: float, state: bool) -> None:
         """
@@ -185,10 +232,9 @@ class AFCButton:
 
     def _run_custom_press_gcode(self, template: Any) -> bool:
         """
-        Render and run a custom short_press_gcode/long_press_gcode override:
-        render, then run it via self.gcode.run_script. A failure is reported
-        through AFC_error, naming the lane and the failing macro, with the
-        exception itself going only to the debug log.
+        Render and run a custom short_press_gcode/long_press_gcode override.
+        A failure is reported through AFC_error, naming the lane and the
+        failing macro, with the exception itself going only to the debug log.
 
         :param template: loaded short_press_template or long_press_template
         :return bool: True when the override had non-empty gcode configured
@@ -199,7 +245,7 @@ class AFCButton:
             commands = template.render()
             if not commands.strip():
                 return False
-            self.gcode.run_script(commands)
+            self.afc.run_script(commands)
         except Exception:
             error_str = f"{self.lane_id}: error running {template.name}"
             self.afc.logger.debug(error_str, only_debug=True, traceback=traceback.format_exc())
