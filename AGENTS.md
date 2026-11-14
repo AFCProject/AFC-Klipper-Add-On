@@ -80,6 +80,10 @@
    line if the method returns something meaningful (omit it otherwise).
    No blank line between the `:param`/`:return` block and the closing `"""`. 
    Docstrings should use a single backtick when appropriate. 
+   Keep the description itself short and succinct, same as the comments
+   rule above — a line or two is usually enough. Only add more when the WHY
+   is genuinely non-obvious (a hidden constraint, a subtle invariant); don't
+   restate what the method name and parameter names already make clear.
 
    ```python
    def register_lane_macros(self, lane_obj: AFCLane):

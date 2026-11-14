@@ -26,7 +26,7 @@ class OpenAms(UnitType):
     buffer_selectable = False
     additional_name_prefix = "AMS"
     additional_buffer_supported = True
-    additional_buffer_options: Tuple[str, ...] = ("None", "FPS_PSF")
+    additional_buffer_options: Tuple[str, ...] = ("None", "Compensator", "FPS_PSF")
     additional_buffer_default = "FPS_PSF"
 
     def copy_files(
