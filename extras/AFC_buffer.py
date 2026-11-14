@@ -774,8 +774,8 @@ class AFCFPSBuffer(AFCBuffer):
         self.sample_time: float = config.getfloat('sample_time', 0.005)
         self.report_time: float = config.getfloat('report_time', 0.100)
         self.reversed: bool = config.getboolean('reversed', False)
-        self.adc_min_val: float = config.getfloat('adc_min_val', 0.1)
-        self.adc_max_val: float = config.getfloat('adc_max_val', 0.9)
+        self.adc_min_val: float = config.getfloat('adc_min_val', 0.0)
+        self.adc_max_val: float = config.getfloat('adc_max_val', 1.0)
 
         # Setup ADC sampling — handle both Klipper and Kalico APIs
         if hasattr(self.adc, "setup_minmax"): # Kalico has this
