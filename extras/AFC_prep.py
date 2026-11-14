@@ -313,11 +313,7 @@ class afcPrep:
                                     "Please check your buffer switches or configuration.</span>".format(buffer_name))
 
         if self.afc.snapmaker_printer:
-            for extruder in self.afc.tools.values():
-                lane: AFCLane = extruder.lanes.get(extruder.lane_loaded, None)
-                if (lane
-                    and lane.tool_loaded):
-                    self.afc.spool.set_snapmaker_filament_params(lane)
+            self.afc.spool.snapmaker_sync_cb()
 
         # Verifying that user has macro positions set correctly for enabled park, cut, etc macros
         error_str = self.afc.verify_macro_positions()

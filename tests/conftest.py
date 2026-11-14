@@ -217,6 +217,15 @@ def _make_klippy_ready_mock():
     mod.Printer = Printer
     return mod
 
+def _make_filament_protocol_mock():
+    mod = types.ModuleType("filament_protocol")
+    mod.FILAMENT_PROTO_MAIN_TYPE_MAPPING = {
+        "PLA": 1, "PETG": 2, "ABS": 3, "TPU": 4, "PVA": 5, "ASA": 6, "PA": 9,
+        "PA-CF": 10, "PA-GF": 11, "PC": 12, "PETG-CF": 17, "PLA-CF": 20,
+        "PEBA": 22, "TPE": 23, "Reserved": 0,
+    }
+    return mod
+
 def _make_print_task_config():
     config = {
         "filament_vendor": ["NONE"] * 4,

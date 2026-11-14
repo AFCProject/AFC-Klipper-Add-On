@@ -3631,6 +3631,7 @@ class TestInPrintReactorTimer:
     def _make(self):
         obj = _make_afc()
         obj.in_print_timer = MagicMock()
+        obj.spool = MagicMock()
         return obj
 
     def test_skips_moonraker_call_when_moonraker_is_none(self):
@@ -3695,6 +3696,25 @@ class TestInPrintReactorTimer:
         obj.in_print_reactor_timer(0.0)
         assert not obj.print_data_metadata.method_calls
         assert obj.number_of_toolchanges == 0
+
+    def test_resyncs_extruder_map_table_when_in_print(self):
+        """GH #824: once the printer reports it's actually printing, AFC's
+        mapping must be resynced from snapmaker's print_task_config -- done
+        here (after the timer's delay) rather than off a print-start event,
+        so the printer has had time to finish updating its own state first."""
+        obj = self._make()
+        obj.moonraker = None
+        obj.function.in_print.return_value = (True, "test.gcode")
+        obj.function.get_current_lane_obj.return_value = None
+        obj.in_print_reactor_timer(0.0)
+        obj.spool.resync_afc_mapping_from_extruder_map_table.assert_called_once()
+
+    def test_does_not_resync_extruder_map_table_when_not_in_print(self):
+        obj = self._make()
+        obj.moonraker = None
+        obj.function.in_print.return_value = (False, None)
+        obj.in_print_reactor_timer(0.0)
+        obj.spool.resync_afc_mapping_from_extruder_map_table.assert_not_called()
 
     def test_finish_print_start_skips_buffer_update_when_lane_has_no_buffer(self):
         """Covers current_lane truthy but buffer_obj falsy in _finish_print_start."""

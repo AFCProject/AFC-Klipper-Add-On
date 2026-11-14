@@ -18,7 +18,7 @@ from queue import Queue
 from configfile import error
 from klippy import Printer
 
-from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List
+from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List, Literal
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -682,7 +682,9 @@ class afc:
         """
         Print timer callback to check if printer is currently in a print. If printer is in a print,
         current filename is looked up and metadata is pulled from moonraker to get total filament change
-        count and per-tool temperatures.
+        count and per-tool temperatures. Also resyncs AFC's T(n) mapping from snapmaker's
+        print_task_config (a no-op on non-snapmaker printers), run here rather than off a
+        print-start event so the printer has time to finish updating its own state first.
 
         Metadata is fetched asynchronously since this reactor timer runs while printing and shouldn't
         block on the HTTP round trip to moonraker. _finish_print_start runs once it's ready
@@ -702,6 +704,7 @@ class afc:
                                                         on_fetched=self._finish_print_start)
             else:
                 self._finish_print_start()
+            self.spool.resync_afc_mapping_from_extruder_map_table()
 
         return self.reactor.NEVER
 
