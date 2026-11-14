@@ -135,7 +135,7 @@ class AFC_Claymore(AFC_vivid):
         return afcBoxTurtle.move_to_hub(self, lane, dist, dir, use_homing,
                                         speed_mode, assist_active)
 
-    def calibrate_lane(self, cur_lane: AFCLane, tol: float|int, 
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float|int,
                        gcmd: GCodeCommand) -> tuple[bool, str, float|int]:
         """
         Method to calibrate lane for Claymore units. Delegates to afcBoxTurtle calibration logic.
