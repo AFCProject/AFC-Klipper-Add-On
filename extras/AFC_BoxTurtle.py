@@ -154,7 +154,7 @@ class afcBoxTurtle(afcUnit):
 
         return succeeded
 
-    def calibrate_bowden(self, cur_lane, dis, tol):
+    def calibrate_bowden(self, cur_lane, dis, tol, gcmd):
         """
         Calibration function for automatically determining afc_bowden_length or dist_hub when
         calibration lane is setup in direct mode.
@@ -163,6 +163,7 @@ class afcBoxTurtle(afcUnit):
         :param dis: Distance step to move when calibrating
         :param tol: Tolerance for fine adjustments during calibration, only used when moving
                     filament to hub
+        :param gcmd: command context the calibration is run through
 
         :return success,message,length: Returns tuple, when successful returns True, message,
                                         and the calibrated length. When error occurs, returns

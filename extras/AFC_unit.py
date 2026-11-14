@@ -801,8 +801,19 @@ class afcUnit:
         self._print_function_not_defined(self.system_Test.__name__)
         return False
 
-    def calibrate_bowden(self, cur_lane, dis, tol, gcmd):
+    def calibrate_bowden(self, cur_lane: AFCLane, dis: float, tol: float,
+                         gcmd: GCodeCommand) -> tuple[bool, str, float]:
+        """
+        Placeholder, overridden by units that support bowden/dist_hub calibration.
+
+        :param cur_lane: Lane to use for calibration
+        :param dis: Distance step to move when calibrating
+        :param tol: Tolerance for fine adjustments during calibration
+        :param gcmd: command context the calibration is run through
+        :return type: tuple of (success, message, calibrated length)
+        """
         self._print_function_not_defined(self.calibrate_bowden.__name__)
+        return False, "", 0.0
 
     def calibrate_td1(self, cur_lane, dis, tol):
         self._print_function_not_defined(self.calibrate_td1.__name__)
@@ -816,8 +827,18 @@ class afcUnit:
     def calc_position(self, cur_lane, state, pos, short_move, tolerance):
         self._print_function_not_defined(self.calc_position.__name__)
 
-    def calibrate_lane(self, cur_lane, tol, gcmd):
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float,
+                       gcmd: GCodeCommand) -> tuple[bool, str, float]:
+        """
+        Placeholder, overridden by units that support dist_hub calibration.
+
+        :param cur_lane: Lane to use for calibration
+        :param tol: Tolerance for fine adjustments during calibration
+        :param gcmd: command context the calibration is run through
+        :return type: tuple of (success, message, calibrated length)
+        """
         self._print_function_not_defined(self.calibrate_lane.__name__)
+        return False, "", 0.0
 
     def unselect_lane(self, move_distance: float=50):
         self._print_function_not_defined(self.unselect_lane.__name__)
