@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Updated
 - Updated the way `run_script_by_command` was being called to work correctly with Kalico's PR 1052 changes and also work correctly with older Klipper versions.
 
+### Fixed
+- Fixed Cut.cfg's rip-length sync using the AFC_extruder section name instead of the
+  real toolhead extruder name for `SYNC_EXTRUDER_MOTION`'s `MOTION_QUEUE`, which broke
+  for custom `extruder_name` mappings (e.g. `e1` mapped to `extruder1`). (#784)
+
 ## [11-09-2026]
 ### Fixed
 - fix Cut.cfg macro to honor the safe_move_first when heading to safe park location
