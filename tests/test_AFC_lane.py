@@ -553,6 +553,135 @@ class TestSetupToolStartEndstop:
         assert "tool" not in lane.endstops
 
 
+class TestSyncToExtruder:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.sync_to_extruder()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper_with_update_current_and_extruder_name(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        lane.extruder_obj.th_extruder_name = "extruder1"
+
+        lane.sync_to_extruder(False)
+
+        lane.drive_stepper.sync_to_extruder.assert_called_once_with(
+            False, th_extruder_name="extruder1", gcmd=None)
+
+    def test_passes_gcmd_through(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.sync_to_extruder(gcmd=gcmd)
+
+        lane.drive_stepper.sync_to_extruder.assert_called_once_with(
+            True, th_extruder_name=lane.extruder_obj.th_extruder_name, gcmd=gcmd)
+
+
+class TestUnsyncToExtruder:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.unsync_to_extruder()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper_with_update_current(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+
+        lane.unsync_to_extruder(False)
+
+        lane.drive_stepper.unsync_to_extruder.assert_called_once_with(False, gcmd=None)
+
+    def test_passes_gcmd_through(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.unsync_to_extruder(gcmd=gcmd)
+
+        lane.drive_stepper.unsync_to_extruder.assert_called_once_with(True, gcmd=gcmd)
+
+
+class TestSetLoadCurrent:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.set_load_current()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.set_load_current(gcmd)
+
+        lane.drive_stepper.set_load_current.assert_called_once_with(gcmd)
+
+
+class TestSetPrintCurrent:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.set_print_current()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.set_print_current(gcmd)
+
+        lane.drive_stepper.set_print_current.assert_called_once_with(gcmd)
+
+
+class TestToolSwap:
+    def test_noop_when_no_toolchanger(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.tc_unit_obj = None
+
+        lane.tool_swap()
+
+        # No AttributeError from calling into a None tc_unit_obj is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_toolchanger_unit_with_set_start_time_false(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.tc_unit_obj = MagicMock()
+
+        lane.tool_swap()
+
+        lane.extruder_obj.tc_unit_obj.tool_swap.assert_called_once_with(
+            lane, set_start_time=False, gcmd=None)
+
+    def test_passes_gcmd_through(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.tc_unit_obj = MagicMock()
+        gcmd = MagicMock()
+
+        lane.tool_swap(gcmd)
+
+        lane.extruder_obj.tc_unit_obj.tool_swap.assert_called_once_with(
+            lane, set_start_time=False, gcmd=gcmd)
+
+
 # ── _attach_tool_start_endstop_to_stepper ─────────────────────────────────────
 # Lanes with no extruder of their own (e.g. Vivid) never set a TOOL endstop in
 # __init__; handle_unit_connect attaches the extruder's U1 endstop instead.
@@ -633,6 +762,118 @@ class TestAttachToolStartEndstopToStepper:
         lane.extruder_obj = MagicMock(tool_start_endstop=MagicMock())
 
         lane._attach_tool_start_endstop_to_stepper()  # should not raise
+
+
+# _attach_fps_psf_buffer_endstop_to_stepper
+# Lanes that share one physical drive stepper (HTLF, NightOwl, QuattroBox) but
+# each have their own FPS_PSF buffer never get wired up by
+# AFC_stepper._handle_ready, which only fires once for the shared drive
+# stepper itself. handle_unit_connect attaches each lane's own buffer here
+# instead, under a lane-prefixed name.
+
+class TestAttachFpsPsfBufferEndstopToStepper:
+    def _make_fps_buffer(self):
+        buffer_obj = MagicMock()
+        buffer_obj.type = "FPS_PSF"
+        buffer_obj.get_fps_endstop_for_lane = MagicMock(return_value=MagicMock())
+        buffer_obj.get_fps_trailing_endstop_for_lane = MagicMock(return_value=MagicMock())
+        return buffer_obj
+
+    def test_attaches_buffer_and_trailing_on_the_shared_drive_stepper(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="PD3")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        lane_fps_endstop = lane.buffer_obj.get_fps_endstop_for_lane.return_value
+        lane_fps_trailing_endstop = lane.buffer_obj.get_fps_trailing_endstop_for_lane.return_value
+        lane.buffer_obj.get_fps_endstop_for_lane.assert_called_once_with("lane4")
+        lane.buffer_obj.get_fps_trailing_endstop_for_lane.assert_called_once_with("lane4")
+        assert drive_stepper._endstops["lane4_buffer"] == (
+            lane_fps_endstop, "lane4_buffer")
+        assert drive_stepper._endstops["lane4_buffer_trailing"] == (
+            lane_fps_trailing_endstop, "lane4_buffer_trailing")
+        assert "lane4_tool_start" not in drive_stepper._endstops
+        assert lane.endstops[AFCHomingPoints.BUFFER] == {
+            "endstop": lane_fps_endstop, "endstop_name": "lane4_buffer"}
+        lane_fps_endstop.add_stepper.assert_called_once_with(
+            drive_stepper.extruder_stepper.stepper)
+        lane_fps_trailing_endstop.add_stepper.assert_called_once_with(
+            drive_stepper.extruder_stepper.stepper)
+
+    def test_also_attaches_tool_start_when_extruder_uses_buffer(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        lane_fps_endstop = lane.buffer_obj.get_fps_endstop_for_lane.return_value
+        assert drive_stepper._endstops["lane4_tool_start"] == (
+            lane_fps_endstop, "lane4_tool_start")
+        assert drive_stepper._endstops["lane4_buffer"] == (
+            lane_fps_endstop, "lane4_buffer")
+
+    def test_noop_when_lane_owns_its_own_stepper(self):
+        """A lane with its own real stepper (self.drive_stepper is None) is
+        handled by AFC_stepper._handle_ready instead; must not be touched here."""
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()  # should not raise
+
+        lane.buffer_obj.get_fps_endstop_for_lane.assert_not_called()
+
+    def test_noop_when_no_buffer_obj(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = None
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops == {}
+
+    def test_noop_when_buffer_is_not_fps_psf(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = MagicMock(type="switched")
+        lane.extruder_obj = MagicMock(tool_start="buffer")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops == {}
+
+    def test_does_not_overwrite_an_already_registered_buffer_endstop(self):
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        existing_buffer = (MagicMock(), "lane4_buffer")
+        existing_trailing = (MagicMock(), "lane4_buffer_trailing")
+        drive_stepper._endstops = {
+            "lane4_buffer": existing_buffer, "lane4_buffer_trailing": existing_trailing}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.extruder_obj = MagicMock(tool_start="PD3")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        assert drive_stepper._endstops["lane4_buffer"] is existing_buffer
+        assert drive_stepper._endstops["lane4_buffer_trailing"] is existing_trailing
+        lane.buffer_obj.get_fps_endstop_for_lane.assert_not_called()
+        lane.buffer_obj.get_fps_trailing_endstop_for_lane.assert_not_called()
 
 
 # ── move_advanced: stepperless unit delegation ───────────────────────────────
@@ -1927,15 +2168,20 @@ class TestGetStatusSpoolVendor:
         response = lane.get_status()
         assert response["spool_vendor"] == ""
 
-    def test_spool_vendor_omitted_when_saving_to_file(self):
-        """Vendor is re-fetched from Spoolman, so it is not persisted -- the
-        same treatment filament_name already gets."""
+    def test_vendor_and_name_persisted_when_saving_to_file(self):
         lane = _make_lane_for_get_status(["T0"])
-        lane.spool_vendor = "Overture"
+        lane.spool_vendor = "Polymaker"
+        lane.filament_name = "PolyTerra PLA"
         lane.td1_data = {"td": "", "color": "", "scan_time": ""}
         response = lane.get_status(save_to_file=True)
-        assert "spool_vendor" not in response
-        assert "filament_name" not in response
+        assert response["spool_vendor"] == "Polymaker"
+        assert response["filament_name"] == "PolyTerra PLA"
+
+    def test_filament_name_reported_live(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.filament_name = "Overture Gray ASA"
+        response = lane.get_status()
+        assert response["filament_name"] == "Overture Gray ASA"
 
 
 class TestSendLaneDataExtruderIndex:
@@ -3231,10 +3477,32 @@ class TestPerformInfiniteRunout:
         afc.error.pause_resume.send_pause_command.assert_called_once()
         afc.save_pos.assert_called_once()
         afc.CHANGE_TOOL.assert_called_with(lane2, restore_pos=False)
-        lane.gcode.run_script_from_command.assert_called_with(f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
+        afc.gcode.run_script_from_command.assert_called_with(
+            f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
         afc.restore_pos.assert_called_once()
         afc.error.pause_resume.send_resume_command.assert_called_once()
         lane.unit_obj.lane_not_ready.assert_called_with(lane)
+
+    def test_current_lane_found_runout_lane2_mutex_not_held_uses_gcode_run_script(self):
+        """_perform_infinite_runout is reached from a weight/sensor callback,
+        never from inside an active gcode command, so the gcode mutex is not
+        held -- afc.run_script must acquire it via self.gcode.run_script
+        rather than running unprotected via run_script_from_command."""
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        afc.gcode.get_mutex().test.return_value = False
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, lane2]
+
+        lane._perform_infinite_runout()
+
+        afc.gcode.run_script.assert_called_with(
+            f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
+        afc.gcode.run_script_from_command.assert_not_called()
 
     def test_current_lane_found_runout_lane2_check_extruder_calls(self):
         afc = MockAFC()
@@ -3289,7 +3557,29 @@ class TestPerformInfiniteRunout:
         afc.lanes.get.assert_any_call(lane2.name)
         assert afc.lanes.get.call_count == 2
         assert lane2.status is AFCLaneState.INFINITE_RUNOUT
-        lane.gcode.run_script_from_command.assert_not_called()
+        afc.gcode.run_script_from_command.assert_not_called()
+
+
+class TestPostPrepUserMacro:
+    def test_runs_macro_through_afc_run_script_when_macro_present(self):
+        lane = _make_afc_lane()
+        lane.post_prep_macro = "MY_POST_PREP_MACRO"
+        lane.afc.function.check_macro_present.return_value = True
+
+        lane._post_prep_user_macro()
+
+        lane.afc.function.check_macro_present.assert_called_once_with("MY_POST_PREP_MACRO")
+        lane.afc.run_script.assert_called_once_with(f"MY_POST_PREP_MACRO LANE={lane.name}")
+
+    def test_does_nothing_when_macro_not_present(self):
+        lane = _make_afc_lane()
+        lane.post_prep_macro = "MY_POST_PREP_MACRO"
+        lane.afc.function.check_macro_present.return_value = False
+
+        lane._post_prep_user_macro()
+
+        lane.afc.function.check_macro_present.assert_called_once_with("MY_POST_PREP_MACRO")
+        lane.afc.run_script.assert_not_called()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4465,3 +4755,31 @@ class TestPrepCallback:
 
         lane_b.handle_prep_runout(20.0, False)
         lane_b.set_unloaded.assert_called_once()
+
+
+class TestAFCLaneLedColorValidation:
+    OPTIONS = {
+        "led_fault": "led_fault",
+        "led_ready": "led_ready",
+        "led_not_ready": "led_not_ready",
+        "led_loading": "led_loading",
+        "led_unloading": "led_unloading",
+        "led_tool_loaded": "led_tool_loaded",
+        "led_tool_loaded_idle": "led_tool_loaded_idle",
+        "led_tool_unloaded": "led_tool_unloaded",
+        "led_spool_illuminate": "led_spool_illum",
+    }
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_invalid_color_raises_at_init(self, option):
+        from configfile import error
+        with pytest.raises(error) as exc:
+            _make_real_afc_lane(values={option: "0.1.0,0,0"})
+        assert str(exc.value) == (
+            f"[AFC_stepper lane1] option '{option}' has invalid LED color '0.1.0,0,0', "
+            f"expected 3 or 4 comma separated numbers from 0 to 1 (R,G,B[,W])")
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_valid_color_stored_on_attribute(self, option):
+        lane = _make_real_afc_lane(values={option: "0.2,0.4,0.6,0.8"})
+        assert getattr(lane, self.OPTIONS[option]) == "0.2,0.4,0.6,0.8"

@@ -73,7 +73,7 @@ class afc_poop:
             if self.verbose:
                 self.logger.info(f'AFC_Poop: {step} Set Cooling Fan to Full Speed')
             # save fan current speed
-            self.gcode.run_script_from_command('M106 S255')
+            self.afc.run_script('M106 S255')
             step += 1
         iteration=0
         while iteration < int(self.purge_length / self.max_iteration_length ):
@@ -102,7 +102,7 @@ class afc_poop:
         if self.full_fan:
             if self.verbose:
                 self.logger.info(f'AFC_Poop: {step} Restore fan speed and feedrate')
-            self.gcode.run_script_from_command('M106 S0')
+            self.afc.run_script('M106 S0')
 
 def load_config(config: ConfigWrapper) -> afc_poop:
     """

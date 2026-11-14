@@ -22,7 +22,7 @@ import sys
 import importlib.util
 import configparser
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import pytest
 
 from extras.AFC_buffer import (
@@ -141,8 +141,11 @@ def _make_fps_buffer(name="FPS_buffer1", **overrides):
     buf.sample_time = 0.005
     buf.report_time = 0.1
     buf.reversed = False
+    buf.adc_min_val = 0.0
+    buf.adc_max_val = 1.0
 
     buf.fps_value = 0.0
+    buf.raw_value = 0.0
     buf.set_point = 0.5
     buf.low_point = 0.1
     buf.high_point = 0.9
@@ -265,14 +268,14 @@ class TestAFCBufferInit:
     def test_led_colors_config_overrides_afc_defaults(self):
         buf, afc, printer = _build_real_buffer(values={
             "led_buffer_advancing": "1,1,1,1",
-            "led_buffer_trailing": "2,2,2,2",
-            "led_buffer_neutral": "3,3,3,3",
-            "led_buffer_disable": "4,4,4,4",
+            "led_buffer_trailing": "0.2,0.2,0.2,0.2",
+            "led_buffer_neutral": "0.3,0.3,0.3,0.3",
+            "led_buffer_disable": "0.4,0.4,0.4,0.4",
         })
         assert buf.led_advancing == "1,1,1,1"
-        assert buf.led_trailing == "2,2,2,2"
-        assert buf.led_neutral == "3,3,3,3"
-        assert buf.led_buffer_disabled == "4,4,4,4"
+        assert buf.led_trailing == "0.2,0.2,0.2,0.2"
+        assert buf.led_neutral == "0.3,0.3,0.3,0.3"
+        assert buf.led_buffer_disabled == "0.4,0.4,0.4,0.4"
 
     def test_led_index_config_reread_after_enabling_led(self):
         buf, afc, printer = _build_real_buffer(values={"led_index": "afc_led:3"})
@@ -1410,14 +1413,53 @@ class TestCmdQueryBufferBase:
         assert "18.7500" in msg
         assert lane.name in msg
 
+    def _enabled_buf_with_lane(self):
+        buf = _make_buffer()
+        buf.enable = True
+        buf.last_state = NEUTRAL_STATE_NAME
+        buf.error_sensitivity = 4.0
+        buf.logger = MagicMock()
+        lane = _make_lane(buf)
+        lane.name = "lane1"
+        buf.current_lane = lane
+        return buf, lane
+
+    def test_lane_without_extruder_stepper_skips_rotation_distance(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = None
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
+    def test_lane_with_none_stepper_skips_rotation_distance(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = MagicMock()
+        lane.extruder_stepper.stepper = None
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
+    def test_lane_with_stepper_reports_rotation_distance_exact(self):
+        buf, lane = self._enabled_buf_with_lane()
+        lane.extruder_stepper = MagicMock()
+        lane.extruder_stepper.stepper.get_rotation_distance.return_value = [18.75]
+        buf.cmd_QUERY_BUFFER(_make_gcmd())
+        expected = (f"{buf.name} : {NEUTRAL_STATE_NAME}"
+                    "\nlane1 Rotation distance: 18.7500"
+                    "\nFault detection enabled, sensitivity 4.0")
+        assert buf.logger.info.call_args_list == [call(expected)]
+
     def test_enabled_no_lane_skips_rotation_distance(self):
         buf = _make_buffer()
         buf.enable = True
         buf.current_lane = None
+        buf.error_sensitivity = 0
+        buf.last_state = NEUTRAL_STATE_NAME
         buf.logger = MagicMock()
         buf.cmd_QUERY_BUFFER(_make_gcmd())
-        msg = buf.logger.info.call_args[0][0]
-        assert "Rotation distance" not in msg
+        assert buf.logger.info.call_args_list == [call(f"{buf.name} : {NEUTRAL_STATE_NAME}")]
 
     def test_enabled_with_fault_detection_reports_sensitivity(self):
         buf = _make_buffer()
@@ -2123,6 +2165,50 @@ class TestAdcCallback:
         buf.reversed = True
         buf._adc_callback(1.0, 0.3)
         assert buf.fps_value == pytest.approx(0.7)
+
+    def test_raw_value_captures_unscaled_reading(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf._adc_callback(1.0, 0.42)
+        assert buf.raw_value == pytest.approx(0.42)
+        assert buf.fps_value == pytest.approx(0.42)
+
+    def test_rescales_within_custom_adc_range(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.1
+        buf.adc_max_val = 0.9
+        buf._adc_callback(1.0, 0.5)
+        assert buf.raw_value == pytest.approx(0.5)
+        assert buf.fps_value == pytest.approx(0.5)
+
+    def test_rescale_clamps_reading_below_min_to_zero(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.2
+        buf.adc_max_val = 0.8
+        buf._adc_callback(1.0, 0.1)
+        assert buf.raw_value == pytest.approx(0.1)
+        assert buf.fps_value == pytest.approx(0.0)
+
+    def test_rescale_clamps_reading_above_max_to_one(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.2
+        buf.adc_max_val = 0.8
+        buf._adc_callback(1.0, 0.9)
+        assert buf.raw_value == pytest.approx(0.9)
+        assert buf.fps_value == pytest.approx(1.0)
+
+    def test_reversed_applies_after_rescale_not_to_raw_value(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf._lane_has_rotation_control = MagicMock(return_value=False)
+        buf.adc_min_val = 0.2
+        buf.adc_max_val = 0.8
+        buf.reversed = True
+        buf._adc_callback(1.0, 0.35)
+        assert buf.raw_value == pytest.approx(0.35)
+        assert buf.fps_value == pytest.approx(0.75)
 
     def test_not_reversed_leaves_value_unchanged(self):
         buf, afc, reactor, printer = _make_fps_buffer()
@@ -3009,6 +3095,9 @@ class TestAFCFPSBufferInit:
         assert buf._latch_enabled is False
         assert buf.reversed is False
         assert buf.fps_value == 0.0
+        assert buf.raw_value == 0.0
+        assert buf.adc_min_val == 0.0
+        assert buf.adc_max_val == 1.0
         assert buf._homing_high_point == 0.7
         assert buf._last_logged_integral == 0.0
         assert buf.integral_extrusion_threshold == 0.02
@@ -3026,6 +3115,24 @@ class TestAFCFPSBufferInit:
     def test_homing_high_point_config_override(self):
         buf, afc, printer, adc = _build_real_fps_buffer(values={"homing_high_point": 0.8})
         assert buf._homing_high_point == 0.8
+
+    def test_adc_min_val_config_override(self):
+        buf, afc, printer, adc = _build_real_fps_buffer(values={"adc_min_val": 0.05})
+        assert buf.adc_min_val == 0.05
+        assert buf.adc_max_val == 1.0
+
+    def test_adc_max_val_config_override(self):
+        buf, afc, printer, adc = _build_real_fps_buffer(values={"adc_max_val": 0.95})
+        assert buf.adc_min_val == 0.0
+        assert buf.adc_max_val == 0.95
+
+    def test_adc_max_val_equal_to_adc_min_val_raises(self):
+        with pytest.raises(Exception, match="adc_max_val .* must be greater than adc_min_val"):
+            _build_real_fps_buffer(values={"adc_min_val": 0.5, "adc_max_val": 0.5})
+
+    def test_adc_max_val_less_than_adc_min_val_raises(self):
+        with pytest.raises(Exception, match="adc_max_val .* must be greater than adc_min_val"):
+            _build_real_fps_buffer(values={"adc_min_val": 0.6, "adc_max_val": 0.4})
 
     def test_kalico_adc_logs_setup_message(self):
         adc = _FakeADC(has_minmax=True)
@@ -3155,6 +3262,94 @@ class TestEnableClearAdvanceLatch:
         buf.clear_advance_latch()
         assert buf._latch_enabled is False
         assert buf._advance_latched is False
+
+
+class TestGetFpsEndstopForLane:
+    """Covers get_fps_endstop_for_lane, the fix for lanes sharing one FPS_PSF
+    buffer piling every lane's stepper onto one shared PollingEndstopWrapper:
+    each lane name must get its own clone."""
+
+    def _make_buffer_with_query_endstops(self, query_endstops=None):
+        buf, afc, printer, adc = _build_real_fps_buffer()
+        printer.objects["query_endstops"] = query_endstops or MagicMock()
+        return buf
+
+    def test_creates_and_registers_a_per_lane_clone(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        result = buf.get_fps_endstop_for_lane("lane1")
+
+        assert isinstance(result, PollingEndstopWrapper)
+        assert result is not buf.fps_endstop
+        query_endstops.register_endstop.assert_called_once_with(result, "lane1_buffer")
+
+    def test_caches_the_clone_per_lane_name(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        first = buf.get_fps_endstop_for_lane("lane1")
+        second = buf.get_fps_endstop_for_lane("lane1")
+
+        assert first is second
+        query_endstops.register_endstop.assert_called_once_with(first, "lane1_buffer")
+
+    def test_different_lanes_get_distinct_clones_with_isolated_steppers(self):
+        """The actual bug this fixes: two lanes sharing one buffer must not
+        end up with each other's stepper in get_steppers()."""
+        buf = self._make_buffer_with_query_endstops()
+
+        lane1_endstop = buf.get_fps_endstop_for_lane("lane1")
+        lane2_endstop = buf.get_fps_endstop_for_lane("lane2")
+        lane1_stepper = MagicMock()
+        lane1_endstop.add_stepper(lane1_stepper)
+
+        assert lane1_endstop is not lane2_endstop
+        assert lane1_endstop.get_steppers() == [lane1_stepper]
+        assert lane2_endstop.get_steppers() == []
+
+
+class TestGetFpsTrailingEndstopForLane:
+    """Covers get_fps_trailing_endstop_for_lane, the trailing-threshold
+    counterpart of get_fps_endstop_for_lane."""
+
+    def _make_buffer_with_query_endstops(self, query_endstops=None):
+        buf, afc, printer, adc = _build_real_fps_buffer()
+        printer.objects["query_endstops"] = query_endstops or MagicMock()
+        return buf
+
+    def test_creates_and_registers_a_per_lane_clone(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        result = buf.get_fps_trailing_endstop_for_lane("lane1")
+
+        assert isinstance(result, PollingEndstopWrapper)
+        assert result is not buf.fps_trailing_endstop
+        query_endstops.register_endstop.assert_called_once_with(
+            result, "lane1_buffer_trailing")
+
+    def test_caches_the_clone_per_lane_name(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        first = buf.get_fps_trailing_endstop_for_lane("lane1")
+        second = buf.get_fps_trailing_endstop_for_lane("lane1")
+
+        assert first is second
+        query_endstops.register_endstop.assert_called_once_with(first, "lane1_buffer_trailing")
+
+    def test_different_lanes_get_distinct_clones_with_isolated_steppers(self):
+        buf = self._make_buffer_with_query_endstops()
+
+        lane1_endstop = buf.get_fps_trailing_endstop_for_lane("lane1")
+        lane2_endstop = buf.get_fps_trailing_endstop_for_lane("lane2")
+        lane1_stepper = MagicMock()
+        lane1_endstop.add_stepper(lane1_stepper)
+
+        assert lane1_endstop is not lane2_endstop
+        assert lane1_endstop.get_steppers() == [lane1_stepper]
+        assert lane2_endstop.get_steppers() == []
 
 
 class TestFPSEnableBuffer:
@@ -3790,7 +3985,8 @@ class TestFPSCmdQueryBuffer:
     def test_reports_raw_smoothed_and_set_point(self):
         buf, afc, reactor, printer = _make_fps_buffer()
         buf.enable = False
-        buf.fps_value = 0.321
+        buf.reversed = False
+        buf.raw_value = 0.321
         buf.smoothed_fps = 0.456
         buf.set_point = 0.5
         buf.logger = MagicMock()
@@ -3799,6 +3995,28 @@ class TestFPSCmdQueryBuffer:
         assert "raw: 0.321" in msg
         assert "smoothed: 0.456" in msg
         assert "set_point: 0.50" in msg
+
+    def test_not_reversed_omits_raw_flipped_line(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf.enable = False
+        buf.reversed = False
+        buf.raw_value = 0.2
+        buf.fps_value = 0.2
+        buf.logger = MagicMock()
+        buf.cmd_QUERY_BUFFER(MagicMock())
+        msg = buf.logger.info.call_args[0][0]
+        assert "raw flipped" not in msg
+
+    def test_reversed_reports_raw_flipped_line(self):
+        buf, afc, reactor, printer = _make_fps_buffer()
+        buf.enable = False
+        buf.reversed = True
+        buf.raw_value = 0.2
+        buf.fps_value = 0.8
+        buf.logger = MagicMock()
+        buf.cmd_QUERY_BUFFER(MagicMock())
+        msg = buf.logger.info.call_args[0][0]
+        assert "raw flipped: 0.800" in msg
 
     def test_not_enabled_skips_rotation_distance(self):
         buf, afc, reactor, printer = _make_fps_buffer()
@@ -3924,10 +4142,12 @@ class TestCmdAfcSetFpsSetPoint:
 class TestFPSGetStatus:
     def test_includes_base_and_fps_specific_keys(self):
         buf, afc, reactor, printer = _make_fps_buffer()
+        buf.raw_value = 0.234
         buf.fps_value = 0.3456
         buf.smoothed_fps = 0.4567
         buf.set_point = 0.5
         result = buf.get_status()
+        assert result["raw_value"] == 0.234
         assert result["fps_value"] == 0.346
         assert result["smoothed_fps"] == 0.457
         assert result["set_point"] == 0.5
@@ -4023,3 +4243,26 @@ class TestModuleImportGuard:
             _exec_afc_buffer_with_blocked_dependency("extras.AFC_utils")
         assert str(exc_info.value).startswith(
             "Error when trying to import AFC_utils.add_filament_switch")
+
+
+class TestAFCBufferLedColorValidation:
+    OPTIONS = {
+        "led_buffer_advancing": "led_advancing",
+        "led_buffer_trailing": "led_trailing",
+        "led_buffer_neutral": "led_neutral",
+        "led_buffer_disable": "led_buffer_disabled",
+    }
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_invalid_color_raises_at_init(self, option):
+        from configfile import error
+        with pytest.raises(error) as exc:
+            _build_real_buffer(values={option: "0.1.0,0,0"})
+        assert str(exc.value) == (
+            f"[AFC_buffer TN] option '{option}' has invalid LED color '0.1.0,0,0', "
+            f"expected 3 or 4 comma separated numbers from 0 to 1 (R,G,B[,W])")
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_valid_color_stored_on_attribute(self, option):
+        buf, _, _ = _build_real_buffer(values={option: "0.2,0.4,0.6,0.8"})
+        assert getattr(buf, self.OPTIONS[option]) == "0.2,0.4,0.6,0.8"

@@ -408,6 +408,11 @@ class TestMethodToV2:
     def test_stop_feed_assist(self):
         assert self._map("stop_feed_assist", {"index": 3}) == ((9, bytes([0x08, 0x03])), [])
 
+    def test_start_rollback_assist(self):
+        # slot 1, speed 10, length 0, mode 3 (rollback assist).
+        assert self._map("start_rollback_assist", {"index": 1}) == (
+            (8, bytes([0x08, 0x01, 0x10, 0x0A, 0x18, 0x00, 0x20, 0x03])), [])
+
     def test_feed_filament(self):
         # slot 1, speed 60, length 40, mode 0 (feed).
         assert self._map("feed_filament", {"index": 1, "length": 40, "speed": 60}) == (
@@ -2318,10 +2323,21 @@ class TestACE2ConnectionParseFrames:
 
 
 class TestACE2ConnectionEnableRfid:
-    def test_enables_every_slot(self):
+    def test_sends_nothing(self):
+        # The ACE 2 has no firmware tag reader; opcode 14 is set_identify's.
         printer, conn = ace2_link()
 
         conn.enable_rfid()
+
+        assert conn._serial.frames == []
+        assert printer.logger.messages == []
+
+
+class TestACE2ConnectionSetIdentify:
+    def test_on_for_every_slot(self):
+        printer, conn = ace2_link()
+
+        conn.set_identify(True)
 
         assert conn._serial.frames == [
             Ace2Wire.frame(slot, Ace2Wire.SET_RFID_ENABLE, bytes([0x08, slot, 0x10, 0x01]))
@@ -2337,32 +2353,22 @@ class TestACE2ConnectionEnableRfid:
         printer, conn = ace2_link()
         conn.slot_count = 2
 
-        conn.enable_rfid()
+        conn.set_identify(True)
 
         assert conn._serial.frames == [
             Ace2Wire.frame(0, Ace2Wire.SET_RFID_ENABLE, bytes([0x08, 0x00, 0x10, 0x01])),
             Ace2Wire.frame(1, Ace2Wire.SET_RFID_ENABLE, bytes([0x08, 0x01, 0x10, 0x01]))]
         assert list(conn._async_ids) == [0, 1]
-        assert printer.logger.messages == [
-            ("debug", "ACE2 TX (async): id=0 set_rfid_enable"),
-            ("debug", "ACE2 TX (async): id=1 set_rfid_enable")]
 
-
-class TestACE2ConnectionDisableRfid:
-    def test_disables_every_slot(self):
+    def test_off_for_every_slot(self):
         printer, conn = ace2_link()
 
-        conn.disable_rfid()
+        conn.set_identify(False)
 
         assert conn._serial.frames == [
             Ace2Wire.frame(slot, Ace2Wire.SET_RFID_ENABLE, bytes([0x08, slot, 0x10, 0x00]))
             for slot in range(4)]
         assert list(conn._async_ids) == [0, 1, 2, 3]
-        assert printer.logger.messages == [
-            ("debug", "ACE2 TX (async): id=0 set_rfid_enable"),
-            ("debug", "ACE2 TX (async): id=1 set_rfid_enable"),
-            ("debug", "ACE2 TX (async): id=2 set_rfid_enable"),
-            ("debug", "ACE2 TX (async): id=3 set_rfid_enable")]
 
 
 class TestAfcACE2Init:
@@ -2456,6 +2462,134 @@ class TestAfcACE2ApplyFeedCheck:
             ("set_feed_check", {"check_length": 200, "error_length": 185})]
         assert printer.logger.messages == [
             ("warning", "ACE2 Ace2_1: set_feed_check failed (non-fatal): serial down")]
+
+
+class TestAfcACE2Staging:
+    OFF = [("set_rfid_enable", {"index": s, "enable": False}) for s in range(4)]
+
+    def test_defaults_skip_the_factory_autostage(self):
+        unit = make_ace2_unit()
+        assert (unit.skip_factory_autostage, unit.stage_initial_dist) == (True, 330.0)
+        # Derived default: stage_initial_dist - 25.
+        assert unit.eject_buffer == 305.0
+
+    def test_eject_buffer_override_wins_over_the_derived_default(self):
+        unit = make_ace2_unit(values={"eject_buffer": 200.0})
+        assert (unit.stage_initial_dist, unit.eject_buffer) == (330.0, 200.0)
+
+    def test_short_stage_initial_dist_clamps_eject_buffer_to_zero(self):
+        # stage_initial_dist - 25 would be negative; the derived default clamps
+        # to 0 instead of handing getfloat's minval=0.0 a rejected default.
+        unit = make_ace2_unit(values={"stage_initial_dist": 5.0})
+        assert (unit.stage_initial_dist, unit.eject_buffer) == (5.0, 25.0)
+
+    def test_factory_staging_has_no_initial_load(self):
+        unit = make_ace2_unit(values={"skip_factory_autostage": False,
+                                      "stage_initial_dist": 300.0})
+        assert unit.stage_initial_dist == 0.0
+        # Factory autostaging (stage_initial_dist 0) keeps afcACE's own eject_buffer
+        # default rather than deriving one from stage_initial_dist.
+        assert unit.eject_buffer == 475.0
+
+    def test_the_rfid_section_still_sets_them_for_the_unit(self):
+        printer = AcePrinter()
+        printer.add_section("AFC_ACE2_rfid", object(), {"skip_factory_autostage": False,
+                                                        "stage_initial_dist": 300.0})
+        unit = make_ace2_unit(printer=printer)
+        # Its skip_factory_autostage False leaves staging to the firmware, so no distance.
+        assert (unit.skip_factory_autostage, unit.stage_initial_dist) == (False, 0.0)
+
+    def test_the_rfid_sections_distance_when_the_unit_skips(self):
+        printer = AcePrinter()
+        printer.add_section("AFC_ACE2_rfid", object(), {"stage_initial_dist": 300.0})
+        unit = make_ace2_unit(printer=printer)
+        assert (unit.skip_factory_autostage, unit.stage_initial_dist) == (True, 300.0)
+
+    def test_the_unit_wins_over_the_rfid_section(self):
+        printer = AcePrinter()
+        printer.add_section("AFC_ACE2_rfid", object(), {"skip_factory_autostage": False,
+                                                        "stage_initial_dist": 300.0})
+        unit = make_ace2_unit(printer=printer, values={"skip_factory_autostage": True,
+                                                       "stage_initial_dist": 400.0})
+        assert (unit.skip_factory_autostage, unit.stage_initial_dist) == (True, 400.0)
+
+    def test_identify_off_on_every_slot(self):
+        unit = make_ace2_unit()
+
+        unit._handle_ace_connected(unit, False)
+
+        assert unit._ace.async_commands == self.OFF
+        assert unit.printer.logger.messages == [
+            ("info", "ACE2 Ace2_1: factory identify off for every slot")]
+
+    def test_factory_staging_turns_identify_on(self):
+        unit = make_ace2_unit(values={"skip_factory_autostage": False})
+
+        unit._handle_ace_connected(unit, False)
+
+        assert unit._ace.async_commands == [
+            ("set_rfid_enable", {"index": s, "enable": True}) for s in range(4)]
+        assert unit.printer.logger.messages == [
+            ("info", "ACE2 Ace2_1: factory identify on for every slot")]
+
+    def test_identify_left_alone_while_disconnected(self):
+        unit = make_ace2_unit(connection=None)
+
+        unit._handle_ace_connected(unit, False)
+
+        assert unit._ace is None
+        assert unit.printer.logger.messages == []
+
+    def test_identify_failure_is_logged(self):
+        printer = AcePrinter()
+        link = make_fake_ace_connection(ace2=True, printer=printer,
+                                        cls=TestAfcACE2ApplyFeedCheck.RefusingLink)
+        link.error = RuntimeError("serial down")
+        unit = make_ace2_unit(printer=printer, connection=link)
+
+        unit._handle_ace_connected(unit, False)
+
+        # The first send raised, so the rest of the slots were not sent.
+        assert link.async_commands == [self.OFF[0]]
+        assert printer.logger.messages == [
+            ("warning", "ACE2 Ace2_1: factory identify off failed (non-fatal): serial down")]
+
+    def test_another_units_connect_is_left_alone(self):
+        unit = make_ace2_unit()
+
+        unit._handle_ace_connected(object(), False)
+
+        assert unit._ace.async_commands == []
+
+    def test_connect_turns_identify_off(self):
+        unit = make_ace2_unit(connect=False)
+
+        with unit.printer.connections.routed():
+            unit._deferred_ace_connect(unit.printer.reactor.monotonic())
+
+        sent = [cmd for cmd in unit._ace.async_commands if cmd[0] == "set_rfid_enable"]
+        assert sent == self.OFF
+        assert ("afc_ace:connected", (unit, False)) in unit.printer.events
+
+    @pytest.mark.parametrize("values,initial", [
+        ({}, 330.0), ({"stage_initial_dist": 250.0}, 250.0),
+        ({"skip_factory_autostage": False}, 0.0)])
+    def test_staging_starts_from_the_initial_load(self, values, initial):
+        unit = make_ace2_unit(lanes=[LaneSpec("lane0", prep=True)], values=values)
+        seen = []
+
+        def begin(lane: Any, ctx: Dict[str, Any]) -> None:
+            """
+            :param lane: lane being staged
+            :param ctx: the stage context
+            """
+            seen.append(ctx["initial"])
+            ctx["removed"] = True                        # stop before any feed
+
+        unit.printer.register_event_handler("afc_ace:stage_probe_begin", begin)
+
+        assert unit._feed_to_hub_probing(unit.lanes["lane0"], 0, dist_hub=200.0) is False
+        assert seen == [initial]
 
 
 class TestAfcACE2CheckStuck:
@@ -2783,3 +2917,152 @@ class TestAfcACE2UsesFirmwareRfid:
         assert unit._ace.commands == []
         assert unit._slot_inventory == [{}, {}, {}, {}]
         assert unit.printer.logger.messages == []
+
+
+class TestAfcACE2UnloadRollbackAssist:
+    """A stopped ACE 2 holds the filament against the tip forming's retracts, so the
+    unload runs rollback assist from its start until the unwind."""
+
+    @staticmethod
+    def _unit() -> afcACE2:
+        return make_ace2_unit(lanes=[LaneSpec("lane1", prep=True, tool_loaded=True)],
+                              feed_assist_active=[0])
+
+    @staticmethod
+    def _methods(unit: afcACE2) -> List[str]:
+        return [method for method, _params in unit._ace.commands]
+
+    def test_prepare_unload_stops_assist_then_starts_rollback_assist(self):
+        unit = self._unit()
+        unit.prepare_unload(unit.lanes["lane1"], None, None)
+        methods = self._methods(unit)
+        assert methods.index("stop_feed_assist") < methods.index("start_rollback_assist")
+        assert unit._rollback_assist_active == {0}
+        assert unit._feed_assist_active == set()
+
+    def test_stopping_assist_ends_rollback_assist(self):
+        unit = self._unit()
+        unit.prepare_unload(unit.lanes["lane1"], None, None)
+        unit._ace.commands.clear()
+        unit._stop_feed_assist(0)
+        assert [m for m in self._methods(unit) if m != "get_status"] == ["stop_feed_assist"]
+        assert unit._rollback_assist_active == set()
+
+
+class TestAfcACE2StartUnloadAssist:
+    @staticmethod
+    def _unit() -> afcACE2:
+        return make_ace2_unit(lanes=[LaneSpec("lane1", prep=True, tool_loaded=True)])
+
+    def test_no_connection_returns_without_starting(self):
+        unit = self._unit()
+        unit._ace = None
+
+        unit._start_unload_assist(0)
+
+        assert unit._rollback_assist_active == set()
+        assert unit.printer.logger.messages == []
+
+    def test_not_connected_returns_without_starting(self):
+        unit = self._unit()
+        unit._ace.connected = False
+
+        unit._start_unload_assist(0)
+
+        assert unit._rollback_assist_active == set()
+        assert [m for m, _p in unit._ace.commands] == []
+        assert unit.printer.logger.messages == []
+
+    def test_success_adds_slot_and_logs_debug(self):
+        unit = self._unit()
+
+        unit._start_unload_assist(0)
+
+        assert unit._rollback_assist_active == {0}
+        assert [m for m, _p in unit._ace.commands if m != "get_status"] == [
+            "start_rollback_assist"]
+        assert unit.printer.logger.messages == [
+            ("debug", f"ACE {unit.name}: rollback assist on slot 0 for the unload")]
+
+    def test_exception_logs_warning_and_does_not_mark_active(self):
+        unit = self._unit()
+        unit._ace.set_reply("start_rollback_assist", RuntimeError("boom"))
+
+        unit._start_unload_assist(0)
+
+        assert unit._rollback_assist_active == set()
+        assert unit.printer.logger.messages == [
+            ("warning", f"ACE {unit.name}: rollback assist on slot 0 failed: boom")]
+
+
+class TestAfcACE2StopFeedAssist:
+    @staticmethod
+    def _unit() -> afcACE2:
+        return make_ace2_unit(lanes=[LaneSpec("lane1", prep=True, tool_loaded=True)])
+
+    def test_slot_not_in_rollback_assist_active_delegates_to_super(self):
+        unit = self._unit()
+        unit._feed_assist_active.add(0)
+
+        unit._stop_feed_assist(0)
+
+        assert unit._rollback_assist_active == set()
+        assert [m for m, _p in unit._ace.commands if m != "get_status"] == ["stop_feed_assist"]
+        assert unit._feed_assist_active == set()
+        assert unit.printer.logger.messages == []
+
+    def test_no_connection_skips_stop_but_still_discards_and_delegates(self):
+        unit = self._unit()
+        unit._rollback_assist_active.add(0)
+        unit._feed_assist_active.add(0)
+        unit._ace = None
+
+        unit._stop_feed_assist(0)
+
+        assert unit._rollback_assist_active == set()
+        assert unit._feed_assist_active == {0}
+        assert unit.printer.logger.messages == []
+
+    def test_not_connected_skips_stop_but_still_discards_and_delegates(self):
+        unit = self._unit()
+        unit._rollback_assist_active.add(0)
+        unit._feed_assist_active.add(0)
+        unit._ace.connected = False
+
+        unit._stop_feed_assist(0)
+
+        assert unit._rollback_assist_active == set()
+        assert unit._feed_assist_active == {0}
+        assert [m for m, _p in unit._ace.commands] == []
+        assert unit.printer.logger.messages == []
+
+    def test_exception_logs_error_and_still_delegates(self):
+        unit = self._unit()
+        unit._rollback_assist_active.add(0)
+        unit._feed_assist_active.add(0)
+        unit._ace.set_reply("stop_feed_assist", RuntimeError("boom"))
+
+        unit._stop_feed_assist(0)
+
+        # Stays tracked active since the stop was never confirmed, so the next
+        # call (reconciliation, the next unload step, ...) retries it.
+        assert unit._rollback_assist_active == {0}
+        # One failing call here, then another from super()._stop_feed_assist.
+        assert [m for m, _p in unit._ace.commands if m != "get_status"] == (
+            ["stop_feed_assist", "stop_feed_assist"])
+        assert unit._feed_assist_active == {0}
+        assert unit.printer.logger.messages == [
+            ("error", "Failed to stop rollback assist slot 0: boom"),
+            ("error", "Failed to stop feed assist slot 0: boom")]
+
+    def test_retry_after_a_failed_stop_succeeds_and_discards(self):
+        unit = self._unit()
+        unit._rollback_assist_active.add(0)
+        unit._ace.set_reply("stop_feed_assist", RuntimeError("boom"), {})
+
+        unit._stop_feed_assist(0)
+        assert unit._rollback_assist_active == {0}
+
+        unit._stop_feed_assist(0)
+        assert unit._rollback_assist_active == set()
+

@@ -12,7 +12,7 @@ from installer.config_editor.edits import replace_text
 from installer.platform_core.console import Console, Prompter
 from installer.platform_core.context import Context
 from installer.platform_core.fsops import safe_copy
-from installer.unit_registry.base import UnitType
+from installer.unit_registry.base import BufferTarget, UnitType
 from installer.unit_registry.options import NameOption, UnitOption
 from installer.unit_registry.selection import UnitSelection
 
@@ -68,6 +68,25 @@ class Vivid(UnitType):
         replace_text(unit_file, "include mcu/Vivid_1.cfg", f"include mcu/{name}.cfg")
         replace_text(mcu_file, "Vivid_1", name)
 
+    def buffer_target(self, ctx: Context, sel: UnitSelection) -> BufferTarget:
+        """
+        The unit's own file and section.
+
+        ViViD has no buffer choice (`buffer_selectable` is False), so this is only
+        ever used to wire up the selected extruder.
+
+        :param ctx: installer context
+        :param sel: the user's unit choices
+        :return BufferTarget: where the extruder option goes
+        """
+        name = sel.unit_name if sel.is_additional_unit else "Vivid_1"
+        return BufferTarget(
+            unit_name=name,
+            unit_section_prefix="AFC_vivid",
+            extruder_file=ctx.afc_config_dir / f"AFC_{name}.cfg",
+            section_name=name,
+        )
+
     def message(self, ctx: Context, sel: UnitSelection) -> str:
         """
         Remind the user about serial information and the buffer pins.
@@ -95,7 +114,7 @@ class Vivid(UnitType):
         """
         ViViD has no buffer choice by default.
 
-        :param sel: the user's unit choices, ``buffer_type`` is cleared
+        :param sel: the user's unit choices, `buffer_type` is cleared
         """
         sel.buffer_type = "None"
 
@@ -103,7 +122,7 @@ class Vivid(UnitType):
         """
         Only a sensor with no buffer chosen yet changes it; ramming leaves the buffer alone.
 
-        :param sel: the user's unit choices, ``buffer_type`` may change
+        :param sel: the user's unit choices, `buffer_type` may change
         :return str: the status message
         """
         if sel.toolhead_sensor == "Sensor":

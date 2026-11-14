@@ -12,6 +12,9 @@ class TestBufferLabel:
     def test_remastered_has_a_friendly_label(self) -> None:
         assert buffer_label("TurtleNeck2Remastered") == "TurtleNeck 2 Remastered"
 
+    def test_compensator_has_a_friendly_label(self) -> None:
+        assert buffer_label("Compensator") == "Compensator(PSF)"
+
     def test_other_tokens_are_shown_as_they_are(self) -> None:
         assert buffer_label("TurtleNeck") == "TurtleNeck"
 

@@ -13,7 +13,7 @@ from installer.platform_core.fsops import safe_copy
 
 def copy_config(ctx: Context, console: Console, prompter: Prompter) -> None:
     """
-    Copy ``AFC.cfg``, ``AFC_Macro_Vars.cfg`` and the macros into the AFC config directory.
+    Copy `AFC.cfg`, `AFC_Macro_Vars.cfg` and the macros into the AFC config directory.
 
     OpenAMS uses the same copy. Each copy asks before replacing something.
 

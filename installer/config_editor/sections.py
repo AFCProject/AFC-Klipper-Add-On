@@ -37,11 +37,11 @@ def _is_empty(line: str) -> bool:
 
 def _parse(path: Path, lines: List[str]) -> List[_Item]:
     """
-    Classify every line like ``iniparse``, rejecting what it rejects.
+    Classify every line like `iniparse`, rejecting what it rejects.
 
     An indented line continues the option above it, so it is an error when no option
     has appeared since the last section header (or the start of the file). A line
-    starting with ``[`` must be a complete section header.
+    starting with `[` must be a complete section header.
 
     :param path: file name, used in error messages
     :param lines: lines with their terminators

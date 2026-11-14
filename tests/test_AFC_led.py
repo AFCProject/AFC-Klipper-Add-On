@@ -110,7 +110,7 @@ class TestLedChange:
         # Toolhead mock needed for lookahead callback
         led.printer._objects["toolhead"] = MagicMock()
         led.led_change(1, [1.0, 0.0, 0.0])
-        led.set_color_fn.assert_called_once_with(1, [1.0, 0.0, 0.0], True)
+        led.set_color_fn.assert_called_once_with(1, [1.0, 0.0, 0.0, 0.0], True)
 
     def test_string_color_parsed_to_list(self):
         led = _make_led()
@@ -119,6 +119,45 @@ class TestLedChange:
         led.led_change(0, "0.5,0.5,0.5,0.0")
         args = led.set_color_fn.call_args[0]
         assert args[1] == [0.5, 0.5, 0.5, 0.0]
+
+    def test_three_value_list_padded_with_white_zero(self):
+        led = _make_led()
+        led.set_color_fn = MagicMock()
+        led.printer._objects["toolhead"] = MagicMock()
+        led.led_change(0, [0.2, 0.4, 0.6])
+        assert led.set_color_fn.call_args[0][1] == [0.2, 0.4, 0.6, 0.0]
+
+    def test_three_value_string_padded_with_white_zero(self):
+        led = _make_led()
+        led.set_color_fn = MagicMock()
+        led.printer._objects["toolhead"] = MagicMock()
+        led.led_change(0, "0,1,0")
+        assert led.set_color_fn.call_args[0][1] == [0.0, 1.0, 0.0, 0.0]
+
+    def test_four_value_color_not_padded(self):
+        led = _make_led()
+        led.set_color_fn = MagicMock()
+        led.printer._objects["toolhead"] = MagicMock()
+        led.led_change(0, [0.1, 0.2, 0.3, 0.9])
+        assert led.set_color_fn.call_args[0][1] == [0.1, 0.2, 0.3, 0.9]
+
+    def test_caller_list_not_mutated(self):
+        led = _make_led()
+        led.set_color_fn = MagicMock()
+        led.printer._objects["toolhead"] = MagicMock()
+        original = [0.2, 0.4, 0.6]
+        led.led_change(0, original)
+        assert original == [0.2, 0.4, 0.6]
+
+    def test_padded_three_value_color_fits_rgbw_color_map(self):
+        led = _make_led(chain_count=1)
+        led.color_map = list(enumerate([(0, c) for c in range(4)]))
+        led.color_data = bytearray(4)
+        led.set_color_fn = MagicMock()
+        led.printer._objects["toolhead"] = MagicMock()
+        led.led_change(0, "0,1,0")
+        led.update_color_data([led.set_color_fn.call_args[0][1]])
+        assert list(led.color_data) == [0, 255, 0, 0]
 
     def test_range_index_calls_set_color_for_each(self):
         led = _make_led(chain_count=6)

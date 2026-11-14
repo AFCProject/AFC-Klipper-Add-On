@@ -33,8 +33,11 @@ _TEMPLATES = {
     "TurtleNeck": "turtleneck",
     "TurtleNeckV2": "turtleneck_v2",
     "TurtleNeck2Remastered": "turtleneck_2_remastered",
+    "Compensator": "compensator_psf",
     "FPS_PSF": "fps_psf",
 }
+# Buffer types whose pin prompt is the FPS/PSF ADC pin rather than TurtleNeck pins.
+FPS_STYLE_TYPES = ("FPS_PSF", "Compensator")
 # Buffer types that ship an mcu file, copied next to the config and included once.
 _MCU_FILES = {
     "TurtleNeckV2": "TurtleNeckv2.cfg",
@@ -51,13 +54,14 @@ def build_buffer_config(
     adc_pin: str = "",
 ) -> str:
     """
-    The text of an ``[AFC_buffer <name>]`` block, without a trailing newline.
+    The text of an `[AFC_buffer <name>]` block, without a trailing newline.
 
     :param buffer_type: ``TurtleNeck``, ``TurtleNeckV2``, ``TurtleNeck2Remastered`` or ``FPS_PSF``
+        `Compensator` or `FPS_PSF`
     :param unit_name: section name
     :param advance_pin: TurtleNeck advance pin
     :param trailing_pin: TurtleNeck trailing pin
-    :param adc_pin: FPS_PSF ADC pin
+    :param adc_pin: FPS_PSF/Compensator ADC pin
     :return str: the block
     :raises ValueError: for any other buffer type
     """
@@ -129,7 +133,7 @@ def query_fps_pin(
     :param prompter: where answers come from
     :param buffer_name: name shown in the messages
     :param unit_name: unit whose name forms the default pin
-    :param default_pin: default pin, or empty for ``<unit>:PSF``
+    :param default_pin: default pin, or empty for `<unit>:PSF`
     :return str: the ADC pin
     """
     default = default_pin or f"{unit_name}:PSF"
@@ -165,11 +169,12 @@ def append_buffer_config(
     :param console: where messages go
     :param prompter: used if the mcu file already exists
     :param buffer_type: ``TurtleNeck``, ``TurtleNeckV2``, ``TurtleNeck2Remastered`` or ``FPS_PSF``
+        `Compensator` or `FPS_PSF`
     :param unit_name: section name for the buffer
     :param target_file: file to write into (created if missing)
     :param advance_pin: TurtleNeck advance pin
     :param trailing_pin: TurtleNeck trailing pin
-    :param adc_pin: FPS_PSF ADC pin
+    :param adc_pin: FPS_PSF/Compensator ADC pin
     """
     config = build_buffer_config(buffer_type, unit_name, advance_pin, trailing_pin, adc_pin)
     if not target_file.exists():
@@ -214,7 +219,8 @@ def apply_unit_buffer(
     ctx: Context, console: Console, prompter: Prompter, sel: UnitSelection, buffer_type: str
 ) -> None:
     """
-    Give a unit its own TurtleNeck, TurtleNeckV2, TurtleNeck2Remastered or FPS_PSF buffer.
+    Give a unit its own TurtleNeck, TurtleNeckV2, TurtleNeck2Remastered, Compensator or
+    FPS_PSF buffer.
 
     Other buffer types do nothing. A unit type without a target is skipped with a
     warning. Pin prompts default from the unit name (EMU and OpenAMS have their own
@@ -239,13 +245,13 @@ def apply_unit_buffer(
     advance = trailing = adc = ""
     if buffer_type == "TurtleNeck":
         advance, trailing = query_tn_pins(console, prompter, "TN", target.unit_name)
-    elif buffer_type == "FPS_PSF":
+    elif buffer_type in FPS_STYLE_TYPES:
         default = ""
         if sel.installation_type == "EMU":
             default = f"{target.unit_name}_lane1:TN"
         elif sel.installation_type == "OpenAMS":
             default = "fps:PA2"
-        adc = query_fps_pin(console, prompter, "FPS_PSF", target.unit_name, default)
+        adc = query_fps_pin(console, prompter, buffer_type, target.unit_name, default)
     append_buffer_config(
         ctx, console, prompter, buffer_type, target.section_name, target.extruder_file,
         advance, trailing, adc,
@@ -263,7 +269,7 @@ def apply_shared_buffer(
     :param ctx: installer context
     :param console: where the warning goes
     :param sel: the user's unit choices
-    :param shared_name: name of the existing ``[AFC_buffer <name>]`` section
+    :param shared_name: name of the existing `[AFC_buffer <name>]` section
     """
     target = _target_for(ctx, sel)
     if target is None:
@@ -280,7 +286,7 @@ def apply_shared_buffer(
 
 def list_existing_buffers(ctx: Context) -> List[str]:
     """
-    Names of every buffer defined in the top-level ``*.cfg`` files of the AFC directory.
+    Names of every buffer defined in the top-level `*.cfg` files of the AFC directory.
 
     :param ctx: installer context
     :return List[str]: sorted unique names

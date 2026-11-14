@@ -18,6 +18,7 @@ from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
+    from gcode import GCodeCommand
     from extras.AFC import afc
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_hub import afc_hub
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from pins import PrinterPins
     from query_endstops import QueryEndstops
 
-try: from extras.AFC_utils import ERROR_STR, add_filament_switch, natural_sort_key
+try: from extras.AFC_utils import ERROR_STR, add_filament_switch, natural_sort_key, get_led_color
 except: raise error("Error when trying to import AFC_utils.ERROR_STR, add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
 
 try: from extras import AFC_assist
@@ -175,18 +176,18 @@ class AFCLane:
         # LED SETTINGS
         # All variables use: (R,G,B,W) 0 = off, 1 = full brightness. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
         self.led_index: str       = config.get('led_index', None)                       # LED index of lane in chain of lane LEDs
-        self.led_fault: str       = config.get('led_fault',None)                        # LED color to set when faults occur in lane
-        self.led_ready: str       = config.get('led_ready',None)                        # LED color to set when lane is ready
-        self.led_not_ready        = config.get('led_not_ready',None)                    # LED color to set when lane not ready
-        self.led_loading          = config.get('led_loading',None)                      # LED color to set when lane is loading
-        self.led_prep_loaded      = config.get('led_loading',None)                      # LED color to set when lane is loaded
-        self.led_unloading        = config.get('led_unloading',None)                    # LED color to set when lane is unloading
-        self.led_tool_loaded      = config.get('led_tool_loaded',None)                  # LED color to set when lane is loaded into tool
-        self.led_tool_loaded_idle = config.get('led_tool_loaded_idle',None)             # LED color to set when lane is loaded into tool and idle
-        self.led_tool_unloaded    = config.get('led_tool_unloaded', None)               # LED color to set when lanes extruder is unloaded
-        self.led_spool_index      = config.get('led_spool_index', None)                 # LED index to illuminate under spool
-        self.led_spool_illum      = config.get('led_spool_illuminate', None)            # LED color to illuminate under spool
-        self.led_use_filament_color: bool = config.getboolean('led_use_filament_color', None)  # When True, uses filament color from color field for lane LEDs instead of configured LED colors
+        self.led_fault: str       = get_led_color(config, 'led_fault',None)                        # LED color to set when faults occur in lane
+        self.led_ready: str       = get_led_color(config, 'led_ready',None)                        # LED color to set when lane is ready
+        self.led_not_ready        = get_led_color(config, 'led_not_ready',None)                    # LED color to set when lane not ready
+        self.led_loading          = get_led_color(config, 'led_loading',None)                      # LED color to set when lane is loading
+        self.led_prep_loaded      = get_led_color(config, 'led_loading',None)                      # LED color to set when lane is loaded
+        self.led_unloading        = get_led_color(config, 'led_unloading',None)                    # LED color to set when lane is unloading
+        self.led_tool_loaded      = get_led_color(config, 'led_tool_loaded',None)                  # LED color to set when lane is loaded into tool
+        self.led_tool_loaded_idle = get_led_color(config, 'led_tool_loaded_idle',None)             # LED color to set when lane is loaded into tool and idle
+        self.led_tool_unloaded    = get_led_color(config, 'led_tool_unloaded', None)               # LED color to set when lanes extruder is unloaded
+        self.led_spool_index      = config.get('led_spool_index', None)                            # LED index to illuminate under spool
+        self.led_spool_illum      = get_led_color(config, 'led_spool_illuminate', None)            # LED color to illuminate under spool
+        self.led_use_filament_color: bool = config.getboolean('led_use_filament_color', None)      # When True, uses filament color from color field for lane LEDs instead of configured LED colors
         self.current_led_state: str = ""
 
         self.long_moves_speed: float   = config.getfloat("long_moves_speed", None)             # Speed in mm/s to move filament when doing long moves. Setting value here overrides values set in unit(AFC_BoxTurtle/NightOwl/etc) section
@@ -626,18 +627,12 @@ class AFCLane:
 
     def _attach_tool_start_endstop_to_stepper(self) -> None:
         """
-        Attach a per-stepper clone of self.extruder_obj's tool_start_endstop
-        (see AFCExtruder.get_tool_start_endstop_for_lane) to whichever
-        stepper this lane homes through.
+        Attach a per-lane clone of the extruder's U1 tool_start_endstop to
+        whichever stepper this lane homes through, so homing one lane
+        doesn't pull in other lanes sharing the same U1 sensor.
 
-        Needed for lanes with no extruder config of their own, which never
-        ran _setup_tool_start_endstop in __init__. No-op when a pin-based
-        endstop is already registered, there's no software endstop to
-        attach, or this lane has no stepper to home through.
-
-        Cloning (rather than sharing one endstop across every lane on this extruder)
-        keeps each homing stepper's get_steppers() scoped to itself, so homing one
-        lane doesn't pull in other lanes sharing the same U1 sensor.
+        No-op when a pin-based endstop is already registered, there's no
+        U1 endstop to clone, or this lane has no stepper to attach to.
         """
         homing_stepper = self.drive_stepper or (self if hasattr(self, "_endstops") else None)
         if (homing_stepper is None
@@ -648,6 +643,42 @@ class AFCLane:
         endstop_name = f"{homing_stepper.name}_tool_start"
         endstop.add_stepper(homing_stepper.extruder_stepper.stepper)
         homing_stepper._endstops["tool_start"] = (endstop, endstop_name)
+
+    def _attach_fps_psf_buffer_endstop_to_stepper(self) -> None:
+        """
+        Attach this lane's own FPS_PSF buffer as a per-lane tool_start/buffer
+        endstop on the shared drive stepper this lane homes through.
+
+        No-op when this lane owns its own stepper, has no buffer of its own,
+        or that buffer is not FPS_PSF.
+        """
+        homing_stepper = self.drive_stepper
+        if (homing_stepper is None
+            or self.buffer_obj is None
+            or self.buffer_obj.type != "FPS_PSF"):
+            return
+
+        stepper = homing_stepper.extruder_stepper.stepper
+        buffer_name = f"{self.name}_buffer"
+        if buffer_name not in homing_stepper._endstops:
+            lane_fps_endstop = self.buffer_obj.get_fps_endstop_for_lane(self.name)
+            lane_fps_endstop.add_stepper(stepper)
+            homing_stepper._endstops[buffer_name] = (lane_fps_endstop, buffer_name)
+            self.endstops[AFCHomingPoints.BUFFER] = {
+                "endstop": lane_fps_endstop, "endstop_name": buffer_name}
+
+        trailing_name = f"{self.name}_buffer_trailing"
+        if trailing_name not in homing_stepper._endstops:
+            lane_fps_trailing_endstop = self.buffer_obj.get_fps_trailing_endstop_for_lane(self.name)
+            lane_fps_trailing_endstop.add_stepper(stepper)
+            homing_stepper._endstops[trailing_name] = (lane_fps_trailing_endstop, trailing_name)
+
+        if self.extruder_obj.tool_start == "buffer":
+            tool_name = f"{self.name}_tool_start"
+            if tool_name not in homing_stepper._endstops:
+                lane_fps_endstop = self.buffer_obj.get_fps_endstop_for_lane(self.name)
+                lane_fps_endstop.add_stepper(stepper)
+                homing_stepper._endstops[tool_name] = (lane_fps_endstop, tool_name)
 
     def handle_moonraker_connect(self):
         """
@@ -757,6 +788,8 @@ class AFCLane:
             self.buffer_obj.lanes[self.name] = self
             # Assigning buffer name just in case stepper is using buffer defined in units/extruder config
             self.buffer_name = self.buffer_obj.name
+
+        self._attach_fps_psf_buffer_endstop_to_stepper()
 
         if self.led_fault            is None: self.led_fault            = self.unit_obj.led_fault
         if self.led_ready            is None: self.led_ready            = self.unit_obj.led_ready
@@ -1126,7 +1159,7 @@ class AFCLane:
         if not self.afc.error_state:
             try:
                 # Swap mapping with runout lane
-                self.gcode.run_script_from_command(
+                self.afc.run_script(
                     f'AFC_SWAP_MAPPING FROM={empty_lane.name} TO={change_lane.name}'
                 )
             except CommandError:
@@ -1516,7 +1549,7 @@ class AFCLane:
         """
         if self.afc.function.check_macro_present(self.post_prep_macro):
             cmd = f"{self.post_prep_macro} LANE={self.name}"
-            self.gcode.run_script_from_command(cmd)
+            self.afc.run_script(cmd)
 
     def do_enable(self, enable):
         if self.drive_stepper is not None:
@@ -1525,41 +1558,48 @@ class AFCLane:
     def sync_print_time(self):
         return
 
-    def sync_to_extruder(self, update_current=True):
+    def sync_to_extruder(self, update_current=True, *, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to sync lane to extruder and set print current if specified.
 
         :param update_current: Sets current to specified print current when True
+        :param gcmd: command context to run the current-change macro through, if any
         """
         if self.drive_stepper is not None:
             self.drive_stepper.sync_to_extruder(update_current,
-                                                th_extruder_name=self.extruder_obj.th_extruder_name)
+                                                th_extruder_name=self.extruder_obj.th_extruder_name,
+                                                gcmd=gcmd)
 
-    def unsync_to_extruder(self, update_current=True):
+    def unsync_to_extruder(self, update_current=True, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
         :param update_current: Sets current to specified load current when True
+        :param gcmd: command context to run the current-change macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.unsync_to_extruder(update_current)
+            self.drive_stepper.unsync_to_extruder(update_current, gcmd=gcmd)
 
     def _set_current(self, current):
         return
 
-    def set_load_current(self):
+    def set_load_current(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to update TMC current to use run current value
+
+        :param gcmd: command context to run the macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.set_load_current()
+            self.drive_stepper.set_load_current(gcmd)
 
-    def set_print_current(self):
+    def set_print_current(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to update TMC current to use print current value
+
+        :param gcmd: command context to run the macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.set_print_current()
+            self.drive_stepper.set_print_current(gcmd)
 
     def update_rotation_distance(self, multiplier):
         if self.drive_stepper is not None:
@@ -1929,12 +1969,14 @@ class AFCLane:
         # No else: do not trigger infinite runout or pause runout here
 
     # Toolchanger functions
-    def tool_swap(self):
+    def tool_swap(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function for calling extruder's tool_swap function
+
+        :param gcmd: command context to run the select/swap macros through, if any
         """
         if self.extruder_obj.tc_unit_obj is not None:
-            self.extruder_obj.tc_unit_obj.tool_swap(self, set_start_time=False)
+            self.extruder_obj.tc_unit_obj.tool_swap(self, set_start_time=False, gcmd=gcmd)
 
 
     def _mapped_keys(self) -> list:
@@ -2228,11 +2270,11 @@ class AFCLane:
             self.logger.error(msg)
             return
 
-        self.afc.function.unset_lane_loaded()
+        self.afc.function.unset_lane_loaded(gcmd)
 
         self.afc.function.handle_activate_extruder()
         self.set_tool_loaded(normal_toolchange=True)
-        self.sync_to_extruder()
+        self.sync_to_extruder(gcmd=gcmd)
         self.afc.save_vars()
         self.unit_obj.select_lane(self)
         self.logger.info("Manually set {} loaded to toolhead".format(self.name))
@@ -2482,9 +2524,9 @@ class AFCLane:
         response["remember_spool"]= bool(self.remember_spool)
         response["spool_id"]= int(self.spool_id) if self.spool_id else None
         response["color"]=self.color
+        response["filament_name"] = self.filament_name
+        response["spool_vendor"] = self.spool_vendor
         if not save_to_file:
-            response["filament_name"] = self.filament_name
-            response["spool_vendor"] = self.spool_vendor
             response["multi_color_hexes"] = self.multi_color
             response["initial_weight"] = self.espooler.espooler_values.full_weight
 

@@ -41,7 +41,7 @@ class UnitTypeMenu:
 
         :param state: shared menu state
         :param deps: menu collaborators
-        :param mode: ``install`` for the first unit or ``additional`` for another one
+        :param mode: `install` for the first unit or `additional` for another one
         """
         self._state = state
         self._deps = deps
@@ -90,9 +90,11 @@ class UnitTypeMenu:
         unit = UNIT_TYPES[number - 1]
         sel.installation_type = unit.display_name
         if self._mode == INSTALL:
+            sel.is_additional_unit = False
             sel.unit_name = unit.default_name
             unit.on_select(sel)
             return "install_options"
+        sel.is_additional_unit = True
         if not additional_buffer_supported(unit.display_name):
             sel.additional_buffer_type = "None"
         elif (

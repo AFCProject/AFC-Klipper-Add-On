@@ -62,8 +62,14 @@ class TestBuildBufferConfig:
         assert text.startswith("[AFC_buffer Buf]\ntype: FPS_PSF\nadc_pin: U:PSF\n")
         assert text.endswith("Set to true if display shows opposite of your tested state.")
 
+    def test_compensator_embeds_the_adc_pin_and_its_calibrated_adc_range(self) -> None:
+        text = build_buffer_config("Compensator", "Buf", adc_pin="U:PSF")
+        assert text.startswith("[AFC_buffer Buf]\ntype: FPS_PSF\nadc_pin: U:PSF\n")
+        assert "reversed: true  #Test slide by hand" in text
+        assert text.endswith("adc_min_val: 0.0\nadc_max_val: 1.0")
+
     def test_there_is_no_trailing_newline_like_command_substitution(self) -> None:
-        for kind in ("TurtleNeck", "TurtleNeckV2", "FPS_PSF"):
+        for kind in ("TurtleNeck", "TurtleNeckV2", "FPS_PSF", "Compensator"):
             assert not build_buffer_config(kind, "B").endswith("\n")
 
     def test_an_unknown_type_is_rejected(self) -> None:
@@ -306,6 +312,14 @@ class TestApplyUnitBuffer:
         block = build_buffer_config("FPS_PSF", target.section_name, adc_pin="PA9")
         assert block in target.extruder_file.read_text()
 
+    def test_compensator_also_asks_for_the_adc_pin(self, printer_tree: PrinterTree) -> None:
+        ctx, unit, sel = installed(printer_tree, "BoxTurtle (4-Lane)")
+        target = unit.buffer_target(ctx, sel)
+        assert target is not None
+        apply_unit_buffer(ctx, RecordingConsole(), ScriptedPrompter(["PA9"]), sel, "Compensator")
+        block = build_buffer_config("Compensator", target.section_name, adc_pin="PA9")
+        assert block in target.extruder_file.read_text()
+
     def test_emu_defaults_the_adc_pin_to_its_first_lane(self, printer_tree: PrinterTree) -> None:
         ctx, unit, sel = installed(printer_tree, "EMU", name="EMU_1")
         target = unit.buffer_target(ctx, sel)
@@ -339,11 +353,11 @@ class TestApplyUnitBuffer:
 
     def test_a_type_without_a_target_warns_and_skips(self, printer_tree: PrinterTree) -> None:
         console = RecordingConsole()
-        sel = UnitSelection(installation_type="ViViD")
+        sel = UnitSelection(installation_type="Not Registered")
         apply_unit_buffer(make_ctx(printer_tree), console, ScriptedPrompter([]), sel, "FPS_PSF")
         assert console.messages == [
             ("WARNING", "PSF buffer selected but no unit target is known for installation "
-                        "type 'ViViD'; skipping.")
+                        "type 'Not Registered'; skipping.")
         ]
 
     @pytest.mark.parametrize("buffer", ["TurtleNeck", "TurtleNeckV2", "FPS_PSF"])
@@ -389,10 +403,11 @@ class TestApplySharedBuffer:
 
     def test_a_type_without_a_target_warns_and_skips(self, printer_tree: PrinterTree) -> None:
         console = RecordingConsole()
-        sel = UnitSelection(installation_type="ViViD")
+        sel = UnitSelection(installation_type="Not Registered")
         apply_shared_buffer(make_ctx(printer_tree), console, sel, "Shared")
         assert console.messages == [
-            ("WARNING", "No unit target is known for installation type 'ViViD'; skipping.")
+            ("WARNING",
+             "No unit target is known for installation type 'Not Registered'; skipping.")
         ]
 
 

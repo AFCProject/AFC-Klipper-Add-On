@@ -17,7 +17,7 @@ import inspect
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Union
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -27,7 +27,8 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from mcu import MCU_adc
 
-try: from extras.AFC_utils import add_filament_switch, VirtualFilamentSensor, PollingEndstopWrapper
+try: from extras.AFC_utils import (add_filament_switch, VirtualFilamentSensor,
+                                  PollingEndstopWrapper, get_led_color)
 except: raise error("Error when trying to import AFC_utils.add_filament_switch\n{trace}".format(trace=traceback.format_exc()))
 
 TRAILING_STATE_NAME = "Trailing"
@@ -74,10 +75,10 @@ class AFCBuffer:
         # LED SETTINGS
         self.led                    = False
         self.led_index              = config.get('led_index', None)
-        self.led_advancing          = config.get('led_buffer_advancing', self.afc.led_buffer_advancing)
-        self.led_trailing           = config.get('led_buffer_trailing', self.afc.led_buffer_trailing)
-        self.led_neutral            = config.get('led_buffer_neutral', self.afc.led_buffer_neutral)
-        self.led_buffer_disabled    = config.get('led_buffer_disable', self.afc.led_buffer_disabled)
+        self.led_advancing          = get_led_color(config, 'led_buffer_advancing', self.afc.led_buffer_advancing)
+        self.led_trailing           = get_led_color(config, 'led_buffer_trailing', self.afc.led_buffer_trailing)
+        self.led_neutral            = get_led_color(config, 'led_buffer_neutral', self.afc.led_buffer_neutral)
+        self.led_buffer_disabled    = get_led_color(config, 'led_buffer_disable', self.afc.led_buffer_disabled)
 
         if self.led_index is not None:
             self.led = True
@@ -594,7 +595,7 @@ class AFCBuffer:
 
     cmd_QUERY_BUFFER_help = "Report Buffer sensor state"
     cmd_QUERY_BUFFER_options = {"BUFFER": {"type": "string", "default": "Turtle_1"}}
-    def cmd_QUERY_BUFFER(self, gcmd):
+    def cmd_QUERY_BUFFER(self, gcmd: GCodeCommand) -> None:
         """
         Reports the current state of the buffer sensor and, if applicable, the rotation
         distance of the current AFC stepper motor.
@@ -604,6 +605,7 @@ class AFCBuffer:
         - If the `turtleneck` feature is enabled and a tool is loaded, the rotation
           distance of the current AFC stepper motor is reported, along with the
           current state of the buffer sensor.
+        - If the loaded lane has no extruder stepper, the rotation distance is omitted.
         - If the `turtleneck` feature is not enabled, only the buffer state is reported.
         - Both the buffer state and, if applicable, the stepper motor's rotation
           distance are sent back as G-code responses.
@@ -624,18 +626,20 @@ class AFCBuffer:
         }
 
         buffer_status = self.buffer_status()
-        state_info = "{}{}".format(buffer_status, state_mapping.get(buffer_status, ''))
+        state_info = f"{buffer_status}{state_mapping.get(buffer_status, '')}"
 
         if self.enable:
-            if self.current_lane is not None:
-                stepper = self.current_lane.extruder_stepper.stepper
-                rotation_dist = stepper.get_rotation_distance()[0]
-                state_info += ("\n{} Rotation distance: {:.4f}".format(self.current_lane.name,
-                                                                       rotation_dist))
+            lane = self.current_lane
+            if (lane is not None
+                and lane.extruder_stepper is not None
+                and lane.extruder_stepper.stepper is not None):
+                rotation_dist = lane.extruder_stepper.stepper.get_rotation_distance()[0]
+                state_info += f"\n{lane.name} Rotation distance: {rotation_dist:.4f}"
             if self.error_sensitivity > 0:
-                state_info += "\nFault detection enabled, sensitivity {}".format(self.error_sensitivity)
+                state_info += (f"\nFault detection enabled, "
+                               f"sensitivity {self.error_sensitivity}")
 
-        self.logger.info("{} : {}".format(self.name, state_info))
+        self.logger.info(f"{self.name} : {state_info}")
 
     def cmd_ENABLE_BUFFER(self, gcmd: GCodeCommand):
         """
@@ -770,6 +774,12 @@ class AFCFPSBuffer(AFCBuffer):
         self.sample_time: float = config.getfloat('sample_time', 0.005)
         self.report_time: float = config.getfloat('report_time', 0.100)
         self.reversed: bool = config.getboolean('reversed', False)
+        self.adc_min_val: float = config.getfloat('adc_min_val', 0.0)
+        self.adc_max_val: float = config.getfloat('adc_max_val', 1.0)
+        if self.adc_max_val <= self.adc_min_val:
+            error_str = (f"adc_max_val ({self.adc_max_val}) must be greater than "
+                        f"adc_min_val ({self.adc_min_val}) in section '{config.get_name()}'")
+            raise config.error(error_str)
 
         # Setup ADC sampling — handle both Klipper and Kalico APIs
         if hasattr(self.adc, "setup_minmax"): # Kalico has this
@@ -796,6 +806,7 @@ class AFCFPSBuffer(AFCBuffer):
         # are accepted alongside set_point/low_point/high_point. If both
         # are specified, the primary name takes precedence.
         self.fps_value: float = 0.0
+        self.raw_value: float = 0.0
         _sp_default = config.getfloat('neutral_point', 0.5, minval=0.1, maxval=0.9)
         self.set_point: float = config.getfloat('set_point', _sp_default, minval=0.1, maxval=0.9)
         _lp_default = config.getfloat('max_tension', 0.1, minval=0.0, maxval=0.5)
@@ -900,11 +911,47 @@ class AFCFPSBuffer(AFCBuffer):
         self.fps_trailing_endstop: PollingEndstopWrapper = PollingEndstopWrapper(
             self.reactor, self.adc.get_mcu, lambda: self.buffer_trailing_triggered,
             poll_time=FPS_ENDSTOP_POLL_TIME)
+        self._lane_fps_endstops: Dict[str, PollingEndstopWrapper] = {}
+        self._lane_fps_trailing_endstops: Dict[str, PollingEndstopWrapper] = {}
 
         # Register macros
         self.gcode.register_mux_command("AFC_SET_FPS_SET_POINT", "BUFFER", self.name,
                                         self.cmd_AFC_SET_FPS_SET_POINT,
                                         desc=self.cmd_AFC_SET_FPS_SET_POINT_help)
+
+    def get_fps_endstop_for_lane(self, lane_name: str) -> PollingEndstopWrapper:
+        """
+        Return a per-lane PollingEndstopWrapper that polls this buffer's advance
+        (high_point) threshold, creating and registering one on first use. Lanes
+        sharing this buffer must each call this instead of adding their stepper
+        directly to `fps_endstop`, so one lane's homing move doesn't pull in
+        other lanes' steppers via a shared stepper list.
+
+        :param lane_name: Name of the lane requesting its own endstop.
+        :return PollingEndstopWrapper: Per-lane endstop for the advance threshold.
+        """
+        if lane_name not in self._lane_fps_endstops:
+            query_endstops = self.printer.lookup_object('query_endstops')
+            endstop_name = f"{lane_name}_buffer"
+            self._lane_fps_endstops[lane_name] = self.fps_endstop.for_stepper(
+                endstop_name, query_endstops)
+        return self._lane_fps_endstops[lane_name]
+
+    def get_fps_trailing_endstop_for_lane(self, lane_name: str) -> PollingEndstopWrapper:
+        """
+        Return a per-lane PollingEndstopWrapper that polls this buffer's trailing
+        (low_point) threshold, creating and registering one on first use. See
+        `get_fps_endstop_for_lane` for why lanes must not share one directly.
+
+        :param lane_name: Name of the lane requesting its own endstop.
+        :return PollingEndstopWrapper: Per-lane endstop for the trailing threshold.
+        """
+        if lane_name not in self._lane_fps_trailing_endstops:
+            query_endstops = self.printer.lookup_object('query_endstops')
+            endstop_name = f"{lane_name}_buffer_trailing"
+            self._lane_fps_trailing_endstops[lane_name] = self.fps_trailing_endstop.for_stepper(
+                endstop_name, query_endstops)
+        return self._lane_fps_trailing_endstops[lane_name]
 
     def _check_deadband(self, set_point: float, deadband: float) -> str:
         """
@@ -972,6 +1019,9 @@ class AFCFPSBuffer(AFCBuffer):
         elif read_value is None:
             read_value = read_time
             read_time = self.reactor.monotonic()
+        self.raw_value = read_value
+        read_value = (read_value - self.adc_min_val) / (self.adc_max_val - self.adc_min_val)
+        read_value = max(0.0, min(1.0, read_value))
 
         if self.reversed:
             read_value = 1.0 - read_value
@@ -1410,9 +1460,10 @@ class AFCFPSBuffer(AFCBuffer):
 
         buffer_status = self.buffer_status()
         state_info = "{}{}".format(buffer_status, state_mapping.get(buffer_status, ''))
-        state_info += "\n{} raw: {:.3f}  smoothed: {:.3f}  set_point: {:.2f}".format(
-            self.type, self.fps_value, self.smoothed_fps, self.set_point
-        )
+        state_info += f"\n{self.type} raw: {self.raw_value:.3f}"
+        if self.reversed:
+            state_info += f" raw flipped: {self.fps_value:.3f}"
+        state_info += f" smoothed: {self.smoothed_fps:.3f} set_point: {self.set_point:.2f}"
 
         if self.enable and self.current_lane is not None:
             if self.current_lane.extruder_stepper is not None:
@@ -1475,6 +1526,7 @@ class AFCFPSBuffer(AFCBuffer):
 
         response = super().get_status(eventtime)
 
+        response['raw_value'] = self.raw_value
         response['fps_value'] = round(self.fps_value, 3)
         response['smoothed_fps'] = round(self.smoothed_fps, 3)
         response['set_point'] = self.set_point

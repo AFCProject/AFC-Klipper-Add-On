@@ -25,7 +25,7 @@ _STOCK_INIT_HEADER = (
 
 def _extension_files(ctx: Context) -> List[Path]:
     """
-    AFC's extras/*.py files, skipping any whose name ends in ``__init__.py``.
+    AFC's extras/*.py files, skipping any whose name ends in `__init__.py`.
 
     :param ctx: installer context
     :return List[Path]: sorted extension paths
@@ -57,7 +57,7 @@ def link_extensions(ctx: Context) -> Optional[str]:
 
 def unlink_extensions(ctx: Context, console: Console) -> None:
     """
-    Remove AFC's extension files from Klipper's extras directory, like ``rm -f``.
+    Remove AFC's extension files from Klipper's extras directory, like `rm -f`.
 
     :param ctx: installer context
     :param console: where the error message goes
@@ -75,10 +75,10 @@ def unlink_extensions(ctx: Context, console: Console) -> None:
 
 def exclude_from_klipper_git(ctx: Context, console: Console) -> None:
     """
-    Add AFC's extension files to Klipper's ``.git/info/exclude``.
+    Add AFC's extension files to Klipper's `.git/info/exclude`.
 
-    Walks ``extras/`` recursively and flattens each file to ``klippy/extras/<name>``,
-    skipping ``__init__.py``. Entries are matched as whole lines. A last line without a
+    Walks `extras/` recursively and flattens each file to `klippy/extras/<name>`,
+    skipping `__init__.py`. Entries are matched as whole lines. A last line without a
     newline gets the first new entry appended to it.
 
     :param ctx: installer context
@@ -107,7 +107,7 @@ def exclude_from_klipper_git(ctx: Context, console: Console) -> None:
 
 def check_init_symlink(ctx: Context, runner: CommandRunner) -> None:
     """
-    Repair ``klippy/extras/__init__.py`` if it was once symlinked to AFC's own.
+    Repair `klippy/extras/__init__.py` if it was once symlinked to AFC's own.
 
     The link is removed and restored from Klipper's git checkout. If git cannot do
     that, the stock header file is written instead.

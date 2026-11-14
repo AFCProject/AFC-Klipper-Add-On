@@ -389,12 +389,12 @@ class TestAce:
         assert unit is not None
         sel = UnitSelection(installation_type=ACE, buffer_type="Internal")
         seen = [sel.buffer_type]
-        for _ in range(6):
+        for _ in range(7):
             unit.cycle_buffer(sel)
             seen.append(sel.buffer_type)
         assert seen == [
             "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered",
-            "FPS_PSF", "None", "Internal",
+            "Compensator", "FPS_PSF", "None", "Internal",
         ]
 
     def test_cycle_buffer_from_an_unknown_value_restarts_at_internal(self) -> None:
@@ -428,7 +428,8 @@ class TestAce:
     def test_additional_buffer_options_include_internal(self) -> None:
         assert additional_buffer_supported(ACE) is True
         assert additional_buffer_options(ACE) == (
-            "None", "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF"
+            "None", "Internal", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered",
+            "Compensator", "FPS_PSF"
         )
         assert additional_buffer_default(ACE) == "Internal"
 
@@ -459,13 +460,24 @@ class TestVivid:
         assert "Vivid_1" not in text(ctx, "AFC_Vivid_2.cfg")
         assert "Vivid_1" not in text(ctx, "mcu/Vivid_2.cfg")
 
-    def test_has_no_buffer_target_so_a_psf_buffer_is_skipped(
-        self, printer_tree: PrinterTree
-    ) -> None:
+    def test_buffer_targets(self, printer_tree: PrinterTree) -> None:
+        """ViViD's target exists only for extruder wiring; it has no buffer choice
+        (on_select always forces buffer_type to "None"), so a PSF buffer is still
+        never applied even though the target is no longer None."""
+        ctx = make_ctx(printer_tree)
         unit = unit_for(VIVID)
         assert unit is not None
-        sel = UnitSelection(installation_type=VIVID)
-        assert unit.buffer_target(make_ctx(printer_tree), sel) is None
+        first = unit.buffer_target(ctx, UnitSelection(installation_type=VIVID, unit_name="z"))
+        assert first == BufferTarget(
+            "Vivid_1", "AFC_vivid", ctx.afc_config_dir / "AFC_Vivid_1.cfg", "Vivid_1"
+        )
+        extra = unit.buffer_target(
+            ctx,
+            UnitSelection(installation_type=VIVID, unit_name="Vivid_2", is_additional_unit=True),
+        )
+        assert extra == BufferTarget(
+            "Vivid_2", "AFC_vivid", ctx.afc_config_dir / "AFC_Vivid_2.cfg", "Vivid_2"
+        )
 
     def test_rows_and_message(self, printer_tree: PrinterTree) -> None:
         ctx = make_ctx(printer_tree)
@@ -483,15 +495,15 @@ class TestVivid:
 
 
 class TestAdditionalBufferRulesForTheRest:
-    def test_openams_offers_only_none_and_fps_psf_and_defaults_to_fps_psf(self) -> None:
+    def test_openams_offers_none_compensator_and_fps_psf_and_defaults_to_fps_psf(self) -> None:
         assert additional_buffer_supported(OPENAMS) is True
-        assert additional_buffer_options(OPENAMS) == ("None", "FPS_PSF")
+        assert additional_buffer_options(OPENAMS) == ("None", "Compensator", "FPS_PSF")
         assert additional_buffer_default(OPENAMS) == "FPS_PSF"
 
     def test_quattrobox_offers_the_full_cycle(self) -> None:
         assert additional_buffer_supported(QUATTRO) is True
         assert additional_buffer_options(QUATTRO) == (
-            "None", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "FPS_PSF"
+            "None", "TurtleNeck", "TurtleNeckV2", "TurtleNeck2Remastered", "Compensator", "FPS_PSF"
         )
 
     def test_vivid_has_no_additional_unit_buffer(self) -> None:

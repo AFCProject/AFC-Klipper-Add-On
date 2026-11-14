@@ -14,7 +14,7 @@ from __future__ import annotations
 import traceback
 from configparser import Error as error
 
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -144,7 +144,7 @@ class AfcToolchanger(afcUnit):
 
         if tool:
             if tool.tc_lane is not None:
-                self.tool_swap(tool.tc_lane)
+                self.tool_swap(tool.tc_lane, gcmd=gcmd)
             else:
                 self.logger.error(f"Tool '{tool_key}' does not have a valid 'tc_lane' attribute.")
         else:
@@ -174,11 +174,11 @@ class AfcToolchanger(afcUnit):
         if (current_extruder
             and current_extruder.custom_unselect):
             self.logger.info(f"Running custom unselect: {current_extruder.custom_unselect}")
-            self.afc.gcode.run_script_from_command(f"{current_extruder.custom_unselect}")
+            self.afc.run_script(f"{current_extruder.custom_unselect}", gcmd)
         else:
-            self.afc.gcode.run_script_from_command("UNSELECT_TOOL")
+            self.afc.run_script("UNSELECT_TOOL", gcmd)
 
-        self.afc.function.handle_activate_extruder()
+        self.afc.function.handle_activate_extruder(gcmd)
 
         lane_obj = self.afc.function.get_current_lane_obj()
         if lane_obj:
@@ -197,7 +197,7 @@ class AfcToolchanger(afcUnit):
             current_extruder.status = State.IDLE
 
 
-    def tool_swap(self, lane: AFCLane, set_start_time=True):
+    def tool_swap(self, lane: AFCLane, set_start_time=True, gcmd: Optional[GCodeCommand]=None):
         """
         Perform a tool swap operation for the specified lane.
 
@@ -207,6 +207,7 @@ class AfcToolchanger(afcUnit):
 
         :param lane: The lane object whose extruder/toolhead should be activated.
         :param set_start_time: Set true to set a starting time for afcDeltaTime.
+        :param gcmd: command context to run the select/swap macros through, if any
 
         :return: None
         """
@@ -232,9 +233,9 @@ class AfcToolchanger(afcUnit):
 
         if lane.extruder_obj.custom_tool_swap:
             self.logger.info(f"Running custom select: {lane.extruder_obj.custom_tool_swap}")
-            self.afc.gcode.run_script_from_command(f"{lane.extruder_obj.custom_tool_swap}")
+            self.afc.run_script(f"{lane.extruder_obj.custom_tool_swap}", gcmd)
         else:
-            self.afc.gcode.run_script_from_command('SELECT_TOOL T={}'.format(tool_index))
+            self.afc.run_script('SELECT_TOOL T={}'.format(tool_index), gcmd)
         lane.extruder_obj.next_pickup = False
 
         if current_extruder:
@@ -244,7 +245,7 @@ class AfcToolchanger(afcUnit):
         lane.activate_toolhead_extruder()
         # Need to call again since KTC activate callback happens before switching to new extruder
         # TODO: Take double call out once transitioned away from KTC
-        self.afc.function._handle_activate_extruder(0)
+        self.afc.function._handle_activate_extruder(0, gcmd)
 
         self.afc.toolhead.wait_moves()
         self.afc.afcDeltaTime.log_with_time("Tool swap done", debug=False)

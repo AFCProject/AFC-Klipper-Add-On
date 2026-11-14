@@ -137,32 +137,32 @@ class TestSetCurrent:
         s = _make_stepper()
         s.tmc_print_current = None
         s._set_current(1.0)
-        s.gcode.run_script_from_command.assert_not_called()
+        s.afc.gcode.run_script_from_command.assert_not_called()
 
     def test_no_script_when_current_arg_is_none(self):
         s = _make_stepper()
         s.tmc_print_current = 0.8
         s._set_current(None)
-        s.gcode.run_script_from_command.assert_not_called()
+        s.afc.gcode.run_script_from_command.assert_not_called()
 
     def test_runs_script_when_both_set(self):
         s = _make_stepper()
         s.tmc_print_current = 0.8
         s._set_current(0.6)
-        s.gcode.run_script_from_command.assert_called_once()
+        s.afc.gcode.run_script_from_command.assert_called_once()
 
     def test_script_contains_stepper_name(self):
         s = _make_stepper(name="lane1")
         s.tmc_print_current = 0.8
         s._set_current(0.6)
-        script = s.gcode.run_script_from_command.call_args[0][0]
+        script = s.afc.gcode.run_script_from_command.call_args[0][0]
         assert "lane1" in script
 
     def test_script_contains_current_value(self):
         s = _make_stepper()
         s.tmc_print_current = 0.8
         s._set_current(0.6)
-        script = s.gcode.run_script_from_command.call_args[0][0]
+        script = s.afc.gcode.run_script_from_command.call_args[0][0]
         assert "0.6" in script
 
 
@@ -176,7 +176,7 @@ class TestCurrentHelpers:
         s._print_current_set = True
         s._set_current = MagicMock()
         s.set_load_current()
-        s._set_current.assert_called_once_with(1.2)
+        s._set_current.assert_called_once_with(1.2, None)
         assert not s._print_current_set
     
     def test_set_load_current_print_current_not_set(self):
@@ -196,7 +196,7 @@ class TestCurrentHelpers:
         s._set_current = MagicMock()
         s.set_load_current()
         s.set_load_current()
-        s._set_current.assert_called_once_with(1.2)
+        s._set_current.assert_called_once_with(1.2, None)
         assert not s._print_current_set
 
     def test_set_print_current_calls_set_current_with_print_value(self):
@@ -205,7 +205,7 @@ class TestCurrentHelpers:
         s.tmc_load_current = 1.0
         s._set_current = MagicMock()
         s.set_print_current()
-        s._set_current.assert_called_once_with(0.5)
+        s._set_current.assert_called_once_with(0.5, None)
         assert s._print_current_set
 
     def test_set_print_current_calls_set_current_with_print_value_called_twice(self):
@@ -215,7 +215,7 @@ class TestCurrentHelpers:
         s._set_current = MagicMock()
         s.set_print_current()
         s.set_print_current()
-        s._set_current.assert_called_once_with(0.5)
+        s._set_current.assert_called_once_with(0.5, None)
         assert s._print_current_set
 
     def test_set_print_current_call_already_enabled(self):
@@ -426,6 +426,20 @@ class TestSyncUnsync:
         s.unsync_to_extruder(update_current=False)
         s.extruder_stepper.sync_to_extruder.assert_not_called()
         assert not s._synced_to_extruder
+
+    def test_sync_passes_gcmd_to_set_print_current(self):
+        s = _make_stepper(extruder_name="extruder")
+        s.set_print_current = MagicMock()
+        gcmd = MagicMock()
+        s.sync_to_extruder(update_current=True, gcmd=gcmd)
+        s.set_print_current.assert_called_once_with(gcmd)
+
+    def test_unsync_passes_gcmd_to_set_load_current(self):
+        s = _make_stepper()
+        s.set_load_current = MagicMock()
+        gcmd = MagicMock()
+        s.unsync_to_extruder(update_current=True, gcmd=gcmd)
+        s.set_load_current.assert_called_once_with(gcmd)
 
 # ── TrapqAppendWrapper  ───────────────────────────────────────────────────
  
@@ -1157,3 +1171,90 @@ class TestAddEndstopMcuEndstopParam:
             ("info", "Error when registering stepper lane1"),
             ("debug", "lane1 adding endstop buffer_advance:buffer_adv:None"),
         ]
+
+
+class TestDoHomingMove:
+    """Covers do_homing_move's manual_home kwargs construction: the
+    probe_pos/gcmd feature-detection flags set on self.afc by
+    AFC._detect_manual_home_signature are independent of each other, so
+    each is exercised true/false on its own and together. gcmd support was
+    added to make AFC work with Kalico PR #1052, which made manual_home's
+    gcmd parameter required.
+    """
+
+    def _make_homing_stepper(self, movepos=10.0, endstop_name="load"):
+        s = _make_stepper()
+        endstop_mock = MagicMock(name="endstop")
+        s._endstops = {endstop_name: (endstop_mock, endstop_name)}
+        s.extruder_stepper.stepper.get_mcu_position = MagicMock(return_value=1000)
+        s.extruder_stepper.stepper.get_step_dist = MagicMock(return_value=0.01)
+        phoming = MagicMock(name="phoming")
+        s.printer._objects["homing"] = phoming
+        s.gcode.create_gcode_command = MagicMock(return_value=MagicMock(name="gcmd"))
+        return s, endstop_mock, phoming
+
+    def _expected_log_messages(self, name="lane1", endstop_spec="load",
+                               movepos=10.0, speed=5.0, accel=100.0):
+        return [
+            ("debug", f"[AFC_stepper:{name}] Homing start endstop={endstop_spec} "
+                      f"movepos={movepos} speed={speed} accel={accel}"),
+            ("debug", f"Homed lane {name} to ENDSTOP={endstop_spec} trigger after "
+                      f"0.000mm (steps=0 dt=0.000s)"),
+        ]
+
+    def test_neither_flag_passes_no_extra_kwargs(self):
+        s, endstop_mock, phoming = self._make_homing_stepper()
+        s.afc.manual_home_has_probe_pos_param = False
+        s.afc.manual_home_requires_gcmd = False
+
+        homed, dist = s.do_homing_move(10.0, 5.0, 100.0, "load", assist_active=False)
+
+        assert homed is True
+        assert dist == 0.0
+        phoming.manual_home.assert_called_once_with(
+            toolhead=s, endstops=[(endstop_mock, "load")], pos=[10.0, 0., 0., 0.], speed=5.0,
+            triggered=True, check_triggered=True)
+        s.gcode.create_gcode_command.assert_not_called()
+        assert s.logger.messages == self._expected_log_messages()
+
+    def test_probe_pos_flag_alone_adds_only_probe_pos(self):
+        s, endstop_mock, phoming = self._make_homing_stepper()
+        s.afc.manual_home_has_probe_pos_param = True
+        s.afc.manual_home_requires_gcmd = False
+
+        homed, dist = s.do_homing_move(10.0, 5.0, 100.0, "load", assist_active=False)
+
+        assert homed is True
+        phoming.manual_home.assert_called_once_with(
+            toolhead=s, endstops=[(endstop_mock, "load")], pos=[10.0, 0., 0., 0.], speed=5.0,
+            triggered=True, check_triggered=True, probe_pos=False)
+        s.gcode.create_gcode_command.assert_not_called()
+
+    def test_gcmd_flag_alone_adds_only_synthesized_gcmd(self):
+        s, endstop_mock, phoming = self._make_homing_stepper()
+        s.afc.manual_home_has_probe_pos_param = False
+        s.afc.manual_home_requires_gcmd = True
+        sentinel_gcmd = MagicMock(name="sentinel_gcmd")
+        s.gcode.create_gcode_command = MagicMock(return_value=sentinel_gcmd)
+
+        homed, dist = s.do_homing_move(10.0, 5.0, 100.0, "load", assist_active=False)
+
+        assert homed is True
+        phoming.manual_home.assert_called_once_with(
+            toolhead=s, endstops=[(endstop_mock, "load")], pos=[10.0, 0., 0., 0.], speed=5.0,
+            triggered=True, check_triggered=True, gcmd=sentinel_gcmd)
+        s.gcode.create_gcode_command.assert_called_once_with("", "", {})
+
+    def test_both_flags_add_both_probe_pos_and_gcmd(self):
+        s, endstop_mock, phoming = self._make_homing_stepper()
+        s.afc.manual_home_has_probe_pos_param = True
+        s.afc.manual_home_requires_gcmd = True
+        sentinel_gcmd = MagicMock(name="sentinel_gcmd")
+        s.gcode.create_gcode_command = MagicMock(return_value=sentinel_gcmd)
+
+        homed, dist = s.do_homing_move(10.0, 5.0, 100.0, "load", assist_active=False)
+
+        assert homed is True
+        phoming.manual_home.assert_called_once_with(
+            toolhead=s, endstops=[(endstop_mock, "load")], pos=[10.0, 0., 0., 0.], speed=5.0,
+            triggered=True, check_triggered=True, probe_pos=False, gcmd=sentinel_gcmd)

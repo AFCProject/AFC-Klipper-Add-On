@@ -26,7 +26,7 @@ _OLD_VARFILE = "VarFile: ../printer_data/config/AFC/AFC.var"
 
 def _body(line: str) -> str:
     """
-    A line without its ``\\n``. A ``\\r`` stays.
+    A line without its `\\n`. A `\\r` stays.
 
     :param line: line with its terminator
     :return str: the line content
@@ -36,9 +36,9 @@ def _body(line: str) -> str:
 
 def set_value(path: Path, key: str, value: str) -> None:
     """
-    Rewrite ``key: <value>`` on every line holding a single-token value for ``key``.
+    Rewrite `key: <value>` on every line holding a single-token value for `key`.
 
-    Indentation is dropped and a trailing ``#`` comment is kept. The output
+    Indentation is dropped and a trailing `#` comment is kept. The output
     always has a space before the (possibly empty) comment. Lines
     are matched anywhere in the file, not per section.
 
@@ -63,7 +63,7 @@ def set_value(path: Path, key: str, value: str) -> None:
 
 def set_tool_start_pin(path: Path, value: str) -> None:
     """
-    Set the first ``pin_tool_start:`` after the ``[AFC_extruder extruder]`` header.
+    Set the first `pin_tool_start:` after the `[AFC_extruder extruder]` header.
 
     The scan never leaves the section on a later header, so a pin in a
     following section is rewritten if the extruder section had none.
@@ -88,7 +88,7 @@ def set_tool_start_pin(path: Path, value: str) -> None:
 
 def ensure_prep_section(path: Path) -> None:
     """
-    Append ``[AFC_prep]`` / ``enable: True`` unless a line already mentions the header.
+    Append `[AFC_prep]` / `enable: True` unless a line already mentions the header.
 
     :param path: config file to edit
     """
@@ -101,12 +101,12 @@ def ensure_prep_section(path: Path) -> None:
 
 def replace_varfile_path(path: Path, afc_config_dir: Path) -> None:
     """
-    Point the old default ``VarFile:`` path at the real AFC config directory.
+    Point the old default `VarFile:` path at the real AFC config directory.
 
     Only the first occurrence on each line is replaced.
 
     :param path: config file to edit
-    :param afc_config_dir: directory that holds ``AFC.var``
+    :param afc_config_dir: directory that holds `AFC.var`
     """
     new = f"VarFile: {afc_config_dir}/AFC.var"
     doc = ConfigDocument.load(path)
@@ -141,7 +141,7 @@ def replace_text_in_tree(directory: Path, old: str, new: str) -> None:
     """
     Run :func:`replace_text` on every regular file under a directory.
 
-    Symlinks are skipped, matching ``find -type f``.
+    Symlinks are skipped, matching `find -type f`.
 
     :param directory: tree to walk, a missing directory is ignored
     :param old: text to find, must not be empty

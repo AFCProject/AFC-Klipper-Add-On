@@ -16,6 +16,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, call
 
+import pytest
+
 from extras.AFC_unit import afcUnit
 
 
@@ -297,6 +299,17 @@ class TestOnFilamentRemove:
 
         assert result is None
         unit.printer.send_event.assert_not_called()
+
+
+class TestFinishUnload:
+    def test_returns_none_and_has_no_side_effects(self):
+        unit = _make_unit()
+        lane = MagicMock()
+
+        result = unit.finish_unload(lane)
+
+        assert result is None
+        assert lane.method_calls == []
 
 
 # ── LED helpers ───────────────────────────────────────────────────────────────
@@ -1372,3 +1385,33 @@ class TestRememberSpoolConfig:
     def test_absent_option_defaults_to_false(self):
         unit = _make_configured_unit({})
         assert unit.remember_spool is False
+
+class TestAFCUnitLedColorValidation:
+    OPTIONS = {
+        "led_fault": "led_fault",
+        "led_ready": "led_ready",
+        "led_not_ready": "led_not_ready",
+        "led_loading": "led_loading",
+        "led_unloading": "led_unloading",
+        "led_tool_loaded": "led_tool_loaded",
+        "led_tool_loaded_idle": "led_tool_loaded_idle",
+        "led_tool_unloaded": "led_tool_unloaded",
+        "led_spool_illuminate": "led_spool_illum",
+        "led_logo_color": "led_logo_color",
+        "led_logo_loading": "led_logo_loading",
+    }
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_invalid_color_raises_at_init(self, option):
+        from configfile import error
+        with pytest.raises(error) as exc:
+            _make_configured_unit({option: "0.1.0,0,0"})
+        assert str(exc.value) == (
+            f"[AFC_BoxTurtle Turtle_1] option '{option}' has invalid LED color "
+            f"'0.1.0,0,0', expected 3 or 4 comma separated numbers from 0 to 1 "
+            f"(R,G,B[,W])")
+
+    @pytest.mark.parametrize("option", list(OPTIONS))
+    def test_valid_color_stored_on_attribute(self, option):
+        unit = _make_configured_unit({option: "0.2,0.4,0.6,0.8"})
+        assert getattr(unit, self.OPTIONS[option]) == "0.2,0.4,0.6,0.8"

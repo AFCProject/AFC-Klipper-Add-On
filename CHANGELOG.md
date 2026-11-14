@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-14-2026]
+### Added
+- Added a Compensator buffer, with support in the installer and an `adc_min_val`/`adc_max_val` pair so PSF-type buffers whose ADC values don't span the full 0.0-1.0 range are scaled to the correct FPS value.
+
+### Changed
+- `QUERY_BUFFER` now reports the raw, prescaled ADC value for PSF-type buffers.
+
+## [11-13-2026]
+### Updated
+- Updated the way `run_script_by_command` was being called to work correctly with Kalico's PR 1052 changes and also work correctly with older Klipper versions.
+
+## [11-09-2026]
+### Fixed
+- fix Cut.cfg macro to honor the safe_move_first when heading to safe park location
+
+## [11-08-2026]
+### Changed
+- The `afc-debug.sh` script now runs completely on python and no longer requires any 3rd party dependencies.
+- `afc-debug.sh` now saves a zip archive of the logs if the upload to termbin.com fails, instead of discarding them.
+
+### Added
+- `afc-debug.sh` now redacts secrets (API keys, passwords, tokens, credentials in URLs) and public IP addresses before uploading or zipping. Private and reserved addresses such as `192.168.x.x` and `10.x.x.x` are kept. Use `--no-redact` to disable.
+
+### Fixed
+- Fixed lane homing raising a `TypeError` on Kalico builds past PR #1052, which made `manual_home`'s `gcmd` parameter required.
+
+## [11-07-2026]
+### Fixed
+- Fixed unload retries getting stuck on OAMS units by stopping the unit's motor via the bay error-LED state and retracting the extruder repeatedly to help free the jam between attempts.
+- Fixed a stuck OAMS unit continuing to drive filament after all unload retries were exhausted, by force-aborting and stopping the unit's motor on final give-up.
+- Fixed the OAMS unload operation's fixed 40-second timeout always reporting "MCU unresponsive" even when filament was simply jammed, by replacing it with encoder-stall detection plus a separate overall timeout backstop.
+- Fixed OpenAMS engagement verification sometimes reporting a false failure (and false jam) by reading the "before" encoder count after the FPS-settle pause instead of before it.
+- Fixed OpenAMS clog detection sometimes falsely triggering during tip-forming/cutting by stopping the clog monitor before that step during unload.
+- Fixed the OpenAMS follower being left stopped and fighting the extruder before unload begins, by running it in reverse so filament pulled back during cut/park/tip-forming is taken up into the buffer.
+- Fixed chattery OpenAMS f1s/hub-HES sensor readings being able to fire spurious runout/insert or load-state events, by debouncing both signals.
+
+### Added
+- Added a new `OAMS_SET_LED_ERROR` gcode command to manually set or clear a bay's error LED; setting the error state also stops the unit's motor for that bay, and clearing it does not restart the motor.
+- Added `engagement_min_fps_drop` and `engagement_min_clicks` config options so OpenAMS engagement verification can be tuned per setup.
+- Added extended `get_status()` fields exposing live OpenAMS state (connection, spool, sensors, action, clog/stuck detection) for macros and dashboards.
+
+## [11-06-2026]
+### Fixed
+- Fixed unload so that ACE units are no longer fighting toolhead extruder when unloading
+- Fixed ACE bowden calibration adding an unneeded 100mm pad to the measured unload distance
+- Fixed ACE 2 turning its factory per-slot identify back on after every reset by resetting it
+  on every connect and reconnect
+### Added
+- Added retries to ACE unload for a buffer that won't collapse to trailing and for a toolhead
+  sensor that doesn't clear, matching the stepper-based unload's existing retry behavior
+- Added ACE 2 rollback assist during the unload cut/tip-form so the unit reels in filament the
+  extruder pushes back instead of fighting it
+- Added `skip_factory_autostage`, `stage_initial_dist` and `eject_buffer` settings for ACE 2
+  staging, migrated from the legacy `AFC_ACE2_rfid` section when present
+
+## [11-04-2026]
+### Added
+- Added a `SET_FILAMENT_INFO` macro to optionally set filament vendor and name when not using spoolman. 
+
+## [11-02-2026]
+### Fixed
+- Fixed a bug where a lane without an extruder stepper could error out if the `QUERY_BUFFER` macro was run. 
+- An error will be thrown at startup if the led configuration is invalid, instead of erroring during a print.
+
+## [11-01-2026]
+### Added
+- Added ability to choose extruder when first installing AFC and when adding additional units on a multi-toolhead system
+
 ## [10-31-2026]
 ### Fixed
 - Fixed Bowden calibration not detecting an already extended buffer when `pin_tool_start` is set to buffer, which previously surfaced as an unrelated "failed to home filament back to hub" error. Fixes #742

@@ -34,7 +34,7 @@ def uninstall_afc(
     """
     Remove AFC: unlink the extensions, drop the printer.cfg include, back up the config.
 
-    The AFC directory is moved to ``AFC.backup.<date>``, never deleted. On a Snapmaker the
+    The AFC directory is moved to `AFC.backup.<date>`, never deleted. On a Snapmaker the
     original Klipper files come back and the fluidd macros are uncommented. Klipper is
     restarted if the printer is idle.
 

@@ -14,7 +14,7 @@ BOX_WIDTH = 87
 
 @dataclass(frozen=True)
 class Segment:
-    """A piece of a row. ``color`` is "", "red", "green" or "bold_green"."""
+    """A piece of a row. `color` is "", "red", "green" or "bold_green"."""
 
     text: str
     color: str = ""
@@ -25,7 +25,7 @@ Row = Tuple[Segment, ...]
 
 def row(*parts: Union[str, Tuple[str, str]]) -> Row:
     """
-    Build a row from plain strings and ``(text, color)`` pairs.
+    Build a row from plain strings and `(text, color)` pairs.
 
     :param parts: row pieces in order
     :return Row: the row (no parts is a blank line)
@@ -37,7 +37,7 @@ def row(*parts: Union[str, Tuple[str, str]]) -> Row:
 
 @dataclass(frozen=True)
 class BoxLine:
-    """A banner box line: ``left`` in the default color, ``right`` after the switch to green."""
+    """A banner box line: `left` in the default color, `right` after the switch to green."""
 
     left: str
     right: str

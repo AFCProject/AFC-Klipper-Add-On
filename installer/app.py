@@ -117,10 +117,10 @@ def run_update(argv: List[str], deps: Optional[AppDeps] = None) -> int:
 
 def run_u1(argv: List[str], deps: Optional[AppDeps] = None) -> int:
     """
-    Run the Snapmaker U1 firmware actions: ``-e`` enables AFC, ``-d`` disables it.
+    Run the Snapmaker U1 firmware actions: `-e` enables AFC, `-d` disables it.
 
     Flags run in the order given and parsing stops at the first non-flag. Root runs with the
-    ``lava`` user's home, as the firmware page does.
+    `lava` user's home, as the firmware page does.
 
     :param argv: arguments after the command name
     :param deps: collaborators, defaults to the real ones

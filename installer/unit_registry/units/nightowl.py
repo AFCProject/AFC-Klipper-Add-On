@@ -70,8 +70,8 @@ class NightOwl(UnitType):
         """
         Copy the unit and a per-unit mcu file, then rename everything but the class name.
 
-        The class name ``AFC_NightOwl`` is parked behind a placeholder while the unit
-        name is substituted for ``NightOwl``.
+        The class name `AFC_NightOwl` is parked behind a placeholder while the unit
+        name is substituted for `NightOwl`.
 
         :param ctx: installer context
         :param console: where messages go

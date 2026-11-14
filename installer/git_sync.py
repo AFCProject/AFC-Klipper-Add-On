@@ -42,9 +42,9 @@ def switch_branch_early(
     afc_path: Path, branch: str, console: Console, runner: CommandRunner, reexec: Reexec
 ) -> None:
     """
-    Switch the checkout to the branch given with ``-b`` before anything else is loaded.
+    Switch the checkout to the branch given with `-b` before anything else is loaded.
 
-    Nothing happens without a branch, without a ``.git`` directory, or when already on it.
+    Nothing happens without a branch, without a `.git` directory, or when already on it.
     After a switch the script restarts itself so the new branch's code runs.
 
     :param afc_path: the AFC checkout
@@ -82,9 +82,9 @@ def clone_and_maybe_restart(
     """
     Clone the repository, or update an existing checkout and restart when it moved.
 
-    A non-empty directory without ``.git`` is treated as a ZIP install and left alone.
+    A non-empty directory without `.git` is treated as a ZIP install and left alone.
 
-    :param ctx: installer context, ``git_install`` is cleared for a ZIP install
+    :param ctx: installer context, `git_install` is cleared for a ZIP install
     :param console: where messages go
     :param runner: command runner
     :param reexec: restarts the script with its original arguments

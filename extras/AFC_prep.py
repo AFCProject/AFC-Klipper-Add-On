@@ -130,8 +130,8 @@ class afcPrep:
             if extruder_obj.on_shuttle():
                 # Calls ACTIVATE_EXTRUDER if current toolhead on shuttle is not the active extruder
                 if self.afc.function.get_current_extruder() != extruder_obj.th_extruder_name:
-                    self.afc.gcode.run_script_from_command(
-                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.th_extruder_name}"
+                    self.afc.run_script(
+                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.th_extruder_name}", gcmd
                     )
             if 'system' in units and "extruders" in units["system"]:
                 # Check to see if lane_loaded is in dictionary and its not an empty string
@@ -171,6 +171,10 @@ class afcPrep:
                             cur_lane.material = units[cur_lane.unit][cur_lane.name]['material']
                         if 'color' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.color = units[cur_lane.unit][cur_lane.name]['color']
+                        if 'filament_name' in units[cur_lane.unit][cur_lane.name]:
+                            cur_lane.filament_name = units[cur_lane.unit][cur_lane.name]['filament_name']
+                        if 'spool_vendor' in units[cur_lane.unit][cur_lane.name]:
+                            cur_lane.spool_vendor = units[cur_lane.unit][cur_lane.name]['spool_vendor']
                         if 'weight' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.weight = units[cur_lane.unit][cur_lane.name]['weight']
                         if 'density' in units[cur_lane.unit][cur_lane.name]:
