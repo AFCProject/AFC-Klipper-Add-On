@@ -2712,8 +2712,6 @@ class afc:
                 # Set the in_toolchange flag to prevent overwriting the saved position during potential failures.
                 self.in_toolchange = True
 
-                # Defaults so the adjusting_temperature block below can safely check these
-                # even when prep hasn't completed and the block below never assigns them.
                 current_lane_name: Optional[str] = None
                 unload_lane: Optional[AFCLane] = None
 
