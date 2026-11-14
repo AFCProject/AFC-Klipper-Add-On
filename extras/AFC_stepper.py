@@ -24,6 +24,7 @@ try: from extras.AFC_lane import AFCLane, AFCHomingPoints, VALID_DIRECT_HUB
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
+    from gcode import GCodeCommand
     from toolhead import ToolHead
     from stepper import PrinterStepper
     from mcu import MCU_endstop
@@ -301,11 +302,13 @@ class AFCExtruderStepper(AFCLane):
         else:
             self.next_cmd_time = print_time
 
-    def sync_to_extruder(self, update_current=True, th_extruder_name=None):
+    def sync_to_extruder(self, update_current=True, *, th_extruder_name=None,
+                        gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to sync lane to extruder and set print current if specified.
 
         :param update_current: Sets current to specified print current when True
+        :param gcmd: command context to run the current-change macro through, if any
         """
         if th_extruder_name is None:
             th_extruder_name = self.extruder_obj.th_extruder_name
@@ -314,44 +317,50 @@ class AFCExtruderStepper(AFCLane):
             self.extruder_stepper.sync_to_extruder(th_extruder_name)
             self._synced_to_extruder = True
 
-        if update_current: self.set_print_current()
+        if update_current: self.set_print_current(gcmd)
 
-    def unsync_to_extruder(self, update_current=True):
+    def unsync_to_extruder(self, update_current=True, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
         :param update_current: Sets current to specified load current when True
+        :param gcmd: command context to run the current-change macro through, if any
         """
         if self._synced_to_extruder:
             self.extruder_stepper.sync_to_extruder(None)
             self._synced_to_extruder = False
-        if update_current: self.set_load_current()
+        if update_current: self.set_load_current(gcmd)
 
-    def _set_current(self, current):
+    def _set_current(self, current, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to update TMC current.
 
         :param current: Sets TMC current to specified value
+        :param gcmd: command context to run the macro through, if any
         """
         if self.tmc_print_current is not None and current is not None:
             command = "SET_TMC_CURRENT STEPPER='{}' CURRENT={}".format(self.name, current)
             self.logger.debug(f"Running macro: {command}")
-            self.gcode.run_script_from_command(command)
+            self.afc.run_script(command, gcmd)
 
-    def set_load_current(self):
+    def set_load_current(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to update TMC current to use run current value
+
+        :param gcmd: command context to run the macro through, if any
         """
         if self._print_current_set:
-            self._set_current( self.tmc_load_current )
+            self._set_current( self.tmc_load_current, gcmd )
             self._print_current_set = False
 
-    def set_print_current(self):
+    def set_print_current(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to update TMC current to use print current value
+
+        :param gcmd: command context to run the macro through, if any
         """
         if not self._print_current_set:
-            self._set_current( self.tmc_print_current )
+            self._set_current( self.tmc_print_current, gcmd )
             self._print_current_set = True
 
     def update_rotation_distance(self, multiplier):

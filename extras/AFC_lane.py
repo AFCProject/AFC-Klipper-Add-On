@@ -18,6 +18,7 @@ from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
+    from gcode import GCodeCommand
     from extras.AFC import afc
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_hub import afc_hub
@@ -1126,7 +1127,7 @@ class AFCLane:
         if not self.afc.error_state:
             try:
                 # Swap mapping with runout lane
-                self.gcode.run_script_from_command(
+                self.afc.run_script(
                     f'AFC_SWAP_MAPPING FROM={empty_lane.name} TO={change_lane.name}'
                 )
             except CommandError:
@@ -1516,7 +1517,7 @@ class AFCLane:
         """
         if self.afc.function.check_macro_present(self.post_prep_macro):
             cmd = f"{self.post_prep_macro} LANE={self.name}"
-            self.gcode.run_script_from_command(cmd)
+            self.afc.run_script(cmd)
 
     def do_enable(self, enable):
         if self.drive_stepper is not None:
@@ -1525,41 +1526,48 @@ class AFCLane:
     def sync_print_time(self):
         return
 
-    def sync_to_extruder(self, update_current=True):
+    def sync_to_extruder(self, update_current=True, *, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to sync lane to extruder and set print current if specified.
 
         :param update_current: Sets current to specified print current when True
+        :param gcmd: command context to run the current-change macro through, if any
         """
         if self.drive_stepper is not None:
             self.drive_stepper.sync_to_extruder(update_current,
-                                                th_extruder_name=self.extruder_obj.th_extruder_name)
+                                                th_extruder_name=self.extruder_obj.th_extruder_name,
+                                                gcmd=gcmd)
 
-    def unsync_to_extruder(self, update_current=True):
+    def unsync_to_extruder(self, update_current=True, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
         :param update_current: Sets current to specified load current when True
+        :param gcmd: command context to run the current-change macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.unsync_to_extruder(update_current)
+            self.drive_stepper.unsync_to_extruder(update_current, gcmd=gcmd)
 
     def _set_current(self, current):
         return
 
-    def set_load_current(self):
+    def set_load_current(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to update TMC current to use run current value
+
+        :param gcmd: command context to run the macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.set_load_current()
+            self.drive_stepper.set_load_current(gcmd)
 
-    def set_print_current(self):
+    def set_print_current(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function to update TMC current to use print current value
+
+        :param gcmd: command context to run the macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.set_print_current()
+            self.drive_stepper.set_print_current(gcmd)
 
     def update_rotation_distance(self, multiplier):
         if self.drive_stepper is not None:
@@ -1929,12 +1937,14 @@ class AFCLane:
         # No else: do not trigger infinite runout or pause runout here
 
     # Toolchanger functions
-    def tool_swap(self):
+    def tool_swap(self, gcmd: Optional[GCodeCommand]=None):
         """
         Helper function for calling extruder's tool_swap function
+
+        :param gcmd: command context to run the select/swap macros through, if any
         """
         if self.extruder_obj.tc_unit_obj is not None:
-            self.extruder_obj.tc_unit_obj.tool_swap(self, set_start_time=False)
+            self.extruder_obj.tc_unit_obj.tool_swap(self, set_start_time=False, gcmd=gcmd)
 
 
     def _mapped_keys(self) -> list:
@@ -2228,11 +2238,11 @@ class AFCLane:
             self.logger.error(msg)
             return
 
-        self.afc.function.unset_lane_loaded()
+        self.afc.function.unset_lane_loaded(gcmd)
 
         self.afc.function.handle_activate_extruder()
         self.set_tool_loaded(normal_toolchange=True)
-        self.sync_to_extruder()
+        self.sync_to_extruder(gcmd=gcmd)
         self.afc.save_vars()
         self.unit_obj.select_lane(self)
         self.logger.info("Manually set {} loaded to toolhead".format(self.name))

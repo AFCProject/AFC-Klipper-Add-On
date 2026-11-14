@@ -130,8 +130,8 @@ class afcPrep:
             if extruder_obj.on_shuttle():
                 # Calls ACTIVATE_EXTRUDER if current toolhead on shuttle is not the active extruder
                 if self.afc.function.get_current_extruder() != extruder_obj.th_extruder_name:
-                    self.afc.gcode.run_script_from_command(
-                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.th_extruder_name}"
+                    self.afc.run_script(
+                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.th_extruder_name}", gcmd
                     )
             if 'system' in units and "extruders" in units["system"]:
                 # Check to see if lane_loaded is in dictionary and its not an empty string

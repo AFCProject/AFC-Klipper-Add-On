@@ -1268,6 +1268,7 @@ class TestWorkingTheExtruderFree:
     def _oams(self, **cfg):
         oams = _make_oams(config_values=cfg or None)
         oams.gcode = MagicMock()
+        oams.afc.gcode = oams.gcode
         return oams
 
     def test_it_prefers_the_lanes_own_tool_stn_unload(self):
@@ -1451,6 +1452,7 @@ class TestUnloadSpoolWithRetry:
         )
         gcode = MagicMock()
         oams.gcode = gcode
+        oams.afc.gcode = gcode
 
         success, message = oams.unload_spool_with_retry(max_retries=3)
 
@@ -1499,6 +1501,7 @@ class TestUnloadSpoolWithRetry:
         gcode = MagicMock()
         gcode.run_script_from_command.side_effect = Exception("no extruder")
         oams.gcode = gcode
+        oams.afc.gcode = gcode
 
         success, message = oams.unload_spool_with_retry(max_retries=3)
 
@@ -1709,6 +1712,7 @@ class TestPidAutotuneCommand:
         oams = _make_oams()
         gcode = MagicMock()
         oams.gcode = gcode
+        oams.afc.gcode = gcode
         gcmd = _make_gcmd({"TARGET_FLOW": 5.0, "TARGET_TEMP": 210.0})
         oams.cmd_OAMS_PID_AUTOTUNE(gcmd)
         calls = [c[0][0] for c in gcode.run_script_from_command.call_args_list]
@@ -2715,6 +2719,7 @@ class TestStopOamsFollowerCommand:
         oams = _make_oams(oams_idx=1)
         gcode = MagicMock()
         oams.gcode = gcode
+        oams.afc.gcode = gcode
         gcmd = _make_gcmd()
 
         oams.cmd_AFC_STOP_OAMS_FOLLOWER(gcmd)
@@ -2726,6 +2731,7 @@ class TestStopOamsFollowerCommand:
         oams = _make_oams(oams_idx=2)
         gcode = MagicMock()
         oams.gcode = gcode
+        oams.afc.gcode = gcode
         gcmd = _make_gcmd()
 
         oams.cmd_AFC_STOP_OAMS_FOLLOWER(gcmd)
@@ -2740,6 +2746,7 @@ class TestStartOamsFollowerCommand:
         oams = _make_oams(oams_idx=1)
         gcode = MagicMock()
         oams.gcode = gcode
+        oams.afc.gcode = gcode
         gcmd = _make_gcmd()
 
         oams.cmd_AFC_START_OAMS_FOLLOWER(gcmd)
@@ -2751,6 +2758,7 @@ class TestStartOamsFollowerCommand:
         oams = _make_oams(oams_idx=2)
         gcode = MagicMock()
         oams.gcode = gcode
+        oams.afc.gcode = gcode
         gcmd = _make_gcmd()
 
         oams.cmd_AFC_START_OAMS_FOLLOWER(gcmd)

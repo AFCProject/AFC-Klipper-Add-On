@@ -261,6 +261,8 @@ try:
 except ImportError:
     pass
 
+from extras.AFC import afc as _AFC  # noqa: E402 (after Klipper module mocks)
+
 
 # ── Reusable helper ───────────────────────────────────────────────────────────
 
@@ -328,6 +330,14 @@ class MockGcode:
         self._commands = {}
         # Use MagicMock so tests can assert call counts / args
         self.run_script_from_command = MagicMock()
+        self.run_script = MagicMock()
+        # test() defaults to True (mutex held), matching the common case
+        # these methods are actually called in: from inside an already-
+        # dispatched gcode command. Tests simulating a non-reentrant call
+        # (a button press or other hardware/reactor callback with no gcode
+        # command in flight) should set mutex.test.return_value = False.
+        self._mutex = MagicMock()
+        self._mutex.test.return_value = True
 
     def register_command(self, name, func, desc=None):
         self._commands[name] = func
@@ -340,6 +350,9 @@ class MockGcode:
 
     def respond_raw(self, msg):
         pass
+
+    def get_mutex(self):
+        return self._mutex
 
     def create_gcode_command(self, command, commandline, params):
         return MagicMock()
@@ -599,6 +612,10 @@ class MockAFC:
         self.enable_multiple_mapping = False
         self.manual_home_has_probe_pos_param = False
         self.manual_home_requires_gcmd = False
+
+    # Real afc.run_script only touches self.gcode, so it runs unmodified here
+    # instead of being duplicated.
+    run_script = _AFC.run_script
 
 
 class MockPrinter:

@@ -2730,7 +2730,7 @@ class TestCalibrateHubHesSpool:
     def test_success_returns_true(self):
         ams, afc, printer, reactor = _make_ams()
         ams._get_oams_index = MagicMock(return_value=1)
-        assert ams._calibrate_hub_hes_spool(2) is True
+        assert ams._calibrate_hub_hes_spool(2, _make_gcmd()) is True
         afc.gcode.run_script_from_command.assert_called_once_with(
             "OAMS_CALIBRATE_HUB_HES OAMS=1 SPOOL=2")
 
@@ -2738,7 +2738,7 @@ class TestCalibrateHubHesSpool:
         ams, afc, printer, reactor = _make_ams()
         ams._get_oams_index = MagicMock(return_value=1)
         afc.gcode.run_script_from_command.side_effect = Exception("boom")
-        assert ams._calibrate_hub_hes_spool(0) is False
+        assert ams._calibrate_hub_hes_spool(0, _make_gcmd()) is False
         assert (
             "error", "Hub HES calibration failed for spool 0: boom"
         ) in ams.logger.messages
@@ -2984,6 +2984,7 @@ class TestHandleSameFpsReload:
         ams.lane_unloaded = MagicMock()
         ams.lane_tool_loaded = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         source = _make_lane("lane1", map=None)
         target = _make_lane("lane2")
 
@@ -3008,6 +3009,7 @@ class TestHandleSameFpsReload:
         ams.lane_unloaded = MagicMock()
         ams.lane_tool_loaded = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         source = _make_lane("lane1", map="T0")
         target = _make_lane("lane2")
 
@@ -3024,6 +3026,7 @@ class TestHandleSameFpsReload:
         ams.lane_unloaded = MagicMock()
         ams.lane_tool_loaded = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         source = _make_lane("lane1", map=None)
         target = _make_lane("lane2")
 
@@ -3193,7 +3196,7 @@ class TestCalibrateLane:
     def test_no_oams_returns_false(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
         lane = _make_lane("lane1", load_state=True)
-        success, msg, dist = ams.calibrate_lane(lane, 0.1)
+        success, msg, dist = ams.calibrate_lane(lane, 0.1, _make_gcmd())
         assert success is False
         assert "not available" in msg
 
@@ -3201,7 +3204,7 @@ class TestCalibrateLane:
         oams = MagicMock()
         ams, afc, printer, reactor = _make_ams(oams=oams)
         lane = _make_lane("lane1", load_state=False)
-        success, msg, dist = ams.calibrate_lane(lane, 0.1)
+        success, msg, dist = ams.calibrate_lane(lane, 0.1, _make_gcmd())
         assert success is False
         assert "not loaded" in msg
 
@@ -3210,7 +3213,7 @@ class TestCalibrateLane:
         ams, afc, printer, reactor = _make_ams(oams=oams)
         ams._calibrate_hub_hes_spool = MagicMock(return_value=True)
         lane = _make_lane("lane1", load_state=True)
-        success, msg, dist = ams.calibrate_lane(lane, 0.1)
+        success, msg, dist = ams.calibrate_lane(lane, 0.1, _make_gcmd())
         assert success is True
         assert msg == "calibration_lane"
         assert (
@@ -3222,7 +3225,7 @@ class TestCalibrateLane:
         ams, afc, printer, reactor = _make_ams(oams=oams)
         ams._calibrate_hub_hes_spool = MagicMock(return_value=False)
         lane = _make_lane("lane1", load_state=True)
-        success, msg, dist = ams.calibrate_lane(lane, 0.1)
+        success, msg, dist = ams.calibrate_lane(lane, 0.1, _make_gcmd())
         assert success is False
         assert "failed" in msg
 
@@ -3231,14 +3234,14 @@ class TestCalibrateBowden:
     def test_no_oams_returns_false(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
         lane = _make_lane("lane1", load_state=True)
-        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1)
+        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1, _make_gcmd())
         assert success is False
 
     def test_not_loaded_returns_false(self):
         oams = MagicMock()
         ams, afc, printer, reactor = _make_ams(oams=oams)
         lane = _make_lane("lane1", load_state=False)
-        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1)
+        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1, _make_gcmd())
         assert success is False
         assert "not loaded" in msg
 
@@ -3248,7 +3251,7 @@ class TestCalibrateBowden:
         ams._get_oams_index = MagicMock(return_value=1)
         ams._get_openams_spool_index = MagicMock(return_value=2)
         lane = _make_lane("lane1", load_state=True)
-        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1)
+        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1, _make_gcmd())
         assert success is True
         afc.gcode.run_script_from_command.assert_called_once_with(
             "OAMS_CALIBRATE_PTFE_LENGTH OAMS=1 SPOOL=2")
@@ -3261,7 +3264,7 @@ class TestCalibrateBowden:
         ams, afc, printer, reactor = _make_ams(oams=oams)
         afc.gcode.run_script_from_command.side_effect = Exception("boom")
         lane = _make_lane("lane1", load_state=True)
-        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1)
+        success, msg, dist = ams.calibrate_bowden(lane, 100, 0.1, _make_gcmd())
         assert success is False
         assert "failed" in msg
 
@@ -3314,9 +3317,9 @@ class TestUnitUnloadLane:
         assert lane.status == AFCLaneState.NONE
         afc.move_e_pos.assert_called_once_with(-2, 25.0, "Quick Pull", wait_tool=False)
         lane.disable_buffer.assert_called_once()
-        lane.sync_to_extruder.assert_called_once()
+        lane.sync_to_extruder.assert_called_once_with(gcmd=None)
         lane.select_lane.assert_called_once()
-        afc.do_tool_cut_tip_form.assert_called_once_with(lane, extruder)
+        afc.do_tool_cut_tip_form.assert_called_once_with(lane, extruder, None)
         lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True)
 
     def test_failure_returns_false_without_saving(self):
@@ -3348,6 +3351,7 @@ class TestUnitUnloadLane:
         afc.move_e_pos = MagicMock()
         afc.do_tool_cut_tip_form = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         lane = _make_lane("lane1")
         ams.unit_unload_lane(lane, MagicMock())
         ams.gcode.run_script_from_command.assert_called_once_with("MY_MACRO")
@@ -4112,6 +4116,7 @@ class TestOnStuckSpoolRecoveryNeeded:
     def test_schedules_recovery_gcode(self):
         ams, afc, printer, reactor = _make_ams()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         ams._on_stuck_spool_recovery_needed("fps1", "lane1")
         ams.gcode.run_script_from_command.assert_called_once_with(
             "_AFC_OAMS_STUCK_RECOVERY LANE=lane1 FPS=fps1")
@@ -4122,6 +4127,7 @@ class TestOnStuckSpoolRecoveryNeeded:
     def test_none_fps_name_uses_empty_string(self):
         ams, afc, printer, reactor = _make_ams()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         ams._on_stuck_spool_recovery_needed(None, "lane1")
         ams.gcode.run_script_from_command.assert_called_once_with(
             "_AFC_OAMS_STUCK_RECOVERY LANE=lane1 FPS=")
@@ -4129,6 +4135,7 @@ class TestOnStuckSpoolRecoveryNeeded:
     def test_schedule_failure_falls_back_to_pause(self):
         ams, afc, printer, reactor = _make_ams()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         ams.gcode.run_script_from_command.side_effect = [Exception("boom"), None]
         ams._on_stuck_spool_recovery_needed("fps1", "lane1")
         assert ams.gcode.run_script_from_command.call_args_list[1][0][0] == "PAUSE"
@@ -4139,6 +4146,7 @@ class TestOnStuckSpoolRecoveryNeeded:
     def test_pause_fallback_also_failing_is_logged(self):
         ams, afc, printer, reactor = _make_ams()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         ams.gcode.run_script_from_command.side_effect = Exception("boom")
         ams._on_stuck_spool_recovery_needed("fps1", "lane1")  # must not raise
         error_msgs = [m for lvl, m in ams.logger.messages if lvl == "error"]
@@ -4161,6 +4169,7 @@ class TestStuckSpoolRecoveryFallback:
         ams, afc, printer, reactor = _make_ams()
         afc.error.AFC_error.side_effect = Exception("no error handler")
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         ams._stuck_spool_recovery_fallback("fps1", "lane1", "reason")
         ams.gcode.run_script_from_command.assert_called_once_with("PAUSE")
         assert (
@@ -4172,6 +4181,7 @@ class TestStuckSpoolRecoveryFallback:
         ams, afc, printer, reactor = _make_ams()
         afc.error.AFC_error.side_effect = Exception("no error handler")
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         ams.gcode.run_script_from_command.side_effect = Exception("gcode dead")
         ams._stuck_spool_recovery_fallback("fps1", "lane1", "reason")  # must not raise
 
@@ -4279,6 +4289,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
 
         ams._cmd_stuck_spool_recovery(self._gcmd())
 
@@ -4339,6 +4350,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
 
         ams._cmd_stuck_spool_recovery(self._gcmd())
 
@@ -4372,6 +4384,7 @@ class TestCmdStuckSpoolRecovery:
         printer._objects["pause_resume"] = pause_resume
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
 
         ams._cmd_stuck_spool_recovery(self._gcmd())
 
@@ -4390,6 +4403,7 @@ class TestCmdStuckSpoolRecovery:
         printer._objects["pause_resume"] = pause_resume
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
 
         ams._cmd_stuck_spool_recovery(self._gcmd())
 
@@ -4407,6 +4421,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
 
         ams._cmd_stuck_spool_recovery(self._gcmd())
 
@@ -4458,6 +4473,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
 
         pause_calls = {"n": 0}
 
@@ -4484,6 +4500,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         reactor.pause = MagicMock()  # no-op, hub.state never changes
 
         ams._cmd_stuck_spool_recovery(self._gcmd())
@@ -4504,6 +4521,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         reactor.pause = MagicMock()
 
         ams._cmd_stuck_spool_recovery(self._gcmd())
@@ -4540,6 +4558,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         ams.gcode.run_script_from_command.side_effect = Exception("resume failed")
 
         ams._cmd_stuck_spool_recovery(self._gcmd())  # must not raise
@@ -4559,6 +4578,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
         pause_resume = MagicMock()
         printer._objects["pause_resume"] = pause_resume
 
@@ -4580,6 +4600,7 @@ class TestCmdStuckSpoolRecovery:
         afc.TOOL_LOAD = MagicMock(return_value=True)
         ams._stuck_spool_recovery_clear_oams_state = MagicMock()
         ams.gcode = MagicMock()
+        ams.afc.gcode = ams.gcode
 
         real_lookup = printer.lookup_object
 

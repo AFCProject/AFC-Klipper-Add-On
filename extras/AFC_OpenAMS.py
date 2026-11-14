@@ -1238,8 +1238,7 @@ class afcAMS(afcUnit):
         :param speed: feedrate in mm/min.
         :param label: optional descriptive label (unused in the move itself).
         """
-        self.afc.gcode.run_script_from_command(
-            f"G92 E0\nG1 E{length:.3f} F{speed:.0f}\nM400")
+        self.afc.run_script(f"G92 E0\nG1 E{length:.3f} F{speed:.0f}\nM400")
 
     def _advance_tool_stn_to_nozzle(
         self, cur_lane: AFCLane, already_advanced: float = 0.0
@@ -1341,16 +1340,13 @@ class afcAMS(afcUnit):
         self.logger.info(
             f"Stuck spool recovery scheduled: fps={fps_name}, lane={lane_name}")
         try:
-            self.gcode.run_script_from_command(
-                f"_AFC_OAMS_STUCK_RECOVERY LANE={lane_name} FPS={fps_name or ''}")
+            self.afc.run_script(f"_AFC_OAMS_STUCK_RECOVERY LANE={lane_name} FPS={fps_name or ''}")
         except Exception as e:
-            self.logger.error(
-                f"Failed to schedule stuck spool recovery for {lane_name}: {e}")
+            self.logger.error(f"Failed to schedule stuck spool recovery for {lane_name}: {e}")
             try:
-                self.gcode.run_script_from_command("PAUSE")
+                self.afc.run_script("PAUSE")
             except Exception as pe:
-                self.logger.error(
-                    f"Failed to pause after recovery-schedule failure: {pe}")
+                self.logger.error(f"Failed to pause after recovery-schedule failure: {pe}")
 
     def _cmd_stuck_spool_recovery(self, gcmd: GCodeCommand) -> None:
         """
@@ -1363,8 +1359,7 @@ class afcAMS(afcUnit):
         fps_name = gcmd.get('FPS', None)
         lane = self.afc.lanes.get(lane_name) if lane_name else None
         if lane is None:
-            self.logger.error(
-                f"Stuck spool recovery: lane '{lane_name}' not found, pausing")
+            self.logger.error(f"Stuck spool recovery: lane '{lane_name}' not found, pausing")
             self._stuck_spool_recovery_fallback(fps_name, lane_name, "lane not found")
             return
         owner = getattr(lane, "unit_obj", None)
@@ -1373,8 +1368,7 @@ class afcAMS(afcUnit):
             owner._cmd_stuck_spool_recovery(gcmd)
             return
 
-        self.logger.info(
-            f"Stuck spool auto-recovery starting: unload then reload for {lane_name}")
+        self.logger.info(f"Stuck spool auto-recovery starting: unload then reload for {lane_name}")
 
         # Save toolhead position so AFC_RESUME can restore it afterwards.
         self.afc.save_pos()
@@ -1433,7 +1427,7 @@ class afcAMS(afcUnit):
                 pr = self.printer.lookup_object("pause_resume", None)
                 if pr is not None:
                     pr.is_paused = True
-            self.gcode.run_script_from_command("AFC_RESUME")
+            self.afc.run_script("AFC_RESUME", gcmd)
         except Exception as e:
             self.logger.error(f"Stuck spool recovery: AFC_RESUME failed: {e}")
 
@@ -1458,7 +1452,7 @@ class afcAMS(afcUnit):
         except Exception as e:
             self.logger.error(f"Failed to raise AFC error for stuck fallback: {e}")
             try:
-                self.gcode.run_script_from_command("PAUSE")
+                self.afc.run_script("PAUSE")
             except Exception:
                 pass
 
@@ -1638,12 +1632,14 @@ class afcAMS(afcUnit):
         cur_lane.set_afc_prep_done()
         return succeeded
 
-    def calibrate_lane(self, cur_lane: AFCLane, tol: float) -> Tuple[bool, str, int]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float,
+                       gcmd: GCodeCommand) -> Tuple[bool, str, int]:
         """
         Run HUB HES calibration for an OpenAMS lane.
 
         :param cur_lane: the lane to calibrate (must be loaded).
         :param tol: calibration tolerance (unused by OpenAMS).
+        :param gcmd: command context to run the calibration macro through
         :return tuple: (success bool, message str, distance int).
         """
         if self.oams is None:
@@ -1654,7 +1650,7 @@ class afcAMS(afcUnit):
             return False, f"{cur_lane.name} not loaded, load before calibration", 0
 
         self.logger.info(f"Running HUB HES calibration for {cur_lane.name}")
-        success = self._calibrate_hub_hes_spool(spool_index)
+        success = self._calibrate_hub_hes_spool(spool_index, gcmd)
         if success:
             return True, "calibration_lane", 0
         return False, f"HUB HES calibration failed for {cur_lane.name}", 0
@@ -1668,7 +1664,8 @@ class afcAMS(afcUnit):
         return "\nHUB HES calibration complete for lanes: {lanes}\n"
 
     def calibrate_bowden(
-        self, cur_lane: AFCLane, dis: float, tol: float
+        self, cur_lane: AFCLane, dis: float, tol: float,
+        gcmd: GCodeCommand
     ) -> Tuple[bool, str, int]:
         """
         Run PTFE length calibration for an OpenAMS lane.
@@ -1676,6 +1673,7 @@ class afcAMS(afcUnit):
         :param cur_lane: the lane to calibrate (must be loaded).
         :param dis: requested distance (unused; firmware drives calibration).
         :param tol: calibration tolerance (unused by OpenAMS).
+        :param gcmd: command context to run the calibration macro through
         :return tuple: (success bool, message str, distance int).
         """
         if self.oams is None:
@@ -1688,20 +1686,22 @@ class afcAMS(afcUnit):
         self.logger.info(f"Running PTFE calibration for {cur_lane.name}")
         try:
             oams_idx = self._get_oams_index()
-            self.afc.gcode.run_script_from_command(
-                f"OAMS_CALIBRATE_PTFE_LENGTH OAMS={oams_idx} SPOOL={spool_index}")
+            self.afc.run_script(f"OAMS_CALIBRATE_PTFE_LENGTH OAMS={oams_idx} SPOOL={spool_index}",
+                                gcmd)
             return True, f"PTFE calibration complete for {cur_lane.name}", 0
         except Exception as e:
             return False, f"PTFE calibration failed for {cur_lane.name}: {e}", 0
 
     # ── Custom load/unload gcode handlers ───────────────────────────
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
+                       gcmd: Optional[GCodeCommand]=None) -> bool:
         """
         Load hook called by AFC's load_sequence for OpenAMS lanes, replacing the
         stepper-based load path with the OAMS transport.
 
         :param cur_lane: the lane being loaded.
         :param cur_extruder: the lane's extruder object.
+        :param gcmd: command context, unused here but accepted for interface parity
         :return bool: True on success, False if the load failed (pauses if printing).
         """
         if not self._oams_load_sequence(cur_lane, cur_extruder):
@@ -1716,32 +1716,34 @@ class afcAMS(afcUnit):
             return False
         return True
 
-    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder) -> bool:
+    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
+                         gcmd: Optional[GCodeCommand]=None) -> bool:
         """
         Unload hook called by AFC's unload_sequence for OpenAMS lanes, replacing
         the stepper-based unload path with the OAMS transport.
 
         :param cur_lane: the lane being unloaded.
         :param cur_extruder: the lane's extruder object.
+        :param gcmd: command context to run the post-unload macro through, if any
         :return bool: True on success, False if the OAMS unload transport failed.
         """
         self.afc.move_e_pos(-2, cur_extruder.tool_unload_speed, "Quick Pull",
                         wait_tool=False)
         cur_lane.status = AFCLaneState.TOOL_UNLOADING
         cur_lane.disable_buffer()
-        cur_lane.sync_to_extruder()
+        cur_lane.sync_to_extruder(gcmd=gcmd)
         cur_lane.select_lane()
         # The cut and tip forming push and pull filament inside the buffer, out of the
         # encoder's sight, which the clog check reads as a clog
         if self._monitor:
             self._monitor.stop()
-        self.afc.do_tool_cut_tip_form(cur_lane, cur_extruder)
+        self.afc.do_tool_cut_tip_form(cur_lane, cur_extruder, gcmd)
         success = self._oams_unload_sequence(cur_lane, cur_extruder)
         if not success:
             return success
 
         if self.afc.post_unload_macro is not None:
-            self.gcode.run_script_from_command(self.afc.post_unload_macro)
+            self.afc.run_script(self.afc.post_unload_macro, gcmd)
 
         cur_lane.set_tool_unloaded(normal_toolchange=True)
         cur_lane.status = AFCLaneState.NONE
@@ -2148,9 +2150,8 @@ class afcAMS(afcUnit):
             concurrent_speed = getattr(
                 cur_lane.extruder_obj, 'tool_unload_speed', 25.0) * 60.0
             try:
-                self.afc.gcode.run_script_from_command("M83")
-                self.afc.gcode.run_script_from_command(
-                    "G1 E-%.2f F%d" % (concurrent_retract, int(concurrent_speed)))
+                self.afc.run_script("M83")
+                self.afc.run_script("G1 E-%.2f F%d" % (concurrent_retract, int(concurrent_speed)))
             except Exception as e:
                 self.logger.warning(f"Concurrent retract failed: {e}")
 
@@ -2240,8 +2241,7 @@ class afcAMS(afcUnit):
         spool = gcmd.get_int('SPOOL', 0)
         try:
             oams_idx = self._get_oams_index()
-            self.afc.gcode.run_script_from_command(
-                f"OAMS_CALIBRATE_PTFE_LENGTH OAMS={oams_idx} SPOOL={spool}")
+            self.afc.run_script(f"OAMS_CALIBRATE_PTFE_LENGTH OAMS={oams_idx} SPOOL={spool}", gcmd)
             gcmd.respond_info("PTFE calibration complete. Check OAMS config for new value")
         except Exception as e:
             gcmd.respond_info(f"PTFE calibration failed: {e}")
@@ -2267,7 +2267,7 @@ class afcAMS(afcUnit):
         if spool is None:
             gcmd.respond_info("Usage: AFC_OAMS_CALIBRATE_HUB_HES SPOOL=<index>")
             return
-        success = self._calibrate_hub_hes_spool(spool)
+        success = self._calibrate_hub_hes_spool(spool, gcmd)
         gcmd.respond_info(
             f"Hub HES calibration {'successful' if success else 'failed'} for spool {spool}")
 
@@ -2292,7 +2292,7 @@ class afcAMS(afcUnit):
         for lane_name, lane in self.lanes.items():
             if lane.load_state:
                 spool_idx = self._spool_map.get(lane_name, 0)
-                if self._calibrate_hub_hes_spool(spool_idx):
+                if self._calibrate_hub_hes_spool(spool_idx, gcmd):
                     count += 1
         gcmd.respond_info(f"Calibrated {count} hub HES sensor(s)")
 
@@ -2445,7 +2445,7 @@ class afcAMS(afcUnit):
                 f"Same-FPS reload failed for {target_name}: {e}", pause=True)
             return False
 
-        self.gcode.run_script_from_command(f'AFC_SWAP_MAPPING FROM={source_name} TO={target_name}')
+        self.afc.run_script(f'AFC_SWAP_MAPPING FROM={source_name} TO={target_name}')
 
         target_lane.set_tool_loaded()
         self.lane_tool_loaded(target_lane)
@@ -3217,17 +3217,18 @@ class afcAMS(afcUnit):
             return self._monitor.state
         return None
 
-    def _calibrate_hub_hes_spool(self, spool_index: int) -> bool:
+    def _calibrate_hub_hes_spool(self, spool_index: int,
+                                 gcmd: GCodeCommand) -> bool:
         """
         Run hub HES calibration for a single spool bay.
 
         :param spool_index: the spool/bay index to calibrate.
+        :param gcmd: command context to run the calibration macro through
         :return bool: True if the calibration command was dispatched without error.
         """
         try:
             oams_idx = self._get_oams_index()
-            self.afc.gcode.run_script_from_command(
-                f"OAMS_CALIBRATE_HUB_HES OAMS={oams_idx} SPOOL={spool_index}")
+            self.afc.run_script(f"OAMS_CALIBRATE_HUB_HES OAMS={oams_idx} SPOOL={spool_index}", gcmd)
             return True
         except Exception as e:
             self.logger.error(f"Hub HES calibration failed for spool {spool_index}: {e}")

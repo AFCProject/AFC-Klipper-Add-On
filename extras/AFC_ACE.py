@@ -1926,8 +1926,8 @@ class afcACE(afcUnit):
         lines.append(f"  shared buf_feed={int(state.get('buf_feed', False))}")
         gcmd.respond_info("\n".join(lines))
 
-    def calibrate_bowden(self, cur_lane: AFCLane, dis: float,
-                         tol: float) -> Tuple[bool, str, float]:
+    def calibrate_bowden(self, cur_lane: AFCLane, dis: float, tol: float,
+                         gcmd: GCodeCommand) -> Tuple[bool, str, float]:
         """
         Calibrate afc_bowden_length (hub→toolhead) by feeding until
         the toolhead sensor triggers.
@@ -1938,6 +1938,7 @@ class afcACE(afcUnit):
         :param dis: Step size in mm (passed by the caller; the inner method uses
             calibration_step).
         :param tol: Tolerance (unused).
+        :param gcmd: command context, unused here but accepted for interface parity
         :return tuple: (success, message, measured_distance).
         """
         slot = self._get_slot(cur_lane.name)
@@ -2035,7 +2036,8 @@ class afcACE(afcUnit):
         return (True, f"afc_bowden_length calibration: {bowden_dist}mm (was {old_bowden}mm)",
                 bowden_dist)
 
-    def calibrate_lane(self, cur_lane: AFCLane, tol: float) -> Tuple[bool, str, float]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float,
+                       gcmd: GCodeCommand) -> Tuple[bool, str, float]:
         """
         Calibrate dist_hub from ACE slot to hub sensor.
 
@@ -2043,6 +2045,7 @@ class afcACE(afcUnit):
 
         :param cur_lane: Lane to calibrate.
         :param tol: Tolerance (unused).
+        :param gcmd: command context, unused here but accepted for interface parity
         :return tuple: (success, message, measured_distance).
         """
         self._operation_active = True
@@ -2074,7 +2077,8 @@ class afcACE(afcUnit):
         except Exception:
             pass
 
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any,
+                       gcmd: Optional[GCodeCommand]=None) -> bool:
         """
         Full toolhead load for a stepperless ACE lane (AFC.load_sequence's
         unit_load_lane hook). Runs the ACE serial transport directly via
@@ -2083,6 +2087,7 @@ class afcACE(afcUnit):
 
         :param cur_lane: Lane to load.
         :param cur_extruder: Extruder the lane loads into.
+        :param gcmd: command context, unused here but accepted for interface parity
         :return bool: True on a verified load, False on failure.
         """
         afc = self.afc
@@ -2092,7 +2097,8 @@ class afcACE(afcUnit):
         afc.save_vars()
         return True
 
-    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: Any) -> bool:
+    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: Any,
+                        gcmd: Optional[GCodeCommand]=None) -> bool:
         """
         Full toolhead unload for a stepperless ACE lane (AFC.unload_sequence's
         unit_unload_lane hook). Runs the shared toolhead phase (quick-pull,
@@ -2102,6 +2108,7 @@ class afcACE(afcUnit):
 
         :param cur_lane: Lane to unload.
         :param cur_extruder: Extruder the lane is synced to on entry.
+        :param gcmd: command context to run the post-unload macro through, if any
         :return bool: True on success, False on failure.
         """
         afc = self.afc
@@ -2109,13 +2116,13 @@ class afcACE(afcUnit):
         try:
             afc.move_e_pos(-2, cur_extruder.tool_unload_speed, "Quick Pull", wait_tool=False)
             cur_lane.disable_buffer()
-            cur_lane.sync_to_extruder()
+            cur_lane.sync_to_extruder(gcmd=gcmd)
             cur_lane.select_lane()
-            afc.do_tool_cut_tip_form(cur_lane, cur_extruder)
+            afc.do_tool_cut_tip_form(cur_lane, cur_extruder, gcmd)
             if not self._ace_unload_sequence(cur_lane, cur_extruder):
                 return False
             if afc.post_unload_macro is not None:
-                self.gcode.run_script_from_command(afc.post_unload_macro)
+                afc.run_script(afc.post_unload_macro, gcmd)
             cur_lane.set_tool_unloaded(normal_toolchange=True)
             cur_lane.status = AFCLaneState.NONE
 
@@ -2588,7 +2595,7 @@ class afcACE(afcUnit):
             gcmd.respond_info("Usage: AFC_ACE_CALIBRATE LANE=<lane_name>")
             return
         cur_lane = self.afc.lanes[lane_name]
-        success, msg, dist = self.calibrate_bowden(cur_lane, self.calibration_step, 1.0)
+        success, msg, dist = self.calibrate_bowden(cur_lane, self.calibration_step, 1.0, gcmd)
         gcmd.respond_info(msg)
 
     cmd_AFC_ACE_CALIBRATE_HUB_help = "Calibrate ACE feed distance to hub"
@@ -2621,7 +2628,7 @@ class afcACE(afcUnit):
             and cur_lane.hub_obj.is_virtual_pin()):
             gcmd.respond_info("Hub calibration requires a physical hub sensor, not virtual")
             return
-        success, msg, dist = self.calibrate_lane(cur_lane, 1.0)
+        success, msg, dist = self.calibrate_lane(cur_lane, 1.0, gcmd)
         gcmd.respond_info(msg)
 
     cmd_AFC_ACE_STATUS_help = "Query ACE hardware status"
@@ -3811,7 +3818,7 @@ class afcACE(afcUnit):
             self.afc.error.AFC_error(msg, pause=True)
         except Exception:
             self.logger.error(msg)
-            self.gcode.run_script_from_command("PAUSE")
+            self.afc.run_script("PAUSE")
 
     cmd_AFC_ACE_STUCK_SPOOL_DETECTION_help = "Enable/disable ACE stuck spool detection"
     def cmd_AFC_ACE_STUCK_SPOOL_DETECTION(self, gcmd: GCodeCommand) -> None:

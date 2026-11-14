@@ -963,11 +963,10 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         speed = self.unload_stall_retract_speed
         for attempt in range(1, tries + 1):
             try:
-                self.gcode.run_script_from_command("M83")
-                self.gcode.run_script_from_command("G92 E0")
-                self.gcode.run_script_from_command(
-                    f"G1 E-{dist:.2f} F{speed:.0f}")
-                self.gcode.run_script_from_command("M400")
+                self.afc.run_script("M83")
+                self.afc.run_script("G92 E0")
+                self.afc.run_script(f"G1 E-{dist:.2f} F{speed:.0f}")
+                self.afc.run_script("M400")
             except Exception as e:
                 # A cold or unloaded extruder refuses the move; retry without it.
                 self.logger.warning(f"OAMS[{self.oams_idx}]: could not retract the extruder "
@@ -1192,9 +1191,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         extrusion_speed_per_min = (60 * target_flow / (pi * (1.75 / 2) ** 2))
         extrusion_length = (extrusion_speed_per_min / 60 * 30)
 
-        self.gcode.run_script_from_command("M104 S%f" % target_temp)
-        self.gcode.run_script_from_command(
-            "G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min))
+        self.afc.run_script("M104 S%f" % target_temp, gcmd)
+        self.afc.run_script("G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min), gcmd)
 
     #: A calibration the firmware has not answered, with the encoder still
     #: for this long, is cancelled (seconds).
@@ -1655,8 +1653,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         AFC_STOP_OAMS_FOLLOWER OAMS=oams1
         ```
         """
-        self.gcode.run_script_from_command(
-            f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=0 DIRECTION=1")
+        self.afc.run_script(f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=0 DIRECTION=1", gcmd)
 
     cmd_AFC_START_OAMS_FOLLOWER_help = "Start the OAMS follower motor"
     def cmd_AFC_START_OAMS_FOLLOWER(self, gcmd: GCodeCommand) -> None:
@@ -1673,8 +1670,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         AFC_START_OAMS_FOLLOWER OAMS=oams1
         ```
         """
-        self.gcode.run_script_from_command(
-            f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=1 DIRECTION=1")
+        self.afc.run_script(f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=1 DIRECTION=1", gcmd)
 
     def _oams_cmd_stats(self, params: Dict[str, Any]) -> None:
         """

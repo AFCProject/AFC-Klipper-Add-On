@@ -553,6 +553,135 @@ class TestSetupToolStartEndstop:
         assert "tool" not in lane.endstops
 
 
+class TestSyncToExtruder:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.sync_to_extruder()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper_with_update_current_and_extruder_name(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        lane.extruder_obj.th_extruder_name = "extruder1"
+
+        lane.sync_to_extruder(False)
+
+        lane.drive_stepper.sync_to_extruder.assert_called_once_with(
+            False, th_extruder_name="extruder1", gcmd=None)
+
+    def test_passes_gcmd_through(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.sync_to_extruder(gcmd=gcmd)
+
+        lane.drive_stepper.sync_to_extruder.assert_called_once_with(
+            True, th_extruder_name=lane.extruder_obj.th_extruder_name, gcmd=gcmd)
+
+
+class TestUnsyncToExtruder:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.unsync_to_extruder()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper_with_update_current(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+
+        lane.unsync_to_extruder(False)
+
+        lane.drive_stepper.unsync_to_extruder.assert_called_once_with(False, gcmd=None)
+
+    def test_passes_gcmd_through(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.unsync_to_extruder(gcmd=gcmd)
+
+        lane.drive_stepper.unsync_to_extruder.assert_called_once_with(True, gcmd=gcmd)
+
+
+class TestSetLoadCurrent:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.set_load_current()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.set_load_current(gcmd)
+
+        lane.drive_stepper.set_load_current.assert_called_once_with(gcmd)
+
+
+class TestSetPrintCurrent:
+    def test_noop_when_no_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.set_print_current()
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_drive_stepper(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
+
+        lane.set_print_current(gcmd)
+
+        lane.drive_stepper.set_print_current.assert_called_once_with(gcmd)
+
+
+class TestToolSwap:
+    def test_noop_when_no_toolchanger(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.tc_unit_obj = None
+
+        lane.tool_swap()
+
+        # No AttributeError from calling into a None tc_unit_obj is itself
+        # the proof the early return fired.
+
+    def test_delegates_to_toolchanger_unit_with_set_start_time_false(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.tc_unit_obj = MagicMock()
+
+        lane.tool_swap()
+
+        lane.extruder_obj.tc_unit_obj.tool_swap.assert_called_once_with(
+            lane, set_start_time=False, gcmd=None)
+
+    def test_passes_gcmd_through(self):
+        lane = _make_afc_lane()
+        lane.extruder_obj.tc_unit_obj = MagicMock()
+        gcmd = MagicMock()
+
+        lane.tool_swap(gcmd)
+
+        lane.extruder_obj.tc_unit_obj.tool_swap.assert_called_once_with(
+            lane, set_start_time=False, gcmd=gcmd)
+
+
 # ── _attach_tool_start_endstop_to_stepper ─────────────────────────────────────
 # Lanes with no extruder of their own (e.g. Vivid) never set a TOOL endstop in
 # __init__; handle_unit_connect attaches the extruder's U1 endstop instead.
@@ -3236,10 +3365,32 @@ class TestPerformInfiniteRunout:
         afc.error.pause_resume.send_pause_command.assert_called_once()
         afc.save_pos.assert_called_once()
         afc.CHANGE_TOOL.assert_called_with(lane2, restore_pos=False)
-        lane.gcode.run_script_from_command.assert_called_with(f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
+        afc.gcode.run_script_from_command.assert_called_with(
+            f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
         afc.restore_pos.assert_called_once()
         afc.error.pause_resume.send_resume_command.assert_called_once()
         lane.unit_obj.lane_not_ready.assert_called_with(lane)
+
+    def test_current_lane_found_runout_lane2_mutex_not_held_uses_gcode_run_script(self):
+        """_perform_infinite_runout is reached from a weight/sensor callback,
+        never from inside an active gcode command, so the gcode mutex is not
+        held -- afc.run_script must acquire it via self.gcode.run_script
+        rather than running unprotected via run_script_from_command."""
+        afc = MockAFC()
+        afc.lanes = MagicMock(spec=dict)
+        afc.gcode.get_mutex().test.return_value = False
+        lane = _make_afc_lane()
+        lane2 = _make_afc_lane()
+        lane.afc = afc
+        lane.runout_lane = lane2.name
+        afc.current = lane.name
+        afc.lanes.get.side_effect = [lane, lane2]
+
+        lane._perform_infinite_runout()
+
+        afc.gcode.run_script.assert_called_with(
+            f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
+        afc.gcode.run_script_from_command.assert_not_called()
 
     def test_current_lane_found_runout_lane2_check_extruder_calls(self):
         afc = MockAFC()
@@ -3294,7 +3445,29 @@ class TestPerformInfiniteRunout:
         afc.lanes.get.assert_any_call(lane2.name)
         assert afc.lanes.get.call_count == 2
         assert lane2.status is AFCLaneState.INFINITE_RUNOUT
-        lane.gcode.run_script_from_command.assert_not_called()
+        afc.gcode.run_script_from_command.assert_not_called()
+
+
+class TestPostPrepUserMacro:
+    def test_runs_macro_through_afc_run_script_when_macro_present(self):
+        lane = _make_afc_lane()
+        lane.post_prep_macro = "MY_POST_PREP_MACRO"
+        lane.afc.function.check_macro_present.return_value = True
+
+        lane._post_prep_user_macro()
+
+        lane.afc.function.check_macro_present.assert_called_once_with("MY_POST_PREP_MACRO")
+        lane.afc.run_script.assert_called_once_with(f"MY_POST_PREP_MACRO LANE={lane.name}")
+
+    def test_does_nothing_when_macro_not_present(self):
+        lane = _make_afc_lane()
+        lane.post_prep_macro = "MY_POST_PREP_MACRO"
+        lane.afc.function.check_macro_present.return_value = False
+
+        lane._post_prep_user_macro()
+
+        lane.afc.function.check_macro_present.assert_called_once_with("MY_POST_PREP_MACRO")
+        lane.afc.run_script.assert_not_called()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

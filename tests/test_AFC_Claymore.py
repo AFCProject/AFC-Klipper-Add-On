@@ -252,12 +252,13 @@ class TestClaymoreCalibrateLane:
     def test_delegates_to_box_turtle_calibrate_lane(self) -> None:
         unit = _make_claymore()
         lane = MagicMock()
+        gcmd = MagicMock()
 
         with patch.object(afcBoxTurtle, "calibrate_lane",
                           return_value=(True, "calibration_lane", 123.0)) as mock_cal:
-            result = unit.calibrate_lane(lane, 0.0)
+            result = unit.calibrate_lane(lane, 0.0, gcmd)
 
-        mock_cal.assert_called_once_with(unit, lane, 0.0)
+        mock_cal.assert_called_once_with(unit, lane, 0.0, gcmd)
         assert result == (True, "calibration_lane", 123.0)
 
 

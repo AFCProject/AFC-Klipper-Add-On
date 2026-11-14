@@ -271,7 +271,7 @@ class TestcmdAFCSelectTool:
         gcmd = _build_gcmd({"TOOL": key_tool})
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
-        tool.tool_swap.assert_called_once_with(extruder.tc_lane)
+        tool.tool_swap.assert_called_once_with(extruder.tc_lane, gcmd=gcmd)
     
     def test_afc_extruder_tool_name(self):
         tool = _make_toolchanger()
@@ -283,7 +283,7 @@ class TestcmdAFCSelectTool:
         gcmd = _build_gcmd({"TOOL": key_tool})
 
         tool.cmd_AFC_SELECT_TOOL(gcmd)
-        tool.tool_swap.assert_called_once_with(extruder1.tc_lane)
+        tool.tool_swap.assert_called_once_with(extruder1.tc_lane, gcmd=gcmd)
     
     def test_invalid_tool_name(self):
         tool = _make_toolchanger()
@@ -357,7 +357,7 @@ class TestCmdAFCUnselectTool:
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
-        tool.afc.function.handle_activate_extruder.assert_called_once_with()
+        tool.afc.function.handle_activate_extruder.assert_called_once_with(gcmd)
 
     def test_current_state_goes_tool_dock_during_unselect_then_idle(self):
         extruder = _make_extruder_obj()
@@ -694,7 +694,7 @@ class TestToolSwap:
         tool.tool_swap(lane)
 
         lane.activate_toolhead_extruder.assert_called_once()
-        tool.afc.function._handle_activate_extruder.assert_called_once_with(0)
+        tool.afc.function._handle_activate_extruder.assert_called_once_with(0, None)
 
     def test_waits_for_toolhead_moves(self):
         tool = _make_toolchanger_for_tool_swap()

@@ -3887,7 +3887,7 @@ class TestAfcACECalibrateBowden:
         unit = ace_p1_unit("lane0")
         unit._ace.connected = False
 
-        assert unit.calibrate_bowden(unit.lanes["lane0"], 50.0, 1.0) == (
+        assert unit.calibrate_bowden(unit.lanes["lane0"], 50.0, 1.0, make_gcmd()) == (
             False, "ACE not connected", 0)
         assert unit._prev_states_stale is False
         assert unit.logger.messages == []
@@ -3897,7 +3897,7 @@ class TestAfcACECalibrateBowden:
         lane = unit.lanes["lane0"]
         lane.hub_obj = None
 
-        assert unit.calibrate_bowden(lane, 50.0, 1.0) == (
+        assert unit.calibrate_bowden(lane, 50.0, 1.0, make_gcmd()) == (
             False, "Lane has no hub configured", 0)
         assert unit._prev_states_stale is False
         assert unit.logger.messages == []
@@ -3911,7 +3911,7 @@ class TestAfcACECalibrateBowden:
         seen: List[bool] = []
         unit.printer.reactor.on_pause = lambda now: seen.append(unit._operation_active)
 
-        result = unit.calibrate_bowden(lane, 50.0, 1.0)
+        result = unit.calibrate_bowden(lane, 50.0, 1.0, make_gcmd())
 
         assert result == (False, "Toolhead sensor already triggered, unload first", 0)
         assert seen == [True]
@@ -4109,7 +4109,7 @@ class TestAfcACECalibrateLane:
             hub.state = True
         AceP1Wire(unit, on_move=on_move)
 
-        result = unit.calibrate_lane(lane, 1.0)
+        result = unit.calibrate_lane(lane, 1.0, make_gcmd())
 
         assert result == (True, "dist_hub calibration: 50.0mm (was 60mm)", 50.0)
         assert lane.dist_hub == 50.0
@@ -4233,7 +4233,7 @@ class TestAfcACEUnitUnloadLane:
         assert unit.unit_unload_lane(lane, extruder) is True
 
         assert unit.afc.move_e_pos.calls == self.MOVES
-        assert unit.afc.do_tool_cut_tip_form.calls == [((lane, extruder), {})]
+        assert unit.afc.do_tool_cut_tip_form.calls == [((lane, extruder, None), {})]
         assert wire.moves() == [self.UNWIND]
         assert lane.status == AFCLaneState.NONE
         assert lane.tool_loaded is False

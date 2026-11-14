@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-13-2026]
+### Updated
+- Updated the way `run_script_by_command` was being called to work correctly with Kalico's PR 1052 changes and also work correctly with older Klipper versions.
+
 ## [11-09-2026]
 ### Fixed
 - fix Cut.cfg macro to honor the safe_move_first when heading to safe park location
