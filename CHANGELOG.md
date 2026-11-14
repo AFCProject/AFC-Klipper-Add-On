@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed Cut.cfg's rip-length sync using the AFC_extruder section name instead of the
   real toolhead extruder name for `SYNC_EXTRUDER_MOTION`'s `MOTION_QUEUE`, which broke
   for custom `extruder_name` mappings (e.g. `e1` mapped to `extruder1`). (#784)
+- Fixed `sync_to_extruder`'s guard only tracking whether a lane was synced, not which
+  extruder it was synced to, so a resync to a different extruder could be silently
+  skipped. (#775)
 
 ## [11-09-2026]
 ### Fixed

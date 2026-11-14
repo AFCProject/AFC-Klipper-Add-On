@@ -98,7 +98,7 @@ class AFCExtruderStepper(AFCLane):
 
         self.extruder_stepper   = extruder.ExtruderStepper(config)
         self.stepper_enable     = self.printer.lookup_object('stepper_enable')
-        self._synced_to_extruder= False
+        self._synced_to_extruder: Optional[str] = None
         self._print_current_set = False
 
         # Homing-related configuration
@@ -308,14 +308,16 @@ class AFCExtruderStepper(AFCLane):
         Helper function to sync lane to extruder and set print current if specified.
 
         :param update_current: Sets current to specified print current when True
+        :param th_extruder_name: Toolhead extruder to sync to, defaults to this
+                                 lane's configured extruder when `None`
         :param gcmd: command context to run the current-change macro through, if any
         """
         if th_extruder_name is None:
             th_extruder_name = self.extruder_obj.th_extruder_name
 
-        if not self._synced_to_extruder:
+        if self._synced_to_extruder != th_extruder_name:
             self.extruder_stepper.sync_to_extruder(th_extruder_name)
-            self._synced_to_extruder = True
+            self._synced_to_extruder = th_extruder_name
 
         if update_current: self.set_print_current(gcmd)
 
@@ -326,9 +328,9 @@ class AFCExtruderStepper(AFCLane):
         :param update_current: Sets current to specified load current when True
         :param gcmd: command context to run the current-change macro through, if any
         """
-        if self._synced_to_extruder:
+        if self._synced_to_extruder is not None:
             self.extruder_stepper.sync_to_extruder(None)
-            self._synced_to_extruder = False
+            self._synced_to_extruder = None
         if update_current: self.set_load_current(gcmd)
 
     def _set_current(self, current, gcmd: Optional[GCodeCommand]=None):
