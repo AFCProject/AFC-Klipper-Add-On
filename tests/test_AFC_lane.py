@@ -775,8 +775,8 @@ class TestAttachFpsPsfBufferEndstopToStepper:
     def _make_fps_buffer(self):
         buffer_obj = MagicMock()
         buffer_obj.type = "FPS_PSF"
-        buffer_obj.fps_endstop = MagicMock()
-        buffer_obj.fps_trailing_endstop = MagicMock()
+        buffer_obj.get_fps_endstop_for_lane = MagicMock(return_value=MagicMock())
+        buffer_obj.get_fps_trailing_endstop_for_lane = MagicMock(return_value=MagicMock())
         return buffer_obj
 
     def test_attaches_buffer_and_trailing_on_the_shared_drive_stepper(self):
@@ -789,16 +789,20 @@ class TestAttachFpsPsfBufferEndstopToStepper:
 
         lane._attach_fps_psf_buffer_endstop_to_stepper()
 
+        lane_fps_endstop = lane.buffer_obj.get_fps_endstop_for_lane.return_value
+        lane_fps_trailing_endstop = lane.buffer_obj.get_fps_trailing_endstop_for_lane.return_value
+        lane.buffer_obj.get_fps_endstop_for_lane.assert_called_once_with("lane4")
+        lane.buffer_obj.get_fps_trailing_endstop_for_lane.assert_called_once_with("lane4")
         assert drive_stepper._endstops["lane4_buffer"] == (
-            lane.buffer_obj.fps_endstop, "lane4_buffer")
+            lane_fps_endstop, "lane4_buffer")
         assert drive_stepper._endstops["lane4_buffer_trailing"] == (
-            lane.buffer_obj.fps_trailing_endstop, "lane4_buffer_trailing")
+            lane_fps_trailing_endstop, "lane4_buffer_trailing")
         assert "lane4_tool_start" not in drive_stepper._endstops
         assert lane.endstops[AFCHomingPoints.BUFFER] == {
-            "endstop": lane.buffer_obj.fps_endstop, "endstop_name": "lane4_buffer"}
-        lane.buffer_obj.fps_endstop.add_stepper.assert_called_once_with(
+            "endstop": lane_fps_endstop, "endstop_name": "lane4_buffer"}
+        lane_fps_endstop.add_stepper.assert_called_once_with(
             drive_stepper.extruder_stepper.stepper)
-        lane.buffer_obj.fps_trailing_endstop.add_stepper.assert_called_once_with(
+        lane_fps_trailing_endstop.add_stepper.assert_called_once_with(
             drive_stepper.extruder_stepper.stepper)
 
     def test_also_attaches_tool_start_when_extruder_uses_buffer(self):
@@ -811,10 +815,11 @@ class TestAttachFpsPsfBufferEndstopToStepper:
 
         lane._attach_fps_psf_buffer_endstop_to_stepper()
 
+        lane_fps_endstop = lane.buffer_obj.get_fps_endstop_for_lane.return_value
         assert drive_stepper._endstops["lane4_tool_start"] == (
-            lane.buffer_obj.fps_endstop, "lane4_tool_start")
+            lane_fps_endstop, "lane4_tool_start")
         assert drive_stepper._endstops["lane4_buffer"] == (
-            lane.buffer_obj.fps_endstop, "lane4_buffer")
+            lane_fps_endstop, "lane4_buffer")
 
     def test_noop_when_lane_owns_its_own_stepper(self):
         """A lane with its own real stepper (self.drive_stepper is None) is
@@ -826,7 +831,7 @@ class TestAttachFpsPsfBufferEndstopToStepper:
 
         lane._attach_fps_psf_buffer_endstop_to_stepper()  # should not raise
 
-        lane.buffer_obj.fps_endstop.add_stepper.assert_not_called()
+        lane.buffer_obj.get_fps_endstop_for_lane.assert_not_called()
 
     def test_noop_when_no_buffer_obj(self):
         lane = _make_afc_lane(fullname="AFC_lane lane4")
@@ -867,8 +872,8 @@ class TestAttachFpsPsfBufferEndstopToStepper:
 
         assert drive_stepper._endstops["lane4_buffer"] is existing_buffer
         assert drive_stepper._endstops["lane4_buffer_trailing"] is existing_trailing
-        lane.buffer_obj.fps_endstop.add_stepper.assert_not_called()
-        lane.buffer_obj.fps_trailing_endstop.add_stepper.assert_not_called()
+        lane.buffer_obj.get_fps_endstop_for_lane.assert_not_called()
+        lane.buffer_obj.get_fps_trailing_endstop_for_lane.assert_not_called()
 
 
 # ── move_advanced: stepperless unit delegation ───────────────────────────────

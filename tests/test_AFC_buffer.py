@@ -3126,6 +3126,14 @@ class TestAFCFPSBufferInit:
         assert buf.adc_min_val == 0.0
         assert buf.adc_max_val == 0.95
 
+    def test_adc_max_val_equal_to_adc_min_val_raises(self):
+        with pytest.raises(Exception, match="adc_max_val .* must be greater than adc_min_val"):
+            _build_real_fps_buffer(values={"adc_min_val": 0.5, "adc_max_val": 0.5})
+
+    def test_adc_max_val_less_than_adc_min_val_raises(self):
+        with pytest.raises(Exception, match="adc_max_val .* must be greater than adc_min_val"):
+            _build_real_fps_buffer(values={"adc_min_val": 0.6, "adc_max_val": 0.4})
+
     def test_kalico_adc_logs_setup_message(self):
         adc = _FakeADC(has_minmax=True)
         buf, afc, printer, adc = _build_real_fps_buffer(adc=adc)
@@ -3254,6 +3262,94 @@ class TestEnableClearAdvanceLatch:
         buf.clear_advance_latch()
         assert buf._latch_enabled is False
         assert buf._advance_latched is False
+
+
+class TestGetFpsEndstopForLane:
+    """Covers get_fps_endstop_for_lane, the fix for lanes sharing one FPS_PSF
+    buffer piling every lane's stepper onto one shared PollingEndstopWrapper:
+    each lane name must get its own clone."""
+
+    def _make_buffer_with_query_endstops(self, query_endstops=None):
+        buf, afc, printer, adc = _build_real_fps_buffer()
+        printer.objects["query_endstops"] = query_endstops or MagicMock()
+        return buf
+
+    def test_creates_and_registers_a_per_lane_clone(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        result = buf.get_fps_endstop_for_lane("lane1")
+
+        assert isinstance(result, PollingEndstopWrapper)
+        assert result is not buf.fps_endstop
+        query_endstops.register_endstop.assert_called_once_with(result, "lane1_buffer")
+
+    def test_caches_the_clone_per_lane_name(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        first = buf.get_fps_endstop_for_lane("lane1")
+        second = buf.get_fps_endstop_for_lane("lane1")
+
+        assert first is second
+        query_endstops.register_endstop.assert_called_once_with(first, "lane1_buffer")
+
+    def test_different_lanes_get_distinct_clones_with_isolated_steppers(self):
+        """The actual bug this fixes: two lanes sharing one buffer must not
+        end up with each other's stepper in get_steppers()."""
+        buf = self._make_buffer_with_query_endstops()
+
+        lane1_endstop = buf.get_fps_endstop_for_lane("lane1")
+        lane2_endstop = buf.get_fps_endstop_for_lane("lane2")
+        lane1_stepper = MagicMock()
+        lane1_endstop.add_stepper(lane1_stepper)
+
+        assert lane1_endstop is not lane2_endstop
+        assert lane1_endstop.get_steppers() == [lane1_stepper]
+        assert lane2_endstop.get_steppers() == []
+
+
+class TestGetFpsTrailingEndstopForLane:
+    """Covers get_fps_trailing_endstop_for_lane, the trailing-threshold
+    counterpart of get_fps_endstop_for_lane."""
+
+    def _make_buffer_with_query_endstops(self, query_endstops=None):
+        buf, afc, printer, adc = _build_real_fps_buffer()
+        printer.objects["query_endstops"] = query_endstops or MagicMock()
+        return buf
+
+    def test_creates_and_registers_a_per_lane_clone(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        result = buf.get_fps_trailing_endstop_for_lane("lane1")
+
+        assert isinstance(result, PollingEndstopWrapper)
+        assert result is not buf.fps_trailing_endstop
+        query_endstops.register_endstop.assert_called_once_with(
+            result, "lane1_buffer_trailing")
+
+    def test_caches_the_clone_per_lane_name(self):
+        query_endstops = MagicMock()
+        buf = self._make_buffer_with_query_endstops(query_endstops)
+
+        first = buf.get_fps_trailing_endstop_for_lane("lane1")
+        second = buf.get_fps_trailing_endstop_for_lane("lane1")
+
+        assert first is second
+        query_endstops.register_endstop.assert_called_once_with(first, "lane1_buffer_trailing")
+
+    def test_different_lanes_get_distinct_clones_with_isolated_steppers(self):
+        buf = self._make_buffer_with_query_endstops()
+
+        lane1_endstop = buf.get_fps_trailing_endstop_for_lane("lane1")
+        lane2_endstop = buf.get_fps_trailing_endstop_for_lane("lane2")
+        lane1_stepper = MagicMock()
+        lane1_endstop.add_stepper(lane1_stepper)
+
+        assert lane1_endstop is not lane2_endstop
+        assert lane1_endstop.get_steppers() == [lane1_stepper]
+        assert lane2_endstop.get_steppers() == []
 
 
 class TestFPSEnableBuffer:

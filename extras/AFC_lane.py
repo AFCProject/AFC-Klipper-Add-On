@@ -661,22 +661,24 @@ class AFCLane:
         stepper = homing_stepper.extruder_stepper.stepper
         buffer_name = f"{self.name}_buffer"
         if buffer_name not in homing_stepper._endstops:
-            self.buffer_obj.fps_endstop.add_stepper(stepper)
-            homing_stepper._endstops[buffer_name] = (self.buffer_obj.fps_endstop, buffer_name)
+            lane_fps_endstop = self.buffer_obj.get_fps_endstop_for_lane(self.name)
+            lane_fps_endstop.add_stepper(stepper)
+            homing_stepper._endstops[buffer_name] = (lane_fps_endstop, buffer_name)
             self.endstops[AFCHomingPoints.BUFFER] = {
-                "endstop": self.buffer_obj.fps_endstop, "endstop_name": buffer_name}
+                "endstop": lane_fps_endstop, "endstop_name": buffer_name}
 
         trailing_name = f"{self.name}_buffer_trailing"
         if trailing_name not in homing_stepper._endstops:
-            self.buffer_obj.fps_trailing_endstop.add_stepper(stepper)
-            homing_stepper._endstops[trailing_name] = (
-                self.buffer_obj.fps_trailing_endstop, trailing_name)
+            lane_fps_trailing_endstop = self.buffer_obj.get_fps_trailing_endstop_for_lane(self.name)
+            lane_fps_trailing_endstop.add_stepper(stepper)
+            homing_stepper._endstops[trailing_name] = (lane_fps_trailing_endstop, trailing_name)
 
         if self.extruder_obj.tool_start == "buffer":
             tool_name = f"{self.name}_tool_start"
             if tool_name not in homing_stepper._endstops:
-                self.buffer_obj.fps_endstop.add_stepper(stepper)
-                homing_stepper._endstops[tool_name] = (self.buffer_obj.fps_endstop, tool_name)
+                lane_fps_endstop = self.buffer_obj.get_fps_endstop_for_lane(self.name)
+                lane_fps_endstop.add_stepper(stepper)
+                homing_stepper._endstops[tool_name] = (lane_fps_endstop, tool_name)
 
     def handle_moonraker_connect(self):
         """

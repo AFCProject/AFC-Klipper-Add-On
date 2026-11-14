@@ -17,7 +17,7 @@ import inspect
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Union
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -776,6 +776,10 @@ class AFCFPSBuffer(AFCBuffer):
         self.reversed: bool = config.getboolean('reversed', False)
         self.adc_min_val: float = config.getfloat('adc_min_val', 0.0)
         self.adc_max_val: float = config.getfloat('adc_max_val', 1.0)
+        if self.adc_max_val <= self.adc_min_val:
+            error_str = (f"adc_max_val ({self.adc_max_val}) must be greater than "
+                        f"adc_min_val ({self.adc_min_val}) in section '{config.get_name()}'")
+            raise config.error(error_str)
 
         # Setup ADC sampling — handle both Klipper and Kalico APIs
         if hasattr(self.adc, "setup_minmax"): # Kalico has this
@@ -907,11 +911,47 @@ class AFCFPSBuffer(AFCBuffer):
         self.fps_trailing_endstop: PollingEndstopWrapper = PollingEndstopWrapper(
             self.reactor, self.adc.get_mcu, lambda: self.buffer_trailing_triggered,
             poll_time=FPS_ENDSTOP_POLL_TIME)
+        self._lane_fps_endstops: Dict[str, PollingEndstopWrapper] = {}
+        self._lane_fps_trailing_endstops: Dict[str, PollingEndstopWrapper] = {}
 
         # Register macros
         self.gcode.register_mux_command("AFC_SET_FPS_SET_POINT", "BUFFER", self.name,
                                         self.cmd_AFC_SET_FPS_SET_POINT,
                                         desc=self.cmd_AFC_SET_FPS_SET_POINT_help)
+
+    def get_fps_endstop_for_lane(self, lane_name: str) -> PollingEndstopWrapper:
+        """
+        Return a per-lane PollingEndstopWrapper that polls this buffer's advance
+        (high_point) threshold, creating and registering one on first use. Lanes
+        sharing this buffer must each call this instead of adding their stepper
+        directly to `fps_endstop`, so one lane's homing move doesn't pull in
+        other lanes' steppers via a shared stepper list.
+
+        :param lane_name: Name of the lane requesting its own endstop.
+        :return PollingEndstopWrapper: Per-lane endstop for the advance threshold.
+        """
+        if lane_name not in self._lane_fps_endstops:
+            query_endstops = self.printer.lookup_object('query_endstops')
+            endstop_name = f"{lane_name}_buffer"
+            self._lane_fps_endstops[lane_name] = self.fps_endstop.for_stepper(
+                endstop_name, query_endstops)
+        return self._lane_fps_endstops[lane_name]
+
+    def get_fps_trailing_endstop_for_lane(self, lane_name: str) -> PollingEndstopWrapper:
+        """
+        Return a per-lane PollingEndstopWrapper that polls this buffer's trailing
+        (low_point) threshold, creating and registering one on first use. See
+        `get_fps_endstop_for_lane` for why lanes must not share one directly.
+
+        :param lane_name: Name of the lane requesting its own endstop.
+        :return PollingEndstopWrapper: Per-lane endstop for the trailing threshold.
+        """
+        if lane_name not in self._lane_fps_trailing_endstops:
+            query_endstops = self.printer.lookup_object('query_endstops')
+            endstop_name = f"{lane_name}_buffer_trailing"
+            self._lane_fps_trailing_endstops[lane_name] = self.fps_trailing_endstop.for_stepper(
+                endstop_name, query_endstops)
+        return self._lane_fps_trailing_endstops[lane_name]
 
     def _check_deadband(self, set_point: float, deadband: float) -> str:
         """
