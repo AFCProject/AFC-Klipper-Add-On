@@ -1124,7 +1124,10 @@ class CFSBus:
             if unit is None:
                 # Single-box setups don't set box_uid: the one unit without a
                 # uid that hasn't got a box yet takes it.
-                free = [u for u in self.units if not u.box_uid and u.box_addr not in taken]
+                # A unit whose box is still online keeps its address (only one box of a
+                # chain may have been power-cycled).
+                free = [u for u in self.units
+                        if not u.box_uid and u.box_addr not in taken and not u.online]
                 unit = free[0] if free else None
             if unit is not None:
                 addr = unit.box_addr
@@ -1417,6 +1420,7 @@ class afcCFS(afcUnit):
                              box_addr=self.box_addr, settings=self._trace_settings())
         self._traced_mask: Optional[int] = None
         self._connection_reading: Optional[int] = None
+        self._presence_reading: Optional[int] = None
         self._traced_print_state: Optional[str] = None
 
         # Box state, as last seen
@@ -1946,17 +1950,21 @@ class afcCFS(afcUnit):
         try:
             interval = (self.heartbeat_interval_printing if self.afc.function.is_printing()
                         else self.heartbeat_interval)
+            # Each request can wait, and a box sequence may start meanwhile: stop then
             if eventtime - self._last_heartbeat >= interval:
                 self._last_heartbeat = eventtime
                 self.heartbeat()
-            mask = self.read_material_mask()
-            if mask is not None:
-                self._mirror_presence(mask)
-            connected = self.read_connected_mask()
-            if connected is not None:
-                self._mirror_connections(connected)
-            self.read_buffer_state()
-            self._queue_startup_tag_reads()
+            if not self.bus.operation_active:
+                mask = self.read_material_mask()
+                if mask is not None:
+                    self._mirror_presence(mask)
+            if not self.bus.operation_active:
+                connected = self.read_connected_mask()
+                if connected is not None:
+                    self._mirror_connections(connected)
+            if not self.bus.operation_active:
+                self.read_buffer_state()
+                self._queue_startup_tag_reads()
         except Exception:
             self.logger.debug(f"CFS {self.name}: poll failed\n{traceback.format_exc()}")
         finally:
@@ -1966,10 +1974,15 @@ class afcCFS(afcUnit):
 
     def _mirror_presence(self, mask: int) -> None:
         """
-        Pass each slot's spool sensor to its lane.
+        Pass each slot's spool sensor to its lane once two polls in a row agree, like the
+        connection sensors: a sensor reply carries no bank, so a late reply to one read could
+        otherwise be taken as the other bank's and look like a runout.
 
         :param mask: material bitmask
         """
+        if mask != self._presence_reading:
+            self._presence_reading = mask
+            return
         if mask != self._traced_mask:
             self.trace.event("presence", mask=mask,
                              slots="".join(P.slot_letter(i) for i in P.bits_to_slots(mask)),
@@ -2080,9 +2093,9 @@ class afcCFS(afcUnit):
     #
     # Lanes are plain [AFC_lane laneN] sections with unit: <cfs>:<1-4>. The box
     # owns the slot motor and sensors, so a lane has no prep/load pins and no
-    # stepper: presence comes from the poll, and tool load/unload are this
-    # unit's AFC_CFS_TOOL_LOAD / AFC_CFS_TOOL_UNLOAD, set as each lane's
-    # custom_load_cmd / custom_unload_cmd at connect.
+    # stepper: presence comes from the poll. Tool loads run this unit's
+    # AFC_CFS_TOOL_LOAD, set as each lane's custom_load_cmd at connect; unloads
+    # go through AFC's unit_unload_lane hook, so a failed one stops AFC.
     #
     def _setup_lanes(self) -> None:
         """
@@ -2116,8 +2129,6 @@ class afcCFS(afcUnit):
         self.load_reports[lane.name] = {}
         if lane.custom_load_cmd is None:
             lane.custom_load_cmd = f"AFC_CFS_TOOL_LOAD LANE={lane.name}"
-        if lane.custom_unload_cmd is None:
-            lane.custom_unload_cmd = f"AFC_CFS_TOOL_UNLOAD LANE={lane.name}"
 
     # Lane plumbing
 
@@ -2399,7 +2410,10 @@ class afcCFS(afcUnit):
         # Mark this slot as the active PRINT slot: the box then runs its own
         # buffer feed loop for the print. Nothing may send SET_BOX_MODE
         # [00][01] (feed/change mode) after this until the next unload.
-        self.set_box_mode(P.MODE_PRINT, bits)
+        mode_reply = self.set_box_mode(P.MODE_PRINT, bits)
+        if (mode_reply is None
+            or not mode_reply.ok):
+            mode_reply = self.set_box_mode(P.MODE_PRINT, bits)
         self.tighten_up(False)
         self.connection_motor(P.CONN_STOP)
         if self.clear_mode_after_load:
@@ -2408,6 +2422,11 @@ class afcCFS(afcUnit):
 
         if not self._toolhead_sensor(lane):
             return False, "toolhead sensor cleared after the handoff"
+        if (mode_reply is None
+            or not mode_reply.ok):
+            # Without print mode the box won't feed the print
+            status = P.status_name(mode_reply.status if mode_reply else None)
+            return False, f"box did not enter print mode ({status})"
         return True, "loaded"
 
     # Load follows the stock sequence tomaspakosta/k1c-cfs-klipper validated on
@@ -2641,8 +2660,8 @@ class afcCFS(afcUnit):
 
     def cmd_AFC_CFS_TOOL_UNLOAD(self, lane: AFCLane, gcmd: Any) -> None:
         """
-        Cut and unload this CFS lane back to the box. AFC calls this through
-        custom_unload_cmd during a tool change.
+        Cut and unload this CFS lane back to the box. AFC's own tool changes use
+        unit_unload_lane instead; this runs the same unload by hand.
 
         Usage
         -----
@@ -2654,6 +2673,37 @@ class afcCFS(afcUnit):
         AFC_CFS_TOOL_UNLOAD LANE=lane1
         ```
         """
+        self._tool_unload(lane, gcmd)
+
+    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: Any,
+                         gcmd: Optional[GCodeCommand] = None) -> bool:
+        """
+        AFC's unload hook (AFC.unload_sequence), used like the ACE's: returns False on a
+        failed unload so AFC stops without recording the tool as unloaded, which a
+        custom_unload_cmd can't do.
+
+        :param cur_lane: lane to unload
+        :param cur_extruder: unused, the lane knows its extruder
+        :param gcmd: command context for the macros, if any
+        :return bool: True if the lane is back in the box
+        """
+        cur_lane.status = AFCLaneState.TOOL_UNLOADING
+        if not self._tool_unload(cur_lane, gcmd):
+            return False
+        if self.afc.post_unload_macro is not None:
+            self.afc.run_script(self.afc.post_unload_macro, gcmd)
+        cur_lane.status = AFCLaneState.NONE
+        return True
+
+    def _tool_unload(self, lane: AFCLane, gcmd: Any) -> bool:
+        """
+        Cut, then RETRUDE start, extruder retract and RETRUDE finish (see _retract_to_box).
+        A failure goes to AFC's error handling.
+
+        :param lane: lane to unload
+        :param gcmd: command context for the macros, if any
+        :return bool: True if the lane is back in the box
+        """
         self.wait_for_tag_reads()   # a tag read keeps the box busy; finish it first
         started = self.reactor.monotonic()
         self._lane_trace(lane, "unload_start", toolhead_sensor=self._toolhead_sensor(lane))
@@ -2664,14 +2714,14 @@ class afcCFS(afcUnit):
         if (not self.online
             and not self.connect()):
             self._lane_fail(lane, f'box is offline ({self.transport.last_error or "no reply"})')
-            return
+            return False
         if self._cutter_engaged():
             self._lane_fail(lane, "cutter sensor is engaged before cutting; check the cutter lever")
-            return
+            return False
         cut_problem = self._run_cutter_sequence(lane, gcmd)
         if cut_problem:
             self._lane_fail(lane, cut_problem)
-            return
+            return False
         self._run_post_cut_macros(lane, gcmd)
 
         with self.operation():
@@ -2687,9 +2737,10 @@ class afcCFS(afcUnit):
                          seconds=round(self.reactor.monotonic() - started, 2))
         if not ok:
             self._lane_fail(lane, f"unload failed: {detail}")
-            return
+            return False
         lane._load_state = False         # reeled back past the merge
         self._mark_tool_state(lane, loaded=False)
+        return True
 
     def _mark_tool_state(self, lane: AFCLane, loaded: bool) -> None:
         """

@@ -1376,11 +1376,12 @@ class TestCFSTransportBusy:
 # CFSBus
 
 class FakeUnit:
-    def __init__(self, name, box_addr, box_uid=None, depth=0):
+    def __init__(self, name, box_addr, box_uid=None, depth=0, online=False):
         self.name = name
         self.box_addr = box_addr
         self.box_uid = box_uid
         self._operation_depth = depth
+        self.online = online
 
 
 UID_A = bytes.fromhex("67913b482422b00236353434")
@@ -1572,6 +1573,12 @@ class TestCFSBusDiscover:
         bus.box.reply(P.CMD_GET_SLAVE_INFO, slave_info(UID_A), slave_info(UID_B))
         assert bus.discover() == [(UID_A, 1), (UID_B, 2)]
 
+    def test_live_box_keeps_its_address(self):
+        # Two boxes without uids, only box 2 power-cycled: box 1 still answers at 1
+        bus = self._bus(FakeUnit("CFS_1", 1, online=True), FakeUnit("CFS_2", 2))
+        bus.box.reply(P.CMD_GET_SLAVE_INFO, slave_info(UID_B))
+        assert bus.discover() == [(UID_B, 2)]
+
     def test_unknown_box_parked_at_spare_address(self):
         bus = self._bus(FakeUnit("CFS_1", 1, UID_A))
         bus.box.reply(P.CMD_GET_SLAVE_INFO, slave_info(UID_B))
@@ -1669,6 +1676,7 @@ def unit_with(values=None, lanes=(1,), do_connect=True, printer=None, name="CFS_
     made = [make_lane(unit, i) for i in lanes]
     if do_connect:
         connect(unit)
+    unit.trace.stop()
     unit.trace = RecTrace()
     return unit, made
 
@@ -2617,6 +2625,14 @@ class TestAfcCFSPoll:
         assert unit._poll(500.0) == 501.0
         assert unit.box.sent == []
 
+    def test_stops_when_a_sequence_starts_mid_poll(self):
+        # The heartbeat's wait lets a load or unload start: send nothing more
+        unit, _ = self._unit()
+        unit.heartbeat = lambda: setattr(unit, "_operation_depth", 1)
+        unit._poll(500.0)
+        assert unit.box.sent == []
+        assert not unit._queue_startup_tag_reads.called
+
     def test_skipped_while_the_line_is_busy(self):
         unit, _ = self._unit()
         unit.transport._mutex.locked = True
@@ -2642,9 +2658,11 @@ class TestAfcCFSPoll:
         assert set(quiet) == {True}
         assert unit._quiet_requests is False
         assert unit._last_heartbeat == 500.0
-        assert unit.present_last == {"lane1": True, "lane2": False}
-        # One connection reading is only remembered; the next poll that agrees applies it
+        # One reading of each bank is only remembered; the next poll that agrees applies it
+        assert unit._presence_reading == 0b0001
         assert unit._connection_reading == 0b0010
+        unit._poll(501.0)
+        assert unit.present_last == {"lane1": True, "lane2": False}
         assert unit.buffer_state == P.BUFFER_MIDDLE
         assert unit._queue_startup_tag_reads.called
         assert unit._trace_print_state.called
@@ -2736,10 +2754,24 @@ class TestAfcCFSMirrorPresence:
         seen = []
         unit.update_lane_presence = lambda lane, present: seen.append((lane.name, present))
         unit._mirror_presence(0b0101)
+        assert seen == []                            # first reading only remembered
+        unit._mirror_presence(0b0101)
         unit._mirror_presence(0b0101)
         assert seen == [("lane1", True), ("lane2", False), ("lane3", True)] * 2
         assert unit.trace.events == [("presence", {"mask": 5, "slots": "AC", "previous": None})]
         assert unit._traced_mask == 5
+
+
+    def test_one_mismatched_reading_changes_nothing(self):
+        # e.g. a late connection-bank reply taken as the material bank: no fake runout
+        unit, lanes = unit_with(lanes=(1, 2))
+        seen = []
+        unit.update_lane_presence = lambda lane, present: seen.append((lane.name, present))
+        unit._mirror_presence(0b0011)
+        unit._mirror_presence(0b0011)
+        unit._mirror_presence(0b0001)
+        unit._mirror_presence(0b0011)
+        assert seen == [("lane1", True), ("lane2", True)]     # lane2 never reported empty
 
 
 class TestAfcCFSMirrorConnections:
@@ -2984,7 +3016,7 @@ class TestAfcCFSSetupLane:
         assert lane._load_state is False
         assert (unit.present_last, unit.load_reports) == ({"lane1": None}, {"lane1": {}})
         assert lane.custom_load_cmd == "AFC_CFS_TOOL_LOAD LANE=lane1"
-        assert lane.custom_unload_cmd == "AFC_CFS_TOOL_UNLOAD LANE=lane1"
+        assert lane.custom_unload_cmd is None     # AFC unloads through unit_unload_lane
         assert unit.function.register_mux_command.calls == []   # registered at config time
 
     def test_users_own_commands_kept(self):
@@ -3243,6 +3275,7 @@ def ready_unit(values=None, lanes=(1,), printer=None, name="CFS_1"):
     unit = make_unit(name=name, values=values, printer=printer)
     made = [make_lane(unit, i) for i in lanes]
     connect(unit)
+    unit.trace.stop()
     unit.trace = RecTrace()
     unit.online = True
     unit.wait_for_tag_reads = Recorder()
@@ -3526,6 +3559,38 @@ class TestAfcCFSLoadAttempt:
                                                        status=P.ST_EXTRUDE_ERR10))
         unit._load_attempt(lane, 0)
         assert msgs(unit)[-1] == ("warning", "CFS lane1: stage 7 returned EXTRUDE_ERR10")
+
+    def _print_mode_replies(self, unit, *replies):
+        # Scripts only the print-mode SET_BOX_MODE replies; returns the attempts made
+        orig, queue, sent = unit.set_box_mode, list(replies), []
+
+        def set_mode(mode, bits=0):
+            if mode != P.MODE_PRINT:
+                return orig(mode, bits)
+            sent.append(bits)
+            return queue.pop(0)
+        unit.set_box_mode = set_mode
+        return sent
+
+    def test_print_mode_retried_once(self):
+        unit, lane = self._unit()
+        sent = self._print_mode_replies(unit, None, frame(P.SET_BOX_MODE))
+        assert unit._load_attempt(lane, 0) == (True, "loaded")
+        assert len(sent) == 2
+
+    def test_print_mode_refused(self):
+        # Without print mode the box won't feed the print, so the load fails
+        unit, lane = self._unit()
+        refused = frame(P.SET_BOX_MODE, status=P.ST_EXTRUDE_ERR10)
+        sent = self._print_mode_replies(unit, refused, refused)
+        assert unit._load_attempt(lane, 0) == (
+            False, "box did not enter print mode (EXTRUDE_ERR10)")
+        assert len(sent) == 2
+
+    def test_print_mode_never_answered(self):
+        unit, lane = self._unit()
+        self._print_mode_replies(unit, None, None)
+        assert unit._load_attempt(lane, 0) == (False, "box did not enter print mode (NO_REPLY)")
 
     def test_clear_mode_after_load(self):
         unit, lane = self._unit({"clear_mode_after_load": True})
@@ -4040,6 +4105,39 @@ class TestAfcCFSCmdToolUnload:
         assert lane._load_state is True
         assert not unit._mark_tool_state.called
 
+    def test_unit_unload_lane(self):
+        # AFC's unload hook: the same unload, then the post-unload macro
+        unit, lane = self._unit()
+        lane._load_state = True
+        unit.afc.post_unload_macro = "AFC_CFS_LEAVE_PURGE"
+        unit.afc.run_script = Recorder()
+        cmd = gcmd()
+        assert unit.unit_unload_lane(lane, lane.extruder_obj, cmd) is True
+        assert unit._mark_tool_state.calls == [((lane,), {"loaded": False})]
+        assert unit.afc.run_script.calls == [(("AFC_CFS_LEAVE_PURGE", cmd), {})]
+        assert lane.status == AFCLaneState.NONE
+
+    def test_unit_unload_lane_without_post_macro(self):
+        unit, lane = self._unit()
+        lane._load_state = True
+        unit.afc.post_unload_macro = None
+        unit.afc.run_script = Recorder()
+        assert unit.unit_unload_lane(lane, lane.extruder_obj) is True
+        assert not unit.afc.run_script.called
+
+    def test_unit_unload_lane_failure_stops_afc(self):
+        # False makes AFC stop before it records the tool as unloaded
+        unit, lane = self._unit()
+        lane._load_state = True
+        unit.afc.post_unload_macro = "AFC_CFS_LEAVE_PURGE"
+        unit.afc.run_script = Recorder()
+        unit._retract_to_box = Recorder(result=(False, "box did not answer RETRUDE start"))
+        assert unit.unit_unload_lane(lane, lane.extruder_obj, gcmd()) is False
+        assert not unit._mark_tool_state.called
+        assert not unit.afc.run_script.called
+        assert lane.status == AFCLaneState.TOOL_UNLOADING
+        self._failed(unit, lane, "unload failed: box did not answer RETRUDE start")
+
     def test_retract_error(self):
         unit, lane = self._unit()
         unit._retract_to_box = Recorder(raises=RuntimeError("serial gone"))
@@ -4119,6 +4217,7 @@ def rfid_unit(values=None, lanes=(1,), printer=None, name="CFS_1"):
     unit = make_unit(name=name, values=values, printer=printer)
     made = [make_lane(unit, i) for i in lanes]
     connect(unit)
+    unit.trace.stop()
     unit.trace = RecTrace()
     unit.online = True
     for lane in made:
@@ -5035,37 +5134,48 @@ class TestAfcCFSCmdAfcCfsReconnect:
 
 
 class TestAfcCFSTraceSummary:
+    def _unit(self, tmp_path):
+        path = str(tmp_path / "cfs_trace.jsonl")
+        unit, _ = ready_unit(values={"trace_file": path})
+        unit.trace.path = path
+        return unit, path
+
     def test_no_trace_file(self):
         unit, _ = ready_unit()
         assert unit._trace_summary() == "off (set trace_file to enable)"
 
-    def test_paused(self):
-        unit, _ = ready_unit(values={"trace_file": "/tmp/cfs_trace.jsonl"})
-        unit.trace = RecTrace(enabled=False)
-        assert unit._trace_summary() == "paused (/tmp/cfs_trace.jsonl)"
+    def test_paused(self, tmp_path):
+        unit, path = self._unit(tmp_path)
+        unit.trace.enabled = False
+        assert unit._trace_summary() == f"paused ({path})"
 
-    def test_stopped_by_an_error(self):
-        unit, _ = ready_unit(values={"trace_file": "/tmp/cfs_trace.jsonl"})
-        unit.trace = RecTrace(enabled=False)
+    def test_stopped_by_an_error(self, tmp_path):
+        unit, _ = self._unit(tmp_path)
+        unit.trace.enabled = False
         unit.trace.last_error = "cannot open trace file: denied"
         assert unit._trace_summary() == "paused (cannot open trace file: denied)"
 
-    def test_recording(self):
-        unit, _ = ready_unit(values={"trace_file": "/tmp/cfs_trace.jsonl"})
+    def test_recording(self, tmp_path):
+        unit, path = self._unit(tmp_path)
         unit.trace.written = 12
-        assert unit._trace_summary() == "recording to /tmp/cfs_trace.jsonl (12 events)"
+        assert unit._trace_summary() == f"recording to {path} (12 events)"
 
-    def test_recording_with_drops(self):
-        unit, _ = ready_unit(values={"trace_file": "/tmp/cfs_trace.jsonl"})
+    def test_recording_with_drops(self, tmp_path):
+        unit, path = self._unit(tmp_path)
         unit.trace.written = 12
         unit.trace.dropped = 3
-        assert unit._trace_summary() == "recording to /tmp/cfs_trace.jsonl (12 events, 3 dropped)"
+        assert unit._trace_summary() == f"recording to {path} (12 events, 3 dropped)"
 
 
 class TestAfcCFSCmdAfcCfsTrace:
-    def _unit(self, trace_file="/tmp/cfs_trace.jsonl"):
-        values = {"trace_file": trace_file} if trace_file else None
+    @pytest.fixture(autouse=True)
+    def _trace_path(self, tmp_path):
+        self.path = str(tmp_path / "cfs_trace.jsonl")
+
+    def _unit(self, trace_file=True):
+        values = {"trace_file": self.path} if trace_file else None
         unit, _ = ready_unit(values=values)
+        unit.trace.path = self.path
         return unit
 
     def test_report_only(self):
@@ -5074,7 +5184,7 @@ class TestAfcCFSCmdAfcCfsTrace:
         unit.cmd_AFC_CFS_TRACE(cmd)
         assert unit.trace.events == []
         cmd.respond_info.assert_called_once_with(
-            "CFS CFS_1 trace: recording to /tmp/cfs_trace.jsonl (0 events)")
+            f"CFS CFS_1 trace: recording to {self.path} (0 events)")
 
     def test_resume(self):
         unit = self._unit()
@@ -5084,7 +5194,7 @@ class TestAfcCFSCmdAfcCfsTrace:
         assert unit.trace.events == [("trace_resume", {})]
 
     def test_resume_without_a_file(self):
-        unit = self._unit(trace_file=None)
+        unit = self._unit(trace_file=False)
         with pytest.raises(CommandError) as e:
             unit.cmd_AFC_CFS_TRACE(gcmd(ENABLE=1))
         assert str(e.value) == "CFS CFS_1: set trace_file in [AFC_CFS CFS_1] first"
@@ -5095,7 +5205,7 @@ class TestAfcCFSCmdAfcCfsTrace:
         unit.cmd_AFC_CFS_TRACE(cmd)
         assert unit.trace.enabled is False
         assert unit.trace.events == [("trace_pause", {})]
-        cmd.respond_info.assert_called_once_with("CFS CFS_1 trace: paused (/tmp/cfs_trace.jsonl)")
+        cmd.respond_info.assert_called_once_with(f"CFS CFS_1 trace: paused ({self.path})")
 
     def test_marker(self):
         unit = self._unit()
