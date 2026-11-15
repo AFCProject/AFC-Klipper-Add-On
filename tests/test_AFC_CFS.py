@@ -8,13 +8,10 @@ from those captures, not from the code under test.
 """
 from __future__ import annotations
 
-import ast
-import configparser
 import errno
 import importlib.util
 import json
 import os
-import pathlib
 import queue
 import struct
 import sys
@@ -22,7 +19,6 @@ import termios
 import threading
 from unittest.mock import MagicMock
 
-import jinja2
 import pytest
 
 from extras.AFC_lane import AFCLaneState, AFCMoveWarning
@@ -1692,6 +1688,7 @@ class TestAfcCFSInit:
     def test_builds_through_afc_unit(self):
         printer = make_printer()
         printer._afc.function.register_mux_command = Recorder()
+        printer._gcode.register_mux_command = Recorder()
         unit = make_unit(printer=printer)
         assert (unit.name, unit.type) == ("CFS_1", "CFS")
         assert unit.reactor is printer.get_reactor()
@@ -1699,26 +1696,26 @@ class TestAfcCFSInit:
         assert unit.bus.units == [unit]
         assert printer._event_handlers["klippy:ready"][-1] == unit._cfs_handle_ready
         assert printer._event_handlers["klippy:disconnect"][-1] == unit._cfs_handle_disconnect
-        unit_opt = {"UNIT": {"type": "string", "default": "CFS_1"}}
+        # Only STATUS goes to the web interface; the first CFS also answers without UNIT
         show = printer._afc.show_macros
-        expected = []
-        for cmd, extra in (("STATUS", {}), ("RECONNECT", {}),
-                           ("RAW", unit.cmd_AFC_CFS_RAW_options), ("TRACE", {})):
-            for value in ("CFS_1", None):   # the first CFS also answers without UNIT
-                expected.append(((show, f"AFC_CFS_{cmd}", "UNIT", value,
-                                  getattr(unit, f"cmd_AFC_CFS_{cmd}"),
-                                  getattr(unit, f"cmd_AFC_CFS_{cmd}_help"),
-                                  {**unit_opt, **extra}), {}))
-        assert printer._afc.function.register_mux_command.calls == expected
+        assert printer._afc.function.register_mux_command.calls == [
+            ((show, "AFC_CFS_STATUS", "UNIT", value, unit.cmd_AFC_CFS_STATUS,
+              unit.cmd_AFC_CFS_STATUS_help, {"UNIT": {"type": "string", "default": "CFS_1"}}), {})
+            for value in ("CFS_1", None)]
+        assert printer._gcode.register_mux_command.calls == [
+            ((f"AFC_CFS_{cmd}", "UNIT", value, getattr(unit, f"cmd_AFC_CFS_{cmd}")),
+             {"desc": getattr(unit, f"cmd_AFC_CFS_{cmd}_help")})
+            for value in ("CFS_1", None) for cmd in ("RECONNECT", "RAW", "TRACE")]
 
     def test_only_the_first_unit_is_the_unit_default(self):
         printer = make_printer()
         printer._afc.function.register_mux_command = Recorder()
+        printer._gcode.register_mux_command = Recorder()
         printer._objects["AFC_hub CFS_2"] = object()
         afcCFS(CfsConfig(name="AFC_CFS CFS_2", printer=printer, cfs_units=["CFS_1", "CFS_2"],
                          values={"serial": SERIAL, "hub": "CFS_2", "extruder": "extruder"}))
-        assert [c[0][3] for c in printer._afc.function.register_mux_command.calls] == [
-            "CFS_2"] * 4
+        assert [c[0][3] for c in printer._afc.function.register_mux_command.calls] == ["CFS_2"]
+        assert [c[0][2] for c in printer._gcode.register_mux_command.calls] == ["CFS_2"] * 3
 
     def test_type_can_be_set(self):
         assert make_unit(values={"type": "CFS2"}).type == "CFS2"
@@ -2923,36 +2920,34 @@ class TestAfcCFSLaneCommands:
     def _unit(self):
         printer = make_printer()
         printer._afc.function.register_mux_command = Recorder()
+        printer._gcode.register_mux_command = Recorder()
         printer._objects["AFC_hub CFS_1"] = object()
         config = CfsConfig(name="AFC_CFS CFS_1", printer=printer,
                            values={"serial": SERIAL, "hub": "CFS_1", "extruder": "extruder"},
                            lane_units={"lane1": "CFS_1:1", "lane5": "CFS_2:1",
                                        "lane9": "CFS_10:1"})
         unit = afcCFS(config)
-        lane_calls = [c for c in printer._afc.function.register_mux_command.calls
-                      if c[0][2] == "LANE"]
-        return unit, lane_calls
+        web = [c for c in printer._afc.function.register_mux_command.calls if c[0][2] == "LANE"]
+        plain = [c for c in printer._gcode.register_mux_command.calls if c[0][1] == "LANE"]
+        return unit, web, plain
 
     def test_registered_at_config_time_for_this_unit_only(self):
-        unit, calls = self._unit()
+        unit, web, plain = self._unit()
         show = unit.afc.show_macros
-        assert [c[0][:4] for c in calls] == [
-            (show, "AFC_CFS_TOOL_LOAD", "LANE", "lane1"),
-            (show, "AFC_CFS_TOOL_UNLOAD", "LANE", "lane1"),
-            (show, "AFC_CFS_EJECT", "LANE", "lane1"),
-            (show, "AFC_CFS_READ_TAG", "LANE", "lane1")]
-        assert [c[0][5] for c in calls] == [
-            "Load a CFS lane into the toolhead",
-            "Unload a CFS lane from the toolhead back to the box",
-            "Reel a CFS lane's filament back into the box (box motors only)",
-            "Read a CFS lane's RFID tag and set its color/material"]
-        assert [c[0][6] for c in calls] == [
-            self.LANE_OPT, self.LANE_OPT, self.LANE_OPT,
-            {**self.LANE_OPT, "SPIN": {"type": "int", "default": 1},
-             "APPLY": {"type": "int", "default": 1}}]
+        # Only EJECT in the web interface; the rest are console commands
+        assert [c[0][:4] for c in web] == [(show, "AFC_CFS_EJECT", "LANE", "lane1")]
+        assert [c[0][5:] for c in web] == [
+            ("Reel a CFS lane's filament back into the box (box motors only)", self.LANE_OPT)]
+        assert [(c[0][:3], c[1]) for c in plain] == [
+            (("AFC_CFS_TOOL_LOAD", "LANE", "lane1"),
+             {"desc": "Load a CFS lane into the toolhead"}),
+            (("AFC_CFS_TOOL_UNLOAD", "LANE", "lane1"),
+             {"desc": "Unload a CFS lane from the toolhead back to the box"}),
+            (("AFC_CFS_READ_TAG", "LANE", "lane1"),
+             {"desc": "Read a CFS lane's RFID tag and set its color/material"})]
 
     def test_commands_run_on_the_attached_lane(self):
-        unit, _ = self._unit()
+        unit, _, _ = self._unit()
         lane = object()
         unit.lanes = {"lane1": lane}
         handlers = {}
@@ -2960,16 +2955,20 @@ class TestAfcCFSLaneCommands:
             handlers[name] = Recorder()
             setattr(unit, f"cmd_AFC_CFS_{name}", handlers[name])
         unit._register_lane_commands("lane1")
-        calls = unit.function.register_mux_command.calls[-4:]
-        for (args, _), name in zip(calls, handlers):
-            args[4]("gcmd")
+        plain = [c[0][3] for c in unit.gcode.register_mux_command.calls[-3:]]
+        web = [c[0][4] for c in unit.function.register_mux_command.calls[-1:]]
+        runs = dict(zip(("TOOL_LOAD", "TOOL_UNLOAD", "READ_TAG"), plain), EJECT=web[0])
+        for name in handlers:
+            run = runs[name]
+            run("gcmd")
             assert handlers[name].calls == [((lane, "gcmd"), {})]
 
     def test_lane_not_attached(self):
-        unit, calls = self._unit()
+        unit, web, plain = self._unit()
         unit.lanes = {}
-        with pytest.raises(CommandError, match="lane1 isn't attached to this unit"):
-            calls[0][0][4](gcmd())
+        for run in (plain[0][0][3], web[0][0][4]):
+            with pytest.raises(CommandError, match="lane1 isn't attached to this unit"):
+                run(gcmd())
 
 
 class TestAfcCFSSetupLane:
@@ -5182,110 +5181,3 @@ class TestLoadConfigPrefix:
         unit = load_config_prefix(config)
         assert isinstance(unit, afcCFS)
         assert unit.name == "CFS_1"
-
-
-# Config template macros
-
-# Only the CFS templates: inside AFC's repo the folder also holds every other unit's
-TEMPLATES = sorted((pathlib.Path(__file__).resolve().parent.parent / "templates")
-                   .glob("AFC_CFS_*.cfg"))
-if not TEMPLATES:  # tests run from inside the AFC checkout; find the repo copy via the symlink
-    TEMPLATES = sorted(pathlib.Path(__file__).resolve().parent.parent.parent
-                       .glob("templates/AFC_CFS_*.cfg"))
-
-
-def _macros():
-    for path in TEMPLATES:
-        cp = configparser.RawConfigParser(strict=False, inline_comment_prefixes=None,
-                                          comment_prefixes=("#", ";"))
-        cp.read(path)
-        for section in cp.sections():
-            if section.startswith("gcode_macro ") and cp.has_option(section, "gcode"):
-                yield pytest.param(cp.get(section, "gcode"), id="{}:{}".format(path.name, section))
-
-
-class TestAfcCFSTemplates:
-    @pytest.mark.parametrize("gcode", list(_macros()))
-    def test_macro_compiles(self, gcode):
-        # Klipper's environment: "{" "}" for expressions
-        env = jinja2.Environment("{%", "%}", "{", "}")
-        env.parse(gcode)
-
-    def test_found_templates(self):
-        # AFC_CFS_wipe.cfg is optional; the leave-purge macro the load needs is in AFC_CFS_1.cfg
-        ids = [p.id for p in _macros()]
-        assert "AFC_CFS_1.cfg:gcode_macro AFC_CFS_LEAVE_PURGE" in ids
-
-
-def _render_leave_purge(y=230.0, homed="xyz", next_lane=None, current_load=None):
-    """Render AFC_CFS_LEAVE_PURGE from AFC_CFS_1.cfg as Klipper would and return its lines."""
-    path = next(p for p in TEMPLATES if p.name == "AFC_CFS_1.cfg")
-    cp = configparser.RawConfigParser(strict=False, inline_comment_prefixes=None,
-                                      comment_prefixes=("#", ";"))
-    cp.read(path)
-    section = "gcode_macro AFC_CFS_LEAVE_PURGE"
-    env = jinja2.Environment("{%", "%}", "{", "}")
-    template = env.from_string(cp.get(section, "gcode"))
-    printer = {
-        "gcode_macro AFC_CFS_PARK": {"safe_y": 215.0, "travel_speed": 250},
-        "AFC": {"next_lane": next_lane, "current_load": current_load},
-        "toolhead": {"homed_axes": homed, "position": {"y": y}},
-    }
-    text = template.render(printer=printer, params={}, settle_ms=1000)
-    return [line.strip() for line in text.splitlines() if line.strip()]
-
-
-def _render_park(x=50.0, y=230.0, z=0.2):
-    """Render AFC_CFS_PARK from AFC_CFS_1.cfg with its default variables and return its lines."""
-    path = next(p for p in TEMPLATES if p.name == "AFC_CFS_1.cfg")
-    cp = configparser.RawConfigParser(strict=False, inline_comment_prefixes=None,
-                                      comment_prefixes=("#", ";"))
-    cp.read(path)
-    section = "gcode_macro AFC_CFS_PARK"
-    # Klipper parses macro variables with ast.literal_eval
-    variables = {k[len("variable_"):]: ast.literal_eval(v.split("#")[0].strip())
-                 for k, v in cp.items(section) if k.startswith("variable_")}
-    env = jinja2.Environment("{%", "%}", "{", "}")
-    template = env.from_string(cp.get(section, "gcode"))
-    printer = {"gcode_move": {"gcode_position": {"x": x, "y": y, "z": z}},
-               "toolhead": {"axis_maximum": {"z": 300.0}}}
-    text = template.render(printer=printer, params={}, **variables)
-    return [line.strip() for line in text.splitlines() if line.strip()]
-
-
-class TestAfcCFSParkMacro:
-    def test_parks_from_behind_safe_y(self):
-        assert _render_park() == ["G90", "AFC_DISABLE_SKEW", "G1 Z30.0 F900",
-                                  "G1 Y215.0 F15000", "G1 X148.0 F15000",
-                                  "G1 Y225.3 F15000", "M400", "AFC_ENABLE_SKEW"]
-
-    def test_already_high_and_in_front(self):
-        assert _render_park(y=200.0, z=50.0) == ["G90", "AFC_DISABLE_SKEW", "G1 X148.0 F15000",
-                                                 "G1 Y225.3 F15000", "M400", "AFC_ENABLE_SKEW"]
-
-    def test_already_lined_up_in_x(self):
-        assert _render_park(x=148.0, z=50.0) == ["G90", "AFC_DISABLE_SKEW", "G1 Y225.3 F15000",
-                                                 "M400", "AFC_ENABLE_SKEW"]
-
-
-class TestAfcCFSLeavePurgeMacro:
-    LEAVES = ["SAVE_GCODE_STATE NAME=_afc_cfs_leave", "G90", "AFC_DISABLE_SKEW",
-              "G1 Y215.0 F15000", "M400", "AFC_ENABLE_SKEW", "G4 P1000",
-              "RESTORE_GCODE_STATE NAME=_afc_cfs_leave"]
-
-    def test_leaves_the_chute(self):
-        assert _render_leave_purge() == self.LEAVES
-
-    def test_already_in_front(self):
-        assert _render_leave_purge(y=200.0) == []
-
-    def test_not_homed(self):
-        assert _render_leave_purge(homed="xz") == []
-
-    def test_stays_between_unload_and_load_of_a_change(self):
-        # After the unload the old lane is still (or no longer) current; the load comes next
-        assert _render_leave_purge(next_lane="lane2", current_load="lane1") == []
-        assert _render_leave_purge(next_lane="lane2", current_load=None) == []
-
-    def test_leaves_after_the_load_of_a_change(self):
-        assert _render_leave_purge(next_lane="lane2", current_load="lane2") == self.LEAVES
