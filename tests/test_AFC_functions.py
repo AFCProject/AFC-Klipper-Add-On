@@ -528,27 +528,31 @@ def _make_calibration_func() -> Tuple[afcFunction, MagicMock]:
 
 
 def _make_adc_button(name: str, resistance_sequence: Any=None,
-                     is_adc: bool=True) -> MagicMock:
+                     is_adc: bool=True, pin: str="PA0") -> MagicMock:
     """
     Build a lightweight stand-in for an ADC-capable AFC_button, as
     _get_adc_buttons()/button calibration see it: name, fullname,
-    is_adc_button, analog_min/max, a get_resistance() that feeds successive
-    calls from `resistance_sequence`, is_adc_saturated() defaulting to False
-    (override per-test for saturation-fallback cases), and
-    ratio_at_resistance() defaulting to the real formula with a 4700 ohm
-    pullup (override per-test for the near-saturation release fallback).
+    is_adc_button, analog_min/max, pin (shared default so buttons compare
+    as being on the same ADC input unless overridden), a get_resistance()
+    that feeds successive calls from `resistance_sequence`,
+    is_adc_saturated() defaulting to False (override per-test for
+    saturation-fallback cases), and ratio_at_resistance() defaulting to the
+    real formula with a 4700 ohm pullup (override per-test for the
+    near-saturation release fallback).
 
     :param name: button/lane name
     :param resistance_sequence: iterable of resistance values returned by
         successive get_resistance() calls; defaults to an unlimited
         sequence of 0.0 when omitted
     :param is_adc: value for is_adc_button
+    :param pin: value for pin
     :return MagicMock: the fake button
     """
     button = MagicMock()
     button.name = name
     button.fullname = f"AFC_button {name}"
     button.is_adc_button = is_adc
+    button.pin = pin
     button.analog_min = 0.0
     button.analog_max = 0.0
     button.is_adc_saturated.return_value = False
@@ -2000,6 +2004,32 @@ class TestSaturatedRangeOverlapsOtherButton:
         func, _ = _make_calibration_func()
         button = _make_adc_button("lane7")
         other = _make_adc_button("lane8")
+        other.analog_min = 60000.0
+        other.analog_max = 70000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is other
+
+    def test_overlapping_other_button_on_a_different_pin_returns_none(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7", pin="PA0")
+        other = _make_adc_button("lane8", pin="PA1")
+        other.analog_min = 60000.0
+        other.analog_max = 70000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is None
+
+    def test_pin_comparison_strips_whitespace(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7", pin=" PA0")
+        other = _make_adc_button("lane8", pin="PA0 ")
         other.analog_min = 60000.0
         other.analog_max = 70000.0
         func.printer._objects["AFC_button lane7"] = button

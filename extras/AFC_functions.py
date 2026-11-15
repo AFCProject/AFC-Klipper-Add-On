@@ -1945,8 +1945,10 @@ class afcFunction:
     def _saturated_range_overlaps_other_button(self, button: AFCButton, min_value: float,
                                                max_value: float) -> Optional[AFCButton]:
         """
-        Check whether `[min_value, max_value]` overlaps any other configured
-        ADC button's current analog_range.
+        Check whether `[min_value, max_value]` overlaps another configured
+        ADC button's current analog_range on the same ADC pin. Buttons on
+        different pins are registered separately with Klipper and can
+        never actually conflict, no matter how their ranges compare.
 
         :param button: button the range is being derived for, excluded from the check
         :param min_value: candidate analog_range minimum, in ohms
@@ -1954,8 +1956,10 @@ class afcFunction:
         :return Optional[AFCButton]: the first other button whose range overlaps,
             or `None` when there's no conflict
         """
+        pin = button.pin.strip()
         for other in self._get_adc_buttons():
-            if other is button:
+            if (other is button
+                or other.pin.strip() != pin):
                 continue
             if (min_value <= other.analog_max
                 and max_value >= other.analog_min):
