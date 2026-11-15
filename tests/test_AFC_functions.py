@@ -17,7 +17,13 @@ from typing import Any, Dict, Tuple
 from unittest.mock import ANY, MagicMock, patch, call
 import pytest
 
-from extras.AFC_functions import afcFunction, afcDeltaTime, round_floats, get_gcode_absolute_extrude, set_gcode_absolute_extrude
+from extras.AFC_functions import (
+    afcFunction, afcDeltaTime, round_floats, get_gcode_absolute_extrude,
+    set_gcode_absolute_extrude, BUTTON_CALIBRATION_POLL_TIME,
+    BUTTON_CALIBRATION_PRESS_DELTA, BUTTON_CALIBRATION_RANGE,
+    BUTTON_CALIBRATION_SAMPLE_COUNT, BUTTON_CALIBRATION_SATURATION_MIN_RATIO,
+    BUTTON_CALIBRATION_SATURATION_MAX_RATIO,
+)
 from extras.AFC_respond import AFCprompt
 
 from tests.test_AFC import _make_afc
@@ -519,6 +525,43 @@ def _make_calibration_func() -> Tuple[afcFunction, MagicMock]:
     afc.lanes["lane1"] = loaded_lane
     extruder.lanes = {"lane1": loaded_lane}
     return func, extruder
+
+
+def _make_adc_button(name: str, resistance_sequence: Any=None,
+                     is_adc: bool=True, pin: str="PA0") -> MagicMock:
+    """
+    Build a lightweight stand-in for an ADC-capable AFC_button, as
+    _get_adc_buttons()/button calibration see it: name, fullname,
+    is_adc_button, analog_min/max, pin (shared default so buttons compare
+    as being on the same ADC input unless overridden), a get_resistance()
+    that feeds successive calls from `resistance_sequence`,
+    is_adc_saturated() defaulting to False (override per-test for
+    saturation-fallback cases), and ratio_at_resistance() defaulting to the
+    real formula with a 4700 ohm pullup (override per-test for the
+    near-saturation release fallback).
+
+    :param name: button/lane name
+    :param resistance_sequence: iterable of resistance values returned by
+        successive get_resistance() calls; defaults to an unlimited
+        sequence of 0.0 when omitted
+    :param is_adc: value for is_adc_button
+    :param pin: value for pin
+    :return MagicMock: the fake button
+    """
+    button = MagicMock()
+    button.name = name
+    button.fullname = f"AFC_button {name}"
+    button.is_adc_button = is_adc
+    button.pin = pin
+    button.analog_min = 0.0
+    button.analog_max = 0.0
+    button.is_adc_saturated.return_value = False
+    button.ratio_at_resistance.side_effect = lambda resistance: resistance / (resistance + 4700.0)
+    if resistance_sequence is not None:
+        button.get_resistance.side_effect = list(resistance_sequence)
+    else:
+        button.get_resistance.return_value = 0.0
+    return button
 
 
 class TestAfcFunctionInit:
@@ -1134,6 +1177,1153 @@ class TestCmdAfcCalibration:
                    for message in raw_messages)
         assert any("second|UNIT_CALIBRATION UNIT=second|secondary" in message
                    for message in raw_messages)
+
+    def test_button_calibration_entry_hidden_without_adc_buttons(self) -> None:
+        func, _ = _make_calibration_func()
+        func.afc.units = {}
+
+        func.cmd_AFC_CALIBRATION(_make_gcmd())
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert not any("Button Calibration|AFC_BUTTON_CALIBRATION" in message
+                       for message in raw_messages)
+
+    def test_button_calibration_entry_shown_with_adc_buttons(self) -> None:
+        func, _ = _make_calibration_func()
+        func.afc.units = {}
+        func.printer._objects["AFC_button lane7"] = _make_adc_button("lane7")
+
+        func.cmd_AFC_CALIBRATION(_make_gcmd())
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("Button Calibration|AFC_BUTTON_CALIBRATION|secondary" in message
+                   for message in raw_messages)
+
+    def test_toolhead_and_button_calibration_continue_color_cascade_past_units(self) -> None:
+        """index-based styling used to desync from the displayed buttons
+        whenever a unit got filtered out (no lanes / standalone-only),
+        since enumerate() still counted the skipped unit toward parity.
+        Using a visible-only counter keeps Toolhead/Button Calibration
+        alternating correctly regardless of how many units were skipped."""
+        func, _ = _make_calibration_func()
+        skipped_unit = MagicMock()
+        skipped_unit.lanes = {}
+        visible_lane = MagicMock()
+        visible_lane.extruder_obj.is_standalone.return_value = False
+        visible_unit = MagicMock()
+        visible_unit.lanes = {"lane1": visible_lane}
+        # One skipped unit (odd count) ahead of one visible unit: the visible
+        # unit lands on "primary" (visible_count == 0), so Toolhead
+        # Calibration must continue the cascade as "secondary".
+        func.afc.units = {"skipped": skipped_unit, "visible": visible_unit}
+        func.printer._objects["AFC_button lane7"] = _make_adc_button("lane7")
+
+        func.cmd_AFC_CALIBRATION(_make_gcmd())
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("visible|UNIT_CALIBRATION UNIT=visible|primary" in message
+                   for message in raw_messages)
+        assert any("Toolhead Calibration|AFC_TOOLHEAD_CALIBRATION|secondary" in message
+                   for message in raw_messages)
+        assert any("Button Calibration|AFC_BUTTON_CALIBRATION|primary" in message
+                   for message in raw_messages)
+
+
+class TestGetAdcButtons:
+    def test_returns_only_adc_buttons(self) -> None:
+        func, _ = _make_calibration_func()
+        adc_button = _make_adc_button("lane7", is_adc=True)
+        digital_button = _make_adc_button("lane8", is_adc=False)
+        func.printer._objects["AFC_button lane7"] = adc_button
+        func.printer._objects["AFC_button lane8"] = digital_button
+
+        assert func._get_adc_buttons() == [adc_button]
+
+    def test_returns_empty_when_no_buttons_registered(self) -> None:
+        func, _ = _make_calibration_func()
+        assert func._get_adc_buttons() == []
+
+
+class TestCmdAfcButtonCalibration:
+    def test_creates_button_per_adc_button_with_alternating_style(self) -> None:
+        func, _ = _make_calibration_func()
+        func.printer._objects["AFC_button lane7"] = _make_adc_button("lane7")
+        func.printer._objects["AFC_button lane8"] = _make_adc_button("lane8")
+
+        func.cmd_AFC_BUTTON_CALIBRATION(_make_gcmd())
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("lane7|BUTTON_CALIBRATION BUTTON=lane7|primary" in message
+                   for message in raw_messages)
+        assert any("lane8|BUTTON_CALIBRATION BUTTON=lane8|secondary" in message
+                   for message in raw_messages)
+
+    def test_includes_all_buttons_footer(self) -> None:
+        func, _ = _make_calibration_func()
+        func.printer._objects["AFC_button lane7"] = _make_adc_button("lane7")
+
+        func.cmd_AFC_BUTTON_CALIBRATION(_make_gcmd())
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("All Buttons|BUTTON_CALIBRATION BUTTON=all" in message
+                   for message in raw_messages)
+
+    def test_no_adc_buttons_shows_prompt_with_no_button_entries(self) -> None:
+        func, _ = _make_calibration_func()
+
+        func.cmd_AFC_BUTTON_CALIBRATION(_make_gcmd())
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert not any("BUTTON_CALIBRATION BUTTON=lane" in message for message in raw_messages)
+        assert any("select a button to" in message for message in raw_messages)
+
+
+class TestResetButtonCalibrationValues:
+    def test_resets_all_session_state(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_1"
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_samples = [1.0, 2.0]
+        func.button_calibration_first_value = 500.0
+        func.button_calibration_gcmd = _make_gcmd()
+        func.button_calibration_last_log_time = 5.0
+        func.button_calibration_await_button = button
+        func.button_calibration_await_baseline = 1000.0
+        func.button_calibration_restart_pending = True
+
+        func._reset_button_calibration_values()
+
+        assert func.button_calibration_active is False
+        assert func.button_calibration_queue == []
+        assert func.button_calibration_stage == ""
+        assert func.button_calibration_baseline is None
+        assert func.button_calibration_samples == []
+        assert func.button_calibration_first_value is None
+        assert func.button_calibration_gcmd is None
+        assert func.button_calibration_last_log_time == 0.0
+        assert func.button_calibration_await_button is None
+        assert func.button_calibration_await_baseline is None
+        assert func.button_calibration_restart_pending is False
+
+    def test_stops_poll_timer(self) -> None:
+        func, _ = _make_calibration_func()
+        func.button_calibration_timer = MagicMock()
+        func.afc.reactor.update_timer = MagicMock()
+
+        func._reset_button_calibration_values()
+
+        func.afc.reactor.update_timer.assert_called_once_with(
+            func.button_calibration_timer, func.afc.reactor.NEVER)
+
+
+class TestShowButtonCalibrationPrompt:
+    def test_shows_prompt_text_with_cancel_footer(self) -> None:
+        func, _ = _make_calibration_func()
+        func.button_calibration_gcmd = _make_gcmd()
+
+        func._show_button_calibration_prompt("Press and hold the lane7 button now.")
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("Press and hold the lane7 button now." in message
+                   for message in raw_messages)
+        assert any("Cancel|BUTTON_CALIBRATION CANCEL=1|warning" in message
+                   for message in raw_messages)
+
+
+class TestCmdButtonCalibration:
+    def test_cancel_resets_state_and_shows_cancelled_prompt(self) -> None:
+        func, _ = _make_calibration_func()
+        func.button_calibration_active = True
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(CANCEL=1))
+
+        assert func.button_calibration_active is False
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("Button calibration cancelled." in message for message in raw_messages)
+
+    def test_already_active_shows_error_without_touching_queue(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.printer._objects["AFC_button lane7"] = button
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="lane7"))
+
+        func.afc.error.AFC_error.assert_called_once()
+        assert func.button_calibration_queue == [button]
+        assert func.button_calibration_active is True
+
+    def test_already_active_does_not_close_the_active_session_s_prompt(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.printer._objects["AFC_button lane7"] = button
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="lane7"))
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert not any("action:prompt_end" in message for message in raw_messages)
+
+    def test_invalid_button_name_shows_error(self) -> None:
+        func, _ = _make_calibration_func()
+        func.printer._objects["AFC_button lane7"] = _make_adc_button("lane7")
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="not_a_button"))
+
+        func.afc.error.AFC_error.assert_called_once()
+        assert "not_a_button" in func.afc.error.AFC_error.call_args[0][0]
+        assert func.button_calibration_active is False
+
+    def test_no_adc_buttons_configured_shows_error(self) -> None:
+        func, _ = _make_calibration_func()
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="all"))
+
+        func.afc.error.AFC_error.assert_called_once()
+        assert func.button_calibration_active is False
+
+    def test_single_button_starts_session(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.printer._objects["AFC_button lane7"] = button
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="lane7"))
+
+        assert func.button_calibration_active is True
+        assert func.button_calibration_queue == [button]
+        assert func.button_calibration_stage == "press_1"
+        assert func.button_calibration_baseline is None
+        assert func.button_calibration_restart_pending is False
+
+    def test_all_buttons_starts_session_with_full_queue(self) -> None:
+        func, _ = _make_calibration_func()
+        b7 = _make_adc_button("lane7")
+        b8 = _make_adc_button("lane8")
+        func.printer._objects["AFC_button lane7"] = b7
+        func.printer._objects["AFC_button lane8"] = b8
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="all"))
+
+        assert func.button_calibration_queue == [b7, b8]
+
+    def test_starts_poll_timer(self) -> None:
+        func, _ = _make_calibration_func()
+        func.printer._objects["AFC_button lane7"] = _make_adc_button("lane7")
+        func.button_calibration_timer = MagicMock()
+        func.afc.reactor.update_timer = MagicMock()
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="lane7"))
+
+        func.afc.reactor.update_timer.assert_called_once_with(
+            func.button_calibration_timer, func.afc.reactor.NOW)
+
+    def test_shows_press_prompt_for_first_button(self) -> None:
+        func, _ = _make_calibration_func()
+        func.printer._objects["AFC_button lane7"] = _make_adc_button("lane7")
+
+        func.cmd_BUTTON_CALIBRATION(_make_gcmd(BUTTON="lane7"))
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("Press and hold the lane7 button now." in message
+                   for message in raw_messages)
+
+
+class TestCmdButtonCalibrationRestart:
+    def test_refuses_when_not_pending(self) -> None:
+        func, _ = _make_calibration_func()
+        func.button_calibration_restart_pending = False
+        func.afc.gcode.respond_raw = MagicMock()
+
+        func.cmd_BUTTON_CALIBRATION_RESTART(_make_gcmd())
+
+        func.afc.error.AFC_error.assert_called_once()
+        func.afc.gcode.respond_raw.assert_not_called()
+        func.afc.gcode.run_script_from_command.assert_not_called()
+
+    def test_restarts_and_closes_prompt_when_pending(self) -> None:
+        func, _ = _make_calibration_func()
+        func.button_calibration_restart_pending = True
+        func.afc.gcode.respond_raw = MagicMock()
+
+        func.cmd_BUTTON_CALIBRATION_RESTART(_make_gcmd())
+
+        func.afc.gcode.respond_raw.assert_called_once_with("// action:prompt_end")
+        func.afc.gcode.run_script_from_command.assert_called_once_with("RESTART")
+        assert func.button_calibration_restart_pending is False
+
+
+class TestCollectButtonSample:
+    def test_returns_none_while_collecting(self) -> None:
+        func, _ = _make_calibration_func()
+        for _ in range(BUTTON_CALIBRATION_SAMPLE_COUNT - 1):
+            assert func._collect_button_sample(1000.0) is None
+        assert len(func.button_calibration_samples) == BUTTON_CALIBRATION_SAMPLE_COUNT - 1
+
+    def test_returns_average_and_clears_buffer_once_full(self) -> None:
+        func, _ = _make_calibration_func()
+        values = [990.0, 995.0, 1000.0, 1005.0, 1010.0][:BUTTON_CALIBRATION_SAMPLE_COUNT]
+        result = None
+        for value in values:
+            result = func._collect_button_sample(value)
+        assert result == pytest.approx(sum(values) / len(values))
+        assert func.button_calibration_samples == []
+
+
+class TestIsReleased:
+    def test_within_press_delta_returns_true_without_checking_ratio(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+
+        result = func._is_released(button, 1000.0, 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA)
+
+        assert result is True
+        button.ratio_at_resistance.assert_not_called()
+
+    def test_outside_press_delta_but_within_ratio_tolerance_returns_true(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.ratio_at_resistance.side_effect = {
+            234995300.0: 0.99998,
+            469995300.0: 0.99999,
+        }.get
+
+        result = func._is_released(button, 234995300.0, 469995300.0)
+
+        assert result is True
+
+    def test_outside_press_delta_and_outside_ratio_tolerance_returns_false(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.ratio_at_resistance.side_effect = {
+            234995300.0: 0.5,
+            469995300.0: 0.99999,
+        }.get
+
+        result = func._is_released(button, 234995300.0, 469995300.0)
+
+        assert result is False
+
+
+class TestStartNextButtonCalibration:
+    def test_sets_stage_and_clears_baseline_and_samples(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_baseline = 1234.0
+        func.button_calibration_samples = [1.0, 2.0]
+
+        func._start_next_button_calibration()
+
+        assert func.button_calibration_stage == "press_1"
+        assert func.button_calibration_baseline is None
+        assert func.button_calibration_samples == []
+
+    def test_shows_press_prompt_for_head_of_queue(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane8")
+        func.button_calibration_queue = [button]
+        func.button_calibration_gcmd = _make_gcmd()
+
+        func._start_next_button_calibration()
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("Press and hold the lane8 button now." in message
+                   for message in raw_messages)
+
+
+class TestPollAwaitRelease:
+    def test_button_none_baseline_set_starts_next(self) -> None:
+        func, _ = _make_calibration_func()
+        next_button = _make_adc_button("lane8")
+        func.button_calibration_active = True
+        func.button_calibration_queue = [next_button]
+        func.button_calibration_await_button = None
+        func.button_calibration_await_baseline = 1000.0
+
+        func._poll_await_release(100.0)
+
+        assert func.button_calibration_stage == "press_1"
+
+    def test_button_set_baseline_none_starts_next(self) -> None:
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7")
+        next_button = _make_adc_button("lane8")
+        func.button_calibration_active = True
+        func.button_calibration_queue = [next_button]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = None
+
+        func._poll_await_release(100.0)
+
+        assert func.button_calibration_stage == "press_1"
+
+    def test_resistance_none_reschedules_without_progress(self) -> None:
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7", resistance_sequence=[None])
+        func.button_calibration_active = True
+        func.button_calibration_queue = [_make_adc_button("lane8")]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = 1000.0
+
+        result = func._poll_await_release(100.0)
+
+        assert result == pytest.approx(100.0 + BUTTON_CALIBRATION_POLL_TIME)
+        assert func.button_calibration_await_button is prev_button
+
+    def test_within_delta_but_not_enough_samples_stays_in_await_release(self) -> None:
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7")
+        prev_button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [_make_adc_button("lane8")]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = 1000.0
+
+        result = func._poll_await_release(100.0)
+
+        assert func.button_calibration_await_button is prev_button
+        assert func.button_calibration_samples == [1000.0]
+        assert result == pytest.approx(100.0 + BUTTON_CALIBRATION_POLL_TIME)
+
+    def test_within_delta_enough_samples_starts_next_button(self) -> None:
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7")
+        prev_button.get_resistance.return_value = 1000.0
+        next_button = _make_adc_button("lane8")
+        func.button_calibration_active = True
+        func.button_calibration_queue = [next_button]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = 1000.0
+
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            func._poll_await_release(100.0 + t)
+
+        assert func.button_calibration_await_button is None
+        assert func.button_calibration_await_baseline is None
+        assert func.button_calibration_stage == "press_1"
+
+    def test_outside_delta_clears_samples(self) -> None:
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7")
+        prev_button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [_make_adc_button("lane8")]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = 1000.0
+        func._poll_await_release(100.0)  # one partial sample toward release
+        assert func.button_calibration_samples == [1000.0]
+
+        prev_button.get_resistance.return_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+        func._poll_await_release(101.0)
+
+        assert func.button_calibration_samples == []
+        assert func.button_calibration_await_button is prev_button
+
+    def test_release_detected_via_ratio_fallback_near_saturation(self) -> None:
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7")
+        prev_button.ratio_at_resistance.side_effect = {
+            234995300.0: 0.99998,
+            469995300.0: 0.99999,
+        }.get
+        prev_button.get_resistance.return_value = 234995300.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [_make_adc_button("lane8")]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = 469995300.0
+
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            func._poll_await_release(100.0 + t)
+
+        assert func.button_calibration_await_button is None
+        assert func.button_calibration_stage == "press_1"
+
+    def test_log_throttled_on_rapid_successive_polls(self) -> None:
+        """A second poll within BUTTON_CALIBRATION_LOG_INTERVAL of the first
+        must not log again, proving the throttle actually gates logging
+        rather than just being a no-op time check."""
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7")
+        prev_button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [_make_adc_button("lane8")]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = 1000.0
+
+        func._poll_await_release(100.0)
+        debug_count_after_first = len(
+            [m for level, m in func.logger.messages if level == "debug"])
+        func._poll_await_release(100.1)
+        debug_count_after_second = len(
+            [m for level, m in func.logger.messages if level == "debug"])
+
+        assert debug_count_after_first == 1
+        assert debug_count_after_second == 1
+
+    def test_returns_never_when_inactive(self) -> None:
+        func, _ = _make_calibration_func()
+        prev_button = _make_adc_button("lane7")
+        prev_button.get_resistance.return_value = 1000.0
+        func.button_calibration_queue = [_make_adc_button("lane8")]
+        func.button_calibration_await_button = prev_button
+        func.button_calibration_await_baseline = 1000.0
+        func.button_calibration_active = False
+
+        assert func._poll_await_release(100.0) == func.afc.reactor.NEVER
+
+
+class TestButtonCalibrationPoll:
+    def test_inactive_returns_never(self) -> None:
+        func, _ = _make_calibration_func()
+        func.button_calibration_active = False
+        func.button_calibration_queue = [_make_adc_button("lane7")]
+
+        assert func._button_calibration_poll(100.0) == func.afc.reactor.NEVER
+
+    def test_active_but_empty_queue_returns_never(self) -> None:
+        func, _ = _make_calibration_func()
+        func.button_calibration_active = True
+        func.button_calibration_queue = []
+
+        assert func._button_calibration_poll(100.0) == func.afc.reactor.NEVER
+
+    def test_await_release_stage_delegates_to_poll_await_release(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "await_release"
+        with patch.object(func, "_poll_await_release", return_value=123.0) as mock_poll:
+            result = func._button_calibration_poll(100.0)
+        mock_poll.assert_called_once_with(100.0)
+        assert result == 123.0
+
+    def test_resistance_none_reschedules(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7", resistance_sequence=[None])
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_1"
+        func.button_calibration_baseline = 1000.0
+
+        result = func._button_calibration_poll(100.0)
+
+        assert result == pytest.approx(100.0 + BUTTON_CALIBRATION_POLL_TIME)
+
+    def test_log_throttled_on_rapid_successive_polls(self) -> None:
+        """A second poll within BUTTON_CALIBRATION_LOG_INTERVAL of the first
+        must not log again, proving the throttle actually gates logging
+        rather than just being a no-op time check."""
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_1"
+        func.button_calibration_baseline = 1000.0
+
+        func._button_calibration_poll(100.0)
+        debug_count_after_first = len(
+            [m for level, m in func.logger.messages if level == "debug"])
+        func._button_calibration_poll(100.1)
+        debug_count_after_second = len(
+            [m for level, m in func.logger.messages if level == "debug"])
+
+        assert debug_count_after_first == 1
+        assert debug_count_after_second == 1
+
+    def test_baseline_none_collects_partial_sample_without_evaluating_delta(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_1"
+        func.button_calibration_baseline = None
+
+        func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_baseline is None
+        assert func.button_calibration_samples == [1000.0]
+
+    def test_baseline_established_and_logged_once_averaged(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_1"
+        func.button_calibration_baseline = None
+
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            func._button_calibration_poll(100.0 + t)
+
+        assert func.button_calibration_baseline == pytest.approx(1000.0)
+        info_messages = [m for level, m in func.logger.messages if level == "info"]
+        assert any("baseline resistance for lane7 is 1000.0" in m for m in info_messages)
+
+    def _set_press1(self, func: afcFunction, button: Any, baseline: float=1000.0) -> None:
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_1"
+        func.button_calibration_baseline = baseline
+
+    # -- press_1 stage --
+
+    def test_press_1_within_delta_clears_samples(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        self._set_press1(func, button)
+        func.button_calibration_samples = [999.0]
+
+        func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_samples == []
+        assert func.button_calibration_stage == "press_1"
+
+    def test_press_1_outside_delta_not_enough_samples_stays_in_press_1(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+        self._set_press1(func, button)
+
+        func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_stage == "press_1"
+        assert len(func.button_calibration_samples) == 1
+
+    def test_press_1_outside_delta_enough_samples_transitions_to_release(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+        self._set_press1(func, button)
+
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            func._button_calibration_poll(100.0 + t)
+
+        assert func.button_calibration_stage == "release"
+        assert func.button_calibration_first_value == pytest.approx(
+            1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1)
+        raw_messages = [m for level, m in func.logger.messages if level == "raw"]
+        assert any("Release the lane7 button, then press it again." in m for m in raw_messages)
+
+    # -- release stage --
+
+    def test_release_outside_delta_clears_samples(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "release"
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_samples = [1.0]
+
+        func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_samples == []
+        assert func.button_calibration_stage == "release"
+
+    def test_release_within_delta_not_enough_samples_stays_in_release(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "release"
+        func.button_calibration_baseline = 1000.0
+
+        func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_stage == "release"
+        assert len(func.button_calibration_samples) == 1
+
+    def test_release_within_delta_enough_samples_transitions_to_press_2(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "release"
+        func.button_calibration_baseline = 1000.0
+
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            func._button_calibration_poll(100.0 + t)
+
+        assert func.button_calibration_stage == "press_2"
+
+    def test_release_detected_via_ratio_fallback_near_saturation(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.ratio_at_resistance.side_effect = {
+            234995300.0: 0.99998,
+            469995300.0: 0.99999,
+        }.get
+        button.get_resistance.return_value = 234995300.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "release"
+        func.button_calibration_baseline = 469995300.0
+
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            func._button_calibration_poll(100.0 + t)
+
+        assert func.button_calibration_stage == "press_2"
+
+    # -- press_2 stage --
+
+    def test_press_2_within_delta_clears_samples(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_2"
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_samples = [999.0]
+
+        func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_samples == []
+        assert func.button_calibration_stage == "press_2"
+
+    def test_press_2_outside_delta_not_enough_samples_stays_in_press_2(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_2"
+        func.button_calibration_baseline = 1000.0
+
+        func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_stage == "press_2"
+        assert len(func.button_calibration_samples) == 1
+
+    def test_press_2_outside_delta_enough_samples_finishes_measurement(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_2"
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_first_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            func._button_calibration_poll(100.0 + t)
+
+        func.ConfigRewrite.assert_called_once()
+        assert button not in func.button_calibration_queue
+
+    def test_returns_never_when_queue_emptied_during_this_tick(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+        func.button_calibration_active = True
+        func.button_calibration_queue = [button]
+        func.button_calibration_stage = "press_2"
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_first_value = 1000.0 + BUTTON_CALIBRATION_PRESS_DELTA + 1
+
+        result = 0.0
+        for t in range(BUTTON_CALIBRATION_SAMPLE_COUNT):
+            result = func._button_calibration_poll(100.0 + t)
+
+        assert result == func.afc.reactor.NEVER
+
+    def test_returns_next_poll_time_when_still_active(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        self._set_press1(func, button)
+
+        result = func._button_calibration_poll(100.0)
+
+        assert result == pytest.approx(100.0 + BUTTON_CALIBRATION_POLL_TIME)
+
+    def test_unrecognized_stage_leaves_state_untouched(self) -> None:
+        """A baseline already set but a stage outside press_1/release/press_2
+        (shouldn't happen in practice) falls through the whole if/elif chain
+        without matching any branch, rather than crashing or guessing."""
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.get_resistance.return_value = 1000.0
+        self._set_press1(func, button)
+        func.button_calibration_stage = "unexpected_stage"
+
+        result = func._button_calibration_poll(100.0)
+
+        assert func.button_calibration_stage == "unexpected_stage"
+        assert func.button_calibration_samples == []
+        assert result == pytest.approx(100.0 + BUTTON_CALIBRATION_POLL_TIME)
+
+
+class TestSaturatedRangeOverlapsOtherButton:
+    def test_no_other_buttons_returns_none(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.printer._objects["AFC_button lane7"] = button
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is None
+
+    def test_excludes_the_button_itself(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        button.analog_min = 50000.0
+        button.analog_max = 100000.0
+        func.printer._objects["AFC_button lane7"] = button
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is None
+
+    def test_non_overlapping_other_button_returns_none(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        other = _make_adc_button("lane8")
+        other.analog_min = 0.0
+        other.analog_max = 1000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is None
+
+    def test_overlapping_other_button_is_returned(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        other = _make_adc_button("lane8")
+        other.analog_min = 60000.0
+        other.analog_max = 70000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is other
+
+    def test_overlapping_other_button_on_a_different_pin_returns_none(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7", pin="PA0")
+        other = _make_adc_button("lane8", pin="PA1")
+        other.analog_min = 60000.0
+        other.analog_max = 70000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is None
+
+    def test_pin_comparison_strips_whitespace(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7", pin=" PA0")
+        other = _make_adc_button("lane8", pin="PA0 ")
+        other.analog_min = 60000.0
+        other.analog_max = 70000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+
+        result = func._saturated_range_overlaps_other_button(button, 50000.0, 100000.0)
+
+        assert result is other
+
+
+class TestAdvanceButtonCalibrationQueue:
+    def test_more_buttons_in_queue_enters_await_release(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        next_button = _make_adc_button("lane8")
+        func.button_calibration_queue = [button, next_button]
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_gcmd = _make_gcmd()
+        func.button_calibration_active = True
+
+        func._advance_button_calibration_queue(button)
+
+        assert func.button_calibration_queue == [next_button]
+        assert func.button_calibration_stage == "await_release"
+        assert func.button_calibration_await_button is button
+        assert func.button_calibration_await_baseline == 1000.0
+        assert func.button_calibration_baseline is None
+        raw_messages = [m for level, m in func.logger.messages if level == "raw"]
+        assert any("Release the lane7 button." in m for m in raw_messages)
+
+    def test_last_button_finishes_session_with_restart_pending(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_gcmd = _make_gcmd()
+
+        func._advance_button_calibration_queue(button)
+
+        assert func.button_calibration_queue == []
+        assert func.button_calibration_active is False
+        assert func.button_calibration_stage == ""
+        assert func.button_calibration_baseline is None
+        assert func.button_calibration_restart_pending is True
+        raw_messages = [m for level, m in func.logger.messages if level == "raw"]
+        assert any("Button calibration complete" in m for m in raw_messages)
+        assert any("Restart Klipper|BUTTON_CALIBRATION_RESTART|primary" in m
+                   for m in raw_messages)
+
+
+class TestFinishButtonMeasurement:
+    def test_averages_first_and_second_values_and_saves_config(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 900.0
+        func.button_calibration_baseline = 1000.0
+
+        func._finish_button_measurement(button, 1100.0)
+
+        average = (900.0 + 1100.0) / 2.0
+        expected_min = average - BUTTON_CALIBRATION_RANGE
+        expected_max = average + BUTTON_CALIBRATION_RANGE
+        func.ConfigRewrite.assert_called_once()
+        call_args = func.ConfigRewrite.call_args[0]
+        assert call_args[0] == "AFC_button lane7"
+        assert call_args[1] == "analog_range"
+        assert call_args[2] == f"{expected_min:.1f},{expected_max:.1f}"
+
+    def test_uses_second_value_when_first_value_missing(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = None
+        func.button_calibration_baseline = 1000.0
+
+        func._finish_button_measurement(button, 1100.0)
+
+        expected_min = 1100.0 - BUTTON_CALIBRATION_RANGE
+        expected_max = 1100.0 + BUTTON_CALIBRATION_RANGE
+        call_args = func.ConfigRewrite.call_args[0]
+        assert call_args[2] == f"{expected_min:.1f},{expected_max:.1f}"
+
+    def test_sets_button_analog_min_max(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 900.0
+        func.button_calibration_baseline = 1000.0
+
+        func._finish_button_measurement(button, 1100.0)
+
+        average = (900.0 + 1100.0) / 2.0
+        assert button.analog_min == pytest.approx(average - BUTTON_CALIBRATION_RANGE)
+        assert button.analog_max == pytest.approx(average + BUTTON_CALIBRATION_RANGE)
+
+    def test_debug_logs_unknown_baseline_when_none(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 900.0
+        func.button_calibration_baseline = None
+
+        func._finish_button_measurement(button, 1100.0)
+
+        debug_messages = [m for level, m in func.logger.messages if level == "debug"]
+        assert any("baseline=unknown" in m for m in debug_messages)
+
+    def test_debug_logs_baseline_value_when_known(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 900.0
+        func.button_calibration_baseline = 1000.0
+
+        func._finish_button_measurement(button, 1100.0)
+
+        debug_messages = [m for level, m in func.logger.messages if level == "debug"]
+        assert any("baseline=1000.0" in m for m in debug_messages)
+
+    def test_pops_queue_and_clears_first_value(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 900.0
+        func.button_calibration_baseline = 1000.0
+
+        func._finish_button_measurement(button, 1100.0)
+
+        assert func.button_calibration_queue == []
+        assert func.button_calibration_first_value is None
+
+    def test_more_buttons_in_queue_enters_await_release(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        next_button = _make_adc_button("lane8")
+        func.button_calibration_queue = [button, next_button]
+        func.button_calibration_first_value = 900.0
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_gcmd = _make_gcmd()
+        func.button_calibration_active = True
+
+        func._finish_button_measurement(button, 1100.0)
+
+        assert func.button_calibration_stage == "await_release"
+        assert func.button_calibration_await_button is button
+        assert func.button_calibration_await_baseline == 1000.0
+        assert func.button_calibration_baseline is None
+        assert func.button_calibration_active is True  # session still running
+        raw_messages = [m for level, m in func.logger.messages if level == "raw"]
+        assert any("Release the lane7 button." in m for m in raw_messages)
+
+    def test_last_button_finishes_session_with_restart_pending(self) -> None:
+        func, _ = _make_calibration_func()
+        button = _make_adc_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 900.0
+        func.button_calibration_baseline = 1000.0
+        func.button_calibration_active = True
+        func.button_calibration_gcmd = _make_gcmd()
+
+        func._finish_button_measurement(button, 1100.0)
+
+        assert func.button_calibration_active is False
+        assert func.button_calibration_stage == ""
+        assert func.button_calibration_baseline is None
+        assert func.button_calibration_restart_pending is True
+        raw_messages = [m for level, m in func.logger.messages if level == "raw"]
+        assert any("Button calibration complete" in m for m in raw_messages)
+        assert any("Restart Klipper|BUTTON_CALIBRATION_RESTART|primary" in m
+                   for m in raw_messages)
+
+    def _make_saturated_button(self, name: str) -> MagicMock:
+        """ADC button stand-in whose resistance_at_ratio() returns distinct,
+        easy-to-assert-on sentinel values for the two ratios
+        _finish_button_measurement's saturated branch is expected to use."""
+        button = _make_adc_button(name)
+        button.is_adc_saturated.return_value = True
+        button.resistance_at_ratio = MagicMock(side_effect=lambda ratio: {
+            BUTTON_CALIBRATION_SATURATION_MIN_RATIO: 50000.0,
+            BUTTON_CALIBRATION_SATURATION_MAX_RATIO: 9999900.0,
+        }[ratio])
+        return button
+
+    def test_saturated_reading_derives_min_from_saturation_min_ratio(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        button.resistance_at_ratio.assert_any_call(BUTTON_CALIBRATION_SATURATION_MIN_RATIO)
+        assert button.analog_min == pytest.approx(50000.0)
+
+    def test_saturated_reading_derives_max_from_saturation_max_ratio_plus_range(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        button.resistance_at_ratio.assert_any_call(BUTTON_CALIBRATION_SATURATION_MAX_RATIO)
+        expected_max = 9999900.0 + BUTTON_CALIBRATION_RANGE
+        assert button.analog_max == pytest.approx(expected_max)
+
+    def test_saturated_reading_saves_derived_range_to_config(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        expected_max = 9999900.0 + BUTTON_CALIBRATION_RANGE
+        call_args = func.ConfigRewrite.call_args[0]
+        assert call_args[2] == f"{50000.0:.1f},{expected_max:.1f}"
+
+    def test_saturated_reading_logs_info_message(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        info_messages = [m for level, m in func.logger.messages if level == "debug"]
+        assert any("lane7 press reading is maxed out" in m for m in info_messages)
+
+    def test_overlapping_saturated_range_skips_save_and_reports_conflict(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        other = _make_adc_button("lane8")
+        other.analog_min = 60000.0
+        other.analog_max = 70000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+        original_min, original_max = button.analog_min, button.analog_max
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        func.ConfigRewrite.assert_not_called()
+        assert button.analog_min == original_min
+        assert button.analog_max == original_max
+        func.afc.error.AFC_error.assert_called_once()
+        error_msg = func.afc.error.AFC_error.call_args[0][0]
+        assert "lane7" in error_msg
+        assert "lane8" in error_msg
+
+    def test_overlapping_saturated_range_still_advances_the_queue(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        other = _make_adc_button("lane8")
+        other.analog_min = 60000.0
+        other.analog_max = 70000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+        func.button_calibration_active = True
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        assert func.button_calibration_queue == []
+        assert func.button_calibration_active is False
+        assert func.button_calibration_restart_pending is True
+
+    def test_non_overlapping_saturated_range_still_saves_normally(self) -> None:
+        func, _ = _make_calibration_func()
+        button = self._make_saturated_button("lane7")
+        other = _make_adc_button("lane8")
+        other.analog_min = 0.0
+        other.analog_max = 1000.0
+        func.printer._objects["AFC_button lane7"] = button
+        func.printer._objects["AFC_button lane8"] = other
+        func.button_calibration_queue = [button]
+        func.button_calibration_first_value = 9396475.0
+        func.button_calibration_baseline = 4.6
+
+        func._finish_button_measurement(button, 9618550.0)
+
+        func.ConfigRewrite.assert_called_once()
+        func.afc.error.AFC_error.assert_not_called()
+        assert button.analog_min == pytest.approx(50000.0)
 
 
 class TestCmdAfcToolheadCalibration:

@@ -59,7 +59,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_utils", trace=traceback.for
 try: from extras.AFC_stats import AFCStats
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
-AFC_VERSION="1.2.13"
+AFC_VERSION="1.2.15"
 
 # Class for holding different states so its clear what all valid states are
 class State(str, Enum):
@@ -998,16 +998,23 @@ class afc:
             pass
         return False
 
-    def run_script(self, script: str, gcmd: Optional[GCodeCommand]=None) -> None:
+    def run_script(self, script: str, gcmd: Optional[GCodeCommand]=None,
+                  force_acquire: bool=False) -> None:
         """
         Run a gcode script, acquiring the gcode mutex only if not already held.
 
         :param script: gcode script to run
         :param gcmd: command context the script is run through, or `None`
             when no command context is available
+        :param force_acquire: True when the caller is never inside gcode
+            command processing (a hardware/reactor callback with no real
+            command in flight), so the mutex must always be acquired rather
+            than guessed at from its current, possibly-unrelated state
         """
-        if (gcmd is not None
-            and hasattr(gcmd, "run_script")):
+        if force_acquire:
+            self.gcode.run_script(script)
+        elif (gcmd is not None
+              and hasattr(gcmd, "run_script")):
             gcmd.run_script(script)
         elif self.gcode.get_mutex().test():
             self.gcode.run_script_from_command(script)
