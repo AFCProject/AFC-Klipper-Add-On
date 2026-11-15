@@ -240,11 +240,14 @@ class AFC_HTLF(afcBoxTurtle):
         self.logger.debug("HTLF: Lobe Movement angle : {}".format(angle_movement))
         return (self.mm_move_per_rotation/360)*angle_movement
 
-    def select_lane( self, lane: AFCLane, disable_selector: bool=False ) -> tuple[bool, float|int]:
+    def select_lane( self, lane: AFCLane, sel_dir: bool=False,
+                     disable_selector: bool=False ) -> tuple[bool, float|int]:
         """
         Moves lobe selector to specified lane based off lanes index
 
         :param lane: Lane object to move selector to
+        :param sel_dir: Not used by HTLF, lobe selection has no direction concept. Kept
+                        so select_lane has the same parameters across all unit types.
         :param disable_selector: When True disables selectors motor after selecting a lane
         :return boolean: Returns True if movement of selector succeeded
         """

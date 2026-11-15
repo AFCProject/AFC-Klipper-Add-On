@@ -171,7 +171,7 @@ class TestTd1Prep:
 
 
 class TestPrepRestoreFilamentInfo:
-    def _run_prep(self, lane_vars, spoolman=None, tmp_path=None):
+    def _run_prep(self, lane_vars, spoolman=None, tmp_path=None, current_lane_obj=None):
         from tests.conftest import MockConfig, MockPrinter, MockAFC
 
         afc = MockAFC()
@@ -198,7 +198,6 @@ class TestPrepRestoreFilamentInfo:
                      "get_bypass_state", "spool"):
             setattr(afc, attr, MagicMock())
         afc.verify_macro_positions = MagicMock(return_value="")
-        afc.function.get_current_lane_obj.return_value = None
 
         lane_stub = MagicMock()
         lane_stub.multi_hubs_found = False
@@ -222,6 +221,8 @@ class TestPrepRestoreFilamentInfo:
         lane.unit_obj = unit
         afc.units = {"unit1": unit}
         afc.lanes = {"lane1": lane}
+        afc.function.get_current_lane_obj.return_value = (
+            lane if current_lane_obj is True else current_lane_obj)
 
         prep.PREP(MagicMock())
         return lane, afc
@@ -261,3 +262,19 @@ class TestPrepRestoreFilamentInfo:
         afc.spool.set_spoolID.assert_not_called()
         assert lane.spool_vendor == "Elegoo"
         assert lane.filament_name == "PLA"
+
+
+class TestPrepSelectCurrentLane(TestPrepRestoreFilamentInfo):
+    """Regression test for GH #778: PREP's select_lane call must not pass
+    sel_dir (formerly sel_prep) as True -- that flag means "selection is
+    happening as part of loading a lane", which is not what PREP is doing."""
+
+    def test_select_lane_called_with_no_direction_flag(self, tmp_path):
+        lane, _ = self._run_prep({}, tmp_path=tmp_path, current_lane_obj=True)
+
+        lane.unit_obj.select_lane.assert_called_once_with(lane)
+
+    def test_select_lane_not_called_when_no_current_lane(self, tmp_path):
+        lane, _ = self._run_prep({}, tmp_path=tmp_path, current_lane_obj=None)
+
+        lane.unit_obj.select_lane.assert_not_called()

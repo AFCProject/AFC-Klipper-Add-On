@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Updated
 - Updated the way `run_script_by_command` was being called to work correctly with Kalico's PR 1052 changes and also work correctly with older Klipper versions.
 
+### Fixed
+- Fixed a `TypeError` during a toolchange when the newly selected extruder had no lane
+  loaded, by guarding TOOL_UNLOAD's unload block against a missing current lane. (#773)
+- Fixed an `UnboundLocalError` in CHANGE_TOOL when adjusting extruder temperature on a
+  lane that hadn't completed prep. (#781)
+- Fixed PREP passing an incorrect selection-direction flag to `select_lane`, which is
+  meant for lane loads, not prep. (#778)
+
+### Changed
+- `select_lane` now has the same parameters (`sel_dir`, `disable_selector`) across all
+  unit types, instead of each unit accepting a different, inconsistent set. (#778)
+
 ## [11-09-2026]
 ### Fixed
 - fix Cut.cfg macro to honor the safe_move_first when heading to safe park location

@@ -772,6 +772,27 @@ class TestSelectLane:
         unit.select_lane(lane, disable_selector=False)
         unit.selector_stepper_obj.do_enable.assert_not_called()
 
+    def test_sel_dir_accepted_but_has_no_effect(self):
+        """sel_dir exists only so select_lane has the same parameters across
+        all unit types; HTLF's lobe selection has no direction concept, so
+        True vs False must produce identical behavior."""
+        unit = _make_htlf()
+        unit.current_selected_lane = None
+        unit.return_to_home = MagicMock(return_value=True)
+        unit._homed_distance = 3.5
+        unit.calculate_lobe_movement = MagicMock(return_value=12.0)
+        unit._selector_cal_dis_adjust = MagicMock()
+        lane = MagicMock()
+        lane.fullname = "AFC_HTLF lane2"
+        lane.index = 2
+        lane.name = "lane2"
+        result_true = unit.select_lane(lane, sel_dir=True)
+
+        unit.current_selected_lane = None
+        result_false = unit.select_lane(lane, sel_dir=False)
+
+        assert result_true == result_false == (True, 3.5)
+
 
 # ── check_runout ──────────────────────────────────────────────────────────────
 

@@ -266,7 +266,7 @@ class afcPrep:
         # have selectors to make sure the selector is on the correct lane
         current_lane = self.afc.function.get_current_lane_obj()
         if current_lane is not None:
-            current_lane.unit_obj.select_lane(current_lane, True)
+            current_lane.unit_obj.select_lane(current_lane)
             current_lane.sync_to_extruder()
 
         # Restore previous bypass state if virtual bypass is active

@@ -227,6 +227,26 @@ class TestCheckRunout:
         assert unit.check_runout("lane") is False
 
 
+# ── select_lane ───────────────────────────────────────────────────────────────
+
+class TestSelectLane:
+    """The base placeholder always reports success without moving anything;
+    sel_dir/disable_selector exist only so overrides share the same
+    parameters, and have no effect here."""
+
+    def test_returns_true_and_zero_default_args(self):
+        unit = _make_unit()
+        assert unit.select_lane("lane") == (True, 0.0)
+
+    def test_sel_dir_true_has_no_effect(self):
+        unit = _make_unit()
+        assert unit.select_lane("lane", sel_dir=True) == (True, 0.0)
+
+    def test_disable_selector_true_has_no_effect(self):
+        unit = _make_unit()
+        assert unit.select_lane("lane", disable_selector=True) == (True, 0.0)
+
+
 # ── _selector_cal_dis_adjust ─────────────────────────────────────────────────
 
 class TestSelectorCalDisAdjust:
