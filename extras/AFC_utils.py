@@ -279,9 +279,15 @@ class DebounceButton:
             return
         # enact state transition and trigger action
         self.logical_state = self.physical_state
-        
+        # bind() checks the call would succeed without invoking button_action.
         try:
-            if 'is_filament_present' in inspect.signature(self.button_action).parameters:
+            inspect.signature(self.button_action).bind(is_filament_present=self.logical_state)
+            takes_is_filament_present_alone = True
+        except TypeError:
+            takes_is_filament_present_alone = False
+
+        try:
+            if takes_is_filament_present_alone:
                 self.button_action(is_filament_present=self.logical_state)
             else:
                 self.button_action(eventtime, self.logical_state)

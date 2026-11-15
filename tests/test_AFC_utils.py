@@ -488,6 +488,52 @@ class TestDebounceButton:
         assert calls == [True]
         pause_resume.cmd_PAUSE.assert_called_once()
 
+    def test_debounce_event_kalico_style_action_with_eventtime_is_called_positionally(self):
+        """Current Kalico's and mainline's note_filament_present(eventtime,
+        is_filament_present=None, ...) has an is_filament_present parameter,
+        but eventtime is still required with no default, so calling with
+        only is_filament_present=... raises a TypeError. Signature.bind()
+        (not a real call) must catch that and fall back to the positional
+        call instead of raising it for real."""
+        cfg = self._make_config(debounce_delay=0.0)
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn.logical_state = False
+        btn.physical_state = True
+        btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
+
+        calls = []
+        def kalico_style(eventtime, is_filament_present=None, force=False, immediate=False):
+            calls.append((eventtime, is_filament_present, force, immediate))
+
+        btn.button_action = kalico_style
+        btn._debounce_event(101.0)
+        assert calls == [(101.0, True, False, False)]
+        pause_resume.cmd_PAUSE.assert_not_called()
+
+    def test_debounce_event_old_kalico_style_action_is_called_by_kwarg(self):
+        """Old Kalico's note_filament_present(is_filament_present=None,
+        force=False, immediate=False) has no eventtime at all, so
+        Signature.bind(is_filament_present=...) succeeds and the
+        kwarg-only call is used."""
+        cfg = self._make_config(debounce_delay=0.0)
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn.logical_state = False
+        btn.physical_state = True
+        btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
+
+        calls = []
+        def old_kalico_style(is_filament_present=None, force=False, immediate=False):
+            calls.append((is_filament_present, force, immediate))
+
+        btn.button_action = old_kalico_style
+        btn._debounce_event(101.0)
+        assert calls == [(True, False, False)]
+        pause_resume.cmd_PAUSE.assert_not_called()
+
 
 # ── AFC_moonraker ─────────────────────────────────────────────────────────────
 class TestAFCMoonraker:
