@@ -72,6 +72,10 @@ BUTTON_CALIBRATION_SATURATION_MIN_RATIO = 0.95
 # Ratio ceiling AFCButton.get_resistance() clamps to; matches its clamp so a
 # saturated button's fallback max always covers every value it can report.
 BUTTON_CALIBRATION_SATURATION_MAX_RATIO = 0.99999
+# Ratio-space fallback tolerance for release detection, used when the ohm
+# delta exceeds BUTTON_CALIBRATION_PRESS_DELTA; resistance blows up for a
+# near-identical ratio close to saturation, where ohms alone can't tell.
+BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE = 0.001
 
 
 def round_floats(value: Any, digits: int = 6) -> Any:
@@ -1713,7 +1717,6 @@ class afcFunction:
             return
 
         if self.button_calibration_active:
-            prompt.p_end()
             self.afc.error.AFC_error("Button calibration is already running.", pause=False)
             return
 
@@ -1805,6 +1808,22 @@ class afcFunction:
         self.button_calibration_samples = []
         return average
 
+    def _is_released(self, button: AFCButton, resistance: float, baseline: float) -> bool:
+        """
+        Check whether `resistance` is close enough to `baseline` to count as
+        released, falling back to a ratio-space comparison near saturation.
+
+        :param button: button whose pullup converts resistance to ratio
+        :param resistance: resistance just measured, in ohms
+        :param baseline: released baseline resistance to compare against, in ohms
+        :return bool: True when the two readings are the same (released) reading
+        """
+        if abs(resistance - baseline) <= BUTTON_CALIBRATION_PRESS_DELTA:
+            return True
+        ratio_delta = abs(button.ratio_at_resistance(resistance)
+                          - button.ratio_at_resistance(baseline))
+        return ratio_delta <= BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE
+
     def _start_next_button_calibration(self) -> None:
         """
         Prompt the user to press the button now at the head of the queue.
@@ -1846,7 +1865,7 @@ class afcFunction:
             self.logger.debug(f"Button calibration: waiting for {button.name} to release, "
                               f"resistance={resistance:.1f} ohms (baseline={baseline:.1f})")
 
-        if abs(resistance - baseline) <= BUTTON_CALIBRATION_PRESS_DELTA:
+        if self._is_released(button, resistance, baseline):
             if self._collect_button_sample(resistance) is not None:
                 self.button_calibration_await_button = None
                 self.button_calibration_await_baseline = None
@@ -1906,7 +1925,7 @@ class afcFunction:
             else:
                 self.button_calibration_samples = []
         elif self.button_calibration_stage == "release":
-            if delta <= BUTTON_CALIBRATION_PRESS_DELTA:
+            if self._is_released(button, resistance, baseline):
                 if self._collect_button_sample(resistance) is not None:
                     self.button_calibration_stage = "press_2"
             else:
@@ -1923,48 +1942,35 @@ class afcFunction:
             return self.afc.reactor.NEVER
         return eventtime + BUTTON_CALIBRATION_POLL_TIME
 
-    def _finish_button_measurement(self, button: AFCButton, second_value: float) -> None:
+    def _saturated_range_overlaps_other_button(self, button: AFCButton, min_value: float,
+                                               max_value: float) -> Optional[AFCButton]:
         """
-        Average the two captured press resistances for `button`, derive and
-        save its analog_range, then advance to the next button in the
-        calibration queue or finish the session if it was the last one.
+        Check whether `[min_value, max_value]` overlaps any other configured
+        ADC button's current analog_range.
 
-        If the button's raw ADC reading is still saturated at this point,
-        the averaged resistance is unreliable (e.g. an open circuit), so the
-        range is instead derived from fixed ADC ratios: a min comfortably
-        past a real press, and a max covering everything get_resistance()
-        can report.
-
-        :param button: button whose second press resistance was just captured
-        :param second_value: resistance captured on the second press, in ohms
+        :param button: button the range is being derived for, excluded from the check
+        :param min_value: candidate analog_range minimum, in ohms
+        :param max_value: candidate analog_range maximum, in ohms
+        :return Optional[AFCButton]: the first other button whose range overlaps,
+            or `None` when there's no conflict
         """
-        first_value = self.button_calibration_first_value
-        if first_value is None:
-            first_value = second_value
-        average = (first_value + second_value) / 2.0
+        for other in self._get_adc_buttons():
+            if other is button:
+                continue
+            if (min_value <= other.analog_max
+                and max_value >= other.analog_min):
+                return other
+        return None
 
-        if button.is_adc_saturated():
-            min_value = button.resistance_at_ratio(BUTTON_CALIBRATION_SATURATION_MIN_RATIO)
-            max_value = (button.resistance_at_ratio(BUTTON_CALIBRATION_SATURATION_MAX_RATIO)
-                        + BUTTON_CALIBRATION_RANGE)
-            self.logger.debug(f"Button calibration: {button.name} press reading is maxed out "
-                             f"(average={average:.1f} ohms); using a range derived from the "
-                             "ADC ratio instead.")
-        else:
-            min_value = average - BUTTON_CALIBRATION_RANGE
-            max_value = average + BUTTON_CALIBRATION_RANGE
+    def _advance_button_calibration_queue(self, button: AFCButton) -> None:
+        """
+        Pop `button` off the calibration queue and either wait for it to be
+        released before starting the next button, or finish the session if
+        it was the last one.
 
+        :param button: button that was just processed (calibrated or skipped)
+        """
         finished_baseline = self.button_calibration_baseline
-        baseline_text = f"{finished_baseline:.1f}" if finished_baseline is not None else "unknown"
-        self.logger.debug(f"Button calibration: {button.name} baseline={baseline_text} ohms, "
-                          f"press1={first_value:.1f} ohms, press2={second_value:.1f} ohms, "
-                          f"average={average:.1f} ohms")
-
-        msg = f"\n<span class=info--text>Calibrated {button.name}: average={average:.1f}</span>"
-        self.ConfigRewrite(button.fullname, "analog_range", f"{min_value:.1f},{max_value:.1f}", msg)
-        button.analog_min = min_value
-        button.analog_max = max_value
-
         self.button_calibration_queue.pop(0)
         self.button_calibration_first_value = None
 
@@ -1990,6 +1996,60 @@ class afcFunction:
             footer = ([("Restart Klipper", "BUTTON_CALIBRATION_RESTART", "primary")]
                       + prompt.DONE_BTN)
             prompt.create_custom_p("Button Calibration Complete", text, None, False, None, footer)
+
+    def _finish_button_measurement(self, button: AFCButton, second_value: float) -> None:
+        """
+        Average the two captured press resistances for `button`, derive and
+        save its analog_range, then advance to the next button in the
+        calibration queue or finish the session if it was the last one.
+
+        A saturated reading derives the range from fixed ADC ratios instead
+        of the unreliable average, and skips the save on a conflict with
+        another button's analog_range.
+
+        :param button: button whose second press resistance was just captured
+        :param second_value: resistance captured on the second press, in ohms
+        """
+        first_value = self.button_calibration_first_value
+        if first_value is None:
+            first_value = second_value
+        average = (first_value + second_value) / 2.0
+
+        finished_baseline = self.button_calibration_baseline
+        baseline_text = f"{finished_baseline:.1f}" if finished_baseline is not None else "unknown"
+        self.logger.debug(f"Button calibration: {button.name} baseline={baseline_text} ohms, "
+                          f"press1={first_value:.1f} ohms, press2={second_value:.1f} ohms, "
+                          f"average={average:.1f} ohms")
+
+        if button.is_adc_saturated():
+            min_value = button.resistance_at_ratio(BUTTON_CALIBRATION_SATURATION_MIN_RATIO)
+            max_value = (button.resistance_at_ratio(BUTTON_CALIBRATION_SATURATION_MAX_RATIO)
+                        + BUTTON_CALIBRATION_RANGE)
+            self.logger.debug(f"Button calibration: {button.name} press reading is maxed out "
+                             f"(average={average:.1f} ohms); using a range derived from the "
+                             "ADC ratio instead.")
+            conflict = self._saturated_range_overlaps_other_button(button, min_value, max_value)
+            if conflict is not None:
+                error_str = (
+                    f"Button calibration: {button.name}'s derived range "
+                    f"({min_value:.1f},{max_value:.1f}) overlaps {conflict.name}'s "
+                    f"analog_range ({conflict.analog_min:.1f},{conflict.analog_max:.1f}). "
+                    f"Check {button.name}'s wiring and recalibrate it; its analog_range "
+                    "was not changed."
+                )
+                self.afc.error.AFC_error(error_str, pause=False)
+                self._advance_button_calibration_queue(button)
+                return
+        else:
+            min_value = average - BUTTON_CALIBRATION_RANGE
+            max_value = average + BUTTON_CALIBRATION_RANGE
+
+        msg = f"\n<span class=info--text>Calibrated {button.name}: average={average:.1f}</span>"
+        self.ConfigRewrite(button.fullname, "analog_range", f"{min_value:.1f},{max_value:.1f}", msg)
+        button.analog_min = min_value
+        button.analog_max = max_value
+
+        self._advance_button_calibration_queue(button)
 
     cmd_AFC_TOOLHEAD_CALIBRATION_help = 'Open the toolhead variable calibration menu'
     cmd_AFC_TOOLHEAD_CALIBRATION_options = {

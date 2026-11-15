@@ -301,6 +301,29 @@ class TestResistanceAtRatio:
         assert result == pytest.approx(expected, rel=1e-6)
 
 
+class TestRatioAtResistance:
+    def test_computes_ratio_from_resistance_and_pullup(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500",
+                           analog_pullup_resistor=4700.0)
+        result = btn.ratio_at_resistance(89300.0)
+        expected = 89300.0 / (89300.0 + 4700.0)
+        assert result == pytest.approx(expected, rel=1e-6)
+
+    def test_uses_this_button_s_own_pullup(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500",
+                           analog_pullup_resistor=100.0)
+        result = btn.ratio_at_resistance(469995300.0)
+        expected = 469995300.0 / (469995300.0 + 100.0)
+        assert result == pytest.approx(expected, rel=1e-6)
+
+    def test_is_the_inverse_of_resistance_at_ratio(self) -> None:
+        btn = _make_button("lane1", analog_range="500,1500",
+                           analog_pullup_resistor=4700.0)
+        resistance = btn.resistance_at_ratio(0.95)
+        result = btn.ratio_at_resistance(resistance)
+        assert result == pytest.approx(0.95, rel=1e-6)
+
+
 # ── get_resistance ────────────────────────────────────────────────────────────
 
 class TestGetResistance:
@@ -385,7 +408,7 @@ class TestRunCustomPressGcode:
         btn.afc.run_script = MagicMock()
         template = _FakeTemplate("AFC_button lane1:short_press_gcode", "MY_MACRO")
         assert btn._run_custom_press_gcode(template) is True
-        btn.afc.run_script.assert_called_once_with("MY_MACRO")
+        btn.afc.run_script.assert_called_once_with("MY_MACRO", force_acquire=True)
 
     def test_render_exception_reports_afc_error_and_returns_true(self) -> None:
         btn = _make_button("lane1")
@@ -560,7 +583,7 @@ class TestButtonCallback:
         btn.afc.CHANGE_TOOL = MagicMock()
         btn.afc.run_script = MagicMock()
         btn.button_callback(100.3, False)
-        btn.afc.run_script.assert_called_once_with("MY_SHORT_MACRO")
+        btn.afc.run_script.assert_called_once_with("MY_SHORT_MACRO", force_acquire=True)
         btn.afc.CHANGE_TOOL.assert_not_called()
 
     def test_long_press_gcode_does_not_affect_short_press(self) -> None:
@@ -638,7 +661,7 @@ class TestButtonCallback:
         btn.afc.LANE_UNLOAD = MagicMock()
         btn.afc.run_script = MagicMock()
         btn.button_callback(101.5, False)
-        btn.afc.run_script.assert_called_once_with("MY_LONG_MACRO")
+        btn.afc.run_script.assert_called_once_with("MY_LONG_MACRO", force_acquire=True)
         btn.afc.LANE_UNLOAD.assert_not_called()
 
     def test_short_press_gcode_does_not_affect_long_press(self) -> None:

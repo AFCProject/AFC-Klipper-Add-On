@@ -447,15 +447,39 @@ def _make_afc_for_check_extruder_temp(
 
 
 class TestRunScript:
-    """Covers afc.run_script's three-way mutex dispatch.
+    """Covers afc.run_script's dispatch.
 
-    `gcmd.run_script` (newer Kalico) is preferred whenever `gcmd` has it.
-    Otherwise, whether the gcode mutex is already held decides between
-    `run_script_from_command` (reentrant: must not re-acquire it, or it
-    deadlocks) and `self.gcode.run_script` (not reentrant: must acquire it,
-    or a legacy/unprotected call can fail outright -- e.g. a macro that
-    itself calls other macros).
+    `force_acquire=True` always wins, for a caller that knows it's never
+    inside gcode command processing (e.g. a hardware button callback) --
+    the mutex's current state there reflects some unrelated macro, not us,
+    so it must always be acquired rather than guessed at.
+
+    Otherwise, `gcmd.run_script` (newer Kalico) is preferred whenever
+    `gcmd` has it. Otherwise, whether the gcode mutex is already held
+    decides between `run_script_from_command` (reentrant: must not
+    re-acquire it, or it deadlocks) and `self.gcode.run_script` (not
+    reentrant: must acquire it, or a legacy/unprotected call can fail
+    outright -- e.g. a macro that itself calls other macros).
     """
+
+    def test_force_acquire_uses_gcode_run_script_even_with_gcmd(self):
+        obj = _make_afc()
+        gcmd = MagicMock(spec=["run_script"])
+
+        obj.run_script("G28", gcmd, force_acquire=True)
+
+        obj.gcode.run_script.assert_called_once_with("G28")
+        gcmd.run_script.assert_not_called()
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_force_acquire_ignores_mutex_state(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = True
+
+        obj.run_script("PAUSE", force_acquire=True)
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
 
     def test_gcmd_with_run_script_uses_it(self):
         obj = _make_afc()

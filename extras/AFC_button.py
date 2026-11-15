@@ -137,6 +137,15 @@ class AFCButton:
         """
         return self.pullup * ratio / (1.0 - ratio)
 
+    def ratio_at_resistance(self, resistance: float) -> float:
+        """
+        Convert a resistance (ohms) to its ADC ratio; inverse of `resistance_at_ratio`.
+
+        :param resistance: resistance to convert, in ohms
+        :return float: corresponding ADC ratio
+        """
+        return resistance / (resistance + self.pullup)
+
     def get_resistance(self) -> Optional[float]:
         """
         Read this button's current ADC resistance, calculated the same way
@@ -245,7 +254,7 @@ class AFCButton:
             commands = template.render()
             if not commands.strip():
                 return False
-            self.afc.run_script(commands)
+            self.afc.run_script(commands, force_acquire=True)
         except Exception:
             error_str = f"{self.lane_id}: error running {template.name}"
             self.afc.logger.debug(error_str, only_debug=True, traceback=traceback.format_exc())
