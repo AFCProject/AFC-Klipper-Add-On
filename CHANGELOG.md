@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `sync_to_extruder`'s guard only tracking whether a lane was synced, not which
   extruder it was synced to, so a resync to a different extruder could be silently
   skipped. (#775)
+- Fixed a `TypeError` during a toolchange when the newly selected extruder had no lane
+  loaded, by guarding TOOL_UNLOAD's unload block against a missing current lane. (#773)
+- Fixed an `UnboundLocalError` in CHANGE_TOOL when adjusting extruder temperature on a
+  lane that hadn't completed prep. (#781)
+- Fixed PREP passing an incorrect selection-direction flag to `select_lane`, which is
+  meant for lane loads, not prep. (#778)
+
+### Changed
+- `select_lane` now has the same parameters (`sel_dir`, `disable_selector`) across all
+  unit types, instead of each unit accepting a different, inconsistent set. (#778)
 
 ## [11-09-2026]
 ### Fixed

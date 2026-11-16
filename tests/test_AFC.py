@@ -1801,6 +1801,36 @@ class TestChangeTool_InfiniteRunout:
         obj.LANE_UNLOAD.assert_not_called()
 
 
+class TestChangeTool_PrepNotDoneAdjustingTemperature:
+    """Regression test for GH #781: current_lane_name/unload_lane must be
+    defined even when cur_lane._afc_prep_done is False, since the sibling
+    adjusting_temperature block references them unconditionally and would
+    otherwise raise UnboundLocalError."""
+
+    def test_no_unbound_local_error_and_park_wipe_skipped(self):
+        """infinite_runout (with differing extruders) makes adjusting_temperature
+        True without needing TOOL_UNLOAD to run, so prep_done=False alone
+        exercises the gap between the two sibling blocks."""
+        obj, cur_lane, current_lane = _make_afc_for_change_tool(
+            next_extruder_name="extruder1", current_extruder_name="extruder0",
+        )
+        cur_lane.status = AFCLaneState.INFINITE_RUNOUT
+        cur_lane._afc_prep_done = False
+        obj.park = True
+        obj.park_cmd = "PARK_MACRO"
+        obj.wipe = True
+        obj.wipe_cmd = "WIPE_MACRO"
+
+        obj.CHANGE_TOOL(cur_lane)
+
+        # CHANGE_TOOL catches all exceptions broadly, so an UnboundLocalError
+        # on current_lane_name/unload_lane would surface here as this generic
+        # error.AFC_error call, not as a raised exception in this test.
+        obj.error.AFC_error.assert_not_called()
+        obj.TOOL_UNLOAD.assert_not_called()
+        obj.gcode.run_script_from_command.assert_not_called()
+
+
 # ── CHANGE_TOOL: exception handling ──────────────────────────────────────────
 
 class TestChangeTool_ExceptionHandling:
@@ -4708,6 +4738,53 @@ class TestToolUnloadDisplayStatusLifecycle:
         assert afc.TOOL_UNLOAD(lane, force_unload=True, restore_temp=False)
 
         afc.restore_toolhead_temp.assert_not_called()
+
+
+class TestToolUnload_CurLaneNoneAfterToolSwap:
+    """Regression test for GH #773: a tool_swap triggered inside TOOL_UNLOAD (because
+    the active extruder differs from the lane's extruder) can leave cur_lane as None
+    when the newly active extruder reports nothing loaded. The unload block must not
+    dereference cur_lane in that case."""
+
+    def _make(self):
+        afc, lane, _ = TestToolUnloadDisplayStatusLifecycle()._make()
+        lane.extruder_obj.th_extruder_name = "extruder1"
+        lane.tool_swap = MagicMock()
+        afc.function.get_current_extruder.return_value = "extruder0"
+        empty_extruder = MagicMock()
+        empty_extruder.lane_loaded = None
+        afc.function.get_current_extruder_obj.return_value = empty_extruder
+        afc.unload_sequence = MagicMock(return_value=True)
+        return afc, lane
+
+    def test_no_attribute_error_and_unload_sequence_skipped(self):
+        afc, lane = self._make()
+
+        result = afc.TOOL_UNLOAD(lane, force_unload=False)
+
+        assert result is True
+        lane.tool_swap.assert_called_once()
+        afc.unload_sequence.assert_not_called()
+
+    def test_state_is_idle_after_no_lane_path(self):
+        afc, lane = self._make()
+        afc.TOOL_UNLOAD(lane, force_unload=False)
+        assert afc.current_state == State.IDLE
+
+    def test_unload_sequence_still_runs_when_cur_lane_survives_swap(self):
+        """Control: when the post-swap extruder DOES still have a lane loaded,
+        cur_lane is resolved (not None) and the unload block runs as before."""
+        afc, lane = self._make()
+        survivor_lane = _make_afc_lane("AFC_stepper lane_survivor")
+        survivor_extruder = MagicMock()
+        survivor_extruder.lane_loaded = survivor_lane.name
+        afc.function.get_current_extruder_obj.return_value = survivor_extruder
+        afc.function.get_current_lane_obj.return_value = survivor_lane
+
+        result = afc.TOOL_UNLOAD(lane, force_unload=False)
+
+        assert result is True
+        afc.unload_sequence.assert_called_once()
 
 
 class TestToolLoadFailureState:
