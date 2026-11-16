@@ -181,44 +181,51 @@ class AFC_vivid(afcBoxTurtle):
                 pass
         return enabled
 
-    def select_lane( self, lane: AFCLane, sel_prep:bool=False ) -> tuple[bool, float|int]:
+    def select_lane( self, lane: AFCLane, sel_dir:bool=False,
+                     disable_selector:bool=False ) -> tuple[bool, float|int]:
         """
         Helper method to use homing to rotate cam until lanes selector
         is triggered.
 
         :param lane: Lane to select for moving filament
-        :param sel_prep: When set to True, cam is rotated in the negative direction
-                         this is useful when loading filament so the filament properly
-                         goes into the PTFE
+        :param sel_dir: When set to True, cam is rotated in the negative direction
+                        this is useful when loading filament so the filament properly
+                        goes into the PTFE
+        :param disable_selector: When True disables selectors motor after selecting a lane
         :return tuple: Returns tuple of homed(True/False) and distance moved
         """
         if lane.selector_endstop_name:
-            sel_dir = MoveDirection.NEG if sel_prep else MoveDirection.POS
-            selector_state = self._get_lane_selector_state(lane)
-            selector_enabled= self._get_selector_enabled()
+            try:
+                move_dir = MoveDirection.NEG if sel_dir else MoveDirection.POS
+                selector_state = self._get_lane_selector_state(lane)
+                selector_enabled= self._get_selector_enabled()
 
-            if (selector_state
-                and selector_enabled):
-                self.logger.debug(f"{lane.name} already selected")
-                return True, 0.0
-            else:
-                if (not selector_enabled
-                    and selector_state):
-                    self.unselect_lane()
+                if (selector_state
+                    and selector_enabled):
+                    self.logger.debug(f"{lane.name} already selected")
+                    return True, 0.0
+                else:
+                    if (not selector_enabled
+                        and selector_state):
+                        self.unselect_lane()
 
-                self.logger.debug(f"{self.type}: Selecting {lane.name}")
-                homed, distance = self.selector_stepper_obj.do_homing_move(
-                    movepos=self.max_selector_movement * sel_dir,
-                    speed=self.selector_homing_speed,
-                    accel=self.selector_homing_accel,
-                    endstop_spec=lane.selector_endstop_name,
-                    assist_active=False
-                )
-                # Applying selector_cal_dis move if specified in users config
-                self._selector_cal_dis_adjust(lane)
+                    self.logger.debug(f"{self.type}: Selecting {lane.name}")
+                    homed, distance = self.selector_stepper_obj.do_homing_move(
+                        movepos=self.max_selector_movement * move_dir,
+                        speed=self.selector_homing_speed,
+                        accel=self.selector_homing_accel,
+                        endstop_spec=lane.selector_endstop_name,
+                        assist_active=False
+                    )
+                    # Applying selector_cal_dis move if specified in users config
+                    self._selector_cal_dis_adjust(lane)
 
-                self.logger.debug(f"{self.type}: Homing done, success:{homed}, distance:{distance}")
-                return homed, round(distance, 2)
+                    self.logger.debug(
+                        f"{self.type}: Homing done, success:{homed}, distance:{distance}")
+                    return homed, round(distance, 2)
+            finally:
+                if disable_selector:
+                    self.selector_stepper_obj.do_enable(False)
         # No selector endstop configured for this lane: nothing to home, so
         # there's no distance moved to report.
         return False, 0
@@ -242,7 +249,7 @@ class AFC_vivid(afcBoxTurtle):
         :param lane: AFCLane object for which to activate and load filament to load sensor
         """
         self.lane_loading(lane)
-        self.select_lane(lane, sel_prep=True)
+        self.select_lane(lane, sel_dir=True)
         num_tries = 0
         distance: float
         if not lane.calibrated_lane:

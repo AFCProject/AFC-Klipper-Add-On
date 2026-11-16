@@ -41,7 +41,7 @@ def _make_stepper(name="lane1", extruder_name="extruder"):
     stepper.extruder_obj = MagicMock()
     stepper.extruder_obj.th_extruder_name = stepper.extruder_obj.name = extruder_name
     stepper.afc_extruder_name = extruder_name
-    stepper._synced_to_extruder = False
+    stepper._synced_to_extruder = None
     stepper._print_current_set = False
 
     # Extruder stepper mock
@@ -339,12 +339,25 @@ class TestSyncUnsync:
 
     def test_sync_calls_extruder_stepper_sync_already_synced(self):
         s = _make_stepper(extruder_name="extruder")
-        s._synced_to_extruder = True
+        s._synced_to_extruder = "extruder"
         s._set_current = MagicMock()
         s.set_print_current = MagicMock()
         s.sync_to_extruder(update_current=True)
         s.extruder_stepper.sync_to_extruder.assert_not_called()
         s.set_print_current.assert_called_once()
+
+    def test_sync_resyncs_when_already_synced_to_a_different_extruder(self):
+        """GH #775: the guard must track which extruder it's synced to, not
+        just whether it's synced -- a stale sync to a different extruder
+        must trigger a real resync, not be skipped like the already-correct
+        case above."""
+        s = _make_stepper(extruder_name="extruder")
+        s._synced_to_extruder = "extruder1"
+        s._set_current = MagicMock()
+        s.set_print_current = MagicMock()
+        s.sync_to_extruder(update_current=True)
+        s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder")
+        assert s._synced_to_extruder == "extruder"
 
     def test_sync_calls_extruder_stepper_sync_called_twice(self):
         s = _make_stepper(extruder_name="extruder")
@@ -370,7 +383,7 @@ class TestSyncUnsync:
 
     def test_sync_calls_set_print_current_when_update_current_synced_set(self):
         s = _make_stepper(extruder_name="extruder")
-        s._synced_to_extruder = True
+        s._synced_to_extruder = "extruder"
         s.set_print_current = MagicMock()
         s.sync_to_extruder(update_current=True)
         s.extruder_stepper.sync_to_extruder.assert_not_called()
@@ -387,15 +400,25 @@ class TestSyncUnsync:
         s.set_print_current = MagicMock()
         s.sync_to_extruder(update_current=False, th_extruder_name="extruder2")
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder2")
-        assert s._synced_to_extruder
+        assert s._synced_to_extruder == "extruder2"
+
+    def test_sync_override_resyncs_when_already_synced_to_a_different_name(self):
+        """Same resync requirement as the default-name case, but through the
+        explicit th_extruder_name override path."""
+        s = _make_stepper(extruder_name="extruder")
+        s._synced_to_extruder = "extruder1"
+        s.set_print_current = MagicMock()
+        s.sync_to_extruder(update_current=False, th_extruder_name="extruder2")
+        s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder2")
+        assert s._synced_to_extruder == "extruder2"
 
     def test_unsync_calls_sync_with_none(self):
         s = _make_stepper()
         s.set_load_current = MagicMock()
-        s._synced_to_extruder = True
+        s._synced_to_extruder = "extruder"
         s.unsync_to_extruder(update_current=False)
         s.extruder_stepper.sync_to_extruder.assert_called_once_with(None)
-        assert not s._synced_to_extruder
+        assert s._synced_to_extruder is None
 
     def test_unsync_calls_set_load_current_when_update_current(self):
         s = _make_stepper()
@@ -411,16 +434,16 @@ class TestSyncUnsync:
 
     def test_unsync_synced_twice(self):
         s = _make_stepper()
-        s._synced_to_extruder = True
+        s._synced_to_extruder = "extruder"
         s.set_load_current = MagicMock()
         s.unsync_to_extruder(update_current=False)
         s.unsync_to_extruder(update_current=False)
         s.extruder_stepper.sync_to_extruder.assert_called_once_with(None)
-        assert not s._synced_to_extruder
+        assert s._synced_to_extruder is None
 
     def test_unsync_unsynced_twice(self):
         s = _make_stepper()
-        s._synced_to_extruder = False
+        s._synced_to_extruder = None
         s.set_load_current = MagicMock()
         s.unsync_to_extruder(update_current=False)
         s.unsync_to_extruder(update_current=False)

@@ -558,6 +558,78 @@ class TestSelectLane:
         unit.select_lane(lane)
         unit.unselect_lane.assert_called_once()
 
+    def test_sel_dir_false_homes_in_positive_direction(self):
+        """sel_dir defaults to False, which must home using MoveDirection.POS."""
+        from extras.AFC_lane import MoveDirection
+        unit = _make_vivid()
+        unit._selector_cal_dis_adjust = MagicMock()
+        lane = _make_lane("lane1", has_selector=True)
+        lane.fila_selector.get_status.return_value = {"filament_detected": False}
+        unit.printer._objects = {}
+        unit.selector_stepper_obj.do_homing_move.return_value = (True, 15.0)
+        unit.select_lane(lane, sel_dir=False)
+        movepos = unit.selector_stepper_obj.do_homing_move.call_args.kwargs["movepos"]
+        assert movepos == unit.max_selector_movement * MoveDirection.POS
+
+    def test_sel_dir_true_homes_in_negative_direction(self):
+        """sel_dir=True (set during a lane load) must home using MoveDirection.NEG."""
+        from extras.AFC_lane import MoveDirection
+        unit = _make_vivid()
+        unit._selector_cal_dis_adjust = MagicMock()
+        lane = _make_lane("lane1", has_selector=True)
+        lane.fila_selector.get_status.return_value = {"filament_detected": False}
+        unit.printer._objects = {}
+        unit.selector_stepper_obj.do_homing_move.return_value = (True, 15.0)
+        unit.select_lane(lane, sel_dir=True)
+        movepos = unit.selector_stepper_obj.do_homing_move.call_args.kwargs["movepos"]
+        assert movepos == unit.max_selector_movement * MoveDirection.NEG
+
+    def test_disable_selector_true_disables_motor_after_homing(self):
+        """disable_selector=True disables the selector stepper after a successful select."""
+        unit = _make_vivid()
+        unit._selector_cal_dis_adjust = MagicMock()
+        lane = _make_lane("lane1", has_selector=True)
+        lane.fila_selector.get_status.return_value = {"filament_detected": False}
+        unit.printer._objects = {}
+        unit.selector_stepper_obj.do_homing_move.return_value = (True, 15.0)
+        unit.select_lane(lane, disable_selector=True)
+        unit.selector_stepper_obj.do_enable.assert_called_once_with(False)
+
+    def test_disable_selector_false_leaves_motor_enabled(self):
+        """disable_selector defaults to False: do_enable must not be called."""
+        unit = _make_vivid()
+        unit._selector_cal_dis_adjust = MagicMock()
+        lane = _make_lane("lane1", has_selector=True)
+        lane.fila_selector.get_status.return_value = {"filament_detected": False}
+        unit.printer._objects = {}
+        unit.selector_stepper_obj.do_homing_move.return_value = (True, 15.0)
+        unit.select_lane(lane, disable_selector=False)
+        unit.selector_stepper_obj.do_enable.assert_not_called()
+
+    def test_disable_selector_true_disables_motor_even_when_already_selected(self):
+        """The disable_selector finally block covers the early 'already selected'
+        return path too, not just the homing path."""
+        unit = _make_vivid()
+        lane = _make_lane("lane1", has_selector=True)
+        lane.fila_selector.get_status.return_value = {"filament_detected": True}
+        stepper_enable = MagicMock()
+        stepper_enable.get_status.return_value = {
+            "steppers": {f"AFC_stepper {unit.selector_stepper}": True}
+        }
+        unit.printer._objects["stepper_enable"] = stepper_enable
+        unit.select_lane(lane, disable_selector=True)
+        unit.selector_stepper_obj.do_enable.assert_called_once_with(False)
+
+    def test_disable_selector_true_has_no_effect_without_selector_endstop(self):
+        """When the lane has no selector endstop, the homing/disable branch is
+        never entered at all, regardless of disable_selector."""
+        unit = _make_vivid()
+        lane = _make_lane("lane1", has_selector=False)
+        lane.selector_endstop_name = None
+        result = unit.select_lane(lane, disable_selector=True)
+        assert result == (False, 0)
+        unit.selector_stepper_obj.do_enable.assert_not_called()
+
 
 # ── calibrate_lane ────────────────────────────────────────────────────────────
 
@@ -633,7 +705,7 @@ class TestPrepLoad:
 
         assert lane.loaded_to_hub is True
         unit.lane_loading.assert_called_once_with(lane)
-        unit.select_lane.assert_called_once_with(lane, sel_prep=True)
+        unit.select_lane.assert_called_once_with(lane, sel_dir=True)
         unit.lane_loaded.assert_called_once_with(lane)
 
     def test_disables_steppers_and_selects_loaded_lane(self):

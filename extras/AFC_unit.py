@@ -755,14 +755,19 @@ class afcUnit:
         if not self._check_led_state(lane, "fault"): return
         self._trigger_led_state(lane, static_color=lane.led_fault, effect_suffix="fault")
 
-    def select_lane( self, lane: AFCLane, sel_prep:bool=False ) -> tuple[bool, float|int]:
+    def select_lane( self, lane: AFCLane, sel_dir:bool=False,
+                     disable_selector:bool=False ) -> tuple[bool, float|int]:
         """
         Common method to select a units lane.
 
         Override in unit specific file if needed
 
         :param lane: AFCLane object for lane to select
-        :param sel_prep: Set to true is selection is happing during prep macro
+        :param sel_dir: Set to True when selection happens as part of loading a lane,
+                        so units with a direction-sensitive selector can move toward
+                        the load direction
+        :param disable_selector: Set to True to disable the selector motor after selecting
+        :return type: tuple of (homed, distance moved)
         """
         return True, 0.0
 
