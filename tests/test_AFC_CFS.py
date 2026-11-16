@@ -1376,12 +1376,11 @@ class TestCFSTransportBusy:
 # CFSBus
 
 class FakeUnit:
-    def __init__(self, name, box_addr, box_uid=None, depth=0, online=False):
+    def __init__(self, name, box_addr, box_uid=None, depth=0):
         self.name = name
         self.box_addr = box_addr
         self.box_uid = box_uid
         self._operation_depth = depth
-        self.online = online
 
 
 UID_A = bytes.fromhex("67913b482422b00236353434")
@@ -1466,26 +1465,27 @@ class TestCFSBusRegister:
             bus.register(FakeUnit("CFS_2", 2, UID_A))
         assert str(e.value) == "CFS CFS_1 and CFS_2 have the same box_uid"
 
-    def test_both_without_uid_not_a_clash(self):
-        bus = self._bus()
-        bus.register(FakeUnit("CFS_1", 1))
-        bus.register(FakeUnit("CFS_2", 2))
-        assert len(bus.units) == 2
-
-    def test_second_unit_without_uid_warns(self):
+    def test_second_unit_without_uid(self):
+        # Without uids a box that restarts alone could take an address still in use
         bus = self._bus()
         bus.register(FakeUnit("CFS_1", 1, UID_A))
-        bus.register(FakeUnit("CFS_2", 2))
-        assert bus.logger.messages == [("warning",
-            "CFS CFS_2: more than one box on /dev/a without box_uid set; boxes are then "
-            "addressed in discovery order, which can change. Set box_uid on each "
-            "(AFC_CFS_STATUS shows it).")]
+        with pytest.raises(ValueError) as e:
+            bus.register(FakeUnit("CFS_2", 2))
+        assert str(e.value) == (
+            "more than one box on /dev/a: set box_uid on each. AFC_CFS_STATUS shows a "
+            "configured box's uid; AFC.log names a box that isn't in any [AFC_CFS] section")
+        assert [u.name for u in bus.units] == ["CFS_1"]
 
-    def test_earlier_unit_without_uid_warns(self):
+    def test_earlier_unit_without_uid(self):
         bus = self._bus()
         bus.register(FakeUnit("CFS_1", 1))
-        bus.register(FakeUnit("CFS_2", 2, UID_B))
-        assert [m[0] for m in bus.logger.messages] == ["warning"]
+        with pytest.raises(ValueError):
+            bus.register(FakeUnit("CFS_2", 2, UID_B))
+
+    def test_single_unit_without_uid(self):
+        bus = self._bus()
+        bus.register(FakeUnit("CFS_1", 1))
+        assert len(bus.units) == 1
 
     def test_every_unit_with_uid_is_quiet(self):
         bus = self._bus()
@@ -1572,12 +1572,6 @@ class TestCFSBusDiscover:
         bus = self._bus(FakeUnit("CFS_1", 1), FakeUnit("CFS_2", 2))
         bus.box.reply(P.CMD_GET_SLAVE_INFO, slave_info(UID_A), slave_info(UID_B))
         assert bus.discover() == [(UID_A, 1), (UID_B, 2)]
-
-    def test_live_box_keeps_its_address(self):
-        # Two boxes without uids, only box 2 power-cycled: box 1 still answers at 1
-        bus = self._bus(FakeUnit("CFS_1", 1, online=True), FakeUnit("CFS_2", 2))
-        bus.box.reply(P.CMD_GET_SLAVE_INFO, slave_info(UID_B))
-        assert bus.discover() == [(UID_B, 2)]
 
     def test_unknown_box_parked_at_spare_address(self):
         bus = self._bus(FakeUnit("CFS_1", 1, UID_A))
@@ -1843,8 +1837,9 @@ class TestAfcCFSInitCfsRuntime:
 
     def test_second_trace_leaves_the_wire_to_the_first(self, tmp_path):
         printer = make_printer()
-        a = make_unit("CFS_1", printer=printer, values={"trace_file": str(tmp_path / "a")})
-        b = make_unit("CFS_2", printer=printer, values={"box_addr": 2,
+        a = make_unit("CFS_1", printer=printer, values={"trace_file": str(tmp_path / "a"),
+                                                       "box_uid": UID_A.hex()})
+        b = make_unit("CFS_2", printer=printer, values={"box_addr": 2, "box_uid": UID_B.hex(),
                                                        "trace_file": str(tmp_path / "b")})
         try:
             assert b.transport.trace is a.trace
@@ -1854,9 +1849,10 @@ class TestAfcCFSInitCfsRuntime:
 
     def test_trace_takes_the_wire_from_a_stopped_one(self, tmp_path):
         printer = make_printer()
-        a = make_unit("CFS_1", printer=printer, values={"trace_file": str(tmp_path / "a")})
+        a = make_unit("CFS_1", printer=printer, values={"trace_file": str(tmp_path / "a"),
+                                                       "box_uid": UID_A.hex()})
         a.trace.stop()
-        b = make_unit("CFS_2", printer=printer, values={"box_addr": 2,
+        b = make_unit("CFS_2", printer=printer, values={"box_addr": 2, "box_uid": UID_B.hex(),
                                                        "trace_file": str(tmp_path / "b")})
         try:
             assert b.transport.trace is b.trace
@@ -1865,9 +1861,10 @@ class TestAfcCFSInitCfsRuntime:
 
     def test_unit_without_trace_file_leaves_the_wire_alone(self, tmp_path):
         printer = make_printer()
-        a = make_unit("CFS_1", printer=printer, values={"trace_file": str(tmp_path / "a")})
+        a = make_unit("CFS_1", printer=printer, values={"trace_file": str(tmp_path / "a"),
+                                                       "box_uid": UID_A.hex()})
         try:
-            make_unit("CFS_2", printer=printer, values={"box_addr": 2})
+            make_unit("CFS_2", printer=printer, values={"box_addr": 2, "box_uid": UID_B.hex()})
             assert a.transport.trace is a.trace
         finally:
             a.trace.stop()
@@ -1912,14 +1909,16 @@ class TestAfcCFSParseSteps:
 class TestAfcCFSHandleConnect:
     def test_sets_up_lanes_and_logo(self):
         unit, (lane,) = unit_with()
-        assert lane.custom_load_cmd == "AFC_CFS_TOOL_LOAD LANE=lane1"
+        assert lane.custom_load_cmd is None       # AFC loads through unit_load_lane
         assert unit.logo == '<span class=success--text>CFS Ready</span>\n'
         assert unit.logo_error == '<span class=error--text>CFS Not Ready</span>\n'
 
     def test_box_without_pin_uses_the_chains_cutter(self):
         printer = make_printer()
-        a, _ = unit_with(name="CFS_1", printer=printer, values={"cutter_sensor_pin": "PA1"})
-        b, _ = unit_with(name="CFS_2", printer=printer, values={"box_addr": 2}, lanes=(1,))
+        a, _ = unit_with(name="CFS_1", printer=printer,
+                         values={"cutter_sensor_pin": "PA1", "box_uid": UID_A.hex()})
+        b, _ = unit_with(name="CFS_2", printer=printer, values={"box_addr": 2, "box_uid": UID_B.hex()},
+                         lanes=(1,))
         assert b.cutter_source is a
         assert a.cutter_source is None                     # has its own pin
 
@@ -2583,8 +2582,8 @@ class TestAfcCFSWaitForTagReads:
 
     def test_waits_for_another_box_on_the_chain(self):
         printer = make_printer()
-        a, _ = unit_with(name="CFS_1", printer=printer)
-        b, _ = unit_with(name="CFS_2", printer=printer, values={"box_addr": 2})
+        a, _ = unit_with(name="CFS_1", printer=printer, values={"box_uid": UID_A.hex()})
+        b, _ = unit_with(name="CFS_2", printer=printer, values={"box_addr": 2, "box_uid": UID_B.hex()})
         b._rfid_busy = True
         a.reactor.on_pause.append(
             lambda now: setattr(b, "_rfid_busy", len(a.reactor.pauses) < 3))
@@ -2738,6 +2737,16 @@ class TestAfcCFSPoll:
         assert level == "debug"
         assert text.startswith("CFS CFS_1: reconnect failed\nTraceback")
         assert text.rstrip().endswith("OSError: port gone")
+
+    def test_sequence_starts_during_reconnect(self):
+        # The reconnect's wait lets a load or unload start: no heartbeat or reads after it
+        unit, _ = self._unit()
+        unit.online = False
+        unit.connect = lambda: (setattr(unit, "online", True),
+                                setattr(unit, "_operation_depth", 1))
+        assert unit._poll(500.0) == unit.reactor.monotonic() + 1.0
+        assert unit.box.sent == []
+        assert unit._last_heartbeat != 500.0
 
     def test_offline_waits_between_reconnects(self):
         unit, _ = self._unit()
@@ -3015,8 +3024,8 @@ class TestAfcCFSSetupLane:
         unit._setup_lane(lane)
         assert lane._load_state is False
         assert (unit.present_last, unit.load_reports) == ({"lane1": None}, {"lane1": {}})
-        assert lane.custom_load_cmd == "AFC_CFS_TOOL_LOAD LANE=lane1"
-        assert lane.custom_unload_cmd is None     # AFC unloads through unit_unload_lane
+        assert lane.custom_load_cmd is None       # AFC loads through unit_load_lane
+        assert lane.custom_unload_cmd is None     # and unloads through unit_unload_lane
         assert unit.function.register_mux_command.calls == []   # registered at config time
 
     def test_users_own_commands_kept(self):
@@ -3089,8 +3098,9 @@ class TestAfcCFSCutter:
 
     def test_chains_switch(self):
         printer = make_printer()
-        a, _ = unit_with(name="CFS_1", printer=printer, values={"cutter_sensor_pin": "PA1"})
-        b, _ = unit_with(name="CFS_2", printer=printer, values={"box_addr": 2})
+        a, _ = unit_with(name="CFS_1", printer=printer,
+                         values={"cutter_sensor_pin": "PA1", "box_uid": UID_A.hex()})
+        b, _ = unit_with(name="CFS_2", printer=printer, values={"box_addr": 2, "box_uid": UID_B.hex()})
         assert b._cutter() is a
 
 
@@ -3778,6 +3788,31 @@ class TestAfcCFSCmdToolLoad:
         assert not unit._mark_tool_state.called
         assert lane._load_state is False
 
+    def test_unit_load_lane(self):
+        # AFC's load hook: the same load, then the lane is recorded as loaded
+        unit, lane = self._unit()
+        unit.afc.save_vars.reset_mock()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd()) is True
+        assert unit._mark_tool_state.calls == [((lane,), {"loaded": True})]
+        assert lane.status == AFCLaneState.TOOL_LOADED
+        unit.afc.save_vars.assert_called_once_with()
+
+    def test_unit_load_lane_failure_stops_afc(self):
+        # Filament still at the toolhead sensor after a failed load: AFC must not record
+        # the lane as loaded (with a custom_load_cmd it only checks that sensor)
+        unit, lane = self._unit({"load_attempts": 1})
+
+        def fed_but_no_print_mode(loading_lane, n):
+            sensor(loading_lane)
+            return False, "box did not enter print mode (NO_REPLY)"
+        unit._load_attempt = fed_but_no_print_mode
+        unit.afc.save_vars.reset_mock()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd()) is False
+        assert lane.status != AFCLaneState.TOOL_LOADED
+        assert not unit.afc.save_vars.called
+        self._failed(unit, lane, "load failed after 1 attempt(s): box did not enter print "
+                                 "mode (NO_REPLY)")
+
     def test_attempt_error_cleans_up(self):
         unit, lane = self._unit({"load_attempts": 1})
         unit.attempt_results = [RuntimeError("serial gone")]
@@ -3877,8 +3912,8 @@ class TestAfcCFSRunCutterSequence:
 
     def test_uses_the_chains_switch(self):
         printer = make_printer()
-        a, _ = self._unit({"cutter_sensor_pin": "PA1"}, printer=printer)
-        b, lane = self._unit({"box_addr": 2}, printer=printer, name="CFS_2")
+        a, _ = self._unit({"cutter_sensor_pin": "PA1", "box_uid": UID_A.hex()}, printer=printer)
+        b, lane = self._unit({"box_addr": 2, "box_uid": UID_B.hex()}, printer=printer, name="CFS_2")
         b.cutter_source = a
         self._cuts(b, (1, 0))
         assert b._run_cutter_sequence(lane, gcmd()) is None
@@ -5108,8 +5143,8 @@ class TestAfcCFSCmdAfcCfsReconnect:
 
     def test_chain_keeps_the_port_open(self):
         printer = make_printer()
-        unit, _ = ready_unit(printer=printer)
-        make_unit("CFS_2", printer=printer, values={"box_addr": 2})
+        unit, _ = ready_unit(printer=printer, values={"box_uid": UID_A.hex()})
+        make_unit("CFS_2", printer=printer, values={"box_addr": 2, "box_uid": UID_B.hex()})
         unit.transport.close = Recorder()
         unit.connect = Recorder(result=True)
         unit.cmd_AFC_CFS_RECONNECT(gcmd())

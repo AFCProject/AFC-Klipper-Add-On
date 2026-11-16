@@ -1045,7 +1045,8 @@ class CFSBus:
 
     def register(self, unit: Any) -> None:
         """
-        Add a unit to the chain, refusing a clashing box_addr or box_uid.
+        Add a unit to the chain, refusing a clashing box_addr or box_uid, or a second
+        box when not every box has a box_uid.
 
         :param unit: afcCFS unit
         """
@@ -1061,10 +1062,12 @@ class CFSBus:
                 raise ValueError(error_str)
         if (self.units
             and (not unit.box_uid or not all(u.box_uid for u in self.units))):
-            self.logger.warning(
-                f"CFS {unit.name}: more than one box on {self.transport.path} without "
-                f"box_uid set; boxes are then addressed in discovery order, which can "
-                f"change. Set box_uid on each (AFC_CFS_STATUS shows it).")
+            # Without uids, a box that restarts alone can't be told apart from the
+            # others, and could take an address that is still in use
+            error_str = (f"more than one box on {self.transport.path}: set box_uid on "
+                         f"each. AFC_CFS_STATUS shows a configured box's uid; AFC.log "
+                         f"names a box that isn't in any [AFC_CFS] section")
+            raise ValueError(error_str)
         self.units.append(unit)
 
     @property
@@ -1122,12 +1125,10 @@ class CFSBus:
                 continue
             unit = self.unit_for_uid(uid)
             if unit is None:
-                # Single-box setups don't set box_uid: the one unit without a
-                # uid that hasn't got a box yet takes it.
-                # A unit whose box is still online keeps its address (only one box of a
-                # chain may have been power-cycled).
+                # A single box may leave box_uid unset (two or more must set it,
+                # see register): it takes the box if it hasn't got one yet.
                 free = [u for u in self.units
-                        if not u.box_uid and u.box_addr not in taken and not u.online]
+                        if not u.box_uid and u.box_addr not in taken]
                 unit = free[0] if free else None
             if unit is not None:
                 addr = unit.box_addr
@@ -1943,7 +1944,9 @@ class afcCFS(afcUnit):
                 except Exception:
                     trace = traceback.format_exc()
                     self.logger.debug(f"CFS {self.name}: reconnect failed\n{trace}")
-            if not self.online:
+            # A reconnect waits on the bus, and a box sequence may start meanwhile
+            if (not self.online
+                or self.bus.operation_active):
                 return self.reactor.monotonic() + self.poll_interval
 
         self._quiet_requests = not self.trace_polls
@@ -2094,8 +2097,8 @@ class afcCFS(afcUnit):
     # Lanes are plain [AFC_lane laneN] sections with unit: <cfs>:<1-4>. The box
     # owns the slot motor and sensors, so a lane has no prep/load pins and no
     # stepper: presence comes from the poll. Tool loads run this unit's
-    # AFC_CFS_TOOL_LOAD, set as each lane's custom_load_cmd at connect; unloads
-    # go through AFC's unit_unload_lane hook, so a failed one stops AFC.
+    # Loads and unloads go through AFC's unit_load_lane/unit_unload_lane hooks, like
+    # the ACE's, so a failed one stops AFC instead of being recorded as done.
     #
     def _setup_lanes(self) -> None:
         """
@@ -2127,8 +2130,6 @@ class afcCFS(afcUnit):
         lane._load_state = False
         self.present_last[lane.name] = None
         self.load_reports[lane.name] = {}
-        if lane.custom_load_cmd is None:
-            lane.custom_load_cmd = f"AFC_CFS_TOOL_LOAD LANE={lane.name}"
 
     # Lane plumbing
 
@@ -2438,8 +2439,8 @@ class afcCFS(afcUnit):
 
     def cmd_AFC_CFS_TOOL_LOAD(self, lane: AFCLane, gcmd: Any) -> None:
         """
-        Load this CFS lane to the nozzle. AFC calls this through custom_load_cmd
-        during a tool change; it can also be run by hand during bring-up.
+        Load this CFS lane to the nozzle. AFC's own tool changes use unit_load_lane
+        instead; this runs the same load by hand.
 
         Usage
         -----
@@ -2450,6 +2451,36 @@ class afcCFS(afcUnit):
         ```
         AFC_CFS_TOOL_LOAD LANE=lane1
         ```
+        """
+        self._tool_load(lane, gcmd)
+
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any,
+                       gcmd: Optional[GCodeCommand] = None) -> bool:
+        """
+        AFC's load hook (AFC.load_sequence), used like the ACE's: returns False on a
+        failed load so AFC stops without recording the lane as loaded. With a
+        custom_load_cmd AFC only checks the toolhead sensor, which can still see
+        filament after a failed load.
+
+        :param cur_lane: lane to load
+        :param cur_extruder: unused, the lane knows its extruder
+        :param gcmd: command context for the macros, if any
+        :return bool: True if the lane is loaded to the nozzle
+        """
+        if not self._tool_load(cur_lane, gcmd):
+            return False
+        cur_lane.status = AFCLaneState.TOOL_LOADED
+        self.afc.save_vars()
+        return True
+
+    def _tool_load(self, lane: AFCLane, gcmd: Any) -> bool:
+        """
+        Load a lane to the nozzle: checks, park, then load attempts (see _load_attempt)
+        and the push to tool_stn.
+
+        :param lane: lane to load
+        :param gcmd: command context for the macros, if any
+        :return bool: True if the lane is loaded to the nozzle
         """
         self.wait_for_tag_reads()   # a tag read keeps the box busy; finish it first
         started = self.reactor.monotonic()
@@ -2462,19 +2493,19 @@ class afcCFS(afcUnit):
         if (not self.online
             and not self.connect()):
             self._lane_fail(lane, f'box is offline ({self.transport.last_error or "no reply"})')
-            return
+            return False
         if self._cutter_engaged():
             self._lane_fail(lane, "cutter sensor is engaged; reset the cutter before loading")
-            return
+            return False
         if self._toolhead_sensor(lane):
             self._lane_fail(lane, "toolhead sensor already sees filament; unload the other "
                                   "lane first")
-            return
+            return False
         mask = self.read_material_mask()
         if (mask is not None
             and not mask & P.slot_bit(lane.index)):
             self._lane_fail(lane, f"no filament in slot {slot}")
-            return
+            return False
 
         if (self.afc.park
             and self.afc.park_cmd):
@@ -2510,7 +2541,7 @@ class afcCFS(afcUnit):
             self._lane_trace(lane, "load_end", ok=False, detail=detail, attempts=attempts_used,
                              seconds=round(self.reactor.monotonic() - started, 2))
             self._lane_fail(lane, f"load failed after {attempts_used} attempt(s): {detail}")
-            return
+            return False
 
         # The handoff already pushed prime1 + prime2 past the sensor.
         remaining = lane.extruder_obj.tool_stn - (self.prime1_length + self.prime2_length)
@@ -2522,6 +2553,7 @@ class afcCFS(afcUnit):
         self._lane_trace(lane, "load_end", ok=True, detail=detail, attempts=attempts_used,
                          tool_stn_push=round(max(remaining, 0), 2),
                          seconds=round(self.reactor.monotonic() - started, 2))
+        return True
 
     # Tool unload
 
