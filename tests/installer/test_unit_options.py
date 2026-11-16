@@ -119,6 +119,7 @@ class TestUnitTypeDefaults:
 
         assert Plain().install_options() == []
         assert Plain().additional_options() == []
+        assert Plain().additional_message(None, UnitSelection()) is None  # type: ignore
 
     @pytest.mark.parametrize("unit", UNIT_TYPES, ids=[u.key for u in UNIT_TYPES])
     def test_buffer_selectable_and_ramming_wording(self, unit) -> None:  # type: ignore

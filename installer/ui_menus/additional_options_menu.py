@@ -167,14 +167,16 @@ class AdditionalOptionsMenu:
                 )
             elif shared:
                 apply_shared_buffer(ctx, deps.console, sel, shared)
-        message = (
-            f"{sel.unit_name} created successfully, please look over config file and update "
-            "lane numbers.\n"
-            "Additionally, please ensure any MCU connections are updated in the appropriate "
-            "files (CANBus, serial, etc)\n"
-            "This is not a 100% turn-key solution and will require some manual configuration "
-            "based on your specific setup."
-        )
+        message = require_unit(sel.installation_type).additional_message(ctx, sel)
+        if message is None:
+            message = (
+                f"{sel.unit_name} created successfully, please look over config file and "
+                "update lane numbers.\n"
+                "Additionally, please ensure any MCU connections are updated in the "
+                "appropriate files (CANBus, serial, etc)\n"
+                "This is not a 100% turn-key solution and will require some manual "
+                "configuration based on your specific setup."
+            )
         if shared:
             message += f"\n\n{sel.unit_name} is set to share the existing buffer '{shared}'."
         if sel.additional_buffer_type == "TurtleNeckV2":

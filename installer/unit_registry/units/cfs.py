@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 import re
+import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from installer.config_editor.blocks import section_names, set_key_in_section
 from installer.config_editor.document import ConfigDocument
@@ -107,6 +108,17 @@ def _next_lane_number(cfg_dir: Path) -> int:
         if match
     ]
     return max(numbers, default=0) + 1
+
+
+def _lane_sort_key(name: str) -> Tuple[int, str]:
+    """
+    Sort `lane9` before `lane10`; names without a number go last.
+
+    :param name: lane name
+    :return Tuple[int, str]: the sort key
+    """
+    match = _LANE.match(name)
+    return (int(match.group(1)), name) if match else (sys.maxsize, name)
 
 
 def normalize_uid(text: str) -> Optional[str]:
@@ -283,6 +295,34 @@ class Cfs(UnitType):
             "pin.\n\n"
             f"- In {ctx.afc_config_dir}/AFC_Hardware.cfg, set tool_stn to the toolhead "
             "sensor-to-nozzle distance and tool_stn_unload to 0.\n  "
+        )
+
+    def additional_message(self, ctx: Context, sel: UnitSelection) -> Optional[str]:
+        """
+        Say how the new box joined the chain and what is left to do, read back from its file.
+
+        :param ctx: installer context
+        :param sel: the user's unit choices
+        :return Optional[str]: the text, or None for the generic note (a renamed template
+            copy, with no chain yet)
+        """
+        name = sel.unit_name
+        unit_file = ctx.afc_config_dir / f"AFC_{name}.cfg"
+        if not unit_file.exists():
+            return f"{name} was not added: a CFS chain takes at most {MAX_BOXES} boxes."
+        box = next((b for b in find_cfs_boxes(ctx.afc_config_dir)
+                    if b.name == name and b.path == unit_file), None)
+        if (box is None
+            or "box_addr" not in box.options):
+            return None
+        lanes = sorted(section_names([unit_file], "AFC_lane"), key=_lane_sort_key)
+        lane_text = f" with lanes {lanes[0]} to {lanes[-1]}" if lanes else ""
+        return (
+            f"{name} created: it joins the CFS chain as box_addr {box.options['box_addr']}"
+            f"{lane_text}, on the same serial port and hub as the first box.\n"
+            f"Restart Klipper with the new box powered on. AFC.log names its uid (\"isn't in "
+            f"any [AFC_CFS] section\"): put it in box_uid in {unit_file}, restart Klipper, "
+            "then power-cycle the boxes once."
         )
 
     def additional_options(self) -> List[UnitOption]:

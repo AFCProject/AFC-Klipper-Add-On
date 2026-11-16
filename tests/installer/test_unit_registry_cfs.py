@@ -13,6 +13,7 @@ from installer.unit_registry.units.cfs import (
     Cfs,
     CfsBox,
     _box_addr,
+    _lane_sort_key,
     _next_lane_number,
     _strip_comment,
     additional_box_config,
@@ -341,6 +342,55 @@ class TestCfsMessage:
             f"- In {cfg}/AFC_Hardware.cfg, set tool_stn to the toolhead sensor-to-nozzle "
             "distance and tool_stn_unload to 0.\n  "
         )
+
+
+class TestCfsAdditionalMessage:
+    def test_says_how_the_box_joined_the_chain(self, printer_tree: PrinterTree) -> None:
+        ctx = make_ctx(printer_tree)
+        put(ctx, "AFC_CFS_1.cfg", first_box_file(UID_A))
+        put(ctx, "AFC_CFS_2.cfg", expected_box("CFS_2", 2, range(9, 13)))
+        path = ctx.afc_config_dir / "AFC_CFS_2.cfg"
+        assert unit().additional_message(ctx, additional("CFS_2")) == (
+            "CFS_2 created: it joins the CFS chain as box_addr 2 with lanes lane9 to lane12, on "
+            "the same serial port and hub as the first box.\n"
+            "Restart Klipper with the new box powered on. AFC.log names its uid (\"isn't in any "
+            f"[AFC_CFS] section\"): put it in box_uid in {path}, restart Klipper, then "
+            "power-cycle the boxes once."
+        )
+
+    def test_a_box_without_lanes(self, printer_tree: PrinterTree) -> None:
+        ctx = make_ctx(printer_tree)
+        put(ctx, "AFC_CFS_2.cfg", "[AFC_CFS CFS_2]\nbox_addr: 3\n")
+        message = unit().additional_message(ctx, additional("CFS_2"))
+        assert message is not None
+        assert message.startswith(
+            "CFS_2 created: it joins the CFS chain as box_addr 3, on the same serial port")
+
+    def test_not_added(self, printer_tree: PrinterTree) -> None:
+        ctx = make_ctx(printer_tree)
+        assert unit().additional_message(ctx, additional("CFS_5")) == (
+            "CFS_5 was not added: a CFS chain takes at most 4 boxes.")
+
+    def test_a_renamed_template_copy_keeps_the_generic_note(
+        self, printer_tree: PrinterTree
+    ) -> None:
+        ctx = make_ctx(printer_tree)
+        put(ctx, "AFC_Box_A.cfg", "[AFC_CFS Box_A]\nhub: Box_A\n")
+        assert unit().additional_message(ctx, additional("Box_A")) is None
+
+    def test_a_file_without_the_units_section_keeps_the_generic_note(
+        self, printer_tree: PrinterTree
+    ) -> None:
+        ctx = make_ctx(printer_tree)
+        put(ctx, "AFC_CFS_1.cfg", first_box_file(UID_A))
+        put(ctx, "AFC_CFS_2.cfg", "# kept by the user\n[AFC_CFS Other]\nbox_addr: 2\n")
+        assert unit().additional_message(ctx, additional("CFS_2")) is None
+
+
+class TestLaneSortKey:
+    def test_numbers_sort_numerically_and_others_last(self) -> None:
+        names = ["spare", "lane10", "lane9", "lane12"]
+        assert sorted(names, key=_lane_sort_key) == ["lane9", "lane10", "lane12", "spare"]
 
 
 class TestCfsAdditionalOptions:
