@@ -302,8 +302,8 @@ class AFCExtruderStepper(AFCLane):
         else:
             self.next_cmd_time = print_time
 
-    def sync_to_extruder(self, update_current=True, *, th_extruder_name=None,
-                        gcmd: Optional[GCodeCommand]=None):
+    def sync_to_extruder(self, update_current: bool=True, *, th_extruder_name: Optional[str]=None,
+                         gcmd: Optional[GCodeCommand]=None) -> None:
         """
         Helper function to sync lane to extruder and set print current if specified.
 
@@ -321,7 +321,8 @@ class AFCExtruderStepper(AFCLane):
 
         if update_current: self.set_print_current(gcmd)
 
-    def unsync_to_extruder(self, update_current=True, gcmd: Optional[GCodeCommand]=None):
+    def unsync_to_extruder(self, update_current: bool=True,
+                           gcmd: Optional[GCodeCommand]=None) -> None:
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
