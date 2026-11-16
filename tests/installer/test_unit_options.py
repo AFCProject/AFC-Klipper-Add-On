@@ -122,7 +122,7 @@ class TestUnitTypeDefaults:
 
     @pytest.mark.parametrize("unit", UNIT_TYPES, ids=[u.key for u in UNIT_TYPES])
     def test_buffer_selectable_and_ramming_wording(self, unit) -> None:  # type: ignore
-        no_choice = unit.key in ("ViViD", "OpenAMS")
+        no_choice = unit.key in ("ViViD", "OpenAMS", "CFS")
         assert unit.buffer_selectable is not no_choice
         expected = "an FPS Board" if unit.key == "OpenAMS" else "a TurtleNeck buffer"
         assert unit.ramming_hardware == expected

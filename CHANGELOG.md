@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RS-485 chain sharing the 4-in-1 buffer as their hub, loads and unloads driven by the box through
   `unit_load_lane`/`unit_unload_lane`, RFID tag reading and an optional cutter switch. Example config in
   `templates/AFC_CFS_1.cfg`.
+- Added Creality CFS to the installer. Additional CFS units join the first box's chain: the installer
+  writes their config with the shared hub, the next free `box_addr` and lane numbers, and a `box_uid`
+  placeholder, and asks for the first box's uid if it has none.
 
 ## [11-14-2026]
 ### Added

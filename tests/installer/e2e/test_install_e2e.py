@@ -30,8 +30,8 @@ def tree_text(result: Result, relative: str) -> str:
 
 
 def _sensor_presses(index: int) -> List[str]:
-    """ACE has no toolhead sensor / ramming toggle (it is always a sensor), so skip it."""
-    return [] if TYPES[index] == "ACE" else [SENSOR_ROW]
+    """ACE and CFS have no toolhead sensor / ramming toggle (always a sensor), so skip it."""
+    return [] if not UNIT_TYPES[index].ramming_supported else [SENSOR_ROW]
 
 
 class TestFirstInstallPerUnitType:
