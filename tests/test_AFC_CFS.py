@@ -1387,6 +1387,7 @@ UID_A = bytes.fromhex("67913b482422b00236353434")
 
 
 UID_B = bytes.fromhex("b0313b4e8411b00645353230")
+UID_C = bytes.fromhex("0123456789abcdef01234567")
 
 
 @pytest.fixture(autouse=True)
@@ -2117,6 +2118,21 @@ class TestAfcCFSConnect:
         assert msgs(unit) == [("error", f"CFS CFS_1: {reason}"),
                               ("warning", f"CFS CFS_1: offline ({reason})")]
         assert unit.online is False
+
+    def test_wrong_box_reported_once(self):
+        # Reconnects retry every few seconds; the same wrong box is logged once
+        unit = self._unit({"box_uid": UID_A.hex()})
+        unit.box.reply(P.CMD_ONLINE_CHECK, online_check(UID_B), online_check(UID_B),
+                       online_check(UID_C), online_check(UID_A), online_check(UID_B))
+        for _ in range(3):
+            assert unit.connect() is False
+        errors = [m for lvl, m in msgs(unit) if lvl == "error"]
+        assert [UID_B.hex() in m for m in errors] == [True, False]   # B once, then C
+        assert UID_C.hex() in errors[1]
+        assert unit.connect() is True                                 # right box again
+        unit.online = False
+        assert unit.connect() is False                                # B again: said again
+        assert len([1 for lvl, _ in msgs(unit) if lvl == "error"]) == 3
 
     def test_discovery_addresses_the_box(self):
         unit = self._unit()

@@ -1413,6 +1413,7 @@ class afcCFS(afcUnit):
             and (self.transport.trace is None or not self.transport.trace.enabled)):
             self.transport.trace = self.trace
         self.seen_uid: Optional[bytes] = None
+        self._wrong_uid_reported: Optional[bytes] = None   # logged once per wrong box
         # Set at connect for a box without its own cutter_sensor_pin
         self.cutter_source: Optional[Any] = None
         if self.trace_file:
@@ -1617,9 +1618,13 @@ class afcCFS(afcUnit):
                 msg = (f"box at address {self.box_addr} is uid {uid.hex()}, expected "
                        f"{self.box_uid.hex()} (box_uid); power-cycle the CFS chain so the "
                        f"boxes are addressed again")
-                self.logger.error(f"CFS {self.name}: {msg}")
+                # Reconnects retry every few seconds: say it once per wrong box
+                if uid != self._wrong_uid_reported:
+                    self._wrong_uid_reported = uid
+                    self.logger.error(f"CFS {self.name}: {msg}")
                 self._set_offline(msg)
                 return False
+        self._wrong_uid_reported = None
         return self._set_online()
 
     def _probe(self) -> Optional[Frame]:
