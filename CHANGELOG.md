@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-15-2026]
+### Added
+- Added support for Creality CFS (Creality Filament System) units with `[AFC_CFS]`: up to four boxes on one
+  RS-485 chain sharing the 4-in-1 buffer as their hub, loads and unloads driven by the box through
+  `unit_load_lane`/`unit_unload_lane`, RFID tag reading and an optional cutter switch. Example config in
+  `templates/AFC_CFS_1.cfg`.
+
 ## [11-14-2026]
 ### Added
 - Added a Compensator buffer, with support in the installer and an `adc_min_val`/`adc_max_val` pair so PSF-type buffers whose ADC values don't span the full 0.0-1.0 range are scaled to the correct FPS value.
