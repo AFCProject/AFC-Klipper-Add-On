@@ -1106,6 +1106,14 @@ class TestGetStatus:
         result = ext.get_status()
         assert result["is_standalone"] is False
 
+    def test_contains_extruder_name(self):
+        """extruder_name exposes th_extruder_name (the real toolhead extruder),
+        which can differ from the AFC_extruder section's own name -- GH #784."""
+        ext = _make_afc_extruder()
+        ext.th_extruder_name = "extruder1"
+        result = ext.get_status()
+        assert result["extruder_name"] == "extruder1"
+
 # ── on_shuttle ────────────────────────────────────────────────────────────────
 # Sentinel value that mirrors the real DETECT_PRESENT constant
 _DETECT_PRESENT = "mounted"

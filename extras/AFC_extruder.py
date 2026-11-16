@@ -1271,6 +1271,7 @@ class AFCExtruder:
         self.response['is_standalone'] = self.is_standalone()
         self.response['next_pickup'] = self.next_pickup
         self.response['status'] = self.status
+        self.response['extruder_name'] = self.th_extruder_name
 
         return self.response
 
