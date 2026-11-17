@@ -168,7 +168,15 @@ class TestNormalizeUid:
     def test_colons_spaces_and_upper_case(self) -> None:
         assert normalize_uid("67:91:3B:48 24:22:B0:02 36:35:34:34") == UID_A
 
-    @pytest.mark.parametrize("text", ["", "6791", UID_A + "00", "zz" + UID_A[2:]])
+    @pytest.mark.parametrize("text", [
+        f"  {UID_A}\r\n", f"\x1b[200~{UID_A}\x1b[201~", "67913b48-2422b002-36353434",
+        f"\t{UID_A.upper()} ",
+    ], ids=["whitespace", "bracketed-paste", "dashes", "tab-upper"])
+    def test_pasted_extras_are_ignored(self, text: str) -> None:
+        assert normalize_uid(text) == UID_A
+
+    @pytest.mark.parametrize("text", ["", "6791", UID_A + "00", "zz" + UID_A[2:],
+                                      f"\x1b[31m{UID_A[:-1]}"])
     def test_not_a_uid(self, text: str) -> None:
         assert normalize_uid(text) is None
 
@@ -357,6 +365,17 @@ class TestCfsAdditionalMessage:
             f"[AFC_CFS] section\"): put it in box_uid in {path}, restart Klipper, then "
             "power-cycle the boxes once."
         )
+
+    def test_boxes_still_missing_a_uid_are_named(self, printer_tree: PrinterTree) -> None:
+        ctx = make_ctx(printer_tree)
+        first = put(ctx, "AFC_CFS_1.cfg", first_box_file())
+        put(ctx, "AFC_CFS_2.cfg", "[AFC_CFS CFS_2]\nbox_addr: 2\n")
+        message = unit().additional_message(ctx, additional("CFS_2"))
+        assert message is not None
+        assert message.endswith(
+            "then power-cycle the boxes once.\n"
+            f"CFS_1 has no box_uid yet: set it in {first} before restarting Klipper "
+            "(AFC_CFS_STATUS UNIT=CFS_1 shows it).")
 
     def test_a_box_without_lanes(self, printer_tree: PrinterTree) -> None:
         ctx = make_ctx(printer_tree)

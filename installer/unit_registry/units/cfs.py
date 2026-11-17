@@ -32,6 +32,9 @@ _HEADER = re.compile(r"^\[")
 _OPTION = re.compile(r"^([A-Za-z0-9_]+)\s*[:=]\s*(.*?)\s*$")
 _LANE = re.compile(r"lane(\d+)$")
 _UID = re.compile(r"[0-9a-f]{24}")
+# Terminal escape sequences a paste can carry (e.g. bracketed-paste markers)
+_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[~A-Za-z]")
+_UID_SEPARATORS = re.compile(r"[\s:\-]")
 
 
 class CfsBox(NamedTuple):
@@ -125,10 +128,11 @@ def normalize_uid(text: str) -> Optional[str]:
     """
     A box uid as AFC_CFS_STATUS prints it, or None if it isn't one.
 
-    :param text: what the user typed (colons and spaces are allowed)
+    :param text: what the user typed or pasted (spaces, colons, dashes and terminal
+        escape sequences are ignored)
     :return Optional[str]: 24 lower-case hex digits, or None
     """
-    uid = text.replace(":", "").replace(" ", "").lower()
+    uid = _UID_SEPARATORS.sub("", _ESCAPE.sub("", text)).lower()
     return uid if _UID.fullmatch(uid) else None
 
 
@@ -317,12 +321,19 @@ class Cfs(UnitType):
             return None
         lanes = sorted(section_names([unit_file], "AFC_lane"), key=_lane_sort_key)
         lane_text = f" with lanes {lanes[0]} to {lanes[-1]}" if lanes else ""
+        # The uid prompt's warning is cleared off the screen, so repeat it here
+        missing = [b for b in find_cfs_boxes(ctx.afc_config_dir)
+                   if b.name != name and not b.options.get("box_uid")]
+        missing_text = "".join(
+            f"\n{b.name} has no box_uid yet: set it in {b.path} before restarting Klipper "
+            f"(AFC_CFS_STATUS UNIT={b.name} shows it)." for b in missing
+        )
         return (
             f"{name} created: it joins the CFS chain as box_addr {box.options['box_addr']}"
             f"{lane_text}, on the same serial port and hub as the first box.\n"
             f"Restart Klipper with the new box powered on. AFC.log names its uid (\"isn't in "
             f"any [AFC_CFS] section\"): put it in box_uid in {unit_file}, restart Klipper, "
-            "then power-cycle the boxes once."
+            f"then power-cycle the boxes once.{missing_text}"
         )
 
     def additional_options(self) -> List[UnitOption]:
