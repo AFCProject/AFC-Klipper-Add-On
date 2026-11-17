@@ -1486,7 +1486,7 @@ class TestPauseOnError:
         buf = _make_buffer()
         buf.enable = False
         buf.afc.error = MagicMock()
-        buf.pause_on_error("fault", pause=True)
+        buf.pause_on_error("fault", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_does_not_pause_before_min_event_systime(self):
@@ -1495,7 +1495,7 @@ class TestPauseOnError:
         buf.min_event_systime = 9_999_999.0  # far in the future
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
-        buf.pause_on_error("fault", pause=True)
+        buf.pause_on_error("fault", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_does_not_pause_when_already_paused(self):
@@ -1504,7 +1504,7 @@ class TestPauseOnError:
         buf.min_event_systime = 0.0
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = True
-        buf.pause_on_error("fault", pause=True)
+        buf.pause_on_error("fault", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_pauses_when_all_conditions_met(self):
@@ -1514,7 +1514,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = TRAILING_STATE_NAME
-        buf.pause_on_error("Something went wrong", pause=True)
+        buf.pause_on_error("Something went wrong", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_called_once()
     
     def test_pauses_when_all_conditions_met_pause_false(self):
@@ -1524,7 +1524,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = TRAILING_STATE_NAME
-        buf.pause_on_error("Something went wrong", pause=False)
+        buf.pause_on_error("Something went wrong", pause=False, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_clog_message_appended_when_trailing(self):
@@ -1534,7 +1534,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = TRAILING_STATE_NAME
-        buf.pause_on_error("Base message", pause=True)
+        buf.pause_on_error("Base message", pause=True, gcmd="callback")
         call_msg = buf.afc.error.AFC_error.call_args[0][0]
         assert "CLOG DETECTED" in call_msg
 
@@ -1545,7 +1545,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = ADVANCING_STATE_NAME
-        buf.pause_on_error("Base message", pause=True)
+        buf.pause_on_error("Base message", pause=True, gcmd="callback")
         call_msg = buf.afc.error.AFC_error.call_args[0][0]
         assert "AFC NOT FEEDING" in call_msg
 
@@ -1703,7 +1703,8 @@ class TestExtruderPosUpdateEvent:
         buf.get_extruder_pos = MagicMock(return_value=55.0)  # > 50.0
         buf.update_filament_error_pos = MagicMock()
         buf.extruder_pos_update_event(100.0)
-        buf.afc.error.AFC_error.assert_called_once_with("AFC filament fault detected! Take necessary action.", True)
+        buf.afc.error.AFC_error.assert_called_once_with(
+            "AFC filament fault detected! Take necessary action.", True, gcmd="callback")
         buf.update_filament_error_pos.assert_called_once()
     
     def test_triggers_pause_when_extruder_pos_exceeds_threshold_not_stepperless_lane(self):
@@ -1720,7 +1721,8 @@ class TestExtruderPosUpdateEvent:
         buf.update_filament_error_pos = MagicMock()
         lane.unit_obj.stepperless_drive = None
         buf.extruder_pos_update_event(100.0)
-        buf.afc.error.AFC_error.assert_called_once_with("AFC filament fault detected! Take necessary action.", True)
+        buf.afc.error.AFC_error.assert_called_once_with(
+            "AFC filament fault detected! Take necessary action.", True, gcmd="callback")
         buf.update_filament_error_pos.assert_called_once()
     
     def test_triggers_pause_when_extruder_pos_exceeds_threshold_stepperless_lane(self):
@@ -3934,7 +3936,7 @@ class TestFPSExtruderPosUpdateEvent:
         buf.get_extruder_pos = MagicMock(return_value=150.0)  # > filament_error_pos (100)
         buf.extruder_pos_update_event(100.0)
         buf.pause_on_error.assert_called_once_with(
-            "AFC FPS buffer filament fault detected! Take necessary action.", True)
+            "AFC FPS buffer filament fault detected! Take necessary action.", True, gcmd="callback")
         buf.update_filament_error_pos.assert_called_once()
 
     def test_fps_stuck_extreme_but_pos_not_past_trip_is_noop(self):

@@ -136,32 +136,32 @@ class TestSetCurrent:
     def test_no_script_when_tmc_print_current_is_none(self):
         s = _make_stepper()
         s.tmc_print_current = None
-        s._set_current(1.0)
+        s._set_current(1.0, gcmd=MagicMock())
         s.afc.gcode.run_script_from_command.assert_not_called()
 
     def test_no_script_when_current_arg_is_none(self):
         s = _make_stepper()
         s.tmc_print_current = 0.8
-        s._set_current(None)
+        s._set_current(None, gcmd=MagicMock())
         s.afc.gcode.run_script_from_command.assert_not_called()
 
     def test_runs_script_when_both_set(self):
         s = _make_stepper()
         s.tmc_print_current = 0.8
-        s._set_current(0.6)
+        s._set_current(0.6, gcmd=MagicMock())
         s.afc.gcode.run_script_from_command.assert_called_once()
 
     def test_script_contains_stepper_name(self):
         s = _make_stepper(name="lane1")
         s.tmc_print_current = 0.8
-        s._set_current(0.6)
+        s._set_current(0.6, gcmd=MagicMock())
         script = s.afc.gcode.run_script_from_command.call_args[0][0]
         assert "lane1" in script
 
     def test_script_contains_current_value(self):
         s = _make_stepper()
         s.tmc_print_current = 0.8
-        s._set_current(0.6)
+        s._set_current(0.6, gcmd=MagicMock())
         script = s.afc.gcode.run_script_from_command.call_args[0][0]
         assert "0.6" in script
 
@@ -175,17 +175,18 @@ class TestCurrentHelpers:
         s.tmc_load_current = 1.2
         s._print_current_set = True
         s._set_current = MagicMock()
-        s.set_load_current()
-        s._set_current.assert_called_once_with(1.2, None)
+        gcmd = MagicMock()
+        s.set_load_current(gcmd=gcmd)
+        s._set_current.assert_called_once_with(1.2, gcmd=gcmd)
         assert not s._print_current_set
-    
+
     def test_set_load_current_print_current_not_set(self):
         s = _make_stepper()
         s.tmc_print_current = 0.8
         s.tmc_load_current = 1.2
         s._print_current_set = False
         s._set_current = MagicMock()
-        s.set_load_current()
+        s.set_load_current(gcmd=MagicMock())
         s._set_current.assert_not_called()
 
     def test_set_load_current_print_current_not_set_called_twice(self):
@@ -194,9 +195,10 @@ class TestCurrentHelpers:
         s.tmc_load_current = 1.2
         s._print_current_set = True
         s._set_current = MagicMock()
-        s.set_load_current()
-        s.set_load_current()
-        s._set_current.assert_called_once_with(1.2, None)
+        gcmd = MagicMock()
+        s.set_load_current(gcmd=gcmd)
+        s.set_load_current(gcmd=gcmd)
+        s._set_current.assert_called_once_with(1.2, gcmd=gcmd)
         assert not s._print_current_set
 
     def test_set_print_current_calls_set_current_with_print_value(self):
@@ -204,8 +206,9 @@ class TestCurrentHelpers:
         s.tmc_print_current = 0.5
         s.tmc_load_current = 1.0
         s._set_current = MagicMock()
-        s.set_print_current()
-        s._set_current.assert_called_once_with(0.5, None)
+        gcmd = MagicMock()
+        s.set_print_current(gcmd=gcmd)
+        s._set_current.assert_called_once_with(0.5, gcmd=gcmd)
         assert s._print_current_set
 
     def test_set_print_current_calls_set_current_with_print_value_called_twice(self):
@@ -213,9 +216,10 @@ class TestCurrentHelpers:
         s.tmc_print_current = 0.5
         s.tmc_load_current = 1.0
         s._set_current = MagicMock()
-        s.set_print_current()
-        s.set_print_current()
-        s._set_current.assert_called_once_with(0.5, None)
+        gcmd = MagicMock()
+        s.set_print_current(gcmd=gcmd)
+        s.set_print_current(gcmd=gcmd)
+        s._set_current.assert_called_once_with(0.5, gcmd=gcmd)
         assert s._print_current_set
 
     def test_set_print_current_call_already_enabled(self):
@@ -224,7 +228,7 @@ class TestCurrentHelpers:
         s.tmc_print_current = 0.5
         s.tmc_load_current = 1.0
         s._set_current = MagicMock()
-        s.set_print_current()
+        s.set_print_current(gcmd=MagicMock())
         s._set_current.assert_not_called()
 
 
@@ -334,7 +338,7 @@ class TestSyncUnsync:
         s = _make_stepper(extruder_name="extruder")
         s._set_current = MagicMock()
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=False)
+        s.sync_to_extruder(update_current=False, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder")
 
     def test_sync_calls_extruder_stepper_sync_already_synced(self):
@@ -342,7 +346,7 @@ class TestSyncUnsync:
         s._synced_to_extruder = "extruder"
         s._set_current = MagicMock()
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=True)
+        s.sync_to_extruder(update_current=True, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_not_called()
         s.set_print_current.assert_called_once()
 
@@ -355,7 +359,7 @@ class TestSyncUnsync:
         s._synced_to_extruder = "extruder1"
         s._set_current = MagicMock()
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=True)
+        s.sync_to_extruder(update_current=True, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder")
         assert s._synced_to_extruder == "extruder"
 
@@ -363,42 +367,42 @@ class TestSyncUnsync:
         s = _make_stepper(extruder_name="extruder")
         s._set_current = MagicMock()
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=False)
-        s.sync_to_extruder(update_current=False)
+        s.sync_to_extruder(update_current=False, gcmd=MagicMock())
+        s.sync_to_extruder(update_current=False, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder")
         assert s._synced_to_extruder
 
     def test_sync_calls_set_print_current_when_update_current(self):
         s = _make_stepper(extruder_name="extruder")
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=True)
+        s.sync_to_extruder(update_current=True, gcmd=MagicMock())
         s.set_print_current.assert_called_once()
 
     def test_sync_calls_set_print_current_when_update_current_called_twice(self):
         s = _make_stepper(extruder_name="extruder")
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=True)
-        s.sync_to_extruder(update_current=True)
+        s.sync_to_extruder(update_current=True, gcmd=MagicMock())
+        s.sync_to_extruder(update_current=True, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder")
 
     def test_sync_calls_set_print_current_when_update_current_synced_set(self):
         s = _make_stepper(extruder_name="extruder")
         s._synced_to_extruder = "extruder"
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=True)
+        s.sync_to_extruder(update_current=True, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_not_called()
         s.set_print_current.assert_called_once()
 
     def test_sync_skips_set_print_current_when_update_current_false(self):
         s = _make_stepper(extruder_name="extruder")
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=False)
+        s.sync_to_extruder(update_current=False, gcmd=MagicMock())
         s.set_print_current.assert_not_called()
 
     def test_sync_uses_override_extruder_name(self):
         s = _make_stepper(extruder_name="extruder")
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=False, th_extruder_name="extruder2")
+        s.sync_to_extruder(update_current=False, th_extruder_name="extruder2", gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder2")
         assert s._synced_to_extruder == "extruder2"
 
@@ -408,7 +412,7 @@ class TestSyncUnsync:
         s = _make_stepper(extruder_name="extruder")
         s._synced_to_extruder = "extruder1"
         s.set_print_current = MagicMock()
-        s.sync_to_extruder(update_current=False, th_extruder_name="extruder2")
+        s.sync_to_extruder(update_current=False, th_extruder_name="extruder2", gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with("extruder2")
         assert s._synced_to_extruder == "extruder2"
 
@@ -416,28 +420,28 @@ class TestSyncUnsync:
         s = _make_stepper()
         s.set_load_current = MagicMock()
         s._synced_to_extruder = "extruder"
-        s.unsync_to_extruder(update_current=False)
+        s.unsync_to_extruder(update_current=False, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with(None)
         assert s._synced_to_extruder is None
 
     def test_unsync_calls_set_load_current_when_update_current(self):
         s = _make_stepper()
         s.set_load_current = MagicMock()
-        s.unsync_to_extruder(update_current=True)
+        s.unsync_to_extruder(update_current=True, gcmd=MagicMock())
         s.set_load_current.assert_called_once()
 
     def test_unsync_skips_set_load_current_when_update_current_false(self):
         s = _make_stepper()
         s.set_load_current = MagicMock()
-        s.unsync_to_extruder(update_current=False)
+        s.unsync_to_extruder(update_current=False, gcmd=MagicMock())
         s.set_load_current.assert_not_called()
 
     def test_unsync_synced_twice(self):
         s = _make_stepper()
         s._synced_to_extruder = "extruder"
         s.set_load_current = MagicMock()
-        s.unsync_to_extruder(update_current=False)
-        s.unsync_to_extruder(update_current=False)
+        s.unsync_to_extruder(update_current=False, gcmd=MagicMock())
+        s.unsync_to_extruder(update_current=False, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_called_once_with(None)
         assert s._synced_to_extruder is None
 
@@ -445,8 +449,8 @@ class TestSyncUnsync:
         s = _make_stepper()
         s._synced_to_extruder = None
         s.set_load_current = MagicMock()
-        s.unsync_to_extruder(update_current=False)
-        s.unsync_to_extruder(update_current=False)
+        s.unsync_to_extruder(update_current=False, gcmd=MagicMock())
+        s.unsync_to_extruder(update_current=False, gcmd=MagicMock())
         s.extruder_stepper.sync_to_extruder.assert_not_called()
         assert not s._synced_to_extruder
 
@@ -455,14 +459,14 @@ class TestSyncUnsync:
         s.set_print_current = MagicMock()
         gcmd = MagicMock()
         s.sync_to_extruder(update_current=True, gcmd=gcmd)
-        s.set_print_current.assert_called_once_with(gcmd)
+        s.set_print_current.assert_called_once_with(gcmd=gcmd)
 
     def test_unsync_passes_gcmd_to_set_load_current(self):
         s = _make_stepper()
         s.set_load_current = MagicMock()
         gcmd = MagicMock()
         s.unsync_to_extruder(update_current=True, gcmd=gcmd)
-        s.set_load_current.assert_called_once_with(gcmd)
+        s.set_load_current.assert_called_once_with(gcmd=gcmd)
 
 # ── TrapqAppendWrapper  ───────────────────────────────────────────────────
  

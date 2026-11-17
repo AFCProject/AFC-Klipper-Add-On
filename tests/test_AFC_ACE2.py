@@ -2632,7 +2632,7 @@ class TestAfcACE2CheckStuck:
         printer.reactor.run_callbacks()
         assert unit._ace.commands == [("get_status", {}), ("stop_feed_assist", {"index": 0})]
         assert printer.afc.error.AFC_error.calls == [
-            ((ace2_jam_message("lane1", self.STUCK),), {"pause": True})]
+            ((ace2_jam_message("lane1", self.STUCK),), {"pause": True, "gcmd": "callback"})]
         assert printer.logger.messages == []
 
     @pytest.mark.parametrize("state,what", [
@@ -2651,7 +2651,7 @@ class TestAfcACE2CheckStuck:
         # The deferred handler is told the lane and the state that tripped.
         unit.printer.reactor.run_callbacks()
         assert unit.printer.afc.error.AFC_error.calls == [
-            ((ace2_jam_message("lane1", what),), {"pause": True})]
+            ((ace2_jam_message("lane1", what),), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.logger.messages == []
 
     def test_recovery_rearms_latch(self):
@@ -2801,7 +2801,8 @@ class TestAfcACE2HandleEncoderJam:
         assert printer.timeline == [("send_command", ("get_status", {})),
                                     ("send_command", ("stop_feed_assist", {"index": 0})),
                                     ("AFC_error", message)]
-        assert printer.afc.error.AFC_error.calls == [((message,), {"pause": True})]
+        assert printer.afc.error.AFC_error.calls == [
+            ((message,), {"pause": True, "gcmd": "callback"})]
         assert printer.gcode.run_script_from_command.calls == []
         assert printer.logger.messages == []
 
@@ -2819,7 +2820,7 @@ class TestAfcACE2HandleEncoderJam:
 
         assert unit._feed_assist_active == {0}
         assert unit.printer.afc.error.AFC_error.calls == [
-            ((ace2_jam_message("lane2", what),), {"pause": True})]
+            ((ace2_jam_message("lane2", what),), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.logger.messages == []
 
     def test_stop_assist_exception_is_swallowed(self):
@@ -2834,7 +2835,7 @@ class TestAfcACE2HandleEncoderJam:
         assert link.commands == []
         assert printer.afc.error.AFC_error.calls == [
             ((ace2_jam_message("lane1", "stuck spool (encoder saw no movement while "
-                                        "feeding)"),), {"pause": True})]
+                                        "feeding)"),), {"pause": True, "gcmd": "callback"})]
         assert printer.gcode.run_script_from_command.calls == []
         assert printer.logger.messages == []
 
@@ -2847,9 +2848,11 @@ class TestAfcACE2HandleEncoderJam:
 
         unit._handle_encoder_jam("lane1", 0, "stuck_error")
 
-        assert printer.afc.error.AFC_error.calls == [((message,), {"pause": True})]
+        assert printer.afc.error.AFC_error.calls == [
+            ((message,), {"pause": True, "gcmd": "callback"})]
         assert printer.logger.messages == [("error", message)]
         assert printer.gcode.run_script_from_command.calls == [(("PAUSE",), {})]
+        assert printer.gcode.run_script.calls == []
         assert unit._feed_assist_active == {1}
 
 
