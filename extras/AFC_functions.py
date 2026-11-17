@@ -117,7 +117,7 @@ class afcFunction:
         self.printer.register_event_handler("afc_hub:register_macros",self.register_hub_macros)
         # TODO: Use or remove once fully moved away from KTC
         # self.reactor = self.printer.get_reactor()
-        # self.activate_extruder_cb = self.reactor.register_timer( self._handle_activate_extruder )
+        # self.activate_extruder_cb = self.reactor.register_timer( self.handle_activate_extruder )
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.auto_var_file = None
         self.errorLog = {}
@@ -653,19 +653,17 @@ class afcFunction:
             return 'Prep:{}'.format(self.HexConvert(cur_lane.led_prep_loaded).split(':')[-1])
         return 'Not Ready:{}'.format(self.HexConvert(cur_lane.led_not_ready).split(':')[-1])
 
-    def handle_activate_extruder(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def handle_activate_extruder_cb(self):
         """
         Function used to deactivate lanes motors and buffers, then enables current extruders lane
 
         This will also be tied to a callback once multiple extruders are implemented
-
-        :param gcmd: command context to run the current-change macros through, if any
         """
         # Wait until printer is not moving so klipper does not crash
         # self.reactor.update_timer( self.activate_extruder_cb, self.reactor.monotonic() + 5 )
-        self._handle_activate_extruder(0, gcmd=gcmd)
+        self.handle_activate_extruder(0, gcmd="callback")
 
-    def _handle_activate_extruder(self, eventtime, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def handle_activate_extruder(self, eventtime, gcmd: Union[GCodeCommand, Literal["callback"]]):
         """
         Supposed to be a callback function from timer, currently this is not called from timer event.
         TODO: Update this functionality before pushing to main/dev or once fully moved away from KTC
@@ -724,7 +722,7 @@ class afcFunction:
             cur_lane_loaded.unsync_to_extruder(gcmd=gcmd)
             cur_lane_loaded.set_tool_unloaded(normal_toolchange=True, gcmd=gcmd)
             cur_lane_loaded.unit_obj.return_to_home(gcmd=gcmd)
-            self.afc.function.handle_activate_extruder(gcmd=gcmd)
+            self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
             self.logger.info("Manually removing {} loaded from toolhead".format(cur_lane_loaded.name))
             self.afc.save_vars()
 

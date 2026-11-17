@@ -2315,7 +2315,7 @@ class AFCLane:
 
         self.afc.function.unset_lane_loaded(gcmd)
 
-        self.afc.function.handle_activate_extruder(gcmd=gcmd)
+        self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
         self.set_tool_loaded(normal_toolchange=True, gcmd=gcmd)
         self.sync_to_extruder(gcmd=gcmd)
         self.afc.save_vars()

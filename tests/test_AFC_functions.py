@@ -3738,7 +3738,7 @@ class TestCmdAfcLaneResetToolheadLoadedGuard:
         func.afc.gcode.respond_info.assert_any_call("Resetting lane1 to hub")
 
 
-# ── handle_activate_extruder / _handle_activate_extruder ─────────────────────
+# ── handle_activate_extruder / handle_activate_extruder ─────────────────────
 
 class TestHandleActivateExtruder:
     def _make(self, cur_lane_loaded=None):
@@ -3759,19 +3759,14 @@ class TestHandleActivateExtruder:
         lane.unit_obj = MagicMock()
         return lane
 
-    def test_handle_activate_extruder_delegates_to_underscore_variant(self):
+    def test_handle_activate_extruder_cb_delegates_to_underscore_variant(self):
+        """handle_activate_extruder_cb is the extruder:activate_extruder event
+        handler, which Klipper always calls with no arguments, so it has no
+        real gcmd to pass through and uses the "callback" literal instead."""
         func = self._make()
-        func._handle_activate_extruder = MagicMock()
-        gcmd = MagicMock()
-        func.handle_activate_extruder(gcmd)
-        func._handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
-
-    def test_handle_activate_extruder_passes_gcmd_through(self):
-        func = self._make()
-        func._handle_activate_extruder = MagicMock()
-        gcmd = MagicMock()
-        func.handle_activate_extruder(gcmd)
-        func._handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
+        func.handle_activate_extruder = MagicMock()
+        func.handle_activate_extruder_cb()
+        func.handle_activate_extruder.assert_called_once_with(0, gcmd="callback")
 
     def test_not_ready_lane_calls_lane_not_ready(self):
         """Covers the `prep_state and load_state` guard's False branch --
@@ -3780,7 +3775,7 @@ class TestHandleActivateExtruder:
         lane = self._make_other_lane(prep_state=False, load_state=False)
         func.afc.lanes = {"lane2": lane}
         gcmd = MagicMock()
-        func._handle_activate_extruder(0, gcmd=gcmd)
+        func.handle_activate_extruder(0, gcmd=gcmd)
         lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
         lane.unit_obj.lane_loaded.assert_not_called()
         lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
@@ -3791,7 +3786,7 @@ class TestHandleActivateExtruder:
         lane = self._make_other_lane(prep_state=True, load_state=False)
         func.afc.lanes = {"lane2": lane}
         gcmd = MagicMock()
-        func._handle_activate_extruder(0, gcmd=gcmd)
+        func.handle_activate_extruder(0, gcmd=gcmd)
         lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_ready_load_only_calls_lane_not_ready(self):
@@ -3800,7 +3795,7 @@ class TestHandleActivateExtruder:
         lane = self._make_other_lane(prep_state=False, load_state=True)
         func.afc.lanes = {"lane2": lane}
         gcmd = MagicMock()
-        func._handle_activate_extruder(0, gcmd=gcmd)
+        func.handle_activate_extruder(0, gcmd=gcmd)
         lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_ready_not_tool_loaded_calls_lane_loaded(self):
@@ -3808,7 +3803,7 @@ class TestHandleActivateExtruder:
         lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=False)
         func.afc.lanes = {"lane2": lane}
         gcmd = MagicMock()
-        func._handle_activate_extruder(0, gcmd=gcmd)
+        func.handle_activate_extruder(0, gcmd=gcmd)
         lane.unit_obj.lane_loaded.assert_called_once_with(lane, gcmd=gcmd)
         lane.unit_obj.lane_not_ready.assert_not_called()
 
@@ -3817,7 +3812,7 @@ class TestHandleActivateExtruder:
         lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=True)
         func.afc.lanes = {"lane2": lane}
         gcmd = MagicMock()
-        func._handle_activate_extruder(0, gcmd=gcmd)
+        func.handle_activate_extruder(0, gcmd=gcmd)
         lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane, gcmd=gcmd)
         lane.unit_obj.lane_loaded.assert_not_called()
         lane.unit_obj.lane_not_ready.assert_not_called()
@@ -3831,7 +3826,7 @@ class TestHandleActivateExtruder:
         active_lane.spool_id = None
         func.get_current_lane_obj = MagicMock(return_value=active_lane)
         func.afc.lanes = {"lane1": active_lane}
-        func._handle_activate_extruder(0, gcmd=MagicMock())
+        func.handle_activate_extruder(0, gcmd=MagicMock())
         # do_enable(True) is legitimately called later, outside the loop, to
         # enable the active lane -- do_enable(False) is what the (skipped)
         # loop body would have called, so that's the call that must be absent.

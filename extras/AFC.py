@@ -114,7 +114,8 @@ class afc:
         self.printer.register_event_handler("afc_stepper:register_macros",self.register_lane_macros)
         # Registering for sdcard reset file so that error_state can be reset when starting a print
         self.printer.register_event_handler("virtual_sdcard:reset_file", self._reset_file_callback)
-        self.printer.register_event_handler("extruder:activate_extruder", self.function.handle_activate_extruder)
+        self.printer.register_event_handler("extruder:activate_extruder",
+                                            self.function.handle_activate_extruder_cb)
         # Registering webhooks endpoint for <ip_address>/printer/afc/status
         self.webhooks.register_endpoint("afc/status", self._webhooks_status)
 
@@ -668,7 +669,9 @@ class afc:
         """
         self.in_print_timer = self.reactor.register_timer( self.in_print_reactor_timer, self.reactor.monotonic() + 5 )
         self.error.reset_failure()
-        self.run_script("CLEAR_PAUSE", gcmd="callback")
+        # Specifically calling run_script_from_command here because this callback is called 
+        # synchronously, so for new Kalico we cannot call run_script because it will cause a deadlock
+        self.gcode.run_script_from_command('CLEAR_PAUSE')
         self.number_of_toolchanges = 0
         self.current_toolchange    = -1
         self.print_tool_temperatures = []
@@ -2842,7 +2845,7 @@ class afc:
                 # could have been changed with KTC SELECT_TOOL and lane might not be synced
                 # properly
                 # Take call out once transitioned away from KTC
-                self.function._handle_activate_extruder(0, gcmd=gcmd)
+                self.function.handle_activate_extruder(0, gcmd=gcmd)
                 self.logger.info("{} already loaded".format(cur_lane.name))
                 if not self.error_state and self.current_toolchange == -1:
                     self.current_toolchange += 1

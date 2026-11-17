@@ -357,7 +357,7 @@ class TestCmdAFCUnselectTool:
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
-        tool.afc.function.handle_activate_extruder.assert_called_once_with(gcmd=gcmd)
+        tool.afc.function.handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
 
     def test_current_state_goes_tool_dock_during_unselect_then_idle(self):
         extruder = _make_extruder_obj()
@@ -695,7 +695,7 @@ class TestToolSwap:
         tool.tool_swap(lane, gcmd=gcmd)
 
         lane.activate_toolhead_extruder.assert_called_once()
-        tool.afc.function._handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
+        tool.afc.function.handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
 
     def test_waits_for_toolhead_moves(self):
         tool = _make_toolchanger_for_tool_swap()

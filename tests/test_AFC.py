@@ -11,7 +11,7 @@ Covers:
   - afc._heat_next_extruder: explicit next_temp path
   - afc.CHANGE_TOOL: adjusting_temperature with new_extruder_temp
   - afc.CHANGE_TOOL: early-exit paths (bypass active, _heat_next_extruder failure)
-  - afc.CHANGE_TOOL: same-lane branch (_handle_activate_extruder, current_toolchange)
+  - afc.CHANGE_TOOL: same-lane branch (handle_activate_extruder, current_toolchange)
   - afc.CHANGE_TOOL: unload path (current=None, prep_done=False, unknown lane, TOOL_UNLOAD failure)
   - afc.CHANGE_TOOL: load path (restore_pos flag, in_toolchange, stats callbacks, error_state guard)
   - afc.CHANGE_TOOL: state management (next_lane_load lifecycle, in_toolchange flag, toolchange counter)
@@ -1149,7 +1149,7 @@ def _make_afc_for_change_tool(lane_name="lane2", next_extruder_name="extruder1",
     obj.function.in_print.return_value = False
     obj.function.is_paused.return_value = False
     obj.function.log_toolhead_pos = MagicMock()
-    obj.function._handle_activate_extruder = MagicMock()
+    obj.function.handle_activate_extruder = MagicMock()
 
     # _heat_next_extruder stub: return (next_extruder_obj, set_temp)
     obj._heat_next_extruder.return_value = (next_extruder, 200.0)
@@ -1434,11 +1434,11 @@ class TestChangeTool_SameLane:
         return obj, cur_lane
 
     def test_handle_activate_extruder_called_with_zero(self):
-        """_handle_activate_extruder(0) is called to re-sync the lane."""
+        """handle_activate_extruder(0) is called to re-sync the lane."""
         gcmd = MagicMock()
         obj, cur_lane = self._make()
         obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
-        obj.function._handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
+        obj.function.handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
 
     def test_save_pos_not_called(self):
         """save_pos is NOT called when the lane is already loaded."""
