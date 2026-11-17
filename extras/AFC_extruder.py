@@ -88,6 +88,10 @@ class AFCExtruderStats:
         self.tc_tool_unload: AFCStats_var
         self.tc_tool_load: AFCStats_var
 
+        # Stats fields above are only assigned once handle_moonraker_stats runs,
+        # which requires a successful moonraker connection; guards check_cut_threshold
+        # against running before that, e.g. when moonraker never connects.
+        self._stats_ready: bool = False
 
     def handle_moonraker_stats(self):
         """
@@ -138,11 +142,16 @@ class AFCExtruderStats:
             self.last_blade_changed.value = "N/A"
             self.last_blade_changed.update_database()
 
+        self._stats_ready = True
+
     def check_cut_threshold(self):
         """
         Function checks current cut value against users threshold value, outputs warning when cut is within
         1k cuts of threshold. Outputs errors once number of cuts exceed threshold
         """
+        if not self._stats_ready:
+            return
+
         send_message = False
         message_type = None
         blade_changed_date_string = self.last_blade_changed
@@ -179,6 +188,9 @@ class AFCExtruderStats:
         """
         Helper function for increasing all cut counts
         """
+        if not self._stats_ready:
+            return
+
         self.cut_total.increase_count()
         self.cut_total_since_changed.increase_count()
         self.check_cut_threshold()
@@ -188,6 +200,9 @@ class AFCExtruderStats:
         Helper function for increasing total toolchange count and number of toolchanges with
         error count.
         """
+        if not self._stats_ready:
+            return
+
         self.tc_total.increase_count()
         self.obj.afc.afc_stats.increase_toolchange_wo_error()
 
@@ -195,6 +210,9 @@ class AFCExtruderStats:
         """
         Resets extruders load/unload/change total/select/unselect values and updates database
         """
+        if not self._stats_ready:
+            return
+
         self.tc_total.reset_count()
         self.tc_tool_unload.reset_count()
         self.tc_tool_load.reset_count()

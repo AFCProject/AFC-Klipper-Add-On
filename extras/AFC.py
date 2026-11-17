@@ -126,6 +126,7 @@ class afc:
         self.spoolman           = None
         self.moonraker: Optional[AFC_moonraker] = None
         self.print_data_metadata : Optional[AFC_PrintFileMetaData] = None
+        self.afc_stats: Optional[AFCStats] = None
         self.td1_defined        = False
         self._td1_present       = False
         self._last_td1_query:float    = 0
@@ -1691,7 +1692,8 @@ class afc:
         if not self.TOOL_LOAD(cur_lane, purge_length, gcmd=gcmd):
             # Error happened, reset toolchanges without error count
             # and increase load error count
-            self.afc_stats.increase_load_error_count(self)
+            if self.afc_stats is not None:
+                self.afc_stats.increase_load_error_count(self)
 
     def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: Optional[float]=None,
                   set_start_time: bool=False, load_to_gears: bool=False,
@@ -1755,6 +1757,8 @@ class afc:
                 msg = ('Failed to unload currently loaded lane {} from extruder {} before loading new lane {}.'.format(
                     lane_name, cur_extruder_obj.name, cur_lane.name))
                 self.error.fix(msg, self.lanes[lane_name], gcmd=gcmd)
+                if self.afc_stats is not None:
+                    self.afc_stats.increase_unload_error_count(self)
                 return False
 
         if cur_lane.name != self.current:
@@ -1810,11 +1814,15 @@ class afc:
                         cur_lane.get_td1_data_load()
                         load_time = self.afcDeltaTime.log_major_delta(
                             f"{cur_lane.name} is now loaded in toolhead", False)
-                        self.afc_stats.average_tool_load_time.average_time(load_time)
+                        if self.afc_stats is not None:
+                            self.afc_stats.average_tool_load_time.average_time(load_time)
 
-                        # Increment stat counts
-                        cur_lane.extruder_obj.estats.tc_tool_load.increase_count()
-                        cur_lane.lane_load_count.increase_count()
+                        # Increment stat counts. estats fields and lane_load_count are only
+                        # assigned once moonraker connects, so stay unset if it never does.
+                        if cur_lane.extruder_obj.estats._stats_ready:
+                            cur_lane.extruder_obj.estats.tc_tool_load.increase_count()
+                        if cur_lane.lane_load_count is not None:
+                            cur_lane.lane_load_count.increase_count()
                         cur_lane.espooler.stats.update_database()
 
                         if self.post_load_macro is not None:
@@ -2137,7 +2145,8 @@ class afc:
         if not self.TOOL_UNLOAD(cur_lane, gcmd=gcmd):
             # Error happened, reset toolchanges without error count
             # and increase unload error count
-            self.afc_stats.increase_unload_error_count(self)
+            if self.afc_stats is not None:
+                self.afc_stats.increase_unload_error_count(self)
 
         # User manually unloaded spool from toolhead, remove spool from active status
         self.spool.set_active_spool(None)
@@ -2267,7 +2276,8 @@ class afc:
                 if restore_temp: self.restore_toolhead_temp(temp_state)
 
             unload_time = self.afcDeltaTime.log_major_delta("Lane {} unload done".format(cur_lane.name if cur_lane is not None else "None"))
-            self.afc_stats.average_tool_unload_time.average_time(unload_time)
+            if self.afc_stats is not None:
+                self.afc_stats.average_tool_unload_time.average_time(unload_time)
             if cur_lane is not None and cur_lane.hub == 'direct_load':
                 self.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         self.current_state = State.IDLE
@@ -2583,7 +2593,9 @@ class afc:
         # Update tool and lane status.
         cur_lane.disable_buffer()
         cur_lane.do_enable(False)
-        cur_lane.extruder_obj.estats.tc_tool_unload.increase_count()
+        # estats fields are only assigned once moonraker connects, stay unset if it never does.
+        if cur_lane.extruder_obj.estats._stats_ready:
+            cur_lane.extruder_obj.estats.tc_tool_unload.increase_count()
         self.save_vars()
         return True
 
@@ -2769,7 +2781,8 @@ class afc:
                             self.error.fix(msg, unload_lane, gcmd=gcmd)  #send to error handling
                             # Error happened, reset toolchanges without error count
                             # and increase unload error count
-                            self.afc_stats.increase_unload_error_count(self)
+                            if self.afc_stats is not None:
+                                self.afc_stats.increase_unload_error_count(self)
                             return
 
                         if (force_unload
@@ -2815,13 +2828,15 @@ class afc:
                     if restore_pos:
                         self.restore_pos()
                     total_time = self.afcDeltaTime.log_total_time("Total change time:")
-                    self.afc_stats.average_toolchange_time.average_time(total_time)
+                    if self.afc_stats is not None:
+                        self.afc_stats.average_toolchange_time.average_time(total_time)
                     self.in_toolchange = False
                     cur_lane.extruder_obj.estats.increase_toolcount_change()
                 else:
                     # Error happened, reset toolchanges without error count
                     # and increase load error count
-                    self.afc_stats.increase_load_error_count(self)
+                    if self.afc_stats is not None:
+                        self.afc_stats.increase_load_error_count(self)
             else:
                 # Calling handle activate extruder just to make sure lanes are synced as tool
                 # could have been changed with KTC SELECT_TOOL and lane might not be synced
@@ -3217,6 +3232,9 @@ class afc:
         """
         short = bool(gcmd.get_int("SHORT", self.short_stats))
 
+        if self.afc_stats is None:
+            self.logger.info("AFC stats are not available, Moonraker never connected.")
+            return
         self.afc_stats.print_stats(afc_obj=self, short=short)
 
     cmd_AFC_CHANGE_BLADE_help = "Sets cutter blade changed date and resets total count since blade was changed"
@@ -3286,7 +3304,7 @@ class afc:
             self.logger.info(f'Extruder stats reset for {extruder.name}')
 
         if extruder or lane:
-            if not self.db_backup:
+            if not self.db_backup and self.moonraker is not None:
                 error = self.moonraker.trigger_db_backup()
                 if error: return
                 self.db_backup = True
@@ -3295,8 +3313,9 @@ class afc:
             if "all" in extruder.lower():
                 for extruder_obj in self.tools.values():
                     reset_extruder(extruder_obj)
-                self.afc_stats.average_tool_load_time.reset_count()
-                self.afc_stats.reset_average_times()
+                if self.afc_stats is not None:
+                    self.afc_stats.average_tool_load_time.reset_count()
+                    self.afc_stats.reset_average_times()
             else:
                 extruder_obj: AFCExtruder = self.tools.get(extruder, None)
                 if extruder_obj:
