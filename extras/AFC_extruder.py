@@ -16,7 +16,7 @@ except ImportError:
 from configparser import Error as error
 from math import ceil
 
-from typing import TYPE_CHECKING, Optional, Union, Dict
+from typing import TYPE_CHECKING, Optional, Union, Dict, Literal
 
 if TYPE_CHECKING:
     from klippy import Printer
@@ -468,8 +468,8 @@ class AFCExtruder:
             self.tc_lane._load_state = self.tc_lane.prep_state = self.tool_start_state
 
             if self.tool_start_state:
-                self.tc_lane.set_loaded()
-                self.tc_lane.set_tool_loaded()
+                self.tc_lane.set_loaded(gcmd="callback")
+                self.tc_lane.set_tool_loaded(gcmd="callback")
 
             if self.tool_start == "buffer":
                 error_msg = (
@@ -559,7 +559,8 @@ class AFCExtruder:
         """
         self.estats.handle_moonraker_stats()
 
-    def _handle_toolhead_sensor_runout(self, state, sensor_name):
+    def _handle_toolhead_sensor_runout(self, state, sensor_name,
+                                       gcmd: Union[GCodeCommand, Literal["callback"]]):
         """
         Handles runout detection at the toolhead sensors (tool_start or tool_end).
         Notifies the currently loaded lane if filament is missing at the toolhead sensor.
@@ -567,13 +568,14 @@ class AFCExtruder:
         is set to True, raises an AFC error and pauses the print while printing.
         :param state: Boolean indicating sensor state (True = filament present, False = runout)
         :param sensor_name: Name of the triggering sensor ("tool_start" or "tool_end")
+        :param gcmd: command context this runout was triggered through
         """
         # Notify the currently loaded lane if filament is missing at toolhead
         if not state:
             if self.lane_loaded and self.lane_loaded in self.lanes:
                 lane = self.lanes[self.lane_loaded]
                 if hasattr(lane, "handle_toolhead_runout"):
-                    lane.handle_toolhead_runout(sensor=sensor_name)
+                    lane.handle_toolhead_runout(sensor=sensor_name, gcmd=gcmd)
             elif (self.enable_runout
                   and self.enable_runout_in_bypass
                   and not self.afc.in_toolchange
@@ -589,7 +591,7 @@ class AFCExtruder:
                 #   5. The toolhead is active on the shuttle (prevents docked/parked toolheads from pausing in multi-tool setups).
                 #   6. The printer is actively printing.
                 msg = f"Toolhead runout detected by {sensor_name} sensor in bypass/manual mode."
-                self.afc.error.AFC_error(msg)
+                self.afc.error.AFC_error(msg, gcmd=gcmd)
 
     def handle_start_runout( self, eventtime):
         """
@@ -602,8 +604,10 @@ class AFCExtruder:
 
         :param eventtime: Event time from the button press
         """
-        self._handle_toolhead_sensor_runout(self.fila_tool_start.runout_helper.filament_present, "tool_start")
-        self.fila_tool_start.runout_helper.min_event_systime = self.reactor.monotonic() + self.fila_tool_start.runout_helper.event_delay
+        runout_helper = self.fila_tool_start.runout_helper
+        self._handle_toolhead_sensor_runout(runout_helper.filament_present, "tool_start",
+                                            gcmd="callback")
+        runout_helper.min_event_systime = (self.reactor.monotonic() + runout_helper.event_delay)
 
     def note_tool_start_callback(self, state, force=False):
         """
@@ -653,10 +657,10 @@ class AFCExtruder:
                             # extruder at once.
                             if (not self.load_active
                                 and not getattr(self.tc_lane, 'custom_load_cmd', None)):
-                                self.load_unload_sequence(self.tool_stn)
+                                self.load_unload_sequence(self.tool_stn, gcmd="callback")
                         else:
-                            self.tc_lane.set_tool_unloaded()
-                            self.tc_lane.set_unloaded()
+                            self.tc_lane.set_tool_unloaded(gcmd="callback")
+                            self.tc_lane.set_unloaded(gcmd="callback")
 
                     elif (self.tc_lane._afc_prep_done
                           and actively_printing):
@@ -669,7 +673,8 @@ class AFCExtruder:
 
         self.tool_start_state = state
 
-    def _set_standalone_lane_states(self, enabled: bool) -> None:
+    def _set_standalone_lane_states(self, enabled: bool,
+                                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
         """
         Sync the standalone toolchanger lane's tool-loaded state with the extruder.
 
@@ -678,18 +683,19 @@ class AFCExtruder:
         unloaded since there is no hardware sensor left holding it "prepped".
 
         :param enabled: True to mark the lane loaded, False to mark it unloaded.
+        :param gcmd: command context the lane updates are run through, if any
         """
         lane = self.tc_lane
         if lane is None: return
         if enabled:
-            lane.set_loaded()
-            lane.set_tool_loaded()
+            lane.set_loaded(gcmd=gcmd)
+            lane.set_tool_loaded(gcmd=gcmd)
             if not self.on_shuttle():
-                lane.unit_obj.lane_tool_loaded_idle(lane)
+                lane.unit_obj.lane_tool_loaded_idle(lane, gcmd=gcmd)
         else:
-            lane.set_tool_unloaded()
+            lane.set_tool_unloaded(gcmd=gcmd)
             if self.tool_start == "virtual":
-                lane.set_unloaded()
+                lane.set_unloaded(gcmd=gcmd)
 
     def _apply_virtual_tool_start_state(self, enabled: bool) -> None:
         """
@@ -727,13 +733,15 @@ class AFCExtruder:
         if self.afc.prep_done:
             self.afc.save_vars()
 
-    def restore_virtual_tool_start(self, enabled: bool) -> None:
+    def restore_virtual_tool_start(self, enabled: bool,
+                                   gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
         """
         Restore the virtual tool_start sensor state from the vars file during PREP,
         same pattern as the virtual bypass restore.
 
         :param enabled: Persisted filament-present state, defaults to False on a
                         fresh install.
+        :param gcmd: command context the lane updates are run through, if any
         """
         enabled = bool(enabled)
         if enabled == self.tool_start_state:
@@ -743,7 +751,7 @@ class AFCExtruder:
             return
 
         self._apply_virtual_tool_start_state(enabled)
-        self._set_standalone_lane_states(enabled)
+        self._set_standalone_lane_states(enabled, gcmd=gcmd)
         self.tc_lane._load_state = self.tc_lane.prep_state = enabled
         self.logger.info(f"Virtual toolhead sensor for {self.name} restored as "
                          f"{'enabled, filament loaded' if enabled else 'disabled'}")
@@ -764,8 +772,10 @@ class AFCExtruder:
         """
 
         # TODO: Need to figure out correct runout for toolheads without units attached (toolchanger setups)
-        self._handle_toolhead_sensor_runout(self.fila_tool_end.runout_helper.filament_present, "tool_end")
-        self.fila_tool_end.runout_helper.min_event_systime = self.reactor.monotonic() + self.fila_tool_end.runout_helper.event_delay
+        runout_helper = self.fila_tool_end.runout_helper
+        self._handle_toolhead_sensor_runout(runout_helper.filament_present, "tool_end",
+                                            gcmd="callback")
+        runout_helper.min_event_systime = self.reactor.monotonic() + runout_helper.event_delay
 
     def tool_end_callback(self, eventtime, state):
         """
@@ -784,7 +794,8 @@ class AFCExtruder:
 
         return self.toolhead_extruder.get_heater()
 
-    def load_unload_sequence(self, distance: float) -> None:
+    def load_unload_sequence(self, distance: float,
+                             gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
         """
         Starts unloading/loading sequence for extruders, currently only for toolheads without lanes
         attached to a toolhead
@@ -804,6 +815,9 @@ class AFCExtruder:
         :param distance: distance to load filament, this is set to `self.current_move_distance` so
                          that distance is saved and used in move_extruder function once extruder is
                          up to temperature
+        :param gcmd: command context the lane updates are run through, if any. Only used for the
+            immediate (standalone_auto_load_unload disabled) path, since the temperature-wait path
+            finishes asynchronously on a reactor timer after this function returns.
         """
         info_str = "Loading" if distance > 0 else "Unloading"
         loaded = bool(distance > 0)
@@ -811,7 +825,7 @@ class AFCExtruder:
         if not self.standalone_auto_load_unload:
             self.tc_lane.status = AFCLaneState.TOOLED if loaded else AFCLaneState.NONE
             self.tc_lane.need_purge = False
-            self._set_standalone_lane_states(loaded)
+            self._set_standalone_lane_states(loaded, gcmd=gcmd)
             self._apply_virtual_tool_start_state(loaded)
             self.logger.info(
                 f"{info_str} {self.name} skipped: standalone_auto_load_unload is disabled, "
@@ -824,7 +838,7 @@ class AFCExtruder:
         # TODO: maybe make this so this same function can be called normally when lanes are assigned
         # to extruders...
         if distance > 0:
-            self.tc_lane.unit_obj.lane_loading(self.tc_lane)
+            self.tc_lane.unit_obj.lane_loading(self.tc_lane, gcmd=gcmd)
             self.tc_lane.status = AFCLaneState.TOOL_LOADING
         else:
             self.tc_lane.status = AFCLaneState.TOOL_UNLOADING
@@ -932,13 +946,13 @@ class AFCExtruder:
                 self.move_extruder(self.current_move_distance)
                 loaded = bool(self.current_move_distance > 0)
 
-                self._set_standalone_lane_states(loaded)
+                self._set_standalone_lane_states(loaded, gcmd="callback")
                 self._apply_virtual_tool_start_state(loaded)
                 if self.tool_start == "virtual":
                     self.tc_lane._load_state = self.tc_lane.prep_state = loaded
             else:
                 self.load_active = False
-                self.tc_lane.set_unloaded()
+                self.tc_lane.set_unloaded(gcmd="callback")
                 self.afc.save_vars()
                 self.logger.error(
                     f"Filament is no longer detected at tool start sensor for {self.name}.\n"
@@ -1091,7 +1105,8 @@ class AFCExtruder:
         else:
             return False
 
-    def prep_on_shuttle_check(self, lane: AFCLane) -> str:
+    def prep_on_shuttle_check(self, lane: AFCLane,
+                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> str:
         """
         This helper method should only be called during PREP as it's a helper to check
         if toolhead is on the shuttle or not and will set toolhead leds correctly.
@@ -1100,16 +1115,17 @@ class AFCExtruder:
         current lane name.
 
         :param lane: AFCLane for current extruder to easily set leds though its unit object
+        :param gcmd: command context the led macros are run through, if any
         :return str: Message string if lane is loaded to toolhead or in toolhead and on shuttle
         """
         msg = ""
         on_shuttle = ""
         if (self.tool_obj
             and self.tc_unit_name):
-            lane.unit_obj.lane_tool_loaded_idle(lane)
+            lane.unit_obj.lane_tool_loaded_idle(lane, gcmd=gcmd)
             if self.on_shuttle():
                 on_shuttle = " and toolhead on shuttle"
-                lane.unit_obj.lane_tool_loaded(lane)
+                lane.unit_obj.lane_tool_loaded(lane, gcmd=gcmd)
         msg += f"<span class=primary--text> in ToolHead{on_shuttle}</span>"
         return msg
 

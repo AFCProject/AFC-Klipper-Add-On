@@ -15,7 +15,7 @@ import mcu
 import struct
 from enum import IntEnum
 from math import pi
-from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING, Union, Literal
 
 from extras.AFC_OpenAMS import AMSHardwareService
 
@@ -803,9 +803,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self._unload_retry_count  = 0
         self._last_unload_attempt = 0.0
 
-    def load_spool_with_retry(
-        self, spool_idx: int, max_retries: Optional[int] = None
-    ) -> Tuple[bool, str]:
+    def load_spool_with_retry(self, spool_idx: int, max_retries: Optional[int] = None, *,
+                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str]:
         """
         Load a spool, retrying on failure up to the configured limit.
         Between attempts it waits the retry delay, aborts the current action,
@@ -816,6 +815,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         :param spool_idx: zero-based spool index to load.
         :param max_retries: override for the load retry limit; `None` uses the
             configured `load_retry_max`.
+        :param gcmd: command context this load is running under, if any.
         :return tuple: `(success, message)` where `success` is `True` on a
             successful (or cancelled) load and `message` is a human-readable
             result, including attempt history on failure.
@@ -871,7 +871,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
                 if self.auto_unload_on_failed_load:
                     self.logger.info(f"OAMS[{self.oams_idx}]: Auto-unloading before retry")
-                    unload_success, unload_msg = self.unload_spool_with_retry()
+                    unload_success, unload_msg = self.unload_spool_with_retry(gcmd=gcmd)
 
                     if not unload_success:
                         self.logger.error(
@@ -950,11 +950,13 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             pass
         return _UNLOAD_STALL_RETRACT_FALLBACK_MM
 
-    def _work_the_extruder_free(self) -> None:
+    def _work_the_extruder_free(self, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
         """
         Retract the extruder by `_stall_retract_mm` between unload attempts,
         up to `unload_stall_retract_tries` times, to help a stuck unload come
         free. A refused move ends the retract without failing the unload.
+
+        :param gcmd: command context the retrying unload is running under, if any.
         """
         dist = self._stall_retract_mm()
         if dist <= 0:
@@ -963,10 +965,10 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         speed = self.unload_stall_retract_speed
         for attempt in range(1, tries + 1):
             try:
-                self.afc.run_script("M83")
-                self.afc.run_script("G92 E0")
-                self.afc.run_script(f"G1 E-{dist:.2f} F{speed:.0f}")
-                self.afc.run_script("M400")
+                self.afc.run_script("M83", gcmd=gcmd)
+                self.afc.run_script("G92 E0", gcmd=gcmd)
+                self.afc.run_script(f"G1 E-{dist:.2f} F{speed:.0f}", gcmd=gcmd)
+                self.afc.run_script("M400", gcmd=gcmd)
             except Exception as e:
                 # A cold or unloaded extruder refuses the move; retry without it.
                 self.logger.warning(f"OAMS[{self.oams_idx}]: could not retract the extruder "
@@ -975,7 +977,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             self.logger.info(f"OAMS[{self.oams_idx}]: pulled the extruder back {dist:.0f}mm "
                              f"({attempt}/{tries}) to help the unload come free")
 
-    def unload_spool_with_retry(self, max_retries: Optional[int] = None) -> Tuple[bool, str]:
+    def unload_spool_with_retry(self, max_retries: Optional[int] = None, *,
+                                gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str]:
         """
         Unload the current spool, retrying on failure up to the limit.
         Between attempts it waits the retry delay, aborts the current action,
@@ -986,6 +989,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
 
         :param max_retries: override for the unload retry limit; `None` uses
             the configured `unload_retry_max`.
+        :param gcmd: command context this unload is running under, if any.
         :return tuple: `(success, message)` where `success` is `True` on a
             successful unload and `message` is a human-readable result,
             including attempt history on failure.
@@ -1014,7 +1018,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                 if self.stop_unit_motion(stall_bay):
                     self.reactor.pause(self.reactor.monotonic() + 1.0)
 
-                self._work_the_extruder_free()
+                self._work_the_extruder_free(gcmd=gcmd)
 
                 self._clear_bay_error(stall_bay)
                 self.reactor.pause(self.reactor.monotonic() + 1.0)
@@ -1191,8 +1195,8 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         extrusion_speed_per_min = (60 * target_flow / (pi * (1.75 / 2) ** 2))
         extrusion_length = (extrusion_speed_per_min / 60 * 30)
 
-        self.afc.run_script("M104 S%f" % target_temp, gcmd)
-        self.afc.run_script("G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min), gcmd)
+        self.afc.run_script("M104 S%f" % target_temp, gcmd=gcmd)
+        self.afc.run_script("G1 E%f F%f" % (extrusion_length, extrusion_speed_per_min), gcmd=gcmd)
 
     #: A calibration the firmware has not answered, with the encoder still
     #: for this long, is cancelled (seconds).
@@ -1409,7 +1413,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             raise gcmd.error("Invalid SPOOL index")
 
         quiet = gcmd.get_int("QUIET", 0)
-        success, message = self.load_spool_with_retry(spool_idx)
+        success, message = self.load_spool_with_retry(spool_idx, gcmd=gcmd)
 
         if success and not quiet:
             gcmd.respond_info(message)
@@ -1504,7 +1508,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         ```
         """
         max_retries = gcmd.get_int("MAX_RETRIES", None)
-        success, message = self.unload_spool_with_retry(max_retries=max_retries)
+        success, message = self.unload_spool_with_retry(max_retries=max_retries, gcmd=gcmd)
         if success:
             gcmd.respond_info(message)
         else:
@@ -1653,7 +1657,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         AFC_STOP_OAMS_FOLLOWER OAMS=oams1
         ```
         """
-        self.afc.run_script(f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=0 DIRECTION=1", gcmd)
+        self.afc.run_script(f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=0 DIRECTION=1", gcmd=gcmd)
 
     cmd_AFC_START_OAMS_FOLLOWER_help = "Start the OAMS follower motor"
     def cmd_AFC_START_OAMS_FOLLOWER(self, gcmd: GCodeCommand) -> None:
@@ -1670,7 +1674,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         AFC_START_OAMS_FOLLOWER OAMS=oams1
         ```
         """
-        self.afc.run_script(f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=1 DIRECTION=1", gcmd)
+        self.afc.run_script(f"OAMS_FOLLOWER OAMS={self.oams_idx} ENABLE=1 DIRECTION=1", gcmd=gcmd)
 
     def _oams_cmd_stats(self, params: Dict[str, Any]) -> None:
         """

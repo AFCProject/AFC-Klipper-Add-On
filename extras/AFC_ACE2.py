@@ -1352,10 +1352,10 @@ class afcACE2(afcACE):
                "the unit. Clear the snag, then resume. Run AFC_ACE_STUCK_SPOOL_DETECTION "
                "ENABLE=0 to disable this check.")
         try:
-            self.afc.error.AFC_error(msg, pause=True)
+            self.afc.error.AFC_error(msg, pause=True, gcmd="callback")
         except Exception:
             self.logger.error(msg)
-            self.afc.run_script("PAUSE")
+            self.afc.run_script("PAUSE", gcmd="callback")
 
     def _start_unload_assist(self, slot: int) -> None:
         """

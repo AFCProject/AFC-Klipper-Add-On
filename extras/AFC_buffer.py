@@ -17,7 +17,7 @@ import inspect
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING, Dict, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Union, Literal
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -282,18 +282,20 @@ class AFCBuffer:
             and self.filament_error_pos is not None):
             if extruder_pos > self.filament_error_pos:
                 msg = "AFC filament fault detected! Take necessary action."
-                self.pause_on_error(msg, True)
+                self.pause_on_error(msg, True, gcmd="callback")
                 # Update error position after triggering to prevent repeated triggers
                 self.update_filament_error_pos()
 
         return eventtime + CHECK_RUNOUT_TIMEOUT
 
-    def pause_on_error(self, msg, pause=False):
+    def pause_on_error(self, msg: str, pause: bool=False, *,
+                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
         """
         Pause the print with an error message if fault is detected, prevents duplicate triggers.
 
         :param msg: Error message to display
         :param pause: Boolean, if True triggers pause with error message
+        :param gcmd: command context the pause is run through
         """
         eventtime = self.reactor.monotonic()
         if (eventtime < self.min_event_systime
@@ -305,7 +307,7 @@ class AFCBuffer:
                 msg += '\nCLOG DETECTED'
             if self.last_state == ADVANCING_STATE_NAME:
                 msg += '\nAFC NOT FEEDING'
-            self.afc.error.AFC_error( msg, True )
+            self.afc.error.AFC_error( msg, True, gcmd=gcmd)
 
     def enable_buffer(self, lane: AFCLane):
         """
@@ -1429,7 +1431,7 @@ class AFCFPSBuffer(AFCBuffer):
                 return eventtime + CHECK_RUNOUT_TIMEOUT
             if extruder_pos > self.filament_error_pos:
                 msg = "AFC FPS buffer filament fault detected! Take necessary action."
-                self.pause_on_error(msg, True)
+                self.pause_on_error(msg, True, gcmd="callback")
                 self.update_filament_error_pos()
 
         return eventtime + CHECK_RUNOUT_TIMEOUT
