@@ -60,10 +60,25 @@
    whether a script can run reentrantly (`run_script_from_command`) or must
    acquire the mutex itself (`gcode.run_script`); calling either method
    directly bypasses that check and can deadlock Klipper or raise
-   `CommandError` depending on whether the mutex happens to be held. Thread
-   `gcmd` through to the call site wherever a real command context is
-   available, defaulting to `None` only where none exists (hardware
-   callbacks, reactor timers).
+   `CommandError` depending on whether the mutex happens to be held.
+   `AFC.run_script`'s `gcmd` parameter is required and must be either a real
+   `GCodeCommand` or the literal string `"callback"` (never `None`, never
+   defaulted). Thread the real `gcmd` through every method in the call chain
+   down to `run_script` wherever a real command context is available
+   (every `cmd_*` handler, and anything reachable synchronously from one).
+   **The literal `"callback"` may only originate inside the actual callback
+   function itself** (the function Klipper/Kalico registers directly as a
+   hardware/sensor callback, reactor timer callback, or deferred HTTP/
+   moonraker completion lambda) **and must then be threaded down from
+   there**, exactly like a real `gcmd` is threaded down from a `cmd_*`
+   handler. Never hardcode `"callback"` inside an intermediate or "ending"
+   helper method partway down the chain, and never write a fallback like
+   `gcmd if gcmd is not None else "callback"` — both let a method get called
+   from a real synchronous context while still passing `"callback"`, which
+   can deadlock on new Kalico (it skips the mutex-test branch). Any method
+   in this chain that isn't the callback itself and isn't a `cmd_*` handler
+   takes `gcmd: Union[GCodeCommand, Literal["callback"]]` as a required
+   parameter it only ever passes through, never originates.
 - **Keep comments short and succinct** — Keep comments succinct and to the point.
    They should only be used when the code does not adequately explain itself.
 - **No decorative dashes on section-divider comments** — write `# Calibration
