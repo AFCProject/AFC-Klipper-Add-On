@@ -61,24 +61,46 @@
    acquire the mutex itself (`gcode.run_script`); calling either method
    directly bypasses that check and can deadlock Klipper or raise
    `CommandError` depending on whether the mutex happens to be held.
-   `AFC.run_script`'s `gcmd` parameter is required and must be either a real
-   `GCodeCommand` or the literal string `"callback"` (never `None`, never
-   defaulted). Thread the real `gcmd` through every method in the call chain
-   down to `run_script` wherever a real command context is available
-   (every `cmd_*` handler, and anything reachable synchronously from one).
-   **The literal `"callback"` may only originate inside the actual callback
-   function itself** (the function Klipper/Kalico registers directly as a
-   hardware/sensor callback, reactor timer callback, or deferred HTTP/
-   moonraker completion lambda) **and must then be threaded down from
+   `AFC.run_script`'s `gcmd` parameter is required and must be a real
+   `GCodeCommand`, or one of two literal strings (never `None`, never
+   defaulted):
+  - `"callback"` — a true async context with no held mutex: hardware/sensor
+    callbacks, reactor timers, deferred HTTP/moonraker completion lambdas.
+    Dispatches by acquiring the mutex fresh.
+  - `"sub_command"` — an event handler fired synchronously from inside
+    another command's own gcode context (e.g. Kalico's
+    `extruder:activate_extruder` firing from inside `ACTIVATE_EXTRUDER`),
+    where that triggering command can't release the mutex until this call
+    stack returns to it. Dispatches by borrowing that already-held mutex
+    instead of acquiring fresh, which would deadlock. Only use this where
+    the synchronous nesting is actually verified (read where the event is
+    fired in Kalico/Klipper's own source), not assumed — the two literals
+    are not interchangeable: using `"sub_command"` where the mutex might
+    genuinely be free, or on a context whose holder could independently
+    release before this call stack returns (e.g. a reactor timer that
+    merely happens to run while something else holds the mutex), can
+    still fail a later recursive `run_script` call through the resulting
+    legacy context.
+
+   Thread the real `gcmd` through every method in the call chain down to
+   `run_script` wherever a real command context is available (every `cmd_*`
+   handler, and anything reachable synchronously from one). **The literal
+   `"callback"` or `"sub_command"` may only originate inside the actual
+   callback/event-handler function itself** (the function Klipper/Kalico
+   registers directly as a hardware/sensor callback, reactor timer
+   callback, deferred HTTP/moonraker completion lambda, or
+   `register_event_handler` target) **and must then be threaded down from
    there**, exactly like a real `gcmd` is threaded down from a `cmd_*`
-   handler. Never hardcode `"callback"` inside an intermediate or "ending"
-   helper method partway down the chain, and never write a fallback like
-   `gcmd if gcmd is not None else "callback"` — both let a method get called
-   from a real synchronous context while still passing `"callback"`, which
-   can deadlock on new Kalico (it skips the mutex-test branch). Any method
-   in this chain that isn't the callback itself and isn't a `cmd_*` handler
-   takes `gcmd: Union[GCodeCommand, Literal["callback"]]` as a required
-   parameter it only ever passes through, never originates.
+   handler. Never hardcode either literal inside an intermediate or
+   "ending" helper method partway down the chain, and never write a
+   fallback like `gcmd if gcmd is not None else "callback"` — both let a
+   method get called from a real synchronous context while still passing
+   the wrong literal, which can deadlock on new Kalico. Any method in this
+   chain that isn't the callback/event-handler itself and isn't a `cmd_*`
+   handler takes `gcmd: AFCGcmd` (the shared type alias defined once in
+   `extras/AFC_utils.py` as `Union[GCodeCommand, Literal["callback",
+   "sub_command"]]`, imported from there rather than spelled out inline)
+   as a required parameter it only ever passes through, never originates.
 - **Keep comments short and succinct** — Keep comments succinct and to the point.
    They should only be used when the code does not adequately explain itself.
 - **No decorative dashes on section-divider comments** — write `# Calibration
