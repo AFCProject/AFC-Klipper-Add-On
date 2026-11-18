@@ -8,7 +8,7 @@ from __future__ import annotations
 import traceback
 
 from configparser import Error as config_error
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union, Literal
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise config_error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -22,6 +22,7 @@ except: raise config_error(ERROR_STR.format(import_lib="AFC_unit", trace=traceba
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from klippy import Printer
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
@@ -178,7 +179,7 @@ class afc_hub:
         """
         self._state = bool(state)
 
-    def hub_cut(self, cur_lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def hub_cut(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Run the hub's filament-cutting sequence: feed the lane until the hub
         sensor triggers, jog back and forth to find the trigger point

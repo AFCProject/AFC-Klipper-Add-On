@@ -12,12 +12,13 @@ import inspect
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING, Any, Optional, Union, Literal
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from klippy import Printer
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
     from extras.pause_resume import PauseResume
@@ -73,8 +74,7 @@ class afcError:
         self.afc.gcode.register_command('RESET_FAILURE', self.cmd_RESET_FAILURE, desc=self.cmd_RESET_FAILURE_help)
         self.afc.gcode.register_command('AFC_RESUME', self.cmd_AFC_RESUME, desc=self.cmd_AFC_RESUME_help)
 
-    def fix(self, problem: Optional[str], lane: Optional[str|AFCLane],
-            gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def fix(self, problem: Optional[str], lane: Optional[str|AFCLane], gcmd: AFCGcmd) -> bool:
         """
         Attempt to resolve a reported lane/toolhead problem automatically,
         falling back to pausing for user intervention when it can't be handled.
@@ -108,8 +108,7 @@ class afcError:
 
         return error_handled
 
-    def ToolHeadFix(self, cur_lane: AFCLane,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def ToolHeadFix(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> bool:
         """
         Attempt to automatically resolve a toolhead-related lane fault by
         retracting or reloading filament to the lane's load sensor.
@@ -178,8 +177,7 @@ class afcError:
                 return True
         return False
 
-    def PauseUserIntervention(self, message: str,
-                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def PauseUserIntervention(self, message: str, gcmd: AFCGcmd) -> None:
         """
         Log an error message and pause the print for user intervention if the
         printer is homed, not already paused, and a pause has been requested.
@@ -194,7 +192,7 @@ class afcError:
             if self.pause:
                 self.pause_print(gcmd=gcmd)
 
-    def pause_print(self, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def pause_print(self, gcmd: AFCGcmd) -> None:
         """
         pause_print function verifies that the printer is homed and not currently paused before calling
         the base pause command
@@ -223,7 +221,7 @@ class afcError:
         self.afc.current_state = State.ERROR if state else State.IDLE
 
     def AFC_error(self, msg: str, pause: bool=True, stack_name: Optional[str]=None, *,
-                  gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                  gcmd: AFCGcmd) -> None:
         """
         Log an AFC error and optionally pause the print.
 
@@ -381,7 +379,7 @@ class afcError:
 
     handle_lane_failure_help = "Get load errors, stop stepper and respond error"
     def handle_lane_failure(self, cur_lane: AFCLane, message: str, pause: bool=True, *,
-                            gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                            gcmd: AFCGcmd) -> None:
         """
         Disable a lane's stepper, mark it as errored, and report the failure.
 

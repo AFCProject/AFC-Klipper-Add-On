@@ -14,11 +14,12 @@ from __future__ import annotations
 import traceback
 from configparser import Error as error
 
-from typing import Optional, TYPE_CHECKING, Union, Literal
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_lane import AFCLane, MoveDirection, AFCHomingPoints
     from extras.AFC_functions import afcFunction
     from extras.AFC_stepper import AFCExtruderStepper
@@ -57,7 +58,7 @@ class AfcToolchanger(afcUnit):
                                          self.cmd_AFC_SET_TOOLHEAD_LED_options)
 
     def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: str, enable_movement: bool,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]):
+                    gcmd: AFCGcmd):
         if assignTcmd: self.afc.function.TcmdAssign(cur_lane)
         # Now that a T command is assigned, send lane data to moonraker
         cur_lane.send_lane_data()
@@ -83,8 +84,7 @@ class AfcToolchanger(afcUnit):
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
-                    assist_active: AssistActive=AssistActive.DYNAMIC, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]
+                    assist_active: AssistActive=AssistActive.DYNAMIC, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Overriding method from AFC_unit
@@ -95,8 +95,7 @@ class AfcToolchanger(afcUnit):
 
     def move_to_load(self, lane: AFCLane, dist: float,
                      dir: MoveDirection, use_homing: bool=True,
-                     speed_mode: SpeedMode=SpeedMode.LONG, *,
-                     gcmd: Union[GCodeCommand, Literal["callback"]]
+                     speed_mode: SpeedMode=SpeedMode.LONG, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Overriding method from AFC_unit
@@ -106,8 +105,7 @@ class AfcToolchanger(afcUnit):
         return True, 0, AFCMoveWarning.NONE
 
     def load_then_home(self, lane: AFCLane|AFCExtruderStepper, distance: float,
-                       assist_active: AssistActive, endstop: AFCHomingPoints,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]
+                       assist_active: AssistActive, endstop: AFCHomingPoints, gcmd: AFCGcmd
                     ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Overriding method from AFC_unit
@@ -201,8 +199,7 @@ class AfcToolchanger(afcUnit):
             current_extruder.status = State.IDLE
 
 
-    def tool_swap(self, lane: AFCLane, set_start_time=True, *,
-                  gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def tool_swap(self, lane: AFCLane, set_start_time=True, *, gcmd: AFCGcmd):
         """
         Perform a tool swap operation for the specified lane.
 

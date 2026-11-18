@@ -15,13 +15,14 @@ import mcu
 import struct
 from enum import IntEnum
 from math import pi
-from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING, Union, Literal
+from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING
 
 from extras.AFC_OpenAMS import AMSHardwareService
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_logger import AFC_logger
     from klippy import Printer
     from reactor import SelectReactor as Reactor
@@ -804,7 +805,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
         self._last_unload_attempt = 0.0
 
     def load_spool_with_retry(self, spool_idx: int, max_retries: Optional[int] = None, *,
-                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str]:
+                              gcmd: AFCGcmd) -> Tuple[bool, str]:
         """
         Load a spool, retrying on failure up to the configured limit.
         Between attempts it waits the retry delay, aborts the current action,
@@ -950,7 +951,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
             pass
         return _UNLOAD_STALL_RETRACT_FALLBACK_MM
 
-    def _work_the_extruder_free(self, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _work_the_extruder_free(self, gcmd: AFCGcmd) -> None:
         """
         Retract the extruder by `_stall_retract_mm` between unload attempts,
         up to `unload_stall_retract_tries` times, to help a stuck unload come
@@ -978,7 +979,7 @@ OAMS[%s]: current_spool=%s fps_value=%s f1s_hes_value_0=%d f1s_hes_value_1=%d f1
                              f"({attempt}/{tries}) to help the unload come free")
 
     def unload_spool_with_retry(self, max_retries: Optional[int] = None, *,
-                                gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str]:
+                                gcmd: AFCGcmd) -> Tuple[bool, str]:
         """
         Unload the current spool, retrying on failure up to the limit.
         Between attempts it waits the retry delay, aborts the current action,

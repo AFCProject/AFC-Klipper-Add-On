@@ -8,11 +8,12 @@ from __future__ import annotations
 import traceback
 
 from configparser import Error as error
-from typing import TYPE_CHECKING, Optional, Union, Literal
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane, MoveDirection
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error(
@@ -43,7 +44,7 @@ class AFC_EMU(afcBoxTurtle):
         self.logo = '<span class=success--text>EMU Ready\n</span>'
         self.logo_error = '<span class=error--text>EMU Not Ready</span>\n'
 
-    def prep_post_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Helper method to run after prep_load has been successful.
 
@@ -69,7 +70,7 @@ class AFC_EMU(afcBoxTurtle):
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
                     assist_active: AssistActive=AssistActive.DYNAMIC, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]
+                    gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
@@ -101,7 +102,7 @@ class AFC_EMU(afcBoxTurtle):
                                              endstop=endstop, use_homing=use_homing, gcmd=gcmd)
         return homed, distance, warn
 
-    def eject_lane(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
         will stop once prep sensor is no longer triggered if movement has not already stopped.

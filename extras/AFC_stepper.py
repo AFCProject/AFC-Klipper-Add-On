@@ -13,7 +13,7 @@ from configfile import error
 from extras.force_move import calc_move_time
 from functools import cached_property
 
-from typing import Optional, TYPE_CHECKING, Dict, Union, Literal
+from typing import Optional, TYPE_CHECKING, Dict
 
 try: from extras.AFC_utils import ERROR_STR
 except:
@@ -25,6 +25,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.form
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from toolhead import ToolHead
     from stepper import PrinterStepper
     from mcu import MCU_endstop
@@ -245,7 +246,7 @@ class AFCExtruderStepper(AFCLane):
             if sync: toolhead.wait_moves()
 
     def move(self, distance: float, speed: float, accel: float, assist_active=False, *,
-             gcmd: Union[GCodeCommand, Literal["callback"]]):
+             gcmd: AFCGcmd):
         """
         Move the specified lane a given distance with specified speed and acceleration.
         This function calculates the movement parameters and commands the stepper motor
@@ -306,7 +307,7 @@ class AFCExtruderStepper(AFCLane):
             self.next_cmd_time = print_time
 
     def sync_to_extruder(self, update_current: bool=True, *, th_extruder_name: Optional[str]=None,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                         gcmd: AFCGcmd) -> None:
         """
         Helper function to sync lane to extruder and set print current if specified.
 
@@ -324,8 +325,7 @@ class AFCExtruderStepper(AFCLane):
 
         if update_current: self.set_print_current(gcmd=gcmd)
 
-    def unsync_to_extruder(self, update_current: bool=True, *,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def unsync_to_extruder(self, update_current: bool=True, *, gcmd: AFCGcmd) -> None:
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
@@ -337,7 +337,7 @@ class AFCExtruderStepper(AFCLane):
             self._synced_to_extruder = None
         if update_current: self.set_load_current(gcmd=gcmd)
 
-    def _set_current(self, current, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _set_current(self, current, gcmd: AFCGcmd):
         """
         Helper function to update TMC current.
 
@@ -349,7 +349,7 @@ class AFCExtruderStepper(AFCLane):
             self.logger.debug(f"Running macro: {command}")
             self.afc.run_script(command, gcmd=gcmd)
 
-    def set_load_current(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_load_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use run current value
 
@@ -359,7 +359,7 @@ class AFCExtruderStepper(AFCLane):
             self._set_current( self.tmc_load_current, gcmd=gcmd )
             self._print_current_set = False
 
-    def set_print_current(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_print_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use print current value
 
@@ -831,7 +831,7 @@ class AFCExtruderStepper(AFCLane):
     # ------------------ Convenience homing helpers ------------------
     def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed: float,
                 accel: float, triggered=True, check_trigger=True, assist_active=True, *,
-                gcmd: Union[GCodeCommand, Literal["callback"]]) -> tuple[bool, float, bool]:
+                gcmd: AFCGcmd) -> tuple[bool, float, bool]:
         """
         Home towards an endstop relative to current position by distance (mm).
         If 'distance' is None, callers should prefer the typed helpers which pick a

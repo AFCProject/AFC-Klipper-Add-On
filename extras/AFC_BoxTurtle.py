@@ -9,10 +9,11 @@ import traceback
 
 from configparser import Error as error
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional, Union, Literal
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_lane import AFCLane, MoveDirection
     from extras.AFC_stepper import AFCExtruderStepper
 
@@ -59,7 +60,7 @@ class afcBoxTurtle(afcUnit):
         self.logo_error+= '  ' + self.name + '\n'
 
     def _move_lane(self, lane: AFCLane|AFCExtruderStepper, delay: float, enable_movement: bool=True,
-                   *, gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                   *, gcmd: AFCGcmd) -> bool:
         """
         Helper method to move BoxTurtle's lane forward then backward
 
@@ -79,7 +80,7 @@ class afcBoxTurtle(afcUnit):
         return lane.load_state
 
     def system_Test(self, cur_lane: AFCLane|AFCExtruderStepper, delay, assignTcmd, enable_movement,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                    gcmd: AFCGcmd) -> bool:
         msg = ''
         succeeded = True
 
@@ -340,7 +341,7 @@ class afcBoxTurtle(afcUnit):
             self.logger.info('CALIBRATE_AFC is not currently supported without tool start sensor')
             return False, "CALIBRATE_AFC is not currently supported without tool start sensor", 0
 
-    def calibrate_td1(self, cur_lane, dis, tol, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def calibrate_td1(self, cur_lane, dis, tol, gcmd: AFCGcmd):
         """
         Calibration function for automatically determining td1_bowden_length
 
@@ -448,7 +449,7 @@ class afcBoxTurtle(afcUnit):
         return True, "td1_bowden_length calibration successful", bow_pos
 
     # Helper functions for movement and calibration
-    def calibrate_hub(self, cur_lane, tol, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def calibrate_hub(self, cur_lane, tol, gcmd: AFCGcmd):
         hub_pos = 0
         msg = ''
         hub_fault_dis = cur_lane.dist_hub + 150
@@ -482,8 +483,7 @@ class afcBoxTurtle(afcUnit):
         return True, msg, tuned_hub_pos
 
     def move_until_state(self, cur_lane, state, move_dis, tolerance, short_move, pos=0,
-                         fault_dis=250, checkpoint=None, *,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]):
+                         fault_dis=250, checkpoint=None, *, gcmd: AFCGcmd):
         # moves filament until specified sensor, returns values for further calibration
         while not state():
             cur_lane.move(move_dis, cur_lane.short_moves_speed, cur_lane.short_moves_accel,
@@ -523,7 +523,7 @@ class afcBoxTurtle(afcUnit):
         return pos, checkpoint, True
 
     def calc_position(self, cur_lane, state, pos, short_move, tolerance, fault_dis=250,
-                      checkpoint=None, *, gcmd: Union[GCodeCommand, Literal["callback"]]):
+                      checkpoint=None, *, gcmd: AFCGcmd):
         # move off and back on to sensor to calculate end position of calibration
         check_pos = 0
         while state():
@@ -633,7 +633,7 @@ class afcBoxTurtle(afcUnit):
             cur_lane.unit_obj.return_to_home(gcmd=gcmd)
             return True, cal_msg, cal_dist
 
-    def prep_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Helper method for initially loading spools when prep sensor is triggered.
 
@@ -665,7 +665,7 @@ class afcBoxTurtle(afcUnit):
                 lane.status = AFCLaneState.NONE
                 break
 
-    def prep_post_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Helper method to run after prep_load has been successful.
 
@@ -686,7 +686,7 @@ class afcBoxTurtle(afcUnit):
                      lane.dist_hub > 200, gcmd=gcmd)
             lane.loaded_to_hub = True
 
-    def eject_lane(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Method to eject spool from lane.
 

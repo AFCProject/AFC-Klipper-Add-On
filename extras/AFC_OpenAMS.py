@@ -23,11 +23,12 @@ import traceback
 from datetime import datetime
 from configparser import Error as error
 from enum import IntEnum
-from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING, Union, Literal
+from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from klippy import Printer
     from reactor import SelectReactor as Reactor
     from extras.AFC_lane import AFCLane, SpeedMode
@@ -1127,8 +1128,7 @@ class afcAMS(afcUnit):
             return self._engagement_params[lane_name]
         return (self._engagement_length, self._engagement_speed)
 
-    def _verify_engagement(self, cur_lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _verify_engagement(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> bool:
         """
         Verify filament engagement by extruding and checking encoder/FPS movement.
         Keeps the follower feeding forward, extrudes the configured engagement
@@ -1232,8 +1232,7 @@ class afcAMS(afcUnit):
         value = getattr(self.oams, 'fps_value', None) if self.oams else None
         return value if isinstance(value, (int, float)) else None
 
-    def _oams_extrude(self, length: float, speed: float, label: str = "", *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _oams_extrude(self, length: float, speed: float, label: str = "", *, gcmd: AFCGcmd) -> None:
         """
         Extrude filament via gcode for engagement/retraction.
 
@@ -1245,7 +1244,7 @@ class afcAMS(afcUnit):
         self.afc.run_script(f"G92 E0\nG1 E{length:.3f} F{speed:.0f}\nM400", gcmd=gcmd)
 
     def _advance_tool_stn_to_nozzle(self, cur_lane: AFCLane, already_advanced: float = 0.0, *,
-                                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                                    gcmd: AFCGcmd) -> None:
         """
         Push filament from the toolhead sensor to the nozzle tip via tool_stn.
         AFC's native load does a tool_stn (sensor->nozzle) extruder move, but the
@@ -1333,7 +1332,7 @@ class afcAMS(afcUnit):
         self.logger.info(f"Stuck spool cleared{' on ' + fps_name if fps_name else ''}")
 
     def _on_stuck_spool_recovery_needed(self, fps_name: Optional[str], lane_name: str,
-                                        gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                                        gcmd: AFCGcmd) -> None:
         """
         Trigger stuck spool recovery (unload + reload + resume).
         Called from reactor timer context (non-blocking): schedules the recovery
@@ -1439,8 +1438,7 @@ class afcAMS(afcUnit):
             self.logger.error(f"Stuck spool recovery: AFC_RESUME failed: {e}")
 
     def _stuck_spool_recovery_fallback(
-        self, fps_name: Optional[str], lane_name: Optional[str], reason: str,
-        gcmd: Union[GCodeCommand, Literal["callback"]]
+        self, fps_name: Optional[str], lane_name: Optional[str], reason: str, gcmd: AFCGcmd
     ) -> None:
         """
         Fall back to pausing when auto-recovery is not possible or fails.
@@ -1491,7 +1489,7 @@ class afcAMS(afcUnit):
 
     # ── Unit interface overrides ────────────────────────────────────
 
-    def prep_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         No-op: OpenAMS firmware drives filament to load sensor directly.
 
@@ -1500,7 +1498,7 @@ class afcAMS(afcUnit):
         """
         pass
 
-    def prep_post_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         No-op: OpenAMS handles hub staging internally.
 
@@ -1509,7 +1507,7 @@ class afcAMS(afcUnit):
         """
         pass
 
-    def eject_lane(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         OpenAMS does not support stepper-based eject.
         Logs guidance to remove the spool physically.
@@ -1563,7 +1561,7 @@ class afcAMS(afcUnit):
         return None
 
     def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: bool, enable_movement: bool,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                    gcmd: AFCGcmd) -> bool:
         """
         OpenAMS system test: query hardware sensors for lane state.
         Reads the lane's F1S/hub sensors, updates lane/tool state and LEDs, and
@@ -1676,8 +1674,7 @@ class afcAMS(afcUnit):
         return "\nHUB HES calibration complete for lanes: {lanes}\n"
 
     def calibrate_bowden(
-        self, cur_lane: AFCLane, dis: float, tol: float,
-        gcmd: Union[GCodeCommand, Literal["callback"]]
+        self, cur_lane: AFCLane, dis: float, tol: float, gcmd: AFCGcmd
     ) -> Tuple[bool, str, int]:
         """
         Run PTFE length calibration for an OpenAMS lane.
@@ -1705,8 +1702,7 @@ class afcAMS(afcUnit):
             return False, f"PTFE calibration failed for {cur_lane.name}: {e}", 0
 
     # ── Custom load/unload gcode handlers ───────────────────────────
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, gcmd: AFCGcmd) -> bool:
         """
         Load hook called by AFC's load_sequence for OpenAMS lanes, replacing the
         stepper-based load path with the OAMS transport.
@@ -1728,8 +1724,7 @@ class afcAMS(afcUnit):
             return False
         return True
 
-    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, gcmd: AFCGcmd) -> bool:
         """
         Unload hook called by AFC's unload_sequence for OpenAMS lanes, replacing
         the stepper-based unload path with the OAMS transport.
@@ -1763,7 +1758,7 @@ class afcAMS(afcUnit):
         return True
 
     def _oams_load_sequence(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                            gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                            gcmd: AFCGcmd) -> bool:
         """
         OAMS load transport: push filament to toolhead area.
         Guards polling against state corruption for the duration of the load.
@@ -1780,8 +1775,7 @@ class afcAMS(afcUnit):
             self._operation_active = False
             self._prev_states_stale = True
 
-    def _oams_load_inner(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _oams_load_inner(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, gcmd: AFCGcmd) -> bool:
         """
         OAMS custom load: filament transport only.
         AFC's load_sequence handles the shared toolhead engagement
@@ -1809,7 +1803,7 @@ class afcAMS(afcUnit):
         return True
 
     def _oams_unload_sequence(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                              gcmd: AFCGcmd) -> bool:
         """
         OAMS unload transport: OAMS hardware unload back to spool bay.
         Guards polling against state corruption for the duration of the unload.
@@ -1826,7 +1820,7 @@ class afcAMS(afcUnit):
             self._operation_active = False
             self._prev_states_stale = True
 
-    def lane_unloading(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_unloading(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Unload-start hook the upstream core actually calls.
         Upstream's unload invokes `lane_unloading` (for LEDs) but never
@@ -1863,7 +1857,7 @@ class afcAMS(afcUnit):
                                            "reverse before unload", force=True)
 
     def _oams_unload_inner(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                           gcmd: AFCGcmd) -> bool:
         """
         OAMS custom unload: filament transport only.
         AFC's unload_sequence handles the shared toolhead operations
@@ -1893,8 +1887,7 @@ class afcAMS(afcUnit):
         afc.afcDeltaTime.log_with_time("OAMS unload complete")
         return True
 
-    def _oams_load(self, cur_lane: AFCLane, max_retries: int = 3, *,
-                   gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _oams_load(self, cur_lane: AFCLane, max_retries: int = 3, *, gcmd: AFCGcmd) -> bool:
         """
         Load filament via OpenAMS hardware with engagement verification.
         Short-circuits if the firmware already has the spool loaded to the
@@ -2104,8 +2097,7 @@ class afcAMS(afcUnit):
         self.logger.error(f"OAMS load failed after {max_retries} attempts")
         return False
 
-    def _oams_unload(self, cur_lane: AFCLane,
-                     gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _oams_unload(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> bool:
         """
         Unload filament via OpenAMS hardware.
         Reverses the follower, retracts the extruder, runs the hardware unload
@@ -2442,7 +2434,7 @@ class afcAMS(afcUnit):
         return src_name.strip().lower() == tgt_name.strip().lower()
 
     def handle_same_fps_reload(self, source_lane: AFCLane, target_lane: AFCLane,
-                               gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                               gcmd: AFCGcmd) -> bool:
         """
         Same-FPS infinite runout reload: no pause, no unload.
         The old filament coasts through the shared PTFE. OAMS pushes
@@ -2509,7 +2501,7 @@ class afcAMS(afcUnit):
             return False
         return True
 
-    def handle_runout(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def handle_runout(self, lane: AFCLane, gcmd: AFCGcmd) -> bool:
         """
         OAMS-specific runout: OAMS cannot retract once F1S goes empty.
         Called by handle_load_runout before the generic _perform_infinite_runout.
@@ -2559,8 +2551,7 @@ class afcAMS(afcUnit):
             f"deferring to AFC infinite spool (hardware unload will be skipped)")
         return False
 
-    def on_filament_insert(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def on_filament_insert(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         OAMS insert: update lane state and publish event.
 
@@ -2578,8 +2569,7 @@ class afcAMS(afcUnit):
                 self.afc.reactor.monotonic(), spool_index=spool_index)
         super().on_filament_insert(lane, gcmd=gcmd)
 
-    def on_filament_remove(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def on_filament_remove(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         OAMS removal: update lane state, cancel pending TD-1 timers, publish event.
 
@@ -2646,8 +2636,7 @@ class afcAMS(afcUnit):
             except Exception:
                 pass
 
-    def _clear_lane_info(self, lane: AFCLane,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _clear_lane_info(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Clear a lane's spool/filament data so a new insert starts fresh
         (mirrors the U1 RFID _clear_lane).
@@ -2700,8 +2689,7 @@ class afcAMS(afcUnit):
             except Exception:
                 pass
 
-    def _clear_lane_state_after_td1(self, cur_lane: AFCLane,
-                                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _clear_lane_state_after_td1(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Clear AFC-level lane loaded state that background detection may have set
         during a temporary TD-1 load.
@@ -2719,8 +2707,7 @@ class afcAMS(afcUnit):
             pass
         self.afc.save_vars()
 
-    def _unload_after_td1(self, cur_lane: AFCLane, spool_index: int,
-                          gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _unload_after_td1(self, cur_lane: AFCLane, spool_index: int, gcmd: AFCGcmd) -> None:
         """
         Unload filament after TD-1 operation using firmware unload_spool().
         Retries up to three times, clears firmware errors, and resets lane state.
@@ -2747,8 +2734,7 @@ class afcAMS(afcUnit):
             pass
         self._clear_lane_state_after_td1(cur_lane, gcmd=gcmd)
 
-    def _cancel_and_cleanup_td1(self, cur_lane: AFCLane, spool_index: int,
-                                gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _cancel_and_cleanup_td1(self, cur_lane: AFCLane, spool_index: int, gcmd: AFCGcmd) -> None:
         """
         Cancel load and clean up after a failed TD-1 calibration.
 
@@ -2836,7 +2822,7 @@ class afcAMS(afcUnit):
         return best_encoder
 
     def calibrate_td1(self, cur_lane: AFCLane, dis: float, tol: float,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str, float]:
+                      gcmd: AFCGcmd) -> Tuple[bool, str, float]:
         """
         Calibrate td1_bowden_length using continuous load from hub.
         Loads spool, waits for hub trigger, captures encoder reference,
@@ -2960,8 +2946,7 @@ class afcAMS(afcUnit):
         return True, "td1_bowden_length calibration successful", encoder_delta
 
     def _capture_td1_with_oams(
-        self, cur_lane: AFCLane, *, require_loaded: bool, require_enabled: bool,
-        gcmd: Union[GCodeCommand, Literal["callback"]]
+        self, cur_lane: AFCLane, *, require_loaded: bool, require_enabled: bool, gcmd: AFCGcmd
     ) -> Tuple[bool, str]:
         """
         Capture TD-1 data using OAMS hardware load/unload cycle.
@@ -3127,9 +3112,7 @@ class afcAMS(afcUnit):
             return False, "TD-1 data not captured (unload completed)"
         return True, "TD-1 data captured"
 
-    def prep_capture_td1(
-        self, cur_lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]
-    ) -> Optional[Tuple[bool, str]]:
+    def prep_capture_td1(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> Optional[Tuple[bool, str]]:
         """
         OpenAMS prep TD-1 capture: only when capture_td1_when_loaded is True.
 
@@ -3144,8 +3127,7 @@ class afcAMS(afcUnit):
         return self._capture_td1_with_oams(
             cur_lane, require_loaded=True, require_enabled=False, gcmd=gcmd)
 
-    def capture_td1_data(self, cur_lane: AFCLane,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str]:
+    def capture_td1_data(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> Tuple[bool, str]:
         """
         Capture TD-1 data for a lane via the OAMS load/unload cycle.
 

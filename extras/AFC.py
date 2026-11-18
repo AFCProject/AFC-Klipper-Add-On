@@ -18,7 +18,7 @@ from queue import Queue
 from configfile import error
 from klippy import Printer
 
-from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List, Literal
+from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from extras.AFC_error import afcError
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_unit import afcUnit
+    from extras.AFC_utils import AFCGcmd
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -669,9 +670,7 @@ class afc:
         """
         self.in_print_timer = self.reactor.register_timer( self.in_print_reactor_timer, self.reactor.monotonic() + 5 )
         self.error.reset_failure()
-        # Specifically calling run_script_from_command here because this callback is called 
-        # synchronously, so for new Kalico we cannot call run_script because it will cause a deadlock
-        self.gcode.run_script_from_command('CLEAR_PAUSE')
+        self.run_script('CLEAR_PAUSE', gcmd="sub_command")
         self.number_of_toolchanges = 0
         self.current_toolchange    = -1
         self.print_tool_temperatures = []
@@ -898,8 +897,7 @@ class afc:
         except Exception:
             self.logger.debug("Unable to restore extruder temperature")
 
-    def _set_display_status(self, variable: str, value: bool,
-                            gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _set_display_status(self, variable: str, value: bool, gcmd: AFCGcmd) -> None:
         """
         Best-effort notification of a display status change during tool-change
         actions (e.g. pushing new filament into the toolhead, retracting it back
@@ -981,8 +979,7 @@ class afc:
 
         return bypass_state
 
-    def _check_bypass(self, unload: bool=False, *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _check_bypass(self, unload: bool=False, *, gcmd: AFCGcmd) -> bool:
         """
         Helper function that checks if bypass has filament loaded
 
@@ -1011,17 +1008,24 @@ class afc:
             pass
         return False
 
-    def run_script(self, script: str, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def run_script(self, script: str, gcmd: AFCGcmd) -> None:
         """
         Run a gcode script, acquiring the gcode mutex only if not already held.
 
         :param script: gcode script to run
-        :param gcmd: command context the script is run through, or the literal
-            string `"callback"` when called from a context with no real
+        :param gcmd: command context the script is run through, or one of two
+            literals: `"callback"` for a true async context with no real
             command (hardware/sensor callbacks, reactor timers, deferred
-            completion callbacks)
+            completion callbacks), or `"sub_command"` for an event handler
+            fired synchronously from inside another command's own gcode
+            context, which can't release the mutex until this call stack
+            returns to it
         """
-        if self._rsfc_accepts_gcmd:
+        if gcmd == "sub_command":
+            # The caller guarantees the mutex is already held by its own
+            # enclosing synchronous command context.
+            self.gcode.run_script_from_command(script)
+        elif self._rsfc_accepts_gcmd:
             # run_script_from_command() with no gcmd creates a legacy g-code
             # context on new Kalico; a later recursive run_script call
             # through that context hits the mutex error again.
@@ -1559,7 +1563,7 @@ class afc:
         cur_lane = self.lanes[lane]
         self.LANE_UNLOAD( cur_lane, gcmd=gcmd )
 
-    def LANE_UNLOAD(self, cur_lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def LANE_UNLOAD(self, cur_lane: AFCLane, gcmd: AFCGcmd):
         """
         Ejects a lane's filament back out of the unit, when the lane is not in use.
 
@@ -1617,8 +1621,7 @@ class afc:
         self.current_state = State.IDLE
 
     def do_poop_kick_wipe(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, *,
-                          purge_length: Optional[float]=None,
-                          gcmd: Union[GCodeCommand, Literal["callback"]]):
+                          purge_length: Optional[float]=None, gcmd: AFCGcmd):
         """
         Helper method for easily calling poop,kick,wipe macros. Macros only run if users have them
         enabled
@@ -1700,8 +1703,7 @@ class afc:
 
     def TOOL_LOAD(self, cur_lane: AFCLane, purge_length: Optional[float]=None,
                   set_start_time: bool=False, load_to_gears: bool=False,
-                  restore_temp: bool=True, *,
-                  gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                  restore_temp: bool=True, *, gcmd: AFCGcmd) -> bool:
         """
         This function handles the loading of a specified lane into the tool. It performs
         several checks and movements to ensure the lane is properly loaded.
@@ -1886,7 +1888,7 @@ class afc:
 
     def load_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub,
                       cur_extruder: AFCExtruder, load_to_gears: bool=False, *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                      gcmd: AFCGcmd) -> bool:
         """
         This function controls the loading sequence and allows for custom gcode commands to be executed
         during the loading process.
@@ -2155,8 +2157,7 @@ class afc:
         self.spool.set_active_spool(None)
 
     def TOOL_UNLOAD(self, cur_lane: AFCLane, set_start_time: bool=True, force_unload: bool=False,
-                    restore_temp: bool=True, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                    restore_temp: bool=True, *, gcmd: AFCGcmd) -> bool:
         """
         This function handles the unloading of a specified lane from the tool. It performs
         several checks and movements to ensure the lane is properly unloaded.
@@ -2287,7 +2288,7 @@ class afc:
         return True
 
     def do_tool_cut_tip_form(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                             gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                             gcmd: AFCGcmd) -> None:
         """
         Performs filament cutting/parking and tip forming during unload, if enabled in config.
 
@@ -2326,7 +2327,7 @@ class afc:
                 self.function.log_toolhead_pos()
 
     def unload_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub, cur_extruder: AFCExtruder,
-                        gcmd: Union[GCodeCommand, Literal["callback"]]):
+                        gcmd: AFCGcmd):
         """
         This function controls the unloading sequence and allows for custom gcode commands to be executed
         during the loading process.
@@ -2702,7 +2703,7 @@ class afc:
 
     def CHANGE_TOOL(self, cur_lane: AFCLane, purge_length: Optional[float]=None,
                     restore_pos: bool=True, new_extruder_temp: Optional[float]=None, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                    gcmd: AFCGcmd) -> None:
         """
         Perform a tool change: unload the currently loaded lane (if any) and
         load `cur_lane`, heating/cooling extruders and handling infinite
@@ -3093,8 +3094,7 @@ class afc:
         self.logger.debug("Done setting temp")
 
     def _heat_next_extruder(
-        self, wait=True, next_temp: Optional[float]=None, *,
-        gcmd: Union[GCodeCommand, Literal["callback"]]
+        self, wait=True, next_temp: Optional[float]=None, *, gcmd: AFCGcmd
     ) -> Union[Tuple[AFCExtruder, float], bool]:
         """
         Heats the next extruder if it is not the current extruder.

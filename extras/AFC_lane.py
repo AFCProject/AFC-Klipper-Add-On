@@ -14,11 +14,12 @@ from datetime import datetime
 from enum import Enum
 from gcode import CommandError
 
-from typing import Optional, Union, TYPE_CHECKING, Literal
+from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC import afc
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_hub import afc_hub
@@ -936,7 +937,7 @@ class AFCLane:
             if assist_active:
                 self.espooler.assist(0)
 
-    def move_auto_speed(self, distance, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def move_auto_speed(self, distance, gcmd: AFCGcmd):
         """
         Helper function for determining speed and accel from passed in distance
 
@@ -1004,7 +1005,7 @@ class AFCLane:
         return (self.is_direct_hub()
                 or (self.hub_obj and getattr(self.hub_obj, "use_dist_hub", False) ))
 
-    def select_lane(self, *, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def select_lane(self, *, gcmd: AFCGcmd):
         """
         Helper function to select lane, calls unit lane selection function.
 
@@ -1012,8 +1013,7 @@ class AFCLane:
         """
         self.unit_obj.select_lane(self, gcmd=gcmd)
 
-    def move(self, distance, speed, accel, assist_active=False, *,
-             gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def move(self, distance, speed, accel, assist_active=False, *, gcmd: AFCGcmd):
         """
         Move the specified lane a given distance with specified speed and acceleration.
         This function calculates the movement parameters and commands the stepper motor
@@ -1033,7 +1033,7 @@ class AFCLane:
     def move_to(
         self, distance: float, speed_mode: SpeedMode,
         endstop:AFCHomingPoints|str=AFCHomingPoints.NONE, assist_active=AssistActive.NO,
-        use_homing=True, *, gcmd: Union[GCodeCommand, Literal["callback"]]
+        use_homing=True, *, gcmd: AFCGcmd
     ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling stepper move_advance or home_to functions based
@@ -1100,8 +1100,7 @@ class AFCLane:
 
 
     def move_advanced(self, distance, speed_mode: SpeedMode,
-                      assist_active: AssistActive = AssistActive.NO, *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]):
+                      assist_active: AssistActive = AssistActive.NO, *, gcmd: AFCGcmd):
         """
         Wrapper for move function and is used to compute several arguments
         to move the lane accordingly.
@@ -1135,7 +1134,7 @@ class AFCLane:
         """
         self._afc_prep_done = True
 
-    def _perform_infinite_runout(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _perform_infinite_runout(self, gcmd: AFCGcmd):
         """
         Common function for infinite spool runout
             - Unloads current lane and loads the next lane as specified by runout variable.
@@ -1211,7 +1210,7 @@ class AFCLane:
         else:
             self._perform_pause_runout(gcmd="callback")
 
-    def _perform_pause_runout(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _perform_pause_runout(self, gcmd: AFCGcmd):
         """
         Common function to pause print when runout occurs, fully unloads and ejects spool if specified by user
 
@@ -1239,7 +1238,7 @@ class AFCLane:
         self.unit_obj.lane_not_ready(self, gcmd=gcmd)
         self.afc.error.AFC_error(msg, gcmd=gcmd)
 
-    def _prep_capture_td1(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _prep_capture_td1(self, gcmd: AFCGcmd):
         """
         Common function to grab TD-1 data once user inserts filament into a lane. Only happens if user has specified
         this by setting `capture_td1_when_loaded: True` and if hub is clear and toolhead is not loaded.
@@ -1568,7 +1567,7 @@ class AFCLane:
         self.set_unloaded(gcmd="callback")
         self.afc.save_vars()
 
-    def _post_prep_user_macro(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _post_prep_user_macro(self, gcmd: AFCGcmd):
         """
         Function to call macro once filament has successfully been loaded during prep callback
 
@@ -1585,8 +1584,7 @@ class AFCLane:
     def sync_print_time(self):
         return
 
-    def sync_to_extruder(self, update_current=True, *,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def sync_to_extruder(self, update_current=True, *, gcmd: AFCGcmd):
         """
         Helper function to sync lane to extruder and set print current if specified.
 
@@ -1598,8 +1596,7 @@ class AFCLane:
                                                 th_extruder_name=self.extruder_obj.th_extruder_name,
                                                 gcmd=gcmd)
 
-    def unsync_to_extruder(self, update_current=True, *,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def unsync_to_extruder(self, update_current=True, *, gcmd: AFCGcmd):
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
@@ -1609,10 +1606,7 @@ class AFCLane:
         if self.drive_stepper is not None:
             self.drive_stepper.unsync_to_extruder(update_current, gcmd=gcmd)
 
-    def _set_current(self, current, gcmd: Union[GCodeCommand, Literal["callback"]]):
-        return
-
-    def set_load_current(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_load_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use run current value
 
@@ -1621,7 +1615,7 @@ class AFCLane:
         if self.drive_stepper is not None:
             self.drive_stepper.set_load_current(gcmd=gcmd)
 
-    def set_print_current(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_print_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use print current value
 
@@ -1758,7 +1752,7 @@ class AFCLane:
         if self.weight < 0:
             self.weight = 0
 
-    def set_loaded(self, *, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_loaded(self, *, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when filament in loaded into lane
 
@@ -1768,7 +1762,7 @@ class AFCLane:
         self.unit_obj.lane_loaded(self, gcmd=gcmd)
         self.afc.spool._set_values(self, gcmd=gcmd)
 
-    def set_unloaded(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_unloaded(self, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when filament is unloaded from lane
 
@@ -1782,8 +1776,7 @@ class AFCLane:
             self.afc.spool.clear_values(self)
         self.unit_obj.lane_not_ready(self, gcmd=gcmd)
 
-    def set_tool_loaded(self, normal_toolchange: bool=False, *,
-                        gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_tool_loaded(self, normal_toolchange: bool=False, *, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when lane is loaded into toolhead
 
@@ -1803,8 +1796,7 @@ class AFCLane:
 
         self.unit_obj.lane_tool_loaded(self, gcmd=gcmd)
 
-    def set_tool_unloaded(self, normal_toolchange: bool=False, *,
-                          gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def set_tool_unloaded(self, normal_toolchange: bool=False, *, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when lane is unloaded from toolhead
 
@@ -1926,7 +1918,7 @@ class AFCLane:
             return False
         return self.status in (AFCLaneState.TOOLED, AFCLaneState.LOADED)
 
-    def handle_toolhead_runout(self, gcmd: Union[GCodeCommand, Literal["callback"]], sensor=None):
+    def handle_toolhead_runout(self, gcmd: AFCGcmd, sensor=None):
         """
         Handles runout detection at the toolhead sensor.
         If all upstream sensors (prep, load, hub) still detect filament, this indicates a break or jam at the toolhead.
@@ -1979,7 +1971,7 @@ class AFCLane:
                     self.set_unloaded(gcmd=gcmd)
                     self.afc.save_vars()
 
-    def handle_hub_runout(self, gcmd: Union[GCodeCommand, Literal["callback"]], sensor=None):
+    def handle_hub_runout(self, gcmd: AFCGcmd, sensor=None):
         """
         Handles runout detection at the hub sensor.
         If both upstream sensors (prep, load) still detect filament but hub does not, this indicates a break or jam at the hub.
@@ -2008,7 +2000,7 @@ class AFCLane:
         # No else: do not trigger infinite runout or pause runout here
 
     # Toolchanger functions
-    def tool_swap(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def tool_swap(self, gcmd: AFCGcmd):
         """
         Helper function for calling extruder's tool_swap function
 
@@ -2144,7 +2136,7 @@ class AFCLane:
             self.unit_obj._apply_td1_data(self, datetime.now(), devices, ignore_time=True,
                                           gcmd="callback")
 
-    def get_td1_data(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def get_td1_data(self, gcmd: AFCGcmd):
         """
         Captures TD-1 data for lane. Has error checking to verify that lane is loaded, hub is not blocked
         and that TD-1 device is still detected before trying to capture data.

@@ -11,7 +11,7 @@ import re
 from configfile import error as config_error
 from datetime import datetime, timedelta
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union, Literal
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from extras.AFC_lane import afc, AFCLane, AFCMoveWarning
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from extras.AFC_hub import afc_hub
     from extras.AFC_extruder import AFCExtruder
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from configfile import ConfigWrapper
 
 try: from extras.AFC_utils import ERROR_STR, section_in_config, get_led_color
@@ -502,8 +503,7 @@ class afcUnit:
             led_color = self.afc.function.HexToLedString(color.replace("#", ""))
             self.afc.function.afc_led( led_color, self.led_logo_index )
 
-    def _stop_led_effects(self , targets: Optional[list[str]]=None, *,
-                          gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _stop_led_effects(self , targets: Optional[list[str]]=None, *, gcmd: AFCGcmd) -> None:
         """
         Iterates through active led effects that were successfully applied by AFC and disables
         them. When targets is supplied, only effects whose prefix matches a target name are
@@ -526,8 +526,7 @@ class afcUnit:
 
         self.afc.active_led_effects = remaining
 
-    def _call_led_effect(self, name: str, effect_suffix: str,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _call_led_effect(self, name: str, effect_suffix: str, gcmd: AFCGcmd) -> None:
         """
         Common method of calling SET_LED_EFFECT with effect name, method constructs effect name as
         <name>_<effect_suffix>, only called if the correct led_effects object exists.
@@ -548,8 +547,7 @@ class afcUnit:
                            extruder: Optional[AFCExtruder]=None,
                            static_color: Optional[str]=None,
                            extruder_static_color: Optional[str]=None,
-                           effect_suffix: Optional[str]=None, *,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                           effect_suffix: Optional[str]=None, *, gcmd: AFCGcmd) -> None:
         """
         Method to apply led effects to lane or extruder leds, gcode is only called if
         `led_effect <lane_name/extruder_name>_<effect_suffix>` is found in printer objects
@@ -625,7 +623,7 @@ class afcUnit:
             lane.current_led_state = state
             return True
 
-    def lane_not_ready(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_not_ready(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when a lane is not ready, aka filament not loaded
         into a lane (prep and load both False). If a lane has an illumination led defined, its turned
@@ -640,8 +638,7 @@ class afcUnit:
         if lane.led_spool_index is not None:
             self.afc.function.afc_led(self.afc.led_off, lane.led_spool_index)
 
-    def lane_loaded(self, lane: AFCLane, force: bool=False, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_loaded(self, lane: AFCLane, force: bool=False, *, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is loaded, normally this is called when
         filament in lane is staged behind hub. If a lane has an illumination led defined, its turned
@@ -659,7 +656,7 @@ class afcUnit:
         if lane.led_spool_index is not None:
             self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
 
-    def lane_unloading(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_unloading(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is unloading, this can be called when
         unloading from toolhead and when ejecting a lane.
@@ -671,7 +668,7 @@ class afcUnit:
         self._trigger_led_state(lane, static_color=lane.led_unloading, effect_suffix="unloading",
                                 gcmd=gcmd)
 
-    def lane_unloaded(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_unloaded(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is unloaded but prep state is still True
 
@@ -692,7 +689,7 @@ class afcUnit:
         :param lane: Lane that finished (or aborted) an unload.
         """
 
-    def lane_loading(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_loading(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is loading, this can be called when
         loading to toolhead or when loading spool into lane.
@@ -704,8 +701,7 @@ class afcUnit:
         self._trigger_led_state(lane, static_color=lane.led_loading, effect_suffix="loading",
                                 gcmd=gcmd)
 
-    def lane_tool_loaded_gears(self, lane: AFCLane,
-                               gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_tool_loaded_gears(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is loaded before the toolhead gears
 
@@ -716,8 +712,7 @@ class afcUnit:
         self._trigger_led_state(lane, lane.extruder_obj, effect_suffix="tool_loaded_gears",
                                 gcmd=gcmd)
 
-    def lane_tool_loaded(self, lane: AFCLane,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_tool_loaded(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is tool loaded,
         also sets toolheads led status color
@@ -729,8 +724,7 @@ class afcUnit:
         self._trigger_led_state(lane, lane.extruder_obj, static_color=lane.led_tool_loaded,
                                 effect_suffix="tool_loaded", gcmd=gcmd)
 
-    def lane_tool_unloaded(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_tool_unloaded(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is tool unloaded,
         also sets toolheads led status color
@@ -744,8 +738,7 @@ class afcUnit:
                                 extruder_static_color=lane.led_tool_unloaded,
                                 effect_suffix="tool_unloaded", gcmd=gcmd)
 
-    def lane_tool_loaded_idle(self, lane: AFCLane,
-                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_tool_loaded_idle(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when its loaded into a tool
         and tool is docked(for toolchangers). Function also sets toolheads led
@@ -771,7 +764,7 @@ class afcUnit:
         if lane.led_spool_index is not None:
             self.afc.function.afc_led(lane.led_spool_illum, lane.led_spool_index)
 
-    def lane_fault(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_fault(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when a fault happens
 
@@ -783,8 +776,7 @@ class afcUnit:
                                 gcmd=gcmd)
 
     def select_lane(self, lane: AFCLane, sel_dir: bool=False,
-                    disable_selector: bool=False, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> tuple[bool, float|int]:
+                    disable_selector: bool=False, *, gcmd: AFCGcmd) -> tuple[bool, float|int]:
         """
         Common method to select a units lane.
 
@@ -800,8 +792,7 @@ class afcUnit:
         """
         return True, 0.0
 
-    def _selector_cal_dis_adjust(self, lane: AFCLane, *,
-                                 gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _selector_cal_dis_adjust(self, lane: AFCLane, *, gcmd: AFCGcmd) -> None:
         """
         Helper function for moving selector selector_cal_dis amount if specified in users config.
         Moving selector_cal_dis is a fine adjustment that can help put more pressure on the filament
@@ -816,7 +807,7 @@ class afcUnit:
             self.selector_stepper_obj.move(lane.selector_cal_dis, lane.short_moves_speed,
                                            lane.short_moves_accel, False, gcmd=gcmd)
 
-    def return_to_home(self, prep=False, *, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def return_to_home(self, prep=False, *, gcmd: AFCGcmd):
         """
         Function to home unit if unit has homing sensor
 
@@ -836,8 +827,7 @@ class afcUnit:
         self.afc.logger.error("{} function not defined for {}".format(name, self.name))
 
     # Function that other units can create so that they are specific to the unit
-    def system_Test(self, cur_lane, delay, assignTcmd, enable_movement,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def system_Test(self, cur_lane, delay, assignTcmd, enable_movement, gcmd: AFCGcmd) -> bool:
         self._print_function_not_defined(self.system_Test.__name__)
         return False
 
@@ -855,18 +845,17 @@ class afcUnit:
         self._print_function_not_defined(self.calibrate_bowden.__name__)
         return False, "", 0.0
 
-    def calibrate_td1(self, cur_lane, dis, tol, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def calibrate_td1(self, cur_lane, dis, tol, gcmd: AFCGcmd):
         self._print_function_not_defined(self.calibrate_td1.__name__)
 
-    def calibrate_hub(self, cur_lane, tol, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def calibrate_hub(self, cur_lane, tol, gcmd: AFCGcmd):
         self._print_function_not_defined(self.calibrate_hub.__name__)
 
     def move_until_state(self, cur_lane, state, move_dis, tolerance, short_move, pos=0, *,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]):
+                         gcmd: AFCGcmd):
         self._print_function_not_defined(self.move_until_state.__name__)
 
-    def calc_position(self, cur_lane, state, pos, short_move, tolerance, *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def calc_position(self, cur_lane, state, pos, short_move, tolerance, *, gcmd: AFCGcmd):
         self._print_function_not_defined(self.calc_position.__name__)
 
     def calibrate_lane(self, cur_lane: AFCLane, tol: float,
@@ -882,12 +871,11 @@ class afcUnit:
         self._print_function_not_defined(self.calibrate_lane.__name__)
         return False, "", 0.0
 
-    def unselect_lane(self, move_distance: float=50, *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def unselect_lane(self, move_distance: float=50, *, gcmd: AFCGcmd):
         self._print_function_not_defined(self.unselect_lane.__name__)
 
     def _move_lane(self, lane: AFCLane|AFCExtruderStepper, delay: float, enable_movement: bool=True,
-                   *, gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                   *, gcmd: AFCGcmd) -> bool:
         self._print_function_not_defined(self._move_lane.__name__)
 
     def calibration_lane_message(self) -> str:
@@ -908,7 +896,7 @@ class afcUnit:
         return lanes
 
     def get_td1_data(self, cur_lane: AFCLane, compare_time: datetime, ignore_time: bool=False, *,
-                     gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                     gcmd: AFCGcmd) -> bool:
         """
         Queries moonrakers endpoint to get td1 data and check to see if data is valid and time
         in data is greater than passed in time as this is how determination is made that filament
@@ -929,7 +917,7 @@ class afcUnit:
 
     def _apply_td1_data(
         self, cur_lane: AFCLane, compare_time: datetime, td1_data: Optional[dict],
-        ignore_time: bool=False, *, gcmd: Union[GCodeCommand, Literal["callback"]]
+        ignore_time: bool=False, *, gcmd: AFCGcmd
     ) -> bool:
         """
         Validates and applies an already-fetched TD-1 data payload to a lane,
@@ -987,7 +975,7 @@ class afcUnit:
                 return True
         return False
 
-    def prep_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Helper method for initially loading spools when prep sensor is triggered.
         Need to override in specific unit
@@ -999,7 +987,7 @@ class afcUnit:
         """
         self._print_function_not_defined(self.prep_load.__name__)
 
-    def prep_post_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Helper method to run after prep_load has been successful for a specific unit.
         Need to override in specific unit
@@ -1011,7 +999,7 @@ class afcUnit:
         """
         self._print_function_not_defined(self.prep_post_load.__name__)
 
-    def eject_lane(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Method to eject spool from Unit/lane.
         Need to override in specific unit
@@ -1021,8 +1009,7 @@ class afcUnit:
         """
         self._print_function_not_defined(self.eject_lane.__name__)
 
-    def on_filament_insert(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def on_filament_insert(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Called when filament is inserted into a lane. Sends the afc:lane_inserted event.
         Units can override to add unit-specific insert handling.
@@ -1032,8 +1019,7 @@ class afcUnit:
         """
         self.printer.send_event("afc:lane_inserted", lane)
 
-    def on_filament_remove(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def on_filament_remove(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Called when filament is removed from a lane. No-op by default; units can override
         to add unit-specific removal handling.
@@ -1046,8 +1032,7 @@ class afcUnit:
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
-                    assist_active: AssistActive=AssistActive.DYNAMIC, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]
+                    assist_active: AssistActive=AssistActive.DYNAMIC, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to hub sensor, calls lanes move_to method with HUB as trigger
@@ -1078,8 +1063,7 @@ class afcUnit:
 
     def move_to_load(self, lane: AFCLane, dist: float,
                      dir: MoveDirection, use_homing: bool=True,
-                     speed_mode: SpeedMode=SpeedMode.LONG, *,
-                     gcmd: Union[GCodeCommand, Literal["callback"]]
+                     speed_mode: SpeedMode=SpeedMode.LONG, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to load sensor, calls lane's move_to method with the load
@@ -1110,8 +1094,7 @@ class afcUnit:
                             assist_active=AssistActive.DYNAMIC, use_homing=use_homing, gcmd=gcmd)
 
     def load_then_home(self, lane: AFCLane|AFCExtruderStepper, distance: float,
-                       assist_active: AssistActive, endstop: AFCHomingPoints,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]
+                       assist_active: AssistActive, endstop: AFCHomingPoints, gcmd: AFCGcmd
                     ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method to move filament to toolhead. If load_then_home boolean is set, AFC will do
@@ -1150,8 +1133,7 @@ class afcUnit:
 
         return home, dist, warn
 
-    def _buffer_toolhead_load_check(self, lane: AFCLane|AFCExtruderStepper, *,
-                                    gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _buffer_toolhead_load_check(self, lane: AFCLane|AFCExtruderStepper, *, gcmd: AFCGcmd):
         """
         Method for checking if filament is loaded to toolhead when using buffer in ramming mode.
         If homing is not enabled or enable_buffer_tool_check is not enabled, lanes tool_loaded status

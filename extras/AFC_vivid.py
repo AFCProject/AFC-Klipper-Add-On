@@ -10,11 +10,12 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Optional, Union, Literal
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_lane import AFCLane, AFCMoveWarning
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.stepper_enable import PrinterStepperEnable
@@ -102,7 +103,7 @@ class AFC_vivid(afcBoxTurtle):
         self.logo_error = '<span class=error--text>ViViD Not Ready</span>\n'
 
     def _move_lane(self, lane: AFCLane, delay: float=1, enable_movement: bool=True,
-                   *, gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                   *, gcmd: AFCGcmd) -> bool:
         """
         Method to check and see if filament is loaded into lane. This method tries to move filament
         to load sensor, once successful lane is retracted by hubs `hub_clear_move_dis`. If homing
@@ -141,8 +142,7 @@ class AFC_vivid(afcBoxTurtle):
         return loaded
 
     def system_Test(self, cur_lane: AFCLane, delay: float,
-                    assignTcmd: bool, enable_movement: bool,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                    assignTcmd: bool, enable_movement: bool, gcmd: AFCGcmd) -> bool:
         """
         Runs the standard system test. ViViD units don't support movement
         during the test, so enable_movement is always forced to False.
@@ -186,8 +186,7 @@ class AFC_vivid(afcBoxTurtle):
         return enabled
 
     def select_lane(self, lane: AFCLane, sel_dir: bool=False,
-                    disable_selector: bool=False, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> tuple[bool, float|int]:
+                    disable_selector: bool=False, *, gcmd: AFCGcmd) -> tuple[bool, float|int]:
         """
         Helper method to use homing to rotate cam until lanes selector
         is triggered.
@@ -236,7 +235,7 @@ class AFC_vivid(afcBoxTurtle):
         # there's no distance moved to report.
         return False, 0
 
-    def prep_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Helper method for initially loading spools when prep sensor is triggered.
         Upon first load, if lanes do not have calibrated_lanes variable set, filament
@@ -294,7 +293,7 @@ class AFC_vivid(afcBoxTurtle):
         self.drive_stepper_obj.do_enable(False)
         self.afc.function.select_loaded_lane(gcmd=gcmd)
 
-    def prep_post_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         This method does nothing and just returns for ViViD units
 
@@ -304,8 +303,7 @@ class AFC_vivid(afcBoxTurtle):
         # Do nothing and return
         return
 
-    def unselect_lane(self, move_distance: float=50, *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def unselect_lane(self, move_distance: float=50, *, gcmd: AFCGcmd) -> None:
         """
         Move the selector by a configurable distance to free filament in a lane, e.g. when
         ejecting filament.
@@ -316,7 +314,7 @@ class AFC_vivid(afcBoxTurtle):
         self.selector_stepper_obj.move(move_distance, self.selector_homing_speed,
                                        self.selector_homing_accel, False, gcmd=gcmd)
 
-    def eject_lane(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
         will stop once prep sensor is no longer triggered if movement has not already stopped.
@@ -346,8 +344,7 @@ class AFC_vivid(afcBoxTurtle):
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
-                    assist_active: AssistActive=AssistActive.DYNAMIC, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]
+                    assist_active: AssistActive=AssistActive.DYNAMIC, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger

@@ -8,12 +8,13 @@ from __future__ import annotations
 import os
 import json
 
-from typing import TYPE_CHECKING, Optional, Union, Literal
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -59,7 +60,7 @@ class afcPrep:
             if not self.dis_unload_macro:
                 self.afc.function._rename(self.afc.BASE_UNLOAD_FILAMENT, self.afc.RENAMED_UNLOAD_FILAMENT, self.afc.cmd_TOOL_UNLOAD, self.afc.cmd_TOOL_UNLOAD_help)
 
-    def _td1_prep(self, overrall_status, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _td1_prep(self, overrall_status, gcmd: AFCGcmd):
         '''
         Helper function to perform TD-1 data capture during PREP
 

@@ -33,11 +33,12 @@ import traceback
 from configparser import Error as error
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING, Union, Literal
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand, GCodeDispatch
+    from extras.AFC_utils import AFCGcmd
     from reactor import SelectReactor as Reactor
     from extras.AFC_lane import AFCLane
     from extras.heaters import PrinterHeaters
@@ -871,8 +872,7 @@ class afcACE(afcUnit):
         if self._is_virtual_hub(lane):
             lane._load_state = lane.tool_loaded
 
-    def _sync_slot_states(self, hw_status: Dict[str, Any],
-                          gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _sync_slot_states(self, hw_status: Dict[str, Any], gcmd: AFCGcmd) -> None:
         """
         Sync lane prep/load state from ACE hardware slot status.
 
@@ -983,7 +983,7 @@ class afcACE(afcUnit):
                 self._prev_slot_states[lane.name] = slot_ready
 
     def _dispatch_load_runout(self, lane: AFCLane, eventtime: float, load_state: bool,
-                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                              gcmd: AFCGcmd) -> None:
         """
         Run a lane's load/runout handler with its failures made visible.
 
@@ -1151,7 +1151,7 @@ class afcACE(afcUnit):
         return slot
 
     # Unit interface overrides
-    def prep_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         No-op for ACE: filament transport to the hub is handled in
         prep_post_load via serial feed, not during prep_load.
@@ -1173,8 +1173,7 @@ class afcACE(afcUnit):
         except Exception:
             return False
 
-    def on_filament_insert(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def on_filament_insert(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         ACE-specific insertion: refresh RFID inventory, apply spool defaults, sync to spoolman.
 
@@ -1235,8 +1234,7 @@ class afcACE(afcUnit):
                 f"ACE on_filament_insert: post_insert event error for {lane.name}: {e}")
         super().on_filament_insert(lane, gcmd=gcmd)
 
-    def on_filament_remove(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def on_filament_remove(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         ACE-specific removal: clear slot inventory and hub state.
 
@@ -1253,7 +1251,7 @@ class afcACE(afcUnit):
 
     # TD-1 support
     def calibrate_td1(self, cur_lane: AFCLane, dis: float, tol: float,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str, float]:
+                      gcmd: AFCGcmd) -> Tuple[bool, str, float]:
         """
         Calibrate TD-1 bowden length by feeding until TD-1 device detects filament.
 
@@ -1272,9 +1270,7 @@ class afcACE(afcUnit):
             self._operation_active = False
             self._prev_states_stale = True
 
-    def prep_capture_td1(self, cur_lane: AFCLane,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]
-                    ) -> Optional[Tuple[bool, str]]:
+    def prep_capture_td1(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> Optional[Tuple[bool, str]]:
         """
         ACE TD-1 capture is triggered from prep_post_load (after hub feed).
 
@@ -1291,8 +1287,7 @@ class afcACE(afcUnit):
             return True, "TD-1 capture handled by prep_post_load"
         return None
 
-    def capture_td1_data(self, cur_lane: AFCLane,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[bool, str]:
+    def capture_td1_data(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> Tuple[bool, str]:
         """
         ACE TD-1 data capture using feed_filament instead of stepper moves.
 
@@ -1324,7 +1319,7 @@ class afcACE(afcUnit):
             self._operation_active = False
 
     def _capture_td1_data_inner(
-        self, cur_lane: AFCLane, slot: int, gcmd: Union[GCodeCommand, Literal["callback"]]
+        self, cur_lane: AFCLane, slot: int, gcmd: AFCGcmd
     ) -> Tuple[bool, str]:
         """
         Feed to the hub (if needed) and on to the TD-1 device, read the TD-1
@@ -1377,8 +1372,7 @@ class afcACE(afcUnit):
         return False, "TD-1 data not captured (unload completed)"
 
     def _calibrate_td1_inner(
-        self, cur_lane: AFCLane, dis: float, tol: float,
-        gcmd: Union[GCodeCommand, Literal["callback"]]
+        self, cur_lane: AFCLane, dis: float, tol: float, gcmd: AFCGcmd
     ) -> Tuple[bool, str, float]:
         """
         Measure td1_bowden_length by feeding to the hub then incrementally on
@@ -1556,9 +1550,7 @@ class afcACE(afcUnit):
             return False
         return True
 
-    def prep_post_load(
-        self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]
-    ) -> None:
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Stage filament to hub via ACE serial feed.
 
@@ -1620,7 +1612,7 @@ class afcACE(afcUnit):
                     self.logger.error(f"ACE prep_post_load failed for {lane.name} after "
                                       f"{max_attempts} attempts: {e}")
 
-    def eject_lane(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Retract filament back into the ACE unit.
 
@@ -1754,7 +1746,7 @@ class afcACE(afcUnit):
             reactor.pause(reactor.monotonic() + 0.1)
 
     def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: bool,
-                    enable_movement: bool, gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                    enable_movement: bool, gcmd: AFCGcmd) -> bool:
         """
         ACE system test, query hardware slot status instead of physical switches.
 
@@ -2104,8 +2096,7 @@ class afcACE(afcUnit):
         except Exception:
             pass
 
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
         """
         Full toolhead load for a stepperless ACE lane (AFC.load_sequence's
         unit_load_lane hook). Runs the ACE serial transport directly via
@@ -2124,8 +2115,7 @@ class afcACE(afcUnit):
         afc.save_vars()
         return True
 
-    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: Any,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
         """
         Full toolhead unload for a stepperless ACE lane (AFC.unload_sequence's
         unit_unload_lane hook). Runs the shared toolhead phase (quick-pull,
@@ -2162,8 +2152,7 @@ class afcACE(afcUnit):
             # repeats this; harmless, since both calls are idempotent.
             self.finish_unload(cur_lane)
 
-    def _ace_load_sequence(self, cur_lane: AFCLane, cur_extruder: Any,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _ace_load_sequence(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
         """
         ACE load transport: serial feed to toolhead area + feed assist.
 
@@ -2205,8 +2194,7 @@ class afcACE(afcUnit):
         errored = self._last_move_error == "feed_error"
         return errored, success
 
-    def _ace_load_inner(self, cur_lane: AFCLane, cur_extruder: Any,
-                        gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _ace_load_inner(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
         """
         ACE custom load, filament transport only.
 
@@ -2378,7 +2366,7 @@ class afcACE(afcUnit):
         self._log_delta("ACE load transport complete")
         return True
 
-    def lane_unloading(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def lane_unloading(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Unload-start hook the upstream core actually calls.
 
@@ -2436,8 +2424,7 @@ class afcACE(afcUnit):
         self._operation_active = False
         self._prev_states_stale = True
 
-    def _ace_unload_sequence(self, cur_lane: AFCLane, cur_extruder: Any,
-                             gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _ace_unload_sequence(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
         """
         ACE unload transport, ACE serial unwind back to hub.
 
@@ -2466,8 +2453,7 @@ class afcACE(afcUnit):
         self._ace.unwind_filament(slot, cur_lane.short_move_dis, self.retract_speed)
         self._wait_for_feed_complete(slot, cur_lane.short_move_dis, self.retract_speed)
 
-    def _collapse_buffer(self, cur_lane: AFCLane, slot: int,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _collapse_buffer(self, cur_lane: AFCLane, slot: int, gcmd: AFCGcmd) -> bool:
         """
         Buffer ramming: unwind in short steps until the buffer reads trailing, as
         AFC's own TOOL_UNLOAD does with a lane stepper.
@@ -2501,7 +2487,7 @@ class afcACE(afcUnit):
 
     def _clear_toolhead_sensor(
         self, cur_lane: AFCLane, cur_extruder: Any, slot: int, retract_dist: float,
-        gcmd: Union[GCodeCommand, Literal["callback"]]
+        gcmd: AFCGcmd
     ) -> bool:
         """
         Retract and unwind again while the toolhead sensor still sees filament,
@@ -2540,8 +2526,7 @@ class afcACE(afcUnit):
             self._wait_for_feed_complete(slot, retract_dist, self.retract_speed)
         return True
 
-    def _ace_unload_inner(self, cur_lane: AFCLane, cur_extruder: Any,
-                          gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _ace_unload_inner(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
         """
         ACE custom unload, filament transport only.
 

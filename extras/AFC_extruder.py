@@ -16,7 +16,7 @@ except ImportError:
 from configparser import Error as error
 from math import ceil
 
-from typing import TYPE_CHECKING, Optional, Union, Dict, Literal
+from typing import TYPE_CHECKING, Optional, Union, Dict
 
 if TYPE_CHECKING:
     from klippy import Printer
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from kinematics.extruder import PrinterExtruder
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from toolhead import ToolHead
     from extras.heaters import Heater
     from extras.AFC import afc
@@ -577,8 +578,7 @@ class AFCExtruder:
         """
         self.estats.handle_moonraker_stats()
 
-    def _handle_toolhead_sensor_runout(self, state, sensor_name,
-                                       gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _handle_toolhead_sensor_runout(self, state, sensor_name, gcmd: AFCGcmd):
         """
         Handles runout detection at the toolhead sensors (tool_start or tool_end).
         Notifies the currently loaded lane if filament is missing at the toolhead sensor.
@@ -691,8 +691,7 @@ class AFCExtruder:
 
         self.tool_start_state = state
 
-    def _set_standalone_lane_states(self, enabled: bool,
-                                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _set_standalone_lane_states(self, enabled: bool, gcmd: AFCGcmd) -> None:
         """
         Sync the standalone toolchanger lane's tool-loaded state with the extruder.
 
@@ -751,8 +750,7 @@ class AFCExtruder:
         if self.afc.prep_done:
             self.afc.save_vars()
 
-    def restore_virtual_tool_start(self, enabled: bool,
-                                   gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def restore_virtual_tool_start(self, enabled: bool, gcmd: AFCGcmd) -> None:
         """
         Restore the virtual tool_start sensor state from the vars file during PREP,
         same pattern as the virtual bypass restore.
@@ -812,8 +810,7 @@ class AFCExtruder:
 
         return self.toolhead_extruder.get_heater()
 
-    def load_unload_sequence(self, distance: float,
-                             gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def load_unload_sequence(self, distance: float, gcmd: AFCGcmd) -> None:
         """
         Starts unloading/loading sequence for extruders, currently only for toolheads without lanes
         attached to a toolhead
@@ -1123,8 +1120,7 @@ class AFCExtruder:
         else:
             return False
 
-    def prep_on_shuttle_check(self, lane: AFCLane,
-                              gcmd: Union[GCodeCommand, Literal["callback"]]) -> str:
+    def prep_on_shuttle_check(self, lane: AFCLane, gcmd: AFCGcmd) -> str:
         """
         This helper method should only be called during PREP as it's a helper to check
         if toolhead is on the shuttle or not and will set toolhead leds correctly.

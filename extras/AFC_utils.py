@@ -31,7 +31,7 @@ from urllib.error import (
     HTTPError
 )
 
-from typing import TYPE_CHECKING, Optional, Callable, List, Any, Union
+from typing import TYPE_CHECKING, Optional, Callable, List, Any, Union, Literal
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
@@ -44,6 +44,14 @@ if TYPE_CHECKING:
     from extras.pause_resume import PauseResume
     from extras.idle_timeout import IdleTimeout
     from pins import PrinterPins
+
+    # Command context a gcode script is run through: a real gcmd, "callback"
+    # for a true async context with no held mutex (hardware/sensor
+    # callbacks, reactor timers, deferred completion callbacks), or
+    # "sub_command" for an event handler fired synchronously from inside
+    # another command's own gcode context, which can't release the mutex
+    # until this call stack returns to it.
+    AFCGcmd = Union[GCodeCommand, Literal["callback", "sub_command"]]
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 

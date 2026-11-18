@@ -6,7 +6,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 from __future__ import annotations
 
-from typing import Optional, Union, Any, Callable, Literal, TYPE_CHECKING
+from typing import Optional, Union, Any, Callable, TYPE_CHECKING
 import copy
 import traceback
 import re
@@ -18,6 +18,7 @@ except: raise error("Error when trying to import AFC_utils.natural_sort_key\n{tr
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from configfile import ConfigWrapper
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
@@ -684,7 +685,7 @@ class AFCSpool:
         return value
 
     def _set_values(self, cur_lane: AFCLane, on_done: Optional[Callable[[], None]] = None, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                    gcmd: AFCGcmd) -> None:
         """
         Helper function for setting lane spool values
 
@@ -731,7 +732,7 @@ class AFCSpool:
 
     def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]],
                     save_vars: bool = True, on_done: Optional[Callable[[], None]] = None, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+                    gcmd: AFCGcmd) -> None:
         """
         Assigns a spool from Spoolman to a lane, pulling material, color, weight,
         and temperature values from Spoolman and updating the lane accordingly.

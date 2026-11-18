@@ -17,13 +17,14 @@ import inspect
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING, Dict, Optional, Union, Literal
+from typing import TYPE_CHECKING, Dict, Optional, Union
 
 if TYPE_CHECKING:
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
     from extras.AFC_stepper import AFCExtruderStepper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from configfile import ConfigWrapper
     from mcu import MCU_adc
 
@@ -288,8 +289,7 @@ class AFCBuffer:
 
         return eventtime + CHECK_RUNOUT_TIMEOUT
 
-    def pause_on_error(self, msg: str, pause: bool=False, *,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def pause_on_error(self, msg: str, pause: bool=False, *, gcmd: AFCGcmd) -> None:
         """
         Pause the print with an error message if fault is detected, prevents duplicate triggers.
 
@@ -1540,7 +1540,8 @@ def load_config_prefix(config):
     if buffer_type == "switched":
         return AFCBuffer(config)
 
-    if buffer_type == "FPS_PSF":
+    if (buffer_type == "COMP"
+        or buffer_type == "FPS_PSF"):
         return AFCFPSBuffer(config)
 
     msg = f"{buffer_type} not valid, only switched(turtleneck style) or FPS_PSF are valid options"

@@ -21,7 +21,7 @@ from configfile import error
 from datetime import datetime
 from pathlib import Path
 
-from typing import TYPE_CHECKING, Union, Optional, Any, List, Literal
+from typing import TYPE_CHECKING, Union, Optional, Any, List
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from extras.AFC_hub import afc_hub
     from gcode import GCodeCommand
     from extras.gcode_move import GCodeMove
+    from extras.AFC_utils import AFCGcmd
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -391,8 +392,7 @@ class afcFunction:
         except Exception:
             return False
 
-    def check_homed(self, error_msg: Optional[str]=None, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def check_homed(self, error_msg: Optional[str]=None, *, gcmd: AFCGcmd) -> bool:
         """
         Helper function to determine if printer is currently homed, if not, then apply G28
 
@@ -663,7 +663,7 @@ class afcFunction:
         # self.reactor.update_timer( self.activate_extruder_cb, self.reactor.monotonic() + 5 )
         self.handle_activate_extruder(0, gcmd="callback")
 
-    def handle_activate_extruder(self, eventtime, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def handle_activate_extruder(self, eventtime, gcmd: AFCGcmd):
         """
         Supposed to be a callback function from timer, currently this is not called from timer event.
         TODO: Update this functionality before pushing to main/dev or once fully moved away from KTC
@@ -726,7 +726,7 @@ class afcFunction:
             self.logger.info("Manually removing {} loaded from toolhead".format(cur_lane_loaded.name))
             self.afc.save_vars()
 
-    def select_loaded_lane(self, gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def select_loaded_lane(self, gcmd: AFCGcmd):
         """
         Function looks up what the current lane loaded is and calls a common `select_lane` function so
         that units that have selectors this makes sure the correct lane is selected if user moves other
@@ -1014,8 +1014,7 @@ class afcFunction:
                     self.config.access_tracking[(name.lower(), option.lower())] = 1
             self.printer.load_object(self.config, name)
 
-    def _safe_extrude(self, amount_mm, feedrate=100, *,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]):
+    def _safe_extrude(self, amount_mm, feedrate=100, *, gcmd: AFCGcmd):
         """
         Helper function to safely extrude a given amount of filament, checking if the lane is loaded and
         if the toolhead is in absolute mode.
@@ -1111,7 +1110,7 @@ class afcFunction:
 
 
     def _afc_cali_comp(self, cali: str, title: str,
-                       additional_msg: str, gcmd: Union[GCodeCommand, Literal["callback"]]):
+                       additional_msg: str, gcmd: AFCGcmd):
         """
         This method handles the completion of the AFC calibration process by displaying a prompt to the user, asking
         whether they want to perform more calibrations.
@@ -1139,8 +1138,7 @@ class afcFunction:
                                True, None)
 
     def _afc_cali_fail(self, cali: str, dis: str, reset_lane: bool=True,
-                       title: str="AFC Calibration Failed", fail_message: str="", *,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]):
+                       title: str="AFC Calibration Failed", fail_message: str="", *, gcmd: AFCGcmd):
         """
         This method opens a prompt after an AFC calibration failure. It informs the user about the failure and provides
         instructions to reset the lane and review the error messages in the console. The user is prompted to take corrective
@@ -1236,7 +1234,7 @@ class afcFunction:
 
     def _resolve_calibration_lane(
         self, extruder_name: str, lane_name: Optional[str],
-        gcmd: Union[GCodeCommand, Literal["callback"]]
+        gcmd: AFCGcmd
     ) -> Optional[AFCLane]:
         """
         Resolve a lane for toolhead calibration.

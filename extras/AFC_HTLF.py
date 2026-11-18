@@ -9,7 +9,7 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Optional, Union, Literal
+from typing import TYPE_CHECKING, Optional
 
 try: from extras.AFC_utils import ERROR_STR
 except:
@@ -29,6 +29,7 @@ except: raise config_error(ERROR_STR.format(import_lib="AFC_utils", trace=traceb
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from mcu import MCU_endstop
     from extras.AFC_stepper import AFCExtruderStepper
 
@@ -118,8 +119,7 @@ class AFC_HTLF(afcBoxTurtle):
         self.logo_error = '<span class=error--text>HTLF Not Ready</span>\n'
 
     def system_Test(self, cur_lane: AFCLane|AFCExtruderStepper, delay: float,
-                    assignTcmd: bool, enable_movement: bool,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                    assignTcmd: bool, enable_movement: bool, gcmd: AFCGcmd) -> bool:
         """
         Runs the standard system test, homing the selector first (if not
         already prep-homed) and again after the test so the selector always
@@ -168,8 +168,7 @@ class AFC_HTLF(afcBoxTurtle):
         """
         self.return_to_home(gcmd=gcmd)
 
-    def _move_selector_home(self, distance: float, *,
-                            gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _move_selector_home(self, distance: float, *, gcmd: AFCGcmd) -> None:
         """
         Helper function to move stepper with correct function call depending on if homing is enabled
         or not
@@ -193,7 +192,7 @@ class AFC_HTLF(afcBoxTurtle):
                                            False, gcmd=gcmd)
 
     def return_to_home(self, prep: bool=False, disable_selector: bool=True, *,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                       gcmd: AFCGcmd) -> bool:
         """
         Moves lobes to home position, if a current lane was selected this function moves back that amount and then performs smaller
         moves until home switch is triggered
@@ -247,8 +246,7 @@ class AFC_HTLF(afcBoxTurtle):
         return (self.mm_move_per_rotation/360)*angle_movement
 
     def select_lane(self, lane: AFCLane, sel_dir: bool=False,
-                    disable_selector: bool=False, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> tuple[bool, float|int]:
+                    disable_selector: bool=False, *, gcmd: AFCGcmd) -> tuple[bool, float|int]:
         """
         Moves lobe selector to specified lane based off lanes index
 
@@ -296,7 +294,7 @@ class AFC_HTLF(afcBoxTurtle):
                 and cur_lane.status != AFCLaneState.EJECTING
                 and cur_lane.status != AFCLaneState.CALIBRATING)
 
-    def prep_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         HTLF does not have prep switches, so there is nothing to do here.
 
@@ -306,7 +304,7 @@ class AFC_HTLF(afcBoxTurtle):
         # HTLF does not have prep switches returning
         return
 
-    def prep_post_load(self, lane: AFCLane, gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         HTLF does not have prep switches, so there is nothing to do here.
 

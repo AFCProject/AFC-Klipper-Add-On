@@ -34,14 +34,14 @@ import threading
 import time
 import traceback
 from enum import Enum
-from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Literal, NamedTuple, Optional,
-                    Set, Tuple, Union)
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 import configfile
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_lane import (AFCHomingPoints, AFCLane, AssistActive, MoveDirection,
                                  SpeedMode)
 
@@ -1981,8 +1981,7 @@ class afcCFS(afcUnit):
         self._trace_print_state()
         return self.reactor.monotonic() + self.poll_interval
 
-    def _mirror_presence(self, mask: int, *,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _mirror_presence(self, mask: int, *, gcmd: AFCGcmd) -> None:
         """
         Pass each slot's spool sensor to its lane once two polls in a row agree, like the
         connection sensors: a sensor reply carries no bank, so a late reply to one read could
@@ -2019,8 +2018,7 @@ class afcCFS(afcUnit):
     # AFC unit hooks
 
     def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: bool,
-                    enable_movement: bool,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+                    enable_movement: bool, gcmd: AFCGcmd) -> bool:
         """
         Restore lane state during PREP from the box's own sensors.
 
@@ -2215,8 +2213,7 @@ class afcCFS(afcUnit):
         self._lane_trace(lane, "box_state", point=point, status=P.status_name(status),
                          toolhead_sensor=self._toolhead_sensor(lane))
 
-    def _lane_fail(self, lane: AFCLane, message: str, *,
-                   gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _lane_fail(self, lane: AFCLane, message: str, *, gcmd: AFCGcmd) -> None:
         """
         Log a lane failure and hand it to AFC's error handling.
 
@@ -2230,8 +2227,7 @@ class afcCFS(afcUnit):
 
     # Presence from the box poll
 
-    def update_lane_presence(self, lane: AFCLane, present: bool, *,
-                             gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def update_lane_presence(self, lane: AFCLane, present: bool, *, gcmd: AFCGcmd) -> None:
         """
         Called by the poll with this slot's material sensor state.
 
@@ -2468,8 +2464,7 @@ class afcCFS(afcUnit):
         """
         self._tool_load(lane, gcmd=gcmd)
 
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any, *,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any, *, gcmd: AFCGcmd) -> bool:
         """
         AFC's load hook (AFC.load_sequence), used like the ACE's: returns False on a
         failed load so AFC stops without recording the lane as loaded. With a
@@ -2487,8 +2482,7 @@ class afcCFS(afcUnit):
         self.afc.save_vars()
         return True
 
-    def _tool_load(self, lane: AFCLane, *,
-                   gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _tool_load(self, lane: AFCLane, *, gcmd: AFCGcmd) -> bool:
         """
         Load a lane to the nozzle: checks, park, then load attempts (see _load_attempt)
         and the push to tool_stn.
@@ -2575,8 +2569,7 @@ class afcCFS(afcUnit):
 
     # Tool unload
 
-    def _run_cutter_sequence(self, lane: AFCLane, *,
-                             gcmd: Union[GCodeCommand, Literal["callback"]]) -> Optional[str]:
+    def _run_cutter_sequence(self, lane: AFCLane, *, gcmd: AFCGcmd) -> Optional[str]:
         """
         Run AFC's cut macro. With a cutter switch configured, verify it: the
         switch must have fired during the cut (blade reached the end of its
@@ -2622,8 +2615,7 @@ class afcCFS(afcUnit):
             self.logger.warning(f"CFS {lane.name}: cut {attempt + 1} not confirmed: {reason}")
         return reason
 
-    def _run_post_cut_macros(self, lane: AFCLane, *,
-                             gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _run_post_cut_macros(self, lane: AFCLane, *, gcmd: AFCGcmd) -> None:
         """
         Park and form a tip after the cut, if enabled.
 
@@ -2727,8 +2719,7 @@ class afcCFS(afcUnit):
         """
         self._tool_unload(lane, gcmd=gcmd)
 
-    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: Any, *,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def unit_unload_lane(self, cur_lane: AFCLane, cur_extruder: Any, *, gcmd: AFCGcmd) -> bool:
         """
         AFC's unload hook (AFC.unload_sequence), used like the ACE's: returns False on a
         failed unload so AFC stops without recording the tool as unloaded, which a
@@ -2747,8 +2738,7 @@ class afcCFS(afcUnit):
         cur_lane.status = AFCLaneState.NONE
         return True
 
-    def _tool_unload(self, lane: AFCLane, *,
-                     gcmd: Union[GCodeCommand, Literal["callback"]]) -> bool:
+    def _tool_unload(self, lane: AFCLane, *, gcmd: AFCGcmd) -> bool:
         """
         Cut, then RETRUDE start, extruder retract and RETRUDE finish (see _retract_to_box).
         A failure goes to AFC's error handling.
@@ -2797,8 +2787,7 @@ class afcCFS(afcUnit):
         self._mark_tool_state(lane, loaded=False, gcmd=gcmd)
         return True
 
-    def _mark_tool_state(self, lane: AFCLane, loaded: bool, *,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def _mark_tool_state(self, lane: AFCLane, loaded: bool, *, gcmd: AFCGcmd) -> None:
         """
         Record the tool state in AFC. AFC's own TOOL_LOAD/TOOL_UNLOAD flow
         does this after our custom command returns, but running
@@ -2892,8 +2881,7 @@ class afcCFS(afcUnit):
 
     # RFID tags
 
-    def on_filament_insert(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def on_filament_insert(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Spool inserted: AFC's event, then a tag read if rfid_read is on.
 
@@ -2904,8 +2892,7 @@ class afcCFS(afcUnit):
         if self.rfid_read:
             self.queue_tag_read(lane, self.rfid_insert_delay)
 
-    def on_filament_remove(self, lane: AFCLane,
-                           gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def on_filament_remove(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Spool removed: forget its tag and any queued read.
 
@@ -3074,8 +3061,7 @@ class afcCFS(afcUnit):
             parts.append(f'Spoolman spool {tag["spool_id"]}')
         return ", ".join(parts)
 
-    def apply_tag(self, lane: AFCLane, tag: Dict[str, Any], *,
-                  gcmd: Union[GCodeCommand, Literal["callback"]]) -> List[str]:
+    def apply_tag(self, lane: AFCLane, tag: Dict[str, Any], *, gcmd: AFCGcmd) -> List[str]:
         """
         Set the lane from its tag with AFC's own commands. A Spoolman ID on
         the tag wins; a lane that already has a Spoolman spool is left alone.
@@ -3108,8 +3094,7 @@ class afcCFS(afcUnit):
             self.afc.run_script(cmd, gcmd=gcmd)
         return cmds
 
-    def apply_lane_state(self, cur_lane: AFCLane, present: bool, *,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> str:
+    def apply_lane_state(self, cur_lane: AFCLane, present: bool, *, gcmd: AFCGcmd) -> str:
         """
         Set a lane's presence and LEDs from the box's sensor.
 
@@ -3136,8 +3121,7 @@ class afcCFS(afcUnit):
             msg += " in ToolHead"
         return msg
 
-    def prep_load(self, lane: AFCLane,
-                  gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Nothing to do: the box draws an inserted spool in itself.
 
@@ -3146,8 +3130,7 @@ class afcCFS(afcUnit):
         """
         return
 
-    def prep_post_load(self, lane: AFCLane,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Nothing to do after a CFS insert.
 
@@ -3156,8 +3139,7 @@ class afcCFS(afcUnit):
         """
         return
 
-    def eject_lane(self, lane: AFCLane,
-                   gcmd: Union[GCodeCommand, Literal["callback"]]) -> None:
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         AFC's eject hook: reel a lane back onto its spool.
 
@@ -3228,7 +3210,7 @@ class afcCFS(afcUnit):
     def move_to_hub(self, lane: AFCLane, dist: float, dir: MoveDirection,
                     use_homing: bool = True, speed_mode: Optional[SpeedMode] = None,
                     assist_active: Optional[AssistActive] = None, *,
-                    gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[Any, ...]:
+                    gcmd: AFCGcmd) -> Tuple[Any, ...]:
         """
         Not used: the box feeds its own filament.
 
@@ -3245,8 +3227,7 @@ class afcCFS(afcUnit):
         return False, 0, AFCMoveWarning.ERROR
 
     def load_then_home(self, lane: AFCLane, distance: float, assist_active: AssistActive,
-                       endstop: AFCHomingPoints,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[Any, ...]:
+                       endstop: AFCHomingPoints, gcmd: AFCGcmd) -> Tuple[Any, ...]:
         """
         Not used: the box feeds its own filament.
 
@@ -3260,8 +3241,7 @@ class afcCFS(afcUnit):
         self.logger.debug(f"CFS {self.name}: load_then_home not supported, box handles feeding")
         return False, 0, AFCMoveWarning.ERROR
 
-    def calibrate_lane(self, cur_lane: AFCLane, tol: float,
-                       gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[Any, ...]:
+    def calibrate_lane(self, cur_lane: AFCLane, tol: float, gcmd: AFCGcmd) -> Tuple[Any, ...]:
         """
         CFS lanes have nothing to calibrate.
 
@@ -3273,7 +3253,7 @@ class afcCFS(afcUnit):
         return False, self.CALIBRATION_UNSUPPORTED, 0.0
 
     def calibrate_bowden(self, cur_lane: AFCLane, dis: float, tol: float,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[Any, ...]:
+                         gcmd: AFCGcmd) -> Tuple[Any, ...]:
         """
         CFS lanes have nothing to calibrate.
 
@@ -3285,8 +3265,7 @@ class afcCFS(afcUnit):
         """
         return False, self.CALIBRATION_UNSUPPORTED, 0.0
 
-    def prep_capture_td1(self, cur_lane: AFCLane,
-                         gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[Any, ...]:
+    def prep_capture_td1(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> Tuple[Any, ...]:
         """
         AFC's hook for capture_td1_when_loaded during PREP. The box feeds the filament and can't
         stop it at a TD-1, so say so instead of letting AFC try its stepper path.
@@ -3300,7 +3279,7 @@ class afcCFS(afcUnit):
         return False, message
 
     def calibrate_td1(self, cur_lane: AFCLane, dis: float, tol: float,
-                      gcmd: Union[GCodeCommand, Literal["callback"]]) -> Tuple[Any, ...]:
+                      gcmd: AFCGcmd) -> Tuple[Any, ...]:
         """
         CFS lanes have nothing to calibrate.
 
