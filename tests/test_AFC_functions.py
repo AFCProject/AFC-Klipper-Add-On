@@ -3766,7 +3766,7 @@ class TestHandleActivateExtruder:
         func = self._make()
         func.handle_activate_extruder = MagicMock()
         func.handle_activate_extruder_cb()
-        func.handle_activate_extruder.assert_called_once_with(0, gcmd="callback")
+        func.handle_activate_extruder.assert_called_once_with(0, gcmd="sub_command")
 
     def test_not_ready_lane_calls_lane_not_ready(self):
         """Covers the `prep_state and load_state` guard's False branch --

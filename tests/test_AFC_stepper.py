@@ -741,6 +741,22 @@ class TestHandleReadyFpsEndstops:
 
         s._add_endstop.assert_not_called()
 
+    def test_skips_fps_endstops_when_buffer_is_comp(self):
+        """type=COMP builds the same AFCFPSBuffer class as FPS_PSF (see
+        AFC_buffer.py's load_config_prefix), but the strict "== FPS_PSF"
+        check here means COMP buffers never get these endstops -- proven
+        separately from the "switched" case since both share nothing but
+        failing that equality check."""
+        s = _make_stepper()
+        s._add_endstop = MagicMock()
+        s.buffer_obj = MagicMock()
+        s.buffer_obj.type = "COMP"
+
+        with patch.object(AFCLane, "_handle_ready", return_value=None):
+            s._handle_ready()
+
+        s._add_endstop.assert_not_called()
+
     def test_skips_fps_endstops_when_no_buffer_obj(self):
         s = _make_stepper()
         s._add_endstop = MagicMock()
@@ -848,6 +864,24 @@ class TestInitEndstopsFpsPfsBuffer:
             ("AFC_buffer", "Turtle_1", "type"): "switched",
         })
         s.buffer_name = "Turtle_1"
+
+        with pytest.raises(Exception):
+            s._init_endstops()
+
+    def test_comp_type_value_missing_advance_pin_still_raises(self):
+        """Stronger version of the "switched" check above: COMP shares
+        AFCFPSBuffer with FPS_PSF (see AFC_buffer.py's load_config_prefix),
+        so this proves is_fps_psf_buffer's equality check actually
+        discriminates between the two type strings, not just between
+        FPS_PSF and an unrelated buffer class."""
+        s = self._make_endstop_stepper({
+            ("AFC_extruder", "extruder", "pin_tool_start"): "buffer",
+            ("AFC_extruder", "extruder", "buffer"): "Comp_1",
+            ("AFC_buffer", "Comp_1", "advance_pin"): None,
+            ("AFC_buffer", "Comp_1", "trailing_pin"): None,
+            ("AFC_buffer", "Comp_1", "type"): "COMP",
+        })
+        s.buffer_name = "Comp_1"
 
         with pytest.raises(Exception):
             s._init_endstops()

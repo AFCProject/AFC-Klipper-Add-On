@@ -4185,6 +4185,20 @@ class TestLoadConfigPrefix:
         result = load_config_prefix(config)
         assert isinstance(result, AFCFPSBuffer)
 
+    def test_comp_type_builds_afcfpsbuffer(self):
+        """type=COMP shares AFCFPSBuffer with FPS_PSF (see the
+        AFC_stepper.py FPS_PSF-endstop tests for the one place their
+        behavior actually diverges)."""
+        from extras.AFC_buffer import load_config_prefix
+        from tests.conftest import MockConfig, MockPrinter, MockAFC
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        printer.lookup_object("pins").setup_pin = MagicMock(return_value=_FakeADC())
+        config = MockConfig(name="AFC_FPS FPS1", printer=printer,
+                            values={"type": "COMP", "adc_pin": "PA5"})
+        result = load_config_prefix(config)
+        assert isinstance(result, AFCFPSBuffer)
+
     def test_unrecognized_type_raises(self):
         from extras.AFC_buffer import load_config_prefix
         from tests.conftest import MockConfig, MockPrinter, MockAFC

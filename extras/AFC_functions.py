@@ -661,7 +661,7 @@ class afcFunction:
         """
         # Wait until printer is not moving so klipper does not crash
         # self.reactor.update_timer( self.activate_extruder_cb, self.reactor.monotonic() + 5 )
-        self.handle_activate_extruder(0, gcmd="callback")
+        self.handle_activate_extruder(0, gcmd="sub_command")
 
     def handle_activate_extruder(self, eventtime, gcmd: AFCGcmd):
         """
