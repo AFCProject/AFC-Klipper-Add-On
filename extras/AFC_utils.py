@@ -323,9 +323,11 @@ class VirtualRunoutHelper:
         # runout_callback's signature on every filament-present transition.
         self._runout_callback_is_keyword_only: bool = False
         if runout_cb is not None:
-            params = list(inspect.signature(runout_cb).parameters.values())
-            self._runout_callback_is_keyword_only = (
-                bool(params) and params[0].kind == inspect.Parameter.KEYWORD_ONLY)
+            try:
+                inspect.signature(runout_cb).bind(0.0)
+            except TypeError:
+                # Can't take eventtime positionally, e.g. **kwargs or *args, eventtime.
+                self._runout_callback_is_keyword_only = True
         self.sensor_enabled: bool = bool(enable_runout)
         self.filament_present: bool = False
         self.insert_gcode: Optional[str] = None

@@ -1456,6 +1456,26 @@ class TestVirtualRunoutHelper:
         helper, _ = self._make_helper(runout_cb=keyword_only_cb)
         assert helper._runout_callback_is_keyword_only is True
 
+    def test_init_kwargs_only_runout_cb_caches_keyword_only_as_true(self):
+        """A **kwargs-only callback's first param kind is VAR_KEYWORD, not
+        KEYWORD_ONLY, so a check on the first param's kind alone would
+        misclassify this as positional and fail to bind eventtime at all."""
+        def kwargs_cb(**kwargs):
+            pass
+
+        helper, _ = self._make_helper(runout_cb=kwargs_cb)
+        assert helper._runout_callback_is_keyword_only is True
+
+    def test_init_args_then_eventtime_runout_cb_caches_keyword_only_as_true(self):
+        """*args makes the trailing eventtime keyword-only, but the first
+        param's kind is VAR_POSITIONAL, not KEYWORD_ONLY, so a check on the
+        first param's kind alone would misclassify this as positional."""
+        def args_then_eventtime_cb(*args, eventtime):
+            pass
+
+        helper, _ = self._make_helper(runout_cb=args_then_eventtime_cb)
+        assert helper._runout_callback_is_keyword_only is True
+
     def test_note_filament_present_updates_state(self):
         helper, _ = self._make_helper()
         helper.note_filament_present(100.0, True)
