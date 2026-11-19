@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `QUERY_BUFFER` now reports the raw, prescaled ADC value for PSF-type buffers.
 
+### Fixed
+- Fixed filament sensor debounce raising a `TypeError` for Snapmaker's and Kalico's `force`/`immediate` calling conventions.
+- Fixed a signature-probing fallback that could invoke a filament sensor callback a second time when it failed for an unrelated reason.
+
 ## [11-13-2026]
 ### Updated
 - Updated the way `run_script_by_command` was being called to work correctly with Kalico's PR 1052 changes and also work correctly with older Klipper versions.
