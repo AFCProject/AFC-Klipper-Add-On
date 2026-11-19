@@ -701,6 +701,63 @@ class TestBufferToggle:
         buf.enable_buffer(lane)
         buf.start_fault_detection.assert_called_once_with(0, multiplier)
 
+    def test_enable_buffer_compressed_overrides_trailing_last_state(self):
+        # Buffer already on its compressed switch with a stale trailing state: feed faster
+        buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.set_multiplier = MagicMock()
+        buf.last_state = TRAILING_STATE_NAME
+        buf.trailing_state = True
+        buf.enable_buffer(lane)
+        buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
+
+    def test_enable_buffer_compressed_overrides_trailing_last_state_fault_enabled(self):
+        buf = _make_buffer(error_sensitivity=5)
+        lane = _make_lane(buf)
+        buf.start_fault_detection = MagicMock()
+        buf.last_state = TRAILING_STATE_NAME
+        buf.trailing_state = True
+        buf.enable_buffer(lane)
+        buf.start_fault_detection.assert_called_once_with(0, buf.multiplier_high * 1.5)
+
+    def test_enable_buffer_expanded_overrides_advancing_last_state(self):
+        # Buffer already on its expanded switch with a stale advancing state: feed slower
+        buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.set_multiplier = MagicMock()
+        buf.last_state = ADVANCING_STATE_NAME
+        buf.advance_state = True
+        buf.enable_buffer(lane)
+        buf.set_multiplier.assert_called_once_with(buf.multiplier_low)
+
+    def test_enable_buffer_expanded_overrides_advancing_last_state_fault_enabled(self):
+        buf = _make_buffer(error_sensitivity=5)
+        lane = _make_lane(buf)
+        buf.start_fault_detection = MagicMock()
+        buf.last_state = ADVANCING_STATE_NAME
+        buf.advance_state = True
+        buf.enable_buffer(lane)
+        buf.start_fault_detection.assert_called_once_with(0, (buf.multiplier_low * 2) / 5)
+
+    def test_enable_buffer_toolchange_onto_compressed_buffer(self):
+        # Previous lane last slowed (trailing state). The new lane's load leaves the buffer on its
+        # compressed switch; load_sequence enables without fault detection, then
+        # enable_fault_detection enables again with it. Both must feed faster.
+        buf = _make_buffer(error_sensitivity=5)
+        lane = _make_lane(buf)
+        buf.last_state = TRAILING_STATE_NAME
+        buf.trailing_state = True
+        buf.set_multiplier = MagicMock()
+        buf.start_fault_detection = MagicMock()
+
+        buf.disable_fault_sensitivity()
+        buf.enable_buffer(lane)
+        buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
+
+        buf.restore_fault_sensitivity()
+        buf.enable_buffer(lane)
+        buf.start_fault_detection.assert_called_once_with(0, buf.multiplier_high * 1.5)
+
 class TestSetMultiplier:
     def test_set_multi_not_enabled(self):
         buf = _make_buffer()
