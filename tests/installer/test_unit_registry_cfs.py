@@ -308,8 +308,32 @@ class TestCfsAskFirstUid:
             "AFC_CFS_STATUS UNIT=CFS_1 in the console and copy its box uid.",
         )]
 
-    @pytest.mark.parametrize("answers", [[""], ["not a uid"], []],
-                             ids=["enter", "invalid", "no-input"])
+    def test_a_mistyped_uid_is_asked_for_again(self, printer_tree: PrinterTree) -> None:
+        ctx = make_ctx(printer_tree)
+        first = self._first(ctx)
+        console = RecordingConsole()
+        prompter = ScriptedPrompter([UID_A[:-1], UID_A])
+        unit()._ask_first_uid(console, prompter, first)
+        assert prompter.prompts == ["Box uid for CFS_1 (press enter to set it later): "] * 2
+        assert find_cfs_boxes(ctx.afc_config_dir)[0].options["box_uid"] == UID_A
+        assert console.messages[1:] == [(
+            "WARNING",
+            f"That isn't a box uid ('{UID_A[:-1]}'): it is 24 hex digits, as AFC_CFS_STATUS "
+            "shows it. Try again, or press enter to set it later.",
+        )]
+
+    def test_a_mistyped_uid_then_enter_leaves_it(self, printer_tree: PrinterTree) -> None:
+        ctx = make_ctx(printer_tree)
+        first = self._first(ctx)
+        before = first.path.read_text()
+        console = RecordingConsole()
+        unit()._ask_first_uid(console, ScriptedPrompter(["hello", ""]), first)
+        assert first.path.read_text() == before
+        assert [level for level, _ in console.messages] == ["INFO", "WARNING", "WARNING"]
+        assert console.messages[2][1].startswith("Set box_uid in [AFC_CFS CFS_1]")
+
+    @pytest.mark.parametrize("answers", [[""], ["   "], []],
+                             ids=["enter", "spaces", "no-input"])
     def test_without_a_uid_says_to_set_it(self, printer_tree: PrinterTree,
                                           answers: List[str]) -> None:
         ctx = make_ctx(printer_tree)

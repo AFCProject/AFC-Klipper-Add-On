@@ -249,7 +249,8 @@ class Cfs(UnitType):
 
     def _ask_first_uid(self, console: Console, prompter: Prompter, first: CfsBox) -> None:
         """
-        Ask for the first box's uid and write it to its section.
+        Ask for the first box's uid and write it to its section. A mistyped uid is asked
+        for again; an empty answer leaves it for later.
 
         :param console: where messages go
         :param prompter: where the answer comes from
@@ -260,16 +261,25 @@ class Cfs(UnitType):
             f"Every box on a CFS chain needs box_uid, and {first.name} has none yet. Run "
             f"AFC_CFS_STATUS UNIT={first.name} in the console and copy its box uid.",
         )
-        answer = prompter.ask(f"Box uid for {first.name} (press enter to set it later): ")
-        uid = normalize_uid(answer or "")
-        if uid is None:
+        while True:
+            answer = (prompter.ask(f"Box uid for {first.name} (press enter to set it later): ")
+                      or "").strip()
+            if not answer:
+                console.print_msg(
+                    "WARNING",
+                    f"Set box_uid in [AFC_CFS {first.name}] in {first.path} before restarting "
+                    "Klipper; it refuses the config while a box on the chain has none.",
+                )
+                return
+            uid = normalize_uid(answer)
+            if uid is not None:
+                set_key_in_section(first.path, f"[AFC_CFS {first.name}]", "box_uid", uid)
+                return
             console.print_msg(
                 "WARNING",
-                f"Set box_uid in [AFC_CFS {first.name}] in {first.path} before restarting "
-                "Klipper; it refuses the config while a box on the chain has none.",
+                f"That isn't a box uid ({answer!r}): it is 24 hex digits, as AFC_CFS_STATUS "
+                "shows it. Try again, or press enter to set it later.",
             )
-            return
-        set_key_in_section(first.path, f"[AFC_CFS {first.name}]", "box_uid", uid)
 
     def buffer_target(self, ctx: Context, sel: UnitSelection) -> BufferTarget:
         """
