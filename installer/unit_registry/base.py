@@ -96,6 +96,17 @@ class UnitType(ABC):
         """
         return ""
 
+    def additional_message(self, ctx: Context, sel: UnitSelection) -> Optional[str]:
+        """
+        Text shown after adding this unit as an additional unit, instead of the generic
+        "update lane numbers" note. None (the default) keeps the generic note.
+
+        :param ctx: installer context
+        :param sel: the user's unit choices
+        :return Optional[str]: the text, or None
+        """
+        return None
+
     @property
     def default_name(self) -> str:
         """

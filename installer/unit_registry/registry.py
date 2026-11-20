@@ -15,6 +15,7 @@ from installer.unit_registry.naming import ask_for_name, lowest_free_name
 from installer.unit_registry.selection import UnitSelection
 from installer.unit_registry.units.ace import Ace
 from installer.unit_registry.units.boxturtle import BoxTurtle4Lane, BoxTurtle8Lane
+from installer.unit_registry.units.cfs import Cfs
 from installer.unit_registry.units.claymore import Claymore
 from installer.unit_registry.units.emu import Emu
 from installer.unit_registry.units.htlf import Htlf
@@ -35,6 +36,7 @@ UNIT_TYPES: List[UnitType] = [
     Ace(),
     Vivid(),
     Emu(),
+    Cfs(),
 ]
 
 _GENERIC_DEFAULT_BUFFER = "TurtleNeck"
