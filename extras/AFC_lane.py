@@ -2312,6 +2312,8 @@ class AFCLane:
         self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
         self.set_tool_loaded(normal_toolchange=True, gcmd=gcmd)
         self.sync_to_extruder(gcmd=gcmd)
+        self.do_enable(True)
+        self.enable_buffer()
         self.afc.save_vars()
         self.unit_obj.select_lane(self, gcmd=gcmd)
         self.logger.info("Manually set {} loaded to toolhead".format(self.name))
