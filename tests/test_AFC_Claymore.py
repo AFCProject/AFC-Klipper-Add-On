@@ -149,13 +149,13 @@ class TestClaymoreMoveLane:
         unit = _make_claymore()
         lane = MagicMock()
         lane.load_state = True
-        assert unit._move_lane(lane) is True
+        assert unit._move_lane(lane, gcmd=MagicMock()) is True
 
     def test_returns_false_when_lane_load_state_false(self) -> None:
         unit = _make_claymore()
         lane = MagicMock()
         lane.load_state = False
-        assert unit._move_lane(lane) is False
+        assert unit._move_lane(lane, gcmd=MagicMock()) is False
 
 
 # ── system_Test ───────────────────────────────────────────────────────────────
@@ -167,23 +167,24 @@ class TestClaymoreSystemTest:
         lane.load_state = True
         lane.prep_state = False
 
-        def fake_super_system_test(self, cur_lane, delay, assignTcmd, enable_movement):
+        def fake_super_system_test(self, cur_lane, delay, assignTcmd, enable_movement, gcmd=None):
             # prep_state must already be synced by the time super() runs.
             assert cur_lane.prep_state is True
             return "ok"
 
         with patch.object(AFC_vivid, "system_Test", fake_super_system_test):
-            unit.system_Test(lane, 0.5, True, True)
+            unit.system_Test(lane, 0.5, True, True, gcmd=MagicMock())
 
     def test_calls_super_with_movement_always_disabled(self) -> None:
         unit = _make_claymore()
         lane = MagicMock()
         lane.load_state = False
 
+        gcmd = MagicMock()
         with patch.object(AFC_vivid, "system_Test", return_value="ok") as mock_st:
-            result = unit.system_Test(lane, 0.5, True, True)
+            result = unit.system_Test(lane, 0.5, True, True, gcmd=gcmd)
 
-        mock_st.assert_called_once_with(lane, 0.5, True, False)
+        mock_st.assert_called_once_with(lane, 0.5, True, False, gcmd=gcmd)
         assert result == "ok"
 
 
@@ -192,15 +193,17 @@ class TestClaymoreSystemTest:
 class TestClaymoreUnselectLane:
     def test_delegates_to_super_with_default_distance(self) -> None:
         unit = _make_claymore()
+        gcmd = MagicMock()
         with patch.object(AFC_vivid, "unselect_lane") as mock_super:
-            unit.unselect_lane()
-        mock_super.assert_called_once_with(move_distance=5)
+            unit.unselect_lane(gcmd=gcmd)
+        mock_super.assert_called_once_with(move_distance=5, gcmd=gcmd)
 
     def test_delegates_to_super_with_custom_distance(self) -> None:
         unit = _make_claymore()
+        gcmd = MagicMock()
         with patch.object(AFC_vivid, "unselect_lane") as mock_super:
-            unit.unselect_lane(move_distance=25)
-        mock_super.assert_called_once_with(move_distance=25)
+            unit.unselect_lane(move_distance=25, gcmd=gcmd)
+        mock_super.assert_called_once_with(move_distance=25, gcmd=gcmd)
 
 
 # ── eject_lane ────────────────────────────────────────────────────────────────
@@ -210,10 +213,11 @@ class TestClaymoreEjectLane:
         unit = _make_claymore()
         lane = MagicMock()
 
+        gcmd = MagicMock()
         with patch.object(afcBoxTurtle, "eject_lane") as mock_eject:
-            unit.eject_lane(lane)
+            unit.eject_lane(lane, gcmd=gcmd)
 
-        mock_eject.assert_called_once_with(unit, lane)
+        mock_eject.assert_called_once_with(unit, lane, gcmd=gcmd)
 
 
 # ── move_to_hub ───────────────────────────────────────────────────────────────
@@ -222,27 +226,29 @@ class TestClaymoreMoveToHub:
     def test_delegates_to_box_turtle_move_to_hub_with_defaults(self) -> None:
         unit = _make_claymore()
         lane = MagicMock()
+        gcmd = MagicMock()
 
         with patch.object(afcBoxTurtle, "move_to_hub",
                           return_value=(True, 100.0, AFCMoveWarning.NONE)) as mock_move:
-            result = unit.move_to_hub(lane, 100.0, MoveDirection.POS)
+            result = unit.move_to_hub(lane, 100.0, MoveDirection.POS, gcmd=gcmd)
 
         mock_move.assert_called_once_with(unit, lane, 100.0, MoveDirection.POS, True,
-                                          SpeedMode.HUB, AssistActive.DYNAMIC)
+                                          SpeedMode.HUB, AssistActive.DYNAMIC, gcmd=gcmd)
         assert result == (True, 100.0, AFCMoveWarning.NONE)
 
     def test_delegates_to_box_turtle_move_to_hub_with_overrides(self) -> None:
         unit = _make_claymore()
         lane = MagicMock()
+        gcmd = MagicMock()
 
         with patch.object(afcBoxTurtle, "move_to_hub",
                           return_value=(False, 50.0, AFCMoveWarning.WARN)) as mock_move:
             result = unit.move_to_hub(lane, 50.0, MoveDirection.NEG, use_homing=False,
                                       speed_mode=SpeedMode.SHORT,
-                                      assist_active=AssistActive.NO)
+                                      assist_active=AssistActive.NO, gcmd=gcmd)
 
         mock_move.assert_called_once_with(unit, lane, 50.0, MoveDirection.NEG, False,
-                                          SpeedMode.SHORT, AssistActive.NO)
+                                          SpeedMode.SHORT, AssistActive.NO, gcmd=gcmd)
         assert result == (False, 50.0, AFCMoveWarning.WARN)
 
 

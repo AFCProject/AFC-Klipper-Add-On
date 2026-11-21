@@ -558,7 +558,7 @@ class TestSyncToExtruder:
         lane = _make_afc_lane()
         lane.drive_stepper = None
 
-        lane.sync_to_extruder()
+        lane.sync_to_extruder(gcmd=MagicMock())
 
         # No AttributeError from calling into a None drive_stepper is itself
         # the proof the early return fired.
@@ -567,11 +567,12 @@ class TestSyncToExtruder:
         lane = _make_afc_lane()
         lane.drive_stepper = MagicMock()
         lane.extruder_obj.th_extruder_name = "extruder1"
+        gcmd = MagicMock()
 
-        lane.sync_to_extruder(False)
+        lane.sync_to_extruder(False, gcmd=gcmd)
 
         lane.drive_stepper.sync_to_extruder.assert_called_once_with(
-            False, th_extruder_name="extruder1", gcmd=None)
+            False, th_extruder_name="extruder1", gcmd=gcmd)
 
     def test_passes_gcmd_through(self):
         lane = _make_afc_lane()
@@ -589,7 +590,7 @@ class TestUnsyncToExtruder:
         lane = _make_afc_lane()
         lane.drive_stepper = None
 
-        lane.unsync_to_extruder()
+        lane.unsync_to_extruder(gcmd=MagicMock())
 
         # No AttributeError from calling into a None drive_stepper is itself
         # the proof the early return fired.
@@ -597,10 +598,11 @@ class TestUnsyncToExtruder:
     def test_delegates_to_drive_stepper_with_update_current(self):
         lane = _make_afc_lane()
         lane.drive_stepper = MagicMock()
+        gcmd = MagicMock()
 
-        lane.unsync_to_extruder(False)
+        lane.unsync_to_extruder(False, gcmd=gcmd)
 
-        lane.drive_stepper.unsync_to_extruder.assert_called_once_with(False, gcmd=None)
+        lane.drive_stepper.unsync_to_extruder.assert_called_once_with(False, gcmd=gcmd)
 
     def test_passes_gcmd_through(self):
         lane = _make_afc_lane()
@@ -617,7 +619,7 @@ class TestSetLoadCurrent:
         lane = _make_afc_lane()
         lane.drive_stepper = None
 
-        lane.set_load_current()
+        lane.set_load_current(gcmd=MagicMock())
 
         # No AttributeError from calling into a None drive_stepper is itself
         # the proof the early return fired.
@@ -629,7 +631,7 @@ class TestSetLoadCurrent:
 
         lane.set_load_current(gcmd)
 
-        lane.drive_stepper.set_load_current.assert_called_once_with(gcmd)
+        lane.drive_stepper.set_load_current.assert_called_once_with(gcmd=gcmd)
 
 
 class TestSetPrintCurrent:
@@ -637,7 +639,7 @@ class TestSetPrintCurrent:
         lane = _make_afc_lane()
         lane.drive_stepper = None
 
-        lane.set_print_current()
+        lane.set_print_current(gcmd=MagicMock())
 
         # No AttributeError from calling into a None drive_stepper is itself
         # the proof the early return fired.
@@ -649,7 +651,7 @@ class TestSetPrintCurrent:
 
         lane.set_print_current(gcmd)
 
-        lane.drive_stepper.set_print_current.assert_called_once_with(gcmd)
+        lane.drive_stepper.set_print_current.assert_called_once_with(gcmd=gcmd)
 
 
 class TestToolSwap:
@@ -657,7 +659,7 @@ class TestToolSwap:
         lane = _make_afc_lane()
         lane.extruder_obj.tc_unit_obj = None
 
-        lane.tool_swap()
+        lane.tool_swap(gcmd=MagicMock())
 
         # No AttributeError from calling into a None tc_unit_obj is itself
         # the proof the early return fired.
@@ -665,11 +667,12 @@ class TestToolSwap:
     def test_delegates_to_toolchanger_unit_with_set_start_time_false(self):
         lane = _make_afc_lane()
         lane.extruder_obj.tc_unit_obj = MagicMock()
+        gcmd = MagicMock()
 
-        lane.tool_swap()
+        lane.tool_swap(gcmd)
 
         lane.extruder_obj.tc_unit_obj.tool_swap.assert_called_once_with(
-            lane, set_start_time=False, gcmd=None)
+            lane, set_start_time=False, gcmd=gcmd)
 
     def test_passes_gcmd_through(self):
         lane = _make_afc_lane()
@@ -845,6 +848,24 @@ class TestAttachFpsPsfBufferEndstopToStepper:
 
         assert drive_stepper._endstops == {}
 
+    def test_attaches_buffer_and_trailing_when_buffer_is_comp(self):
+        """COMP shares AFCFPSBuffer with FPS_PSF (see AFC_buffer.py's
+        load_config_prefix) and is in FPS_PSF_TYPES, so it must be attached
+        the same way a true FPS_PSF buffer is."""
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.buffer_obj.type = "COMP"
+        lane.extruder_obj = MagicMock(tool_start="PD3")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        lane_fps_endstop = lane.buffer_obj.get_fps_endstop_for_lane.return_value
+        assert drive_stepper._endstops["lane4_buffer"] == (
+            lane_fps_endstop, "lane4_buffer")
+
     def test_noop_when_buffer_is_not_fps_psf(self):
         lane = _make_afc_lane(fullname="AFC_lane lane4")
         drive_stepper = MagicMock()
@@ -893,7 +914,7 @@ class TestMoveAdvancedStepperlessDelegation:
         lane.unit_obj = MagicMock(spec=["stepperless_drive", "lane_move"])
         lane.unit_obj.stepperless_drive = True
 
-        lane.move_advanced(25.0, SpeedMode.SHORT)
+        lane.move_advanced(25.0, SpeedMode.SHORT, gcmd=MagicMock())
 
         lane.unit_obj.lane_move.assert_called_once_with(lane, 25.0, SpeedMode.SHORT)
         lane.move.assert_not_called()
@@ -901,29 +922,32 @@ class TestMoveAdvancedStepperlessDelegation:
     def test_unit_obj_none_does_not_delegate(self):
         lane = self._make()
         lane.unit_obj = None
+        gcmd = MagicMock()
 
-        lane.move_advanced(25.0, SpeedMode.SHORT)
+        lane.move_advanced(25.0, SpeedMode.SHORT, gcmd=gcmd)
 
-        lane.move.assert_called_once_with(25.0, 50, 100, False)
+        lane.move.assert_called_once_with(25.0, 50, 100, False, gcmd=gcmd)
 
     def test_stepperless_false_does_not_delegate(self):
         lane = self._make()
         lane.unit_obj = MagicMock(spec=["stepperless_drive", "lane_move"])
         lane.unit_obj.stepperless_drive = False
+        gcmd = MagicMock()
 
-        lane.move_advanced(25.0, SpeedMode.SHORT)
+        lane.move_advanced(25.0, SpeedMode.SHORT, gcmd=gcmd)
 
         lane.unit_obj.lane_move.assert_not_called()
-        lane.move.assert_called_once_with(25.0, 50, 100, False)
+        lane.move.assert_called_once_with(25.0, 50, 100, False, gcmd=gcmd)
 
     def test_stepperless_true_but_no_lane_move_does_not_delegate(self):
         lane = self._make()
         lane.unit_obj = MagicMock(spec=["stepperless_drive"])
         lane.unit_obj.stepperless_drive = True
+        gcmd = MagicMock()
 
-        lane.move_advanced(25.0, SpeedMode.SHORT)
+        lane.move_advanced(25.0, SpeedMode.SHORT, gcmd=gcmd)
 
-        lane.move.assert_called_once_with(25.0, 50, 100, False)
+        lane.move.assert_called_once_with(25.0, 50, 100, False, gcmd=gcmd)
 
 
 # ── _prep_capture_td1: unit hook interception ────────────────────────────────
@@ -944,36 +968,39 @@ class TestPrepCaptureTd1UnitHook:
         lane = self._make()
         lane.unit_obj = MagicMock(spec=["prep_capture_td1"])
         lane.unit_obj.prep_capture_td1.return_value = ("ok", "msg")
+        gcmd = MagicMock()
 
-        lane._prep_capture_td1()
+        lane._prep_capture_td1(gcmd)
 
-        lane.unit_obj.prep_capture_td1.assert_called_once_with(lane)
+        lane.unit_obj.prep_capture_td1.assert_called_once_with(lane, gcmd=gcmd)
         lane.get_td1_data.assert_not_called()
 
     def test_hook_returns_none_falls_through_to_default_capture(self):
         lane = self._make()
         lane.unit_obj = MagicMock(spec=["prep_capture_td1"])
         lane.unit_obj.prep_capture_td1.return_value = None
+        gcmd = MagicMock()
 
-        lane._prep_capture_td1()
+        lane._prep_capture_td1(gcmd)
 
-        lane.unit_obj.prep_capture_td1.assert_called_once_with(lane)
-        lane.get_td1_data.assert_called_once_with()
+        lane.unit_obj.prep_capture_td1.assert_called_once_with(lane, gcmd=gcmd)
+        lane.get_td1_data.assert_called_once_with(gcmd=gcmd)
 
     def test_no_hook_falls_through_to_default_capture(self):
         lane = self._make()
         lane.unit_obj = MagicMock(spec=[])
+        gcmd = MagicMock()
 
-        lane._prep_capture_td1()
+        lane._prep_capture_td1(gcmd)
 
-        lane.get_td1_data.assert_called_once_with()
+        lane.get_td1_data.assert_called_once_with(gcmd=gcmd)
 
     def test_td1_when_loaded_false_skips_entire_block(self):
         lane = self._make(td1_when_loaded=False)
         lane.unit_obj = MagicMock(spec=["prep_capture_td1"])
         lane.unit_obj.prep_capture_td1.return_value = ("ok", "msg")
 
-        lane._prep_capture_td1()
+        lane._prep_capture_td1(MagicMock())
 
         lane.unit_obj.prep_capture_td1.assert_not_called()
         lane.get_td1_data.assert_not_called()
@@ -997,20 +1024,22 @@ class TestGetTd1DataUnitHook:
         lane = self._make_no_device()
         lane.unit_obj = MagicMock(spec=["capture_td1_data"])
         lane.unit_obj.capture_td1_data.return_value = (True, "captured via unit")
+        gcmd = MagicMock()
 
-        result = lane.get_td1_data()
+        result = lane.get_td1_data(gcmd)
 
         assert result == (True, "captured via unit")
-        lane.unit_obj.capture_td1_data.assert_called_once_with(lane)
+        lane.unit_obj.capture_td1_data.assert_called_once_with(lane, gcmd)
 
     def test_hook_returns_none_falls_through_to_default_logic(self):
         lane = self._make_no_device()
         lane.unit_obj = MagicMock(spec=["capture_td1_data"])
         lane.unit_obj.capture_td1_data.return_value = None
+        gcmd = MagicMock()
 
-        status, msg = lane.get_td1_data()
+        status, msg = lane.get_td1_data(gcmd)
 
-        lane.unit_obj.capture_td1_data.assert_called_once_with(lane)
+        lane.unit_obj.capture_td1_data.assert_called_once_with(lane, gcmd)
         # Default logic reaches the "not loaded" check, proving execution
         # actually continued past the hook instead of using its result.
         assert status is False
@@ -1020,7 +1049,7 @@ class TestGetTd1DataUnitHook:
         lane = self._make_no_device()
         lane.unit_obj = MagicMock(spec=[])
 
-        status, msg = lane.get_td1_data()
+        status, msg = lane.get_td1_data(MagicMock())
 
         assert status is False
         assert "not loaded" in msg.lower()
@@ -1184,7 +1213,7 @@ class TestHandleLoadRunout:
     def test_outer_gate_all_true_processes_load(self):
         lane = self._make()
         lane.handle_load_runout(100.0, True)
-        lane.set_loaded.assert_called_once_with()
+        lane.set_loaded.assert_called_once_with(gcmd="callback")
 
     # -- load_state True: staged spool id stashing --
 
@@ -1207,7 +1236,7 @@ class TestHandleLoadRunout:
         lane = self._make()
         lane._load_suppressed = False
         lane.handle_load_runout(100.0, True)
-        lane.unit_obj.on_filament_insert.assert_called_once_with(lane)
+        lane.unit_obj.on_filament_insert.assert_called_once_with(lane, gcmd="callback")
 
     def test_missing_on_filament_insert_hook_does_not_raise(self):
         lane = self._make()
@@ -1237,7 +1266,7 @@ class TestHandleLoadRunout:
         lane.td1_device_id = "td1_1"
         lane.tool_loaded = False
         lane.handle_load_runout(100.0, True)
-        lane._prep_capture_td1.assert_called_once_with()
+        lane._prep_capture_td1.assert_called_once_with(gcmd="callback")
 
     # -- load_state True: direct_load hub --
 
@@ -1248,7 +1277,8 @@ class TestHandleLoadRunout:
         lane.handle_load_runout(100.0, True)
         lane.afc.function.is_printing.assert_called_once_with(check_movement=True)
         lane.afc.error.AFC_error.assert_called_once_with(
-            "Cannot load spool to toolhead while printer is actively moving or homing", False
+            "Cannot load spool to toolhead while printer is actively moving or homing", False,
+            gcmd="callback"
         )
         lane.afc.TOOL_LOAD.assert_not_called()
 
@@ -1258,7 +1288,7 @@ class TestHandleLoadRunout:
         lane.afc.function.is_printing = MagicMock(return_value=False)
         lane.afc.TOOL_LOAD.return_value = True
         lane.handle_load_runout(100.0, True)
-        lane.afc.TOOL_LOAD.assert_called_once_with(lane)
+        lane.afc.TOOL_LOAD.assert_called_once_with(lane, gcmd="callback")
         lane.afc.error.AFC_error.assert_not_called()
         lane.afc.afc_stats.increase_load_error_count.assert_not_called()
 
@@ -1282,7 +1312,7 @@ class TestHandleLoadRunout:
     def test_load_state_true_always_runs_post_prep_macro(self):
         lane = self._make()
         lane.handle_load_runout(100.0, True)
-        lane._post_prep_user_macro.assert_called_once_with()
+        lane._post_prep_user_macro.assert_called_once_with(gcmd="callback")
 
     # -- load_state False: on_filament_remove always fires --
 
@@ -1291,7 +1321,7 @@ class TestHandleLoadRunout:
         lane.unit_obj.check_runout.return_value = False
         lane.status = "None"
         lane.handle_load_runout(100.0, False)
-        lane.unit_obj.on_filament_remove.assert_called_once_with(lane)
+        lane.unit_obj.on_filament_remove.assert_called_once_with(lane, gcmd="callback")
 
     # -- load_state False: disabled-sensor warning gate (each alone False) --
 
@@ -1301,7 +1331,7 @@ class TestHandleLoadRunout:
         lane.unit_obj.check_runout.return_value = False
         lane.handle_load_runout(100.0, False)
         assert lane.logger.messages == []
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
 
     def test_sensor_enabled_true_skips_disabled_warning(self):
         lane = self._make()
@@ -1311,7 +1341,7 @@ class TestHandleLoadRunout:
         lane.unit_obj.check_runout.return_value = False
         lane.handle_load_runout(100.0, False)
         assert lane.logger.messages == []
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
 
     def test_not_printing_skips_disabled_warning(self):
         lane = self._make()
@@ -1321,7 +1351,7 @@ class TestHandleLoadRunout:
         lane.unit_obj.check_runout.return_value = False
         lane.handle_load_runout(100.0, False)
         assert lane.logger.messages == []
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
 
     def test_disabled_sensor_while_printing_logs_warning_exactly(self):
         lane = self._make()
@@ -1352,7 +1382,7 @@ class TestHandleLoadRunout:
         lane.unit_obj.handle_runout = MagicMock(return_value=False)
         lane.runout_lane = "lane2"
         lane.handle_load_runout(100.0, False)
-        lane._perform_infinite_runout.assert_called_once_with()
+        lane._perform_infinite_runout.assert_called_once_with(gcmd="callback")
         lane._perform_pause_runout.assert_not_called()
 
     def test_check_runout_true_unit_declines_and_no_runout_lane_uses_pause(self):
@@ -1361,7 +1391,7 @@ class TestHandleLoadRunout:
         lane.unit_obj.handle_runout = MagicMock(return_value=False)
         lane.runout_lane = None
         lane.handle_load_runout(100.0, False)
-        lane._perform_pause_runout.assert_called_once_with()
+        lane._perform_pause_runout.assert_called_once_with(gcmd="callback")
         lane._perform_infinite_runout.assert_not_called()
 
     def test_check_runout_true_no_handle_runout_hook_treated_as_undeclined(self):
@@ -1372,14 +1402,14 @@ class TestHandleLoadRunout:
         lane.runout_lane = None
         lane.handle_load_runout(100.0, False)
         assert not hasattr(lane.unit_obj, "handle_runout")
-        lane._perform_pause_runout.assert_called_once_with()
+        lane._perform_pause_runout.assert_called_once_with(gcmd="callback")
 
     def test_check_runout_false_and_not_calibrating_sets_unloaded(self):
         lane = self._make()
         lane.unit_obj.check_runout.return_value = False
         lane.status = "None"
         lane.handle_load_runout(100.0, False)
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
 
     def test_check_runout_false_and_calibrating_skips_set_unloaded(self):
         lane = self._make()
@@ -1512,7 +1542,7 @@ class TestHandlePrepRunout:
         lane = self._make()
         lane.afc.last_prep_activity_time = 0.0  # eventtime=100.0 -> delta=100s
         lane.handle_prep_runout(100.0, False)
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
 
     def test_guard_allows_does_not_schedule_a_recheck(self):
         lane = self._make()
@@ -1532,7 +1562,7 @@ class TestHandlePrepRunout:
         lane = self._make()
         lane.afc.last_prep_activity_time = 98.0  # delta=2.0s, not < 2.0
         lane.handle_prep_runout(100.0, False)
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
 
     def test_guard_blocks_save_vars_too(self):
         lane = self._make()
@@ -1551,7 +1581,7 @@ class TestHandlePrepRunout:
         lane._load_state = True
         lane.runout_lane = None
         lane.handle_prep_runout(100.0, False)
-        lane._perform_pause_runout.assert_called_once_with()
+        lane._perform_pause_runout.assert_called_once_with(gcmd="callback")
         lane.set_unloaded.assert_not_called()  # took the printing branch, not the unload one
         lane.reactor.register_callback.assert_not_called()  # never reaches the deferred-recheck logic
 
@@ -1564,7 +1594,7 @@ class TestHandlePrepRunout:
         lane._load_state = True
         lane.runout_lane = "lane3"
         lane.handle_prep_runout(100.0, False)
-        lane._perform_infinite_runout.assert_called_once_with()
+        lane._perform_infinite_runout.assert_called_once_with(gcmd="callback")
 
     # -- deferred recheck (Jimmy's review on PR #827: an edge silently dropped by
     # the guard could leave a lane's internal status stale forever -- e.g. eject
@@ -1602,7 +1632,7 @@ class TestHandlePrepRunout:
         lane = self._make()
         lane.afc.last_prep_activity_time = 0.0
         lane._recheck_prep_runout(200.0)
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
         lane.afc.save_vars.assert_called_once_with()
         lane.reactor.register_callback.assert_not_called()
 
@@ -1619,7 +1649,7 @@ class TestHandlePrepRunout:
         lane.afc.lanes["lane2"].prep_active = False  # the other lane's cycle has since ended
         recheck_callback(recheck_time)
 
-        lane.set_unloaded.assert_called_once_with()
+        lane.set_unloaded.assert_called_once_with(gcmd="callback")
 
     # -- outer gate / save_vars sanity (mirrors TestHandleLoadRunout) --
 
@@ -2490,7 +2520,7 @@ class TestMoveTo:
         lane.extruder_stepper = None
         lane.extruder_obj.is_standalone.return_value=False
         homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                          False, False)
+                                          False, False, gcmd=MagicMock())
         assert homed == False
         assert dist == 0
         assert warn == AFCMoveWarning.ERROR
@@ -2501,7 +2531,7 @@ class TestMoveTo:
         lane.extruder_stepper = None
         lane.extruder_obj.is_standalone.return_value=True
         homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                          False, False)
+                                          False, False, gcmd=MagicMock())
         assert homed == True
         assert dist == 0
         assert warn == AFCMoveWarning.NONE
@@ -2511,7 +2541,7 @@ class TestMoveTo:
         lane.drive_stepper = AFCExtruderStepper.__new__(AFCExtruderStepper)
         lane.move_advanced = MagicMock()
         homed, dist, warn = lane.move_to(100, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                          False, False)
+                                          False, False, gcmd=MagicMock())
         assert homed == True
         assert dist == 0
         assert warn == AFCMoveWarning.NONE
@@ -2531,7 +2561,7 @@ class TestMoveTo:
         lane.move_advanced = MagicMock()
         home_to.return_value = (True, MOVE_DISTANCE, False)
         homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                         ASSIST_ACTIVE, HOMING)
+                                         ASSIST_ACTIVE, HOMING, gcmd=MagicMock())
         call_args = home_to.call_args[0]
         kwargs = home_to.call_args[1]
         assert homed == True
@@ -2559,7 +2589,7 @@ class TestMoveTo:
         lane.move_advanced = MagicMock()
         home_to.return_value = (True, abs(MOVE_DISTANCE), False)
         homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                         ASSIST_ACTIVE, HOMING)
+                                         ASSIST_ACTIVE, HOMING, gcmd=MagicMock())
         call_args = home_to.call_args[0]
         kwargs = home_to.call_args[1]
         assert homed == True
@@ -2587,7 +2617,7 @@ class TestMoveTo:
         lane.move_advanced = MagicMock()
         home_to.return_value = (False, 0, True)
         homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                         ASSIST_ACTIVE, HOMING)
+                                         ASSIST_ACTIVE, HOMING, gcmd=MagicMock())
         call_args = home_to.call_args[0]
         kwargs = home_to.call_args[1]
         assert homed == False
@@ -2616,7 +2646,7 @@ class TestMoveTo:
         lane.move_advanced = MagicMock()
         home_to.return_value = (False, MOVE_SHORT, False)
         homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                         ASSIST_ACTIVE, HOMING)
+                                         ASSIST_ACTIVE, HOMING, gcmd=MagicMock())
         call_args = home_to.call_args[0]
         kwargs = home_to.call_args[1]
         assert homed == False
@@ -2645,7 +2675,7 @@ class TestMoveTo:
         lane.move_advanced = MagicMock()
         home_to.return_value = (False, MOVE_SHORT, False)
         homed, dist, warn = lane.move_to(MOVE_DISTANCE, SpeedMode.SHORT, AFCHomingPoints.BUFFER,
-                                         ASSIST_ACTIVE, HOMING)
+                                         ASSIST_ACTIVE, HOMING, gcmd=MagicMock())
         call_args = home_to.call_args[0]
         kwargs = home_to.call_args[1]
         assert homed == False
@@ -2792,7 +2822,7 @@ class TestPerformPauseRunout:
 
     def test_msg_shows_weight_based_when_auto_switch_triggered(self):
         lane = _make_lane_for_pause_runout(auto_switch_triggered=True)
-        lane._perform_pause_runout()
+        lane._perform_pause_runout(MagicMock())
         msg = lane.afc.error.AFC_error.call_args[0][0]
         print(msg)
         assert "Minimum weight" in msg
@@ -2800,7 +2830,7 @@ class TestPerformPauseRunout:
 
     def test_msg_shows_runout_when_not_auto_switch_triggered(self):
         lane = _make_lane_for_pause_runout(auto_switch_triggered=False)
-        lane._perform_pause_runout()
+        lane._perform_pause_runout(MagicMock())
         msg = lane.afc.error.AFC_error.call_args[0][0]
         print(msg)
         assert "Runout" in msg
@@ -2811,7 +2841,7 @@ class TestPerformPauseRunout:
         """When unit_obj.unload_on_runout is False, the whole
         TOOL_UNLOAD/LANE_UNLOAD/error-counting block is skipped."""
         lane = _make_lane_for_pause_runout(unload_on_runout=False)
-        lane._perform_pause_runout()
+        lane._perform_pause_runout(MagicMock())
         lane.afc.TOOL_UNLOAD.assert_not_called()
         lane.afc.LANE_UNLOAD.assert_not_called()
         lane.afc.afc_stats.increase_unload_error_count.assert_not_called()
@@ -2822,9 +2852,10 @@ class TestPerformPauseRunout:
         lane = _make_lane_for_pause_runout(unload_on_runout=True)
         lane.afc.error_state = False
         lane.afc.TOOL_UNLOAD.return_value = True
-        lane._perform_pause_runout()
-        lane.afc.TOOL_UNLOAD.assert_called_once_with(lane)
-        lane.afc.LANE_UNLOAD.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        lane._perform_pause_runout(gcmd)
+        lane.afc.TOOL_UNLOAD.assert_called_once_with(lane, gcmd=gcmd)
+        lane.afc.LANE_UNLOAD.assert_called_once_with(lane, gcmd=gcmd)
         lane.afc.afc_stats.increase_unload_error_count.assert_not_called()
 
     def test_unload_on_runout_true_and_error_state_increases_unload_error_count(self):
@@ -2834,8 +2865,9 @@ class TestPerformPauseRunout:
         lane = _make_lane_for_pause_runout(unload_on_runout=True)
         lane.afc.error_state = True
         lane.afc.TOOL_UNLOAD.return_value = False
-        lane._perform_pause_runout()
-        lane.afc.TOOL_UNLOAD.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        lane._perform_pause_runout(gcmd)
+        lane.afc.TOOL_UNLOAD.assert_called_once_with(lane, gcmd=gcmd)
         lane.afc.LANE_UNLOAD.assert_not_called()
         lane.afc.afc_stats.increase_unload_error_count.assert_called_once_with(lane.afc)
 
@@ -2901,18 +2933,20 @@ def _make_lane_for_set_loaded(
 class TestSetLoaded:
     def test_status_set_to_loaded(self):
         lane = _make_afc_lane()
-        lane.set_loaded()
+        lane.set_loaded(gcmd=MagicMock())
         assert lane.status == AFCLaneState.LOADED
 
     def test_calls_lane_loaded(self):
         lane = _make_afc_lane()
-        lane.set_loaded()
-        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        lane.set_loaded(gcmd=gcmd)
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_calls_spool_set_values(self):
         lane = _make_afc_lane()
-        lane.set_loaded()
-        lane.afc.spool._set_values.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        lane.set_loaded(gcmd=gcmd)
+        lane.afc.spool._set_values.assert_called_once_with(lane, gcmd=gcmd)
 
 
 class TestSetUnloaded:
@@ -2927,33 +2961,33 @@ class TestSetUnloaded:
 
     def test_tool_loaded_cleared(self):
         lane = self._make_lane()
-        lane.set_unloaded()
+        lane.set_unloaded(MagicMock())
         assert lane.tool_loaded is False
 
     def test_status_set_to_none(self):
         lane = self._make_lane()
-        lane.set_unloaded()
+        lane.set_unloaded(MagicMock())
         assert lane.status == AFCLaneState.NONE
 
     def test_loaded_to_hub_cleared(self):
         lane = self._make_lane()
-        lane.set_unloaded()
+        lane.set_unloaded(MagicMock())
         assert lane.loaded_to_hub is False
 
     def test_td1_data_cleared(self):
         lane = self._make_lane()
-        lane.set_unloaded()
+        lane.set_unloaded(MagicMock())
         assert lane.td1_data == {}
 
     def test_clears_spool_values_when_not_remembering(self):
         lane = self._make_lane(remember_spool=False)
-        lane.set_unloaded()
+        lane.set_unloaded(MagicMock())
         lane.afc.spool.clear_values.assert_called_once_with(lane)
 
     def test_does_not_clear_spool_values_when_remembering(self):
         """Covers the `not self.remember_spool` guard's False branch."""
         lane = self._make_lane(remember_spool=True)
-        lane.set_unloaded()
+        lane.set_unloaded(MagicMock())
         lane.afc.spool.clear_values.assert_not_called()
 
     def test_calls_lane_not_ready(self):
@@ -2961,8 +2995,9 @@ class TestSetUnloaded:
         lane_unloaded), so a freshly-emptied lane and one that was never
         loaded end up in the same LED state."""
         lane = self._make_lane()
-        lane.set_unloaded()
-        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        lane.set_unloaded(gcmd)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
 
 
 # ── cmd_AFC_RECOVER_LANE ───────────────────────────────────────────────────
@@ -3010,8 +3045,9 @@ class TestCmdAfcRecoverLane:
 
     def test_calls_lane_not_ready(self):
         lane = self._make_lane()
-        lane.cmd_AFC_RECOVER_LANE(MagicMock())
-        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        lane.cmd_AFC_RECOVER_LANE(gcmd)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_saves_vars(self):
         lane = self._make_lane()
@@ -3181,8 +3217,9 @@ class TestCmdSetLaneLoaded:
     def test_select_lane_called_with_self(self):
         """unit_obj.select_lane must be called with the lane itself."""
         lane = _make_lane_for_set_loaded()
-        lane.cmd_SET_LANE_LOADED(MagicMock())
-        lane.unit_obj.select_lane.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        lane.cmd_SET_LANE_LOADED(gcmd)
+        lane.unit_obj.select_lane.assert_called_once_with(lane, gcmd=gcmd)
  
     def test_logger_info_called_with_lane_name(self):
         """A success info message must be logged that mentions the lane name."""
@@ -3257,25 +3294,25 @@ class TestHandleToolheadRunout:
 
     def test_not_normal_printing_state(self):
         lane = self._make_lane_for_toolhead_runout(normal_printing_state=False)
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.save_pos.assert_not_called()
         lane.afc.save_vars.assert_not_called()
 
     def test_not_printing(self):
         lane = self._make_lane_for_toolhead_runout(printing=False)
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.save_pos.assert_not_called()
         lane.afc.save_vars.assert_not_called()
     
     def test_not_on_shuttle(self):
         lane = self._make_lane_for_toolhead_runout(on_shuttle=False)
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.save_pos.assert_not_called()
         lane.afc.save_vars.assert_not_called()
     
     def test_all_sensors_true(self):
         lane = self._make_lane_for_toolhead_runout()
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.save_pos.assert_called_once()
         lane.afc.error.pause_resume.send_pause_command.assert_called_once()
         lane.afc.error.AFC_error.assert_called_once()
@@ -3283,39 +3320,39 @@ class TestHandleToolheadRunout:
     def test_all_sensors_true_check_error_msg(self):
         sensor_name = "tool_start"
         lane = self._make_lane_for_toolhead_runout()
-        lane.handle_toolhead_runout(sensor=sensor_name)
+        lane.handle_toolhead_runout("callback", sensor=sensor_name)
         assert f"Toolhead runout detected by {sensor_name} sensor" in \
                 lane.afc.error.AFC_error.call_args.args[0]
     
     def test_prep_false(self):
         lane = self._make_lane_for_toolhead_runout(prep=False)
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.error.pause_resume.send_pause_command.assert_not_called()
         lane._perform_pause_runout.assert_called_once()
     
     def test_load_false(self):
         lane = self._make_lane_for_toolhead_runout(load=False)
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.error.pause_resume.send_pause_command.assert_not_called()
         lane._perform_pause_runout.assert_called_once()
     
     def test_hub_false(self):
         lane = self._make_lane_for_toolhead_runout(hub=False)
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.error.pause_resume.send_pause_command.assert_not_called()
         lane._perform_pause_runout.assert_called_once()
 
     def test_no_hub_obj(self):
         lane = self._make_lane_for_toolhead_runout(hub=False)
         lane.hub_obj = None
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.save_pos.assert_called_once()
         lane.afc.error.pause_resume.send_pause_command.assert_called_once()
         lane.afc.error.AFC_error.assert_called_once()
     
     def test_standalone_runout_no_runout_lane(self):
         lane = self._make_lane_for_toolhead_runout(standalone=True)
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.error.pause_resume.send_pause_command.assert_not_called()
         lane._perform_pause_runout.assert_called_once()
         lane._perform_infinite_runout.assert_not_called()
@@ -3328,7 +3365,7 @@ class TestHandleToolheadRunout:
         sensor = "tool_start"
         lane = self._make_lane_for_toolhead_runout(standalone=True)
         lane.extruder_obj.fila_tool_start.runout_helper.sensor_enabled = False
-        lane.handle_toolhead_runout(sensor=sensor)
+        lane.handle_toolhead_runout("callback", sensor=sensor)
 
         warn_msgs = [m for lvl, m in lane.logger.messages if lvl == "warning"]
         assert any(f"{sensor} runout has been detected," in m for m in warn_msgs)
@@ -3340,7 +3377,7 @@ class TestHandleToolheadRunout:
         sensor = "tool_end"
         lane = self._make_lane_for_toolhead_runout(standalone=True)
         lane.extruder_obj.fila_tool_end.runout_helper.sensor_enabled = False
-        lane.handle_toolhead_runout(sensor=sensor)
+        lane.handle_toolhead_runout("callback", sensor=sensor)
 
         warn_msgs = [m for lvl, m in lane.logger.messages if lvl == "warning"]
         assert any(f"{sensor} runout has been detected," in m for m in warn_msgs)
@@ -3348,14 +3385,14 @@ class TestHandleToolheadRunout:
     def test_standalone_runout_disabled_None(self):
         lane = self._make_lane_for_toolhead_runout(standalone=True)
         lane.extruder_obj.fila_tool_end.runout_helper.sensor_enabled = False
-        lane.handle_toolhead_runout()
+        lane.handle_toolhead_runout("callback")
 
         warn_msgs = [m for lvl, m in lane.logger.messages if lvl == "warning"]
         assert any("toolhead runout has been detected," in m for m in warn_msgs)
     
     def test_standalone_runout_has_runout_lane(self):
         lane = self._make_lane_for_toolhead_runout(standalone=True, runout="lane1")
-        lane.handle_toolhead_runout(sensor="tool_start")
+        lane.handle_toolhead_runout("callback", sensor="tool_start")
         lane.afc.error.pause_resume.send_pause_command.assert_not_called()
         lane._perform_pause_runout.assert_not_called()
         lane._perform_infinite_runout.assert_called_once()
@@ -3366,30 +3403,31 @@ class TestSetToolLoaded:
         obj.extruder_obj.on_shuttle.return_value = False
         obj.afc.current_loading = True
 
-        obj.set_tool_loaded()
+        obj.set_tool_loaded(gcmd=MagicMock())
 
         assert obj.tool_loaded is True
         assert obj.extruder_obj.lane_loaded is obj.name
         assert obj.status is AFCLaneState.TOOLED
         assert obj.afc.current_loading is True
         obj.afc.spool.set_active_spool.assert_not_called()
-    
+
     def test_not_normal_toolchange_lane_tool_loaded_called(self):
         obj = _make_afc_lane()
         obj.extruder_obj.on_shuttle.return_value = False
+        gcmd = MagicMock()
 
-        obj.set_tool_loaded()
+        obj.set_tool_loaded(gcmd=gcmd)
         obj.unit_obj.lane_tool_loaded.assert_called_once()
-        obj.unit_obj.lane_tool_loaded.assert_called_with(obj)
+        obj.unit_obj.lane_tool_loaded.assert_called_with(obj, gcmd=gcmd)
         obj.afc.spool.set_active_spool.assert_not_called()
-    
+
     def test_normal_toolchange(self):
         spool_id = 100
         obj = _make_afc_lane()
         obj.spool_id = spool_id
         obj.extruder_obj.on_shuttle.return_value = True
 
-        obj.set_tool_loaded(normal_toolchange=True)
+        obj.set_tool_loaded(normal_toolchange=True, gcmd=MagicMock())
         obj.afc.spool.set_active_spool.assert_called_once()
         obj.afc.spool.set_active_spool.assert_called_with(spool_id)
         assert obj.afc.current_loading is None
@@ -3403,7 +3441,7 @@ class TestPerformInfiniteRunout:
         lane.afc = afc
 
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
         info_msgs = [m for lvl, m in lane.logger.messages if lvl == "info"]
 
         assert lane.status is AFCLaneState.NONE
@@ -3411,7 +3449,8 @@ class TestPerformInfiniteRunout:
         assert any(f"Infinite Spool triggered for {lane.name}" in m for m in info_msgs), info_msgs
         afc.lanes.get.assert_called_with(afc.current)
         assert afc.lanes.get.call_count == 1
-        afc.error.AFC_error.assert_called_with(f"Error when looking up current lane:{lane.afc.current}")
+        afc.error.AFC_error.assert_called_with(
+            f"Error when looking up current lane:{lane.afc.current}", gcmd="callback")
 
     def test_current_lane_found_runout_none(self):
         afc = MockAFC()
@@ -3421,12 +3460,13 @@ class TestPerformInfiniteRunout:
         afc.current = lane.name
         afc.lanes.get.side_effect = [lane, None]
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
         afc.lanes.get.assert_any_call(afc.current)
         afc.lanes.get.assert_any_call(None)
         assert afc.lanes.get.call_count == 2
-        afc.error.AFC_error.assert_called_with(f"Error when looking up runout lane:{lane.runout_lane} for lane:{lane.name}")
+        afc.error.AFC_error.assert_called_with(
+            f"Error when looking up runout lane:{lane.runout_lane} for lane:{lane.name}", gcmd="callback")
 
     def test_current_lane_found_runout_lane2_not_found(self):
         afc = MockAFC()
@@ -3438,12 +3478,13 @@ class TestPerformInfiniteRunout:
         afc.current = lane.name
         afc.lanes.get.side_effect = [lane, None]
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
         afc.lanes.get.assert_any_call(afc.current)
         afc.lanes.get.assert_any_call(lane2.name)
         assert afc.lanes.get.call_count == 2
-        afc.error.AFC_error.assert_called_with(f"Error when looking up runout lane:{lane.runout_lane} for lane:{lane.name}")
+        afc.error.AFC_error.assert_called_with(
+            f"Error when looking up runout lane:{lane.runout_lane} for lane:{lane.name}", gcmd="callback")
     
     def test_current_lane_found_runout_lane2(self):
         afc = MockAFC()
@@ -3455,7 +3496,7 @@ class TestPerformInfiniteRunout:
         afc.current = lane.name
         afc.lanes.get.side_effect = [lane, lane2]
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
         afc.lanes.get.assert_any_call(afc.current)
         afc.lanes.get.assert_any_call(lane2.name)
@@ -3472,22 +3513,24 @@ class TestPerformInfiniteRunout:
         afc.current = lane.name
         afc.lanes.get.side_effect = [lane, lane2]
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
         afc.error.pause_resume.send_pause_command.assert_called_once()
         afc.save_pos.assert_called_once()
-        afc.CHANGE_TOOL.assert_called_with(lane2, restore_pos=False)
+        afc.CHANGE_TOOL.assert_called_with(lane2, restore_pos=False, gcmd="callback")
         afc.gcode.run_script_from_command.assert_called_with(
             f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
+        afc.gcode.run_script.assert_not_called()
         afc.restore_pos.assert_called_once()
         afc.error.pause_resume.send_resume_command.assert_called_once()
-        lane.unit_obj.lane_not_ready.assert_called_with(lane)
+        lane.unit_obj.lane_not_ready.assert_called_with(lane, gcmd="callback")
 
-    def test_current_lane_found_runout_lane2_mutex_not_held_uses_gcode_run_script(self):
+    def test_current_lane_found_runout_lane2_mutex_state_does_not_matter(self):
         """_perform_infinite_runout is reached from a weight/sensor callback,
-        never from inside an active gcode command, so the gcode mutex is not
-        held -- afc.run_script must acquire it via self.gcode.run_script
-        rather than running unprotected via run_script_from_command."""
+        never from inside an active gcode command, so it always threads the
+        literal "callback" gcmd. On mainline/old-Kalico (this MockAFC's
+        default), afc.run_script now runs unconditionally via
+        run_script_from_command regardless of the gcode mutex's state."""
         afc = MockAFC()
         afc.lanes = MagicMock(spec=dict)
         afc.gcode.get_mutex().test.return_value = False
@@ -3498,11 +3541,11 @@ class TestPerformInfiniteRunout:
         afc.current = lane.name
         afc.lanes.get.side_effect = [lane, lane2]
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
-        afc.gcode.run_script.assert_called_with(
+        afc.gcode.run_script_from_command.assert_called_with(
             f"AFC_SWAP_MAPPING FROM={lane.name} TO={lane2.name}")
-        afc.gcode.run_script_from_command.assert_not_called()
+        afc.gcode.run_script.assert_not_called()
 
     def test_current_lane_found_runout_lane2_check_extruder_calls(self):
         afc = MockAFC()
@@ -3514,11 +3557,11 @@ class TestPerformInfiniteRunout:
         afc.current = lane.name
         afc.lanes.get.side_effect = [lane, lane2]
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
         lane.extruder_obj.set_print_leds.assert_called_with(0, quiet=True)
         lane2.extruder_obj.set_print_leds.assert_called_with(1, quiet=True)
-        lane2.unit_obj.lane_tool_loaded.assert_called_with(lane2)
+        lane2.unit_obj.lane_tool_loaded.assert_called_with(lane2, gcmd="callback")
     
     def test_current_lane_found_runout_lane2_same_extruder(self):
         afc = MockAFC()
@@ -3531,7 +3574,7 @@ class TestPerformInfiniteRunout:
         afc.current = lane.name
         afc.lanes.get.side_effect = [lane, lane2]
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
         lane.extruder_obj.set_print_leds.assert_not_called()
     
@@ -3551,7 +3594,7 @@ class TestPerformInfiniteRunout:
             change_tool_side_effect(afc)
         )
 
-        lane._perform_infinite_runout()
+        lane._perform_infinite_runout("callback")
 
         afc.lanes.get.assert_any_call(afc.current)
         afc.lanes.get.assert_any_call(lane2.name)
@@ -3566,17 +3609,18 @@ class TestPostPrepUserMacro:
         lane.post_prep_macro = "MY_POST_PREP_MACRO"
         lane.afc.function.check_macro_present.return_value = True
 
-        lane._post_prep_user_macro()
+        lane._post_prep_user_macro("callback")
 
         lane.afc.function.check_macro_present.assert_called_once_with("MY_POST_PREP_MACRO")
-        lane.afc.run_script.assert_called_once_with(f"MY_POST_PREP_MACRO LANE={lane.name}")
+        lane.afc.run_script.assert_called_once_with(
+            f"MY_POST_PREP_MACRO LANE={lane.name}", gcmd="callback")
 
     def test_does_nothing_when_macro_not_present(self):
         lane = _make_afc_lane()
         lane.post_prep_macro = "MY_POST_PREP_MACRO"
         lane.afc.function.check_macro_present.return_value = False
 
-        lane._post_prep_user_macro()
+        lane._post_prep_user_macro("callback")
 
         lane.afc.function.check_macro_present.assert_called_once_with("MY_POST_PREP_MACRO")
         lane.afc.run_script.assert_not_called()
@@ -4199,7 +4243,7 @@ class TestPrepCallback:
         result = lane.prep_callback(10, True)
         assert result is None
         lane.afc.error.AFC_error.assert_called_once_with(
-            "Please home printer before directly loading to toolhead", False
+            "Please home printer before directly loading to toolhead", False, gcmd="callback"
         )
 
     def test_home_guard_skipped_when_hub_is_none(self):
@@ -4311,7 +4355,8 @@ class TestPrepCallback:
         lane.afc.function.is_printing.return_value = True
         lane.prep_callback(10, True)
         lane.afc.error.AFC_error.assert_called_once_with(
-            "Cannot load lane1 spool while printer is actively moving or homing", False
+            "Cannot load lane1 spool while printer is actively moving or homing", False,
+            gcmd="callback"
         )
         lane.unit_obj.prep_load.assert_not_called()
 
@@ -4359,7 +4404,8 @@ class TestPrepCallback:
         lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
         lane.prep_callback(10, True)
         lane.afc.error.AFC_error.assert_called_once_with(
-            "Cannot load lane1 spool while printer is actively moving or homing", False
+            "Cannot load lane1 spool while printer is actively moving or homing", False,
+            gcmd="callback"
         )
 
     def test_another_lane_active_checked_together_with_is_printing(self):
@@ -4370,7 +4416,8 @@ class TestPrepCallback:
         lane.afc.lanes["lane2"] = MagicMock(prep_active=True)
         lane.prep_callback(10, True)
         lane.afc.error.AFC_error.assert_called_once_with(
-            "Cannot load lane1 spool while printer is actively moving or homing", False
+            "Cannot load lane1 spool while printer is actively moving or homing", False,
+            gcmd="callback"
         )
 
     def test_only_this_lane_in_afc_lanes_does_not_block_prep_load(self):
@@ -4380,7 +4427,7 @@ class TestPrepCallback:
         lane = _make_lane_ready_to_load()
         assert list(lane.afc.lanes.keys()) == ["lane1"]
         lane.prep_callback(10, True)
-        lane.unit_obj.prep_load.assert_called_once_with(lane)
+        lane.unit_obj.prep_load.assert_called_once_with(lane, gcmd="callback")
 
     # ── last_prep_activity_time: only set when a load actually starts ────
     # Per review feedback (CodeRabbit + Jimmy): recording this on every edge,
@@ -4412,7 +4459,7 @@ class TestPrepCallback:
     def test_successful_load_calls_prep_load(self):
         lane = _make_lane_ready_to_load()
         lane.prep_callback(10, True)
-        lane.unit_obj.prep_load.assert_called_once_with(lane)
+        lane.unit_obj.prep_load.assert_called_once_with(lane, gcmd="callback")
 
     def test_successful_load_activates_loading_led_before_prep_load(self):
         lane = _make_lane_ready_to_load()
@@ -4420,7 +4467,7 @@ class TestPrepCallback:
         lane.unit_obj.lane_loading.side_effect = lambda *a, **kw: order.append("lane_loading")
         lane.unit_obj.prep_load.side_effect = lambda *a, **kw: order.append("prep_load")
         lane.prep_callback(10, True)
-        lane.unit_obj.lane_loading.assert_called_once_with(lane)
+        lane.unit_obj.lane_loading.assert_called_once_with(lane, gcmd="callback")
         assert order == ["lane_loading", "prep_load"]
 
     def test_successful_load_resets_status_to_none(self):
@@ -4446,7 +4493,7 @@ class TestPrepCallback:
         lane.hub = "direct_load"
         lane.afc.TOOL_LOAD.return_value = True
         lane.prep_callback(10, True)
-        lane.afc.TOOL_LOAD.assert_called_once_with(lane)
+        lane.afc.TOOL_LOAD.assert_called_once_with(lane, gcmd="callback")
         assert lane.afc.spool._set_values.call_args.args == (lane,)
         lane.afc.afc_stats.increase_load_error_count.assert_not_called()
 
@@ -4498,7 +4545,7 @@ class TestPrepCallback:
         lane = _make_lane_ready_to_load()
         lane.hub = "PB1"
         lane.prep_callback(10, True)
-        lane.unit_obj.prep_post_load.assert_called_once_with(lane)
+        lane.unit_obj.prep_post_load.assert_called_once_with(lane, gcmd="callback")
         lane.do_enable.assert_called_once_with(False)
         lane.afc.TOOL_LOAD.assert_not_called()
 
@@ -4510,7 +4557,7 @@ class TestPrepCallback:
         lane.hub = None
         lane.prep_callback(10, True)
         lane.afc.TOOL_LOAD.assert_not_called()
-        lane.unit_obj.prep_post_load.assert_called_once_with(lane)
+        lane.unit_obj.prep_post_load.assert_called_once_with(lane, gcmd="callback")
         lane.do_enable.assert_called_once_with(False)
 
     # ── load_state and prep_state -> set_loaded (prep_state guaranteed ───
@@ -4521,7 +4568,8 @@ class TestPrepCallback:
         sensor triggering as a result."""
         lane = _make_lane_ready_to_load()
         lane.hub = "PB1"
-        lane.unit_obj.prep_load.side_effect = lambda _lane: setattr(_lane, "_load_state", True)
+        lane.unit_obj.prep_load.side_effect = (
+            lambda _lane, gcmd=None: setattr(_lane, "_load_state", True))
         lane.prep_callback(10, True)
         lane.set_loaded.assert_called_once()
         lane._post_prep_user_macro.assert_called_once()
@@ -4539,7 +4587,8 @@ class TestPrepCallback:
         lane = _make_lane_ready_to_load()
         lane.hub = "PB1"
         lane.td1_device_id = "td1-abc"
-        lane.unit_obj.prep_load.side_effect = lambda _lane: setattr(_lane, "_load_state", True)
+        lane.unit_obj.prep_load.side_effect = (
+            lambda _lane, gcmd=None: setattr(_lane, "_load_state", True))
         lane.prep_callback(10, True)
         lane._prep_capture_td1.assert_called_once()
 
@@ -4547,7 +4596,8 @@ class TestPrepCallback:
         lane = _make_lane_ready_to_load()
         lane.hub = "PB1"
         lane.td1_device_id = None
-        lane.unit_obj.prep_load.side_effect = lambda _lane: setattr(_lane, "_load_state", True)
+        lane.unit_obj.prep_load.side_effect = (
+            lambda _lane, gcmd=None: setattr(_lane, "_load_state", True))
         lane.prep_callback(10, True)
         lane._prep_capture_td1.assert_not_called()
 
@@ -4566,7 +4616,7 @@ class TestPrepCallback:
             "\n    Make sure filament is not stuck in load sensor or check to make sure "
             "load sensor is not stuck triggered."
             "\n    Once cleared try loading again",
-            pause=False,
+            pause=False, gcmd="callback",
         )
 
     def test_sensor_stuck_message_skipped_when_printing(self):
@@ -4596,7 +4646,7 @@ class TestPrepCallback:
             "\n    If filament is not stuck in sensor run AFC_RECOVER_LANE LANE=lane1 "
             "to reset internal AFC state."
             "\n    Once cleared try loading again",
-            pause=False,
+            pause=False, gcmd="callback",
         )
 
     def test_sensor_stuck_message_excludes_vivid_hint_for_other_units(self):
@@ -4616,7 +4666,7 @@ class TestPrepCallback:
         prep_callback returns."""
         lane = _make_lane_ready_to_load()
         observed = []
-        def _record(_lane):
+        def _record(_lane, gcmd=None):
             observed.append(lane.prep_active)
         lane.unit_obj.prep_load.side_effect = _record
         lane.prep_callback(10, True)
@@ -4675,7 +4725,7 @@ class TestPrepCallback:
         lane_a.afc.lanes = {lane_a.name: lane_a, lane_b.name: lane_b}
 
         blocked_result = []
-        def _release_lane_b_mid_cycle(_lane):
+        def _release_lane_b_mid_cycle(_lane, gcmd=None):
             lane_b.handle_prep_runout(10.05, False)
             blocked_result.append(lane_b.set_unloaded.called)
         lane_a.unit_obj.prep_load.side_effect = _release_lane_b_mid_cycle

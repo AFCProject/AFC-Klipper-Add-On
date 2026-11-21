@@ -158,7 +158,7 @@ class TestButtonCallbackShortPress:
         btn.afc.CHANGE_TOOL = MagicMock()
         # 0.3s press < long_press_duration (1.2s)
         btn._button_callback(100.3, False)
-        btn.afc.CHANGE_TOOL.assert_called_once_with(btn.lane_obj)
+        btn.afc.CHANGE_TOOL.assert_called_once_with(btn.lane_obj, gcmd="callback")
 
     def test_short_press_with_this_lane_active_unloads(self):
         btn = _make_button("lane1")
@@ -169,7 +169,7 @@ class TestButtonCallbackShortPress:
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.TOOL_UNLOAD = MagicMock(return_value=True)
         btn._button_callback(100.3, False)
-        btn.afc.TOOL_UNLOAD.assert_called_once_with(cur_lane)
+        btn.afc.TOOL_UNLOAD.assert_called_once_with(cur_lane, gcmd="callback")
         btn.afc.afc_stats.increase_unload_error_count.assert_not_called()
 
     def test_short_press_unload_failure_increases_unload_error_count(self):
@@ -194,7 +194,7 @@ class TestButtonCallbackShortPress:
         btn.afc.function.get_current_lane_obj.return_value = cur_lane
         btn.afc.CHANGE_TOOL = MagicMock()
         btn._button_callback(100.3, False)
-        btn.afc.CHANGE_TOOL.assert_called_once_with(btn.lane_obj)
+        btn.afc.CHANGE_TOOL.assert_called_once_with(btn.lane_obj, gcmd="callback")
 
 
 # ── _button_callback – long press ────────────────────────────────────────────
@@ -208,7 +208,7 @@ class TestButtonCallbackLongPress:
         btn.afc.LANE_UNLOAD = MagicMock()
         # 1.5s press ≥ long_press_duration (1.0s)
         btn._button_callback(101.5, False)
-        btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj)
+        btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj, gcmd="callback")
 
     def test_long_press_with_this_lane_active_unloads_then_ejects(self):
         btn = _make_button("lane1", long_press_duration=1.0)
@@ -221,7 +221,7 @@ class TestButtonCallbackLongPress:
         btn.afc.LANE_UNLOAD = MagicMock()
         btn._button_callback(101.5, False)
         btn.afc.TOOL_UNLOAD.assert_called_once()
-        btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj)
+        btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj, gcmd="callback")
         btn.afc.afc_stats.increase_unload_error_count.assert_not_called()
 
     def test_long_press_unload_failure_increases_unload_error_count_and_skips_eject(self):
@@ -250,7 +250,7 @@ class TestButtonCallbackLongPress:
         btn.afc.LANE_UNLOAD = MagicMock()
         btn.afc.TOOL_UNLOAD = MagicMock()
         btn._button_callback(101.5, False)
-        btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj)
+        btn.afc.LANE_UNLOAD.assert_called_once_with(btn.lane_obj, gcmd="callback")
         btn.afc.TOOL_UNLOAD.assert_not_called()
 
 

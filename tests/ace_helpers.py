@@ -20,6 +20,7 @@ from __future__ import annotations
 import atexit
 import configparser
 import contextlib
+import inspect
 import json
 import logging
 import logging.handlers
@@ -1132,19 +1133,23 @@ class AceError:
         self.handle_lane_failure = Hook(self._handle_lane_failure)
 
     def _afc_error(self, msg: str, pause: bool = True,
-                   stack_name: Optional[str] = None) -> None:
+                   stack_name: Optional[str] = None,
+                   gcmd: Optional[Any] = None) -> None:
         """
         :param msg: error text
         :param pause: AFC's pause flag, kept in .calls
         :param stack_name: AFC's stack label, kept in .calls
+        :param gcmd: AFC's command context, kept in .calls
         """
         self.timeline.append(("AFC_error", msg))
 
-    def _handle_lane_failure(self, cur_lane: Any, message: str, pause: bool = True) -> None:
+    def _handle_lane_failure(self, cur_lane: Any, message: str, pause: bool = True,
+                             gcmd: Optional[Any] = None) -> None:
         """
         :param cur_lane: the failed lane
         :param message: failure text
         :param pause: AFC's pause flag, kept in .calls
+        :param gcmd: AFC's command context, kept in .calls
         """
         self.timeline.append(("handle_lane_failure",
                               (getattr(cur_lane, "name", cur_lane), message)))
@@ -1230,6 +1235,8 @@ class AceAFC:
         self.reactor = reactor
         self.logger = logger
         self.gcode = gcode
+        self._rsfc_accepts_gcmd = "gcmd" in inspect.signature(
+            self.gcode.run_script_from_command).parameters
         self.toolhead = toolhead if toolhead is not None else AceToolhead()
         self.function = AceFunction()
         self.error = AceError(self.timeline)
@@ -1447,23 +1454,24 @@ class AceExtruder:
             buffer_obj.clear_advance_latch()
         self.reactor.pause(self.reactor.monotonic() + 0.5)
 
-    def prep_on_shuttle_check(self, lane: Any) -> str:
+    def prep_on_shuttle_check(self, lane: Any, gcmd: Any = None) -> str:
         """
         AFC_extruder.prep_on_shuttle_check stand-in: same real logic, ported
         here so ACE tests exercise the production method. tool_obj isn't
         modeled by this stand-in, so it's read defensively.
 
         :param lane: AFCLane for current extruder to easily set leds though its unit object
+        :param gcmd: command context, threaded through to the LED-state calls below
         :return str: Message string if lane is loaded to toolhead or in toolhead and on shuttle
         """
         msg = ""
         on_shuttle = ""
         if (getattr(self, "tool_obj", None)
             and getattr(self, "tc_unit_name", None)):
-            lane.unit_obj.lane_tool_loaded_idle(lane)
+            lane.unit_obj.lane_tool_loaded_idle(lane, gcmd=gcmd)
             if self.on_shuttle():
                 on_shuttle = " and toolhead on shuttle"
-                lane.unit_obj.lane_tool_loaded(lane)
+                lane.unit_obj.lane_tool_loaded(lane, gcmd=gcmd)
         msg += f"<span class=primary--text> in ToolHead{on_shuttle}</span>"
         return msg
 

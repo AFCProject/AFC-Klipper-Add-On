@@ -773,7 +773,7 @@ class TestLoadSpoolWithRetry:
     def test_success_first_attempt(self):
         oams = _make_oams()
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.SUCCESS, "Spool loaded successfully"))
-        success, message = oams.load_spool_with_retry(0)
+        success, message = oams.load_spool_with_retry(0, gcmd="callback")
         assert success is True
         assert message == "Spool loaded successfully"
         assert 0 not in oams._load_retry_state
@@ -782,7 +782,7 @@ class TestLoadSpoolWithRetry:
     def test_cancel_code_counts_as_success(self):
         oams = _make_oams()
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.CANCEL, "Spool loading cancelled"))
-        success, message = oams.load_spool_with_retry(0)
+        success, message = oams.load_spool_with_retry(0, gcmd="callback")
         assert success is True
 
     def test_success_after_one_retry_marks_was_retry(self):
@@ -796,7 +796,7 @@ class TestLoadSpoolWithRetry:
                 (OAMSOpCode.SUCCESS, "ok"),
             ]
         )
-        success, message = oams.load_spool_with_retry(1, max_retries=3)
+        success, message = oams.load_spool_with_retry(1, max_retries=3, gcmd="callback")
         assert success is True
         assert oams.last_load_was_retry(1) is False  # state reset after success
         assert oams.load_spool.call_count == 2
@@ -828,7 +828,7 @@ class TestLoadSpoolWithRetry:
                 (OAMSOpCode.SUCCESS, "ok"),
             ]
         )
-        success, message = oams.load_spool_with_retry(1, max_retries=3)
+        success, message = oams.load_spool_with_retry(1, max_retries=3, gcmd="callback")
         assert success is True
         assert any(
             lvl == "info" and "Load retry 2/3 for lane lane1" in m
@@ -850,7 +850,7 @@ class TestLoadSpoolWithRetry:
         oams.abort_current_action = MagicMock()
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.ERROR_UNSPECIFIED, "nope"))
 
-        success, message = oams.load_spool_with_retry(0, max_retries=2)
+        success, message = oams.load_spool_with_retry(0, max_retries=2, gcmd="callback")
 
         assert success is False
         assert "Failed to load lane lane1 after 2 attempts" in message
@@ -867,7 +867,7 @@ class TestLoadSpoolWithRetry:
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.ERROR_UNSPECIFIED, "fail"))
         oams.unload_spool_with_retry = MagicMock(return_value=(False, "unload failed"))
 
-        success, message = oams.load_spool_with_retry(0, max_retries=3)
+        success, message = oams.load_spool_with_retry(0, max_retries=3, gcmd="callback")
 
         assert success is False
         assert "Failed to unload" in message
@@ -887,7 +887,7 @@ class TestLoadSpoolWithRetry:
         oams.abort_current_action = MagicMock()
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.ERROR_UNSPECIFIED, "nope"))
 
-        success, message = oams.load_spool_with_retry(0, max_retries=2)
+        success, message = oams.load_spool_with_retry(0, max_retries=2, gcmd="callback")
 
         assert success is False
         assert "after 2 attempts" in message
@@ -905,7 +905,7 @@ class TestLoadSpoolWithRetry:
         oams.unload_spool_with_retry = MagicMock()
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.ERROR_UNSPECIFIED, "nope"))
 
-        oams.load_spool_with_retry(0, max_retries=2)
+        oams.load_spool_with_retry(0, max_retries=2, gcmd="callback")
 
         oams.unload_spool_with_retry.assert_not_called()
 
@@ -918,7 +918,7 @@ class TestLoadSpoolWithRetry:
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.ERROR_UNSPECIFIED, "busy"))
         oams.unload_spool_with_retry = MagicMock(return_value=(True, "unloaded"))
 
-        success, message = oams.load_spool_with_retry(0, max_retries=0)
+        success, message = oams.load_spool_with_retry(0, max_retries=0, gcmd="callback")
 
         assert success is False
         assert oams.load_spool.call_count == 4  # used load_retry_max, not 0
@@ -930,7 +930,7 @@ class TestLoadSpoolWithRetry:
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.ERROR_UNSPECIFIED, "busy"))
         oams.unload_spool_with_retry = MagicMock(return_value=(True, "unloaded"))
 
-        success, message = oams.load_spool_with_retry(0, max_retries=-1)
+        success, message = oams.load_spool_with_retry(0, max_retries=-1, gcmd="callback")
 
         assert success is False
         assert oams.load_spool.call_count == 2
@@ -996,7 +996,7 @@ class TestTheErrorStateIsWhatActuallyStopsTheUnit:
         oams.unload_spool = MagicMock(
             side_effect=[(False, "OAMS is busy"), (False, "OAMS is busy")])
 
-        success, _ = oams.unload_spool_with_retry(max_retries=2)
+        success, _ = oams.unload_spool_with_retry(max_retries=2, gcmd="callback")
 
         assert success is False
         oams.set_led_error.assert_any_call(1, 1), (
@@ -1017,7 +1017,7 @@ class TestTheErrorStateIsWhatActuallyStopsTheUnit:
         oams.unload_spool = MagicMock(
             side_effect=[(False, "OAMS is busy"), (True, "unloaded")])
 
-        assert oams.unload_spool_with_retry(max_retries=3)[0] is True
+        assert oams.unload_spool_with_retry(max_retries=3, gcmd="callback")[0] is True
         # A fresh unload clears the bay first (see the previous test), so scope
         # this to the retry cycle: the stop, and then a clear AFTER it.
         assert (1, 1) in calls, "the unit was never actually stopped"
@@ -1040,7 +1040,7 @@ class TestTheErrorStateIsWhatActuallyStopsTheUnit:
         oams.unload_spool = MagicMock(return_value=(True, "unloaded"))
         oams._flag_bay(1)          # the previous give-up latched it
 
-        oams.unload_spool_with_retry()
+        oams.unload_spool_with_retry(gcmd="callback")
 
         assert calls and calls[0] == (1, 0), (
             "the first thing a fresh unload does must be to clear the bay")
@@ -1060,7 +1060,7 @@ class TestTheErrorStateIsWhatActuallyStopsTheUnit:
         oams.unload_spool = _unload
         oams._flag_bay(2)
 
-        assert oams.unload_spool_with_retry()[0] is True
+        assert oams.unload_spool_with_retry(gcmd="callback")[0] is True
         oams.set_led_error.assert_any_call(2, 0)
 
     def test_a_successful_load_clears_the_bay_the_jam_flagged(self):
@@ -1073,7 +1073,7 @@ class TestTheErrorStateIsWhatActuallyStopsTheUnit:
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.SUCCESS, "loaded"))
         oams._flag_bay(1)          # the jam that gave up latched it
 
-        assert oams.load_spool_with_retry(1)[0] is True
+        assert oams.load_spool_with_retry(1, gcmd="callback")[0] is True
         oams.set_led_error.assert_any_call(1, 0)
 
     def test_the_stop_forces_the_edge(self):
@@ -1180,7 +1180,7 @@ class TestWeOnlyClearWhatWeLit:
         oams.set_led_error = MagicMock()
         oams.unload_spool = MagicMock(return_value=(True, "unloaded"))
 
-        assert oams.unload_spool_with_retry()[0] is True
+        assert oams.unload_spool_with_retry(gcmd="callback")[0] is True
         oams.set_led_error.assert_not_called()
 
     def test_a_clean_load_never_touches_the_bay(self):
@@ -1189,7 +1189,7 @@ class TestWeOnlyClearWhatWeLit:
         oams.set_led_error = MagicMock()
         oams.load_spool = MagicMock(return_value=(OAMSOpCode.SUCCESS, "loaded"))
 
-        assert oams.load_spool_with_retry(1)[0] is True
+        assert oams.load_spool_with_retry(1, gcmd="callback")[0] is True
         oams.set_led_error.assert_not_called()
 
     def test_the_stop_flags_the_bay_it_stopped(self):
@@ -1308,20 +1308,20 @@ class TestWorkingTheExtruderFree:
         # itself, since every real source (config, lane, fallback) is positive.
         oams = self._oams()
         oams._stall_retract_mm = MagicMock(return_value=0.0)
-        oams._work_the_extruder_free()
+        oams._work_the_extruder_free("callback")
         oams.gcode.run_script_from_command.assert_not_called()
 
     def test_zero_skips_retracting_entirely(self):
         oams = self._oams(unload_stall_retract_mm=0.0,
                           unload_stall_retract_tries=0)
         oams.current_spool = None
-        oams._work_the_extruder_free()
+        oams._work_the_extruder_free("callback")
         oams.gcode.run_script_from_command.assert_not_called()
 
     def test_it_repeats(self):
         oams = self._oams(unload_stall_retract_mm=30.0,
                           unload_stall_retract_tries=3)
-        oams._work_the_extruder_free()
+        oams._work_the_extruder_free("callback")
         moves = [str(c) for c in oams.gcode.run_script_from_command.call_args_list
                  if "G1 E-" in str(c)]
         assert len(moves) == 3 and all("E-30.00" in m for m in moves)
@@ -1332,7 +1332,7 @@ class TestWorkingTheExtruderFree:
         oams = self._oams(unload_stall_retract_mm=30.0,
                           unload_stall_retract_tries=3)
         oams.gcode.run_script_from_command.side_effect = Exception("cold")
-        oams._work_the_extruder_free()
+        oams._work_the_extruder_free("callback")
         assert oams.gcode.run_script_from_command.call_count == 1
 
 
@@ -1389,7 +1389,7 @@ class TestAWedgedUnitIsActuallyCancelled:
         oams.unload_spool = MagicMock(
             side_effect=[(False, "OAMS is busy"), (False, "OAMS is busy")])
 
-        success, _ = oams.unload_spool_with_retry(max_retries=2)
+        success, _ = oams.unload_spool_with_retry(max_retries=2, gcmd="callback")
 
         assert success is False
         assert oams.abort_current_action.call_args_list[-1].kwargs.get("force") is True, (
@@ -1406,7 +1406,7 @@ class TestAWedgedUnitIsActuallyCancelled:
         oams.unload_spool = MagicMock(
             side_effect=[(False, "OAMS is busy"), (True, "unloaded")])
 
-        oams.unload_spool_with_retry(max_retries=3)
+        oams.unload_spool_with_retry(max_retries=3, gcmd="callback")
 
         assert oams.abort_current_action.call_args_list[0].kwargs.get("force") is True
 
@@ -1421,7 +1421,7 @@ class TestAWedgedUnitIsActuallyCancelled:
         oams.gcode = MagicMock()
         oams.unload_spool = MagicMock(return_value=(False, "OAMS is busy"))
 
-        success, _ = oams.unload_spool_with_retry(max_retries=1)
+        success, _ = oams.unload_spool_with_retry(max_retries=1, gcmd="callback")
 
         assert success is False
         oams.stop_unit_motion.assert_called_once()
@@ -1435,7 +1435,7 @@ class TestUnloadSpoolWithRetry:
     def test_success_first_attempt(self):
         oams = _make_oams()
         oams.unload_spool = MagicMock(return_value=(True, "Spool unloaded successfully"))
-        success, message = oams.unload_spool_with_retry()
+        success, message = oams.unload_spool_with_retry(gcmd="callback")
         assert success is True
         assert oams._unload_retry_count == 0
         assert oams._last_unload_attempt == 0.0
@@ -1454,7 +1454,7 @@ class TestUnloadSpoolWithRetry:
         oams.gcode = gcode
         oams.afc.gcode = gcode
 
-        success, message = oams.unload_spool_with_retry(max_retries=3)
+        success, message = oams.unload_spool_with_retry(max_retries=3, gcmd="callback")
 
         assert success is True
         # Two passes of M83/G92/G1/M400 -- the retract now repeats
@@ -1484,7 +1484,7 @@ class TestUnloadSpoolWithRetry:
         oams.hardware_service = service
         oams.unload_spool = MagicMock(return_value=(True, "Spool unloaded successfully"))
 
-        success, message = oams.unload_spool_with_retry()
+        success, message = oams.unload_spool_with_retry(gcmd="callback")
 
         assert success is True
         assert any(
@@ -1503,7 +1503,7 @@ class TestUnloadSpoolWithRetry:
         oams.gcode = gcode
         oams.afc.gcode = gcode
 
-        success, message = oams.unload_spool_with_retry(max_retries=3)
+        success, message = oams.unload_spool_with_retry(max_retries=3, gcmd="callback")
 
         assert success is True
         assert (
@@ -1524,7 +1524,7 @@ class TestUnloadSpoolWithRetry:
             return (False, "busy")
         oams.unload_spool = MagicMock(side_effect=fake_unload)
 
-        success, message = oams.unload_spool_with_retry(max_retries=2)
+        success, message = oams.unload_spool_with_retry(max_retries=2, gcmd="callback")
 
         assert success is False
         assert "after 2 attempts" in message
@@ -1548,7 +1548,7 @@ class TestUnloadSpoolWithRetry:
         oams.abort_current_action = MagicMock()
         oams.unload_spool = MagicMock(return_value=(False, "busy"))
 
-        success, message = oams.unload_spool_with_retry(max_retries=0)
+        success, message = oams.unload_spool_with_retry(max_retries=0, gcmd="callback")
 
         assert success is False
         assert oams.unload_spool.call_count == 3  # used unload_retry_max, not 0
@@ -1560,7 +1560,7 @@ class TestUnloadSpoolWithRetry:
         oams.abort_current_action = MagicMock()
         oams.unload_spool = MagicMock(return_value=(False, "busy"))
 
-        success, message = oams.unload_spool_with_retry(max_retries=-5)
+        success, message = oams.unload_spool_with_retry(max_retries=-5, gcmd="callback")
 
         assert success is False
         assert oams.unload_spool.call_count == 2
@@ -2394,7 +2394,7 @@ class TestUnloadSpoolCommand:
         oams.unload_spool_with_retry = MagicMock(return_value=(True, "ok"))
         gcmd = _make_gcmd({"MAX_RETRIES": 5})
         oams.cmd_OAMS_UNLOAD_SPOOL(gcmd)
-        oams.unload_spool_with_retry.assert_called_once_with(max_retries=5)
+        oams.unload_spool_with_retry.assert_called_once_with(max_retries=5, gcmd=gcmd)
 
 
 # ── cmd_OAMS_ABORT_ACTION ─────────────────────────────────────────────────────
