@@ -741,21 +741,27 @@ class TestHandleReadyFpsEndstops:
 
         s._add_endstop.assert_not_called()
 
-    def test_skips_fps_endstops_when_buffer_is_comp(self):
+    def test_registers_fps_endstops_when_buffer_is_comp(self):
         """type=COMP builds the same AFCFPSBuffer class as FPS_PSF (see
-        AFC_buffer.py's load_config_prefix), but the strict "== FPS_PSF"
-        check here means COMP buffers never get these endstops -- proven
-        separately from the "switched" case since both share nothing but
-        failing that equality check."""
+        AFC_buffer.py's load_config_prefix) and is treated the same way here
+        via FPS_PSF_TYPES, so it must register these endstops too."""
         s = _make_stepper()
         s._add_endstop = MagicMock()
         s.buffer_obj = MagicMock()
         s.buffer_obj.type = "COMP"
+        s.buffer_obj.fps_endstop = "SENTINEL_ADVANCE_ENDSTOP"
+        s.buffer_obj.fps_trailing_endstop = "SENTINEL_TRAILING_ENDSTOP"
 
         with patch.object(AFCLane, "_handle_ready", return_value=None):
             s._handle_ready()
 
-        s._add_endstop.assert_not_called()
+        registered = {call.args[0]: (call.args[2], call.kwargs.get("mcu_endstop"))
+                     for call in s._add_endstop.call_args_list}
+        assert "tool_start" not in registered
+        assert registered == {
+            "buffer_advance": ("lane1_buffer_adv", "SENTINEL_ADVANCE_ENDSTOP"),
+            "buffer_trailing": ("lane1_buffer_trailing", "SENTINEL_TRAILING_ENDSTOP"),
+        }
 
     def test_skips_fps_endstops_when_no_buffer_obj(self):
         s = _make_stepper()
@@ -868,12 +874,11 @@ class TestInitEndstopsFpsPfsBuffer:
         with pytest.raises(Exception):
             s._init_endstops()
 
-    def test_comp_type_value_missing_advance_pin_still_raises(self):
-        """Stronger version of the "switched" check above: COMP shares
-        AFCFPSBuffer with FPS_PSF (see AFC_buffer.py's load_config_prefix),
-        so this proves is_fps_psf_buffer's equality check actually
-        discriminates between the two type strings, not just between
-        FPS_PSF and an unrelated buffer class."""
+    def test_comp_type_missing_advance_pin_skips_without_error(self):
+        """COMP shares AFCFPSBuffer with FPS_PSF (see AFC_buffer.py's
+        load_config_prefix) and is now in FPS_PSF_TYPES, so it must skip
+        the missing-advance_pin error the same way a true FPS_PSF buffer
+        does, rather than raising like "switched" does."""
         s = self._make_endstop_stepper({
             ("AFC_extruder", "extruder", "pin_tool_start"): "buffer",
             ("AFC_extruder", "extruder", "buffer"): "Comp_1",
@@ -883,8 +888,11 @@ class TestInitEndstopsFpsPfsBuffer:
         })
         s.buffer_name = "Comp_1"
 
-        with pytest.raises(Exception):
-            s._init_endstops()
+        s._init_endstops()  # should not raise
+
+        tool_start_calls = [c for c in s._add_endstop.call_args_list
+                            if c.args[0] == "tool_start"]
+        assert tool_start_calls == []
 
     def test_switched_buffer_with_advance_pin_registers_tool_start(self):
         """Regression check: normal switched-buffer path is unaffected by the

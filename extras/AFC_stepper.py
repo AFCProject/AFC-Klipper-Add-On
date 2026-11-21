@@ -23,6 +23,9 @@ except:
 try: from extras.AFC_lane import AFCLane, AFCHomingPoints, VALID_DIRECT_HUB
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
+try: from extras.AFC_buffer import FPS_PSF_TYPES
+except: raise error(ERROR_STR.format(import_lib="AFC_buffer", trace=traceback.format_exc()))
+
 if TYPE_CHECKING:
     from extras.AFC_utils import AFCGcmd
     from toolhead import ToolHead
@@ -162,7 +165,7 @@ class AFCExtruderStepper(AFCLane):
         super()._handle_ready()
 
         if (self.buffer_obj
-            and self.buffer_obj.type == "FPS_PSF"):
+            and self.buffer_obj.type in FPS_PSF_TYPES):
             if self.extruder_obj.tool_start == "buffer":
                 self._add_endstop('tool_start', None, f'{self.name}_tool_start',
                                   mcu_endstop=self.buffer_obj.fps_endstop)
@@ -580,7 +583,7 @@ class AFCExtruderStepper(AFCLane):
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
         fps_psf_buffer   = self._get_section_value('AFC_buffer', buffer_name, 'type')
-        is_fps_psf_buffer = fps_psf_buffer is not None and fps_psf_buffer == "FPS_PSF"
+        is_fps_psf_buffer = fps_psf_buffer is not None and fps_psf_buffer in FPS_PSF_TYPES
 
         # Check to verify that hub is not a virtual sensor
         if (hub_pin

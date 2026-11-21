@@ -37,6 +37,9 @@ except: raise error(ERROR_STR.format(import_lib="AFC_assist", trace=traceback.fo
 try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
 
+try: from extras.AFC_buffer import FPS_PSF_TYPES
+except: raise error(ERROR_STR.format(import_lib="AFC_buffer", trace=traceback.format_exc()))
+
 # Unit types that only have load switch
 ONLY_LOAD_TYPES = ["HTLF", "Claymore", "OpenAMS", "ACE", "ACE2"]
 EXCLUDE_TYPES = ONLY_LOAD_TYPES + [ "ViViD"]
@@ -650,12 +653,12 @@ class AFCLane:
         endstop on the shared drive stepper this lane homes through.
 
         No-op when this lane owns its own stepper, has no buffer of its own,
-        or that buffer is not FPS_PSF.
+        or that buffer is not FPS_PSF_TYPES.
         """
         homing_stepper = self.drive_stepper
         if (homing_stepper is None
             or self.buffer_obj is None
-            or self.buffer_obj.type != "FPS_PSF"):
+            or self.buffer_obj.type not in FPS_PSF_TYPES):
             return
 
         stepper = homing_stepper.extruder_stepper.stepper

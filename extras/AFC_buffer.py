@@ -38,6 +38,8 @@ NEUTRAL_STATE_NAME = "Neutral"
 CHECK_RUNOUT_TIMEOUT = 0.5
 FPS_ENDSTOP_POLL_TIME = 0.01  # 10ms poll interval for software endstop
 
+FPS_PSF_TYPES = ["FPS_PSF", "COMP"]
+
 class AFCBuffer:
     def __init__(self, config):
         self.printer    = config.get_printer()
@@ -1540,9 +1542,8 @@ def load_config_prefix(config):
     if buffer_type == "switched":
         return AFCBuffer(config)
 
-    if (buffer_type == "COMP"
-        or buffer_type == "FPS_PSF"):
+    if (buffer_type in FPS_PSF_TYPES):
         return AFCFPSBuffer(config)
 
-    msg = f"{buffer_type} not valid, only switched(turtleneck style) or FPS_PSF are valid options"
+    msg = f"{buffer_type} not valid, only switched(turtleneck style), FPS_PSF or COMP are valid options"
     raise error(msg)

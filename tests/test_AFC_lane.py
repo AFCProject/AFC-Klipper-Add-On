@@ -848,6 +848,24 @@ class TestAttachFpsPsfBufferEndstopToStepper:
 
         assert drive_stepper._endstops == {}
 
+    def test_attaches_buffer_and_trailing_when_buffer_is_comp(self):
+        """COMP shares AFCFPSBuffer with FPS_PSF (see AFC_buffer.py's
+        load_config_prefix) and is in FPS_PSF_TYPES, so it must be attached
+        the same way a true FPS_PSF buffer is."""
+        lane = _make_afc_lane(fullname="AFC_lane lane4")
+        drive_stepper = MagicMock()
+        drive_stepper._endstops = {}
+        lane.drive_stepper = drive_stepper
+        lane.buffer_obj = self._make_fps_buffer()
+        lane.buffer_obj.type = "COMP"
+        lane.extruder_obj = MagicMock(tool_start="PD3")
+
+        lane._attach_fps_psf_buffer_endstop_to_stepper()
+
+        lane_fps_endstop = lane.buffer_obj.get_fps_endstop_for_lane.return_value
+        assert drive_stepper._endstops["lane4_buffer"] == (
+            lane_fps_endstop, "lane4_buffer")
+
     def test_noop_when_buffer_is_not_fps_psf(self):
         lane = _make_afc_lane(fullname="AFC_lane lane4")
         drive_stepper = MagicMock()
