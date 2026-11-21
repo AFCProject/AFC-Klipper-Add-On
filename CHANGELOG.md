@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-21-2026]
+### Fixed
+- Fixed buffer not getting enabled when `SET_LANE_LOADED` macro is used.
+
 ## [11-15-2026]
 ### Added
 - Added support for Creality CFS (Creality Filament System) units with `[AFC_CFS]`: up to four boxes on one
