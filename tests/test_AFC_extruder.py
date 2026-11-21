@@ -2154,38 +2154,39 @@ class TestVirtualToolStartToggle:
 
     def test_calls_note_tool_start_callback(self):
         ext = self._make()
-        ext._virtual_tool_start_toggle(True)
-        ext.note_tool_start_callback.assert_called_once_with(True)
+        gcmd = MockGCodeCommand()
+        ext._virtual_tool_start_toggle(True, gcmd=gcmd)
+        ext.note_tool_start_callback.assert_called_once_with(True, gcmd=gcmd)
 
     def test_calls_apply_virtual_tool_start_state(self):
         ext = self._make()
-        ext._virtual_tool_start_toggle(False)
+        ext._virtual_tool_start_toggle(False, gcmd=MockGCodeCommand())
         ext._apply_virtual_tool_start_state.assert_called_once_with(False)
 
     def test_logs_enabled_message(self):
         """Covers the `'enabled.' if enabled else 'disabled'` ternary's True side."""
         ext = self._make()
-        ext._virtual_tool_start_toggle(True)
+        ext._virtual_tool_start_toggle(True, gcmd=MockGCodeCommand())
         assert ext.logger.messages == [
             ("info", "Virtual toolhead sensor for extruder enabled.")]
 
     def test_logs_disabled_message(self):
         """Covers the `'enabled.' if enabled else 'disabled'` ternary's False side."""
         ext = self._make()
-        ext._virtual_tool_start_toggle(False)
+        ext._virtual_tool_start_toggle(False, gcmd=MockGCodeCommand())
         assert ext.logger.messages == [
             ("info", "Virtual toolhead sensor for extruder disabled")]
 
     def test_saves_vars_when_prep_done(self):
         """Covers the `if self.afc.prep_done` guard's True branch."""
         ext = self._make(prep_done=True)
-        ext._virtual_tool_start_toggle(True)
+        ext._virtual_tool_start_toggle(True, gcmd=MockGCodeCommand())
         ext.afc.save_vars.assert_called_once_with()
 
     def test_skips_save_vars_when_prep_not_done(self):
         """Covers the `if self.afc.prep_done` guard's False branch."""
         ext = self._make(prep_done=False)
-        ext._virtual_tool_start_toggle(True)
+        ext._virtual_tool_start_toggle(True, gcmd=MockGCodeCommand())
         ext.afc.save_vars.assert_not_called()
 
 

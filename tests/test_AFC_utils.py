@@ -1640,12 +1640,12 @@ class TestVirtualFilamentSensor:
         gcmd = MockGCodeCommand(params={"ENABLE": 1})
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
         assert sensor.runout_helper.sensor_enabled is True
-        enable_cb.assert_called_once_with(True)
+        enable_cb.assert_called_once_with(True, gcmd=gcmd)
 
         gcmd = MockGCodeCommand(params={"ENABLE": 0})
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
         assert sensor.runout_helper.sensor_enabled is False
-        enable_cb.assert_called_with(False)
+        enable_cb.assert_called_with(False, gcmd=gcmd)
 
     def test_cmd_set_filament_sensor_without_callback(self):
         """Buffers and other users pass no enable_cb -- toggling must still work."""

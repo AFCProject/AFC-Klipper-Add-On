@@ -464,7 +464,7 @@ class VirtualFilamentSensor:
         enable = bool(gcmd.get_int("ENABLE", 1, minval=0, maxval=1))
         self.runout_helper.sensor_enabled = enable
         if self.enable_cb is not None:
-            self.enable_cb(enable)
+            self.enable_cb(enable, gcmd=gcmd)
 
 class PollingEndstopWrapper:
     """

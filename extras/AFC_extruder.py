@@ -627,7 +627,7 @@ class AFCExtruder:
                                             gcmd="callback")
         runout_helper.min_event_systime = (self.reactor.monotonic() + runout_helper.event_delay)
 
-    def note_tool_start_callback(self, state, force=False):
+    def note_tool_start_callback(self, state, force=False, gcmd: AFCGcmd="callback"):
         """
         Method for overriding runout_helper.note_filament_present for passed in filament_motion_sensor
         object. Currently this is only needed for to allow AFC to work with Snapmakers U1 toolhead
@@ -638,9 +638,9 @@ class AFCExtruder:
                       through to original note_filament_present method.
         """
         self.orig_note_filament_present(state, force)
-        self.tool_start_callback(0, state)
+        self.tool_start_callback(0, state, gcmd=gcmd)
 
-    def tool_start_callback(self, eventtime, state):
+    def tool_start_callback(self, eventtime, state, *, gcmd: AFCGcmd="callback"):
         """
         Callback for the tool_start (pre-extruder) filament sensor.
         Updates the sensor state and triggers runout handling if filament is missing.
@@ -675,10 +675,10 @@ class AFCExtruder:
                             # extruder at once.
                             if (not self.load_active
                                 and not getattr(self.tc_lane, 'custom_load_cmd', None)):
-                                self.load_unload_sequence(self.tool_stn, gcmd="callback")
+                                self.load_unload_sequence(self.tool_stn, gcmd=gcmd)
                         else:
-                            self.tc_lane.set_tool_unloaded(gcmd="callback")
-                            self.tc_lane.set_unloaded(gcmd="callback")
+                            self.tc_lane.set_tool_unloaded(gcmd=gcmd)
+                            self.tc_lane.set_unloaded(gcmd=gcmd)
 
                     elif (self.tc_lane._afc_prep_done
                           and actively_printing):
@@ -733,7 +733,7 @@ class AFCExtruder:
         helper.filament_present = enabled
         self.tool_start_state = enabled
 
-    def _virtual_tool_start_toggle(self, enabled: bool) -> None:
+    def _virtual_tool_start_toggle(self, enabled: bool, gcmd: AFCGcmd) -> None:
         """
         Callback for the virtual tool_start sensor's GUI switch (SET_FILAMENT_SENSOR
         ENABLE=). The switch state is the filament-present state; no hardware is read.
@@ -743,7 +743,7 @@ class AFCExtruder:
 
         :param enabled: New ENABLE value from SET_FILAMENT_SENSOR.
         """
-        self.note_tool_start_callback(enabled)
+        self.note_tool_start_callback(enabled, gcmd=gcmd)
         self._apply_virtual_tool_start_state(enabled)
         self.logger.info(f"Virtual toolhead sensor for {self.name} "
                          f"{'enabled.' if enabled else 'disabled'}")

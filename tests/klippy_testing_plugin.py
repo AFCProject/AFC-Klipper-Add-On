@@ -102,10 +102,19 @@ class KlippyTestingPlugin:
 
         if defer is None:
             eventtime = reactor.monotonic() + delta
-            if state is None:
-                method(eventtime)
+            call = (lambda: method(eventtime)) if state is None else (lambda: method(eventtime, state))
+
+            # On Kalico, this command's own GCodeContextRoot otherwise holds
+            # the gcode mutex through the call below; without_lock()
+            # (Kalico-only) releases it first so a callback that does a
+            # fresh-acquire run_script(..., "callback") doesn't deadlock
+            # waiting on a mutex this command itself still holds.
+            without_lock = getattr(gcmd, 'without_lock', None)
+            if without_lock is not None:
+                with without_lock():
+                    call()
             else:
-                method(eventtime, state)
+                call()
         else:
             if state is None:
                 callback = lambda et: method(et)
