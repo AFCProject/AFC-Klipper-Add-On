@@ -18,7 +18,6 @@ from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
-    from gcode import GCodeCommand
     from extras.AFC_utils import AFCGcmd
     from extras.AFC import afc
     from extras.AFC_extruder import AFCExtruder

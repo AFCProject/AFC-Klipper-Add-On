@@ -14,7 +14,7 @@ from __future__ import annotations
 import traceback
 from configparser import Error as error
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper

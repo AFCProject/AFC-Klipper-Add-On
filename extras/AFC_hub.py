@@ -21,7 +21,6 @@ except: raise config_error(ERROR_STR.format(import_lib="AFC_unit", trace=traceba
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
-    from gcode import GCodeCommand
     from extras.AFC_utils import AFCGcmd
     from klippy import Printer
     from extras.AFC import afc

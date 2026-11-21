@@ -24,7 +24,6 @@ try: from extras.AFC_lane import AFCLane, AFCHomingPoints, VALID_DIRECT_HUB
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
 if TYPE_CHECKING:
-    from gcode import GCodeCommand
     from extras.AFC_utils import AFCGcmd
     from toolhead import ToolHead
     from stepper import PrinterStepper

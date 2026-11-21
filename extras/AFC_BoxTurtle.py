@@ -9,7 +9,7 @@ import traceback
 
 from configparser import Error as error
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand

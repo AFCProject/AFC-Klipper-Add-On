@@ -10,7 +10,7 @@ import traceback
 
 from configparser import Error as error
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 try: from extras.AFC_utils import ERROR_STR
 except:
@@ -24,7 +24,6 @@ except: raise error(ERROR_STR.format(import_lib="AFC_NightOwl", trace=traceback.
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC_lane import AFCLane
-    from gcode import GCodeCommand
     from extras.AFC_utils import AFCGcmd
 
 class afcQuattroBox(afcNightOwl):

@@ -9,7 +9,7 @@ import traceback
 
 from configparser import Error as config_error
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 try: from extras.AFC_utils import ERROR_STR
 except:

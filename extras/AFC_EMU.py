@@ -8,11 +8,10 @@ from __future__ import annotations
 import traceback
 
 from configparser import Error as error
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane, MoveDirection
-    from gcode import GCodeCommand
     from extras.AFC_utils import AFCGcmd
 
 try: from extras.AFC_utils import ERROR_STR
