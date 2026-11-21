@@ -5201,6 +5201,10 @@ class ACEConnection:
 
         request_id = self._next_request_id
         self._next_request_id += 1
+        if len(self._async_ids) == self._async_ids.maxlen:
+            evicted_id = self._async_ids[0]
+            self._quiet_async_ids.discard(evicted_id)
+            self._quiet_request_methods.pop(evicted_id, None)
         self._async_ids.append(request_id)
         if quiet:
             self._quiet_async_ids.add(request_id)

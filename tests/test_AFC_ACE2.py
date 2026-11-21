@@ -2289,6 +2289,34 @@ class TestACE2ConnectionSendCommandAsync:
 
         assert printer.logger.messages == [("debug", "ACE2 TX (async): id=0 get_status")]
 
+    def test_evicts_quiet_metadata_for_id_dropped_by_full_deque(self):
+        """When _async_ids is full, the id it drops must leave the quiet maps too."""
+        printer, conn = ace2_link()
+        for request_id in range(conn._async_ids.maxlen):
+            conn._async_ids.append(request_id)
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = conn._async_ids.maxlen
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert 0 not in conn._quiet_async_ids
+        assert 0 not in conn._quiet_request_methods
+        assert conn._quiet_async_ids == {conn._async_ids.maxlen}
+        assert conn._quiet_request_methods == {conn._async_ids.maxlen: "get_temp"}
+
+    def test_does_not_evict_quiet_metadata_when_deque_not_full(self):
+        """No eviction should happen before _async_ids reaches its maxlen."""
+        printer, conn = ace2_link()
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = 1
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert conn._quiet_async_ids == {0, 1}
+        assert conn._quiet_request_methods == {0: "get_status", 1: "get_temp"}
+
 
 class TestACE2ConnectionResponseMatchesPending:
     def test_no_recorded_opcode_accepts(self):
