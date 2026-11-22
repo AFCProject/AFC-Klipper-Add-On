@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-22-2026]
+### Updated
+- Updated Park.cfg, Poop.cfg and Brush.cfg macros to support interacting with the Creality K1 CFS Upgrade Kit Poop Chute
+
 ## [11-15-2026]
 ### Added
 - Added support for Creality CFS (Creality Filament System) units with `[AFC_CFS]`: up to four boxes on one
