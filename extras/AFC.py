@@ -1910,6 +1910,12 @@ class afc:
 
         # Placeholder for custom load sequence
         if cur_lane.custom_load_cmd:
+            if load_to_gears:
+                error_str = (f"Lane {cur_lane.name}: custom load command does not support "
+                             "gear-only loading.")
+                self.error.AFC_error(error_str, pause=self.function.in_print())
+                return False
+
             self.logger.info("Running custom load command for lane {}".format(cur_lane.name))
 
             self.run_script(cur_lane.custom_load_cmd, gcmd=gcmd)
@@ -1926,7 +1932,8 @@ class afc:
                 self.error.handle_lane_failure(cur_lane, message, gcmd=gcmd)
                 return False
         elif hasattr(cur_lane.unit_obj, "unit_load_lane"):
-            if not cur_lane.unit_obj.unit_load_lane(cur_lane, cur_extruder, gcmd=gcmd):
+            if not cur_lane.unit_obj.unit_load_lane(cur_lane, cur_extruder,
+                                                    load_to_gears=load_to_gears, gcmd=gcmd):
                 return False
         else:
             use_direct_dist = False

@@ -4413,7 +4413,8 @@ class TestLoadSequenceUnitLoadLane:
         result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is True
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(
+            lane, extruder, load_to_gears=False, gcmd=gcmd)
         lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
         afc.save_vars.assert_called_once_with()
@@ -4426,9 +4427,20 @@ class TestLoadSequenceUnitLoadLane:
         result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is False
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(
+            lane, extruder, load_to_gears=False, gcmd=gcmd)
         lane.set_tool_loaded.assert_not_called()
         afc.save_vars.assert_not_called()
+
+    def test_load_to_gears_true_passed_through_to_unit_load_lane(self):
+        gcmd = MagicMock()
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_load_lane.return_value = True
+
+        afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        lane.unit_obj.unit_load_lane.assert_called_once_with(
+            lane, extruder, load_to_gears=True, gcmd=gcmd)
 
     def test_no_unit_load_lane_hook_falls_through_to_default_path(self):
         # Without the unit_load_lane hook, load_sequence must take the
@@ -4495,6 +4507,69 @@ class TestLoadSequenceUnitLoadLane:
         afc.move_e_pos.assert_not_called()
         lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert afc.save_vars.call_count == 2
+
+
+# ── load_sequence: custom_load_cmd rejects gear-only loading ───────────────────
+# New branch: custom_load_cmd is opaque user gcode, so load_sequence cannot
+# honor load_to_gears there and rejects it up front without running anything.
+
+class TestLoadSequenceCustomLoadCmdGearOnlyRejection:
+    def _make(self):
+        afc = _make_afc()
+        afc._check_extruder_temp = MagicMock(return_value=False)
+        afc.save_vars = MagicMock()
+        afc.run_script = MagicMock()
+        lane = _make_afc_lane()
+        lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        lane.unit_obj = MagicMock(spec=[])
+        hub = MagicMock()
+        extruder = MagicMock()
+        return afc, lane, hub, extruder
+
+    def test_load_to_gears_true_returns_false_without_running_custom_cmd(self):
+        afc, lane, hub, extruder = self._make()
+        gcmd = MagicMock()
+
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        assert result is False
+        afc.run_script.assert_not_called()
+        afc.save_vars.assert_not_called()
+
+    def test_load_to_gears_true_reports_gear_only_error(self):
+        afc, lane, hub, extruder = self._make()
+        afc.function.in_print.return_value = True
+        gcmd = MagicMock()
+
+        afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        afc.error.AFC_error.assert_called_once_with(
+            f"Lane {lane.name}: custom load command does not support gear-only loading.",
+            pause=True)
+
+    def test_load_to_gears_true_pause_follows_in_print_false(self):
+        afc, lane, hub, extruder = self._make()
+        afc.function.in_print.return_value = False
+        gcmd = MagicMock()
+
+        afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        assert afc.error.AFC_error.call_args.kwargs["pause"] is False
+
+    def test_load_to_gears_false_runs_custom_cmd_normally(self):
+        afc, lane, hub, extruder = self._make()
+        lane.get_toolhead_pre_sensor_state.return_value = True
+        lane.set_tool_loaded = MagicMock()
+        lane.enable_buffer = MagicMock()
+        gcmd = MagicMock()
+
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=False, gcmd=gcmd)
+
+        assert result is not False
+        afc.run_script.assert_called_once_with("MY_CUSTOM_LOAD", gcmd=gcmd)
+        afc.error.AFC_error.assert_not_called()
+        assert lane.status == AFCLaneState.TOOL_LOADED
         assert afc.save_vars.call_count == 2
 
 

@@ -1702,17 +1702,19 @@ class afcAMS(afcUnit):
             return False, f"PTFE calibration failed for {cur_lane.name}: {e}", 0
 
     # ── Custom load/unload gcode handlers ───────────────────────────
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, gcmd: AFCGcmd) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, oad_to_gears: bool=False,
+                       *, gcmd: AFCGcmd) -> bool:
         """
         Load hook called by AFC's load_sequence for OpenAMS lanes, replacing the
         stepper-based load path with the OAMS transport.
 
         :param cur_lane: the lane being loaded.
         :param cur_extruder: the lane's extruder object.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context this load is running under, if any.
         :return bool: True on success, False if the load failed (pauses if printing).
         """
-        if not self._oams_load_sequence(cur_lane, cur_extruder, gcmd=gcmd):
+        if not self._oams_load_sequence(cur_lane, cur_extruder, load_to_gears, gcmd=gcmd):
             # Mirror the ACE: on total load failure (after _oams_load's retries)
             # pause the print when printing, so a failed toolchange doesn't
             # continue with no filament loaded. Returning False alone only resets
@@ -1758,32 +1760,33 @@ class afcAMS(afcUnit):
         return True
 
     def _oams_load_sequence(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
-                            gcmd: AFCGcmd) -> bool:
+                            load_to_gears: bool=False, *, gcmd: AFCGcmd) -> bool:
         """
         OAMS load transport: push filament to toolhead area.
         Guards polling against state corruption for the duration of the load.
 
         :param cur_lane: the lane being loaded.
         :param cur_extruder: the lane's extruder object.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context this load is running under, if any.
         :return bool: True on successful transport.
         """
         self._operation_active = True
         try:
-            return self._oams_load_inner(cur_lane, cur_extruder, gcmd=gcmd)
+            return self._oams_load_inner(cur_lane, cur_extruder, load_to_gears, gcmd=gcmd)
         finally:
             self._operation_active = False
             self._prev_states_stale = True
 
-    def _oams_load_inner(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, gcmd: AFCGcmd) -> bool:
+    def _oams_load_inner(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
+                         load_to_gears: bool=False, *, gcmd: AFCGcmd) -> bool:
         """
-        OAMS custom load: filament transport only.
-        AFC's load_sequence handles the shared toolhead engagement
-        (sync_to_extruder, tool_end, tool_stn, sensor verification,
-        buffer ram).
+        OAMS custom load: filament transport to the toolhead sensor, then the tool_stn move to
+        the nozzle, unless `load_to_gears` is set.
 
         :param cur_lane: the lane being loaded.
         :param cur_extruder: the lane's extruder object.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context this load is running under, if any.
         :return bool: True on successful transport.
         """
@@ -1791,7 +1794,7 @@ class afcAMS(afcUnit):
         self._hub_load_suppressed.discard(cur_lane.name)
 
         # OAMS hardware load (pushes filament to toolhead area)
-        if not self._oams_load(cur_lane, gcmd=gcmd):
+        if not self._oams_load(cur_lane, load_to_gears=load_to_gears, gcmd=gcmd):
             return False
 
         # Latch loaded_to_hub True; raw_load_state (live hub HES) is updated by
@@ -1887,7 +1890,8 @@ class afcAMS(afcUnit):
         afc.afcDeltaTime.log_with_time("OAMS unload complete")
         return True
 
-    def _oams_load(self, cur_lane: AFCLane, max_retries: int = 3, *, gcmd: AFCGcmd) -> bool:
+    def _oams_load(self, cur_lane: AFCLane, max_retries: int = 3, load_to_gears: bool=False, *,
+                   gcmd: AFCGcmd) -> bool:
         """
         Load filament via OpenAMS hardware with engagement verification.
         Short-circuits if the firmware already has the spool loaded to the
@@ -1896,6 +1900,7 @@ class afcAMS(afcUnit):
 
         :param cur_lane: the lane to load.
         :param max_retries: number of load attempts before giving up.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context this load is running under, if any.
         :return bool: True if the spool loaded and engaged.
         """
@@ -2010,9 +2015,10 @@ class afcAMS(afcUnit):
                     # When engagement ran it already extruded engagement_length
                     # past the sensor, so push only the remainder; when deferred
                     # it extruded nothing, so push the full tool_stn.
-                    already = (0.0 if self._defer_engagement
-                               else self.get_engagement_params(cur_lane.name)[0])
-                    self._advance_tool_stn_to_nozzle(cur_lane, already_advanced=already, gcmd=gcmd)
+                    if not load_to_gears:
+                        already = (0.0 if self._defer_engagement
+                                   else self.get_engagement_params(cur_lane.name)[0])
+                        self._advance_tool_stn_to_nozzle(cur_lane, already_advanced=already, gcmd=gcmd)
 
                     # Enable follower and start monitor
                     if self._follower:

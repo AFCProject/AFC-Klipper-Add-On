@@ -4235,6 +4235,21 @@ class TestAfcACEUnitLoadLane:
             ("debug", "ACE load: tool_stn to nozzle"), ("debug", "ACE load transport complete")]
 
 
+    def test_load_to_gears_is_passed_through_and_skips_tool_stn(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
+        lane = unit.lanes["lane0"]
+        AceP1Wire(unit, on_move=lambda method, params: setattr(
+            lane.extruder_obj, "tool_start_state", True))
+
+        gcmd = make_gcmd()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, load_to_gears=True, gcmd=gcmd) is True
+
+        assert lane.status == AFCLaneState.TOOL_LOADED
+        assert unit.afc.move_e_pos.calls == []
+        assert unit.logger.messages == [
+            ("debug", "ACE Ace_1: feed on slot 0 stopped at the toolhead sensor")]
+
+
 class TestAfcACEUnitUnloadLane:
     @staticmethod
     def _unit(operation_active: bool = True) -> Tuple[afcACE, Any, AceP1Wire]:
@@ -4369,6 +4384,19 @@ class TestAfcACEAceLoadSequence:
         assert unit.afc.afcDeltaTime.messages == [
             ("debug", "ACE load: tool_stn to nozzle"), ("debug", "ACE load transport complete")]
         assert unit.afc.error.handle_lane_failure.calls == []
+
+    def test_load_to_gears_is_passed_through_and_skips_tool_stn(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
+        lane = unit.lanes["lane0"]
+        AceP1Wire(unit, on_move=lambda method, params: setattr(
+            lane.extruder_obj, "tool_start_state", True))
+
+        gcmd = make_gcmd()
+        assert unit._ace_load_sequence(
+            lane, lane.extruder_obj, load_to_gears=True, gcmd=gcmd) is True
+
+        assert unit.afc.move_e_pos.calls == []
+        assert unit.afc.afcDeltaTime.messages == [("debug", "ACE load transport complete")]
 
     def test_a_failed_load_still_clears_flag(self):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True), operation_active=True)
@@ -4572,6 +4600,22 @@ class TestAfcACEAceLoadInner:
         assert unit.afc.move_e_pos.calls == []
         assert unit.afc.afcDeltaTime.messages == [("debug", "ACE load transport complete")]
         # No tool_stn advance line.
+        assert unit.logger.messages == [
+            ("debug", "ACE Ace_1: feed on slot 0 stopped at the toolhead sensor")]
+        assert unit.afc.error.handle_lane_failure.calls == []
+
+    def test_load_to_gears_skips_tool_stn_even_when_positive(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True))
+        lane = unit.lanes["lane0"]
+        self._wire(unit, lane, sensor_on=1)
+
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(
+            lane, lane.extruder_obj, load_to_gears=True, gcmd=gcmd) is True
+
+        assert unit.afc.move_e_pos.calls == []
+        assert unit.afc.afcDeltaTime.messages == [("debug", "ACE load transport complete")]
+        # No tool_stn advance line, even though tool_stn is positive.
         assert unit.logger.messages == [
             ("debug", "ACE Ace_1: feed on slot 0 stopped at the toolhead sensor")]
         assert unit.afc.error.handle_lane_failure.calls == []

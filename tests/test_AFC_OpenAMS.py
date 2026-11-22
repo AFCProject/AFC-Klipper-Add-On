@@ -3302,6 +3302,26 @@ class TestUnitLoadLane:
             lane, "OpenAMS load failed for lane1: encoder moved only 2 clicks of the 10 needed",
             pause=False, gcmd="callback")
 
+    def test_load_to_gears_is_passed_through_to_load_sequence(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_load_sequence = MagicMock(return_value=True)
+        extruder = MagicMock()
+        lane = _make_lane("lane1")
+
+        assert ams.unit_load_lane(lane, extruder, load_to_gears=True, gcmd="callback") is True
+
+        ams._oams_load_sequence.assert_called_once_with(lane, extruder, True, gcmd="callback")
+
+    def test_load_to_gears_false_is_passed_through_to_load_sequence(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_load_sequence = MagicMock(return_value=True)
+        extruder = MagicMock()
+        lane = _make_lane("lane1")
+
+        assert ams.unit_load_lane(lane, extruder, load_to_gears=False, gcmd="callback") is True
+
+        ams._oams_load_sequence.assert_called_once_with(lane, extruder, False, gcmd="callback")
+
 
 class TestUnitUnloadLane:
     def test_success_saves_vars_and_returns_true(self):
@@ -3403,7 +3423,7 @@ class TestOamsLoadSequence:
         ams, afc, printer, reactor = _make_ams()
         seen_active = {}
 
-        def fake_inner(lane, ext, gcmd=None):
+        def fake_inner(lane, ext, load_to_gears=False, gcmd=None):
             seen_active["during"] = ams._operation_active
             return True
         ams._oams_load_inner = fake_inner
@@ -3433,6 +3453,26 @@ class TestOamsLoadSequence:
         lane = _make_lane("lane1")
         assert ams._oams_load_sequence(lane, MagicMock(), gcmd="callback") is False
 
+    def test_load_to_gears_is_passed_through_to_inner(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_load_inner = MagicMock(return_value=True)
+        extruder = MagicMock()
+        lane = _make_lane("lane1")
+
+        assert ams._oams_load_sequence(lane, extruder, load_to_gears=True, gcmd="callback") is True
+
+        ams._oams_load_inner.assert_called_once_with(lane, extruder, True, gcmd="callback")
+
+    def test_load_to_gears_false_is_passed_through_to_inner(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_load_inner = MagicMock(return_value=True)
+        extruder = MagicMock()
+        lane = _make_lane("lane1")
+
+        assert ams._oams_load_sequence(lane, extruder, load_to_gears=False, gcmd="callback") is True
+
+        ams._oams_load_inner.assert_called_once_with(lane, extruder, False, gcmd="callback")
+
 
 class TestOamsLoadInner:
     def test_clears_hub_load_suppression_for_lane(self):
@@ -3454,6 +3494,26 @@ class TestOamsLoadInner:
 
         assert result is False
         afc.save_vars.assert_not_called()
+
+    def test_load_to_gears_is_passed_through_to_oams_load(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_load = MagicMock(return_value=True)
+        lane = _make_lane("lane1")
+
+        result = ams._oams_load_inner(lane, MagicMock(), load_to_gears=True, gcmd="callback")
+
+        assert result is True
+        ams._oams_load.assert_called_once_with(lane, load_to_gears=True, gcmd="callback")
+
+    def test_load_to_gears_false_is_passed_through_to_oams_load(self):
+        ams, afc, printer, reactor = _make_ams()
+        ams._oams_load = MagicMock(return_value=True)
+        lane = _make_lane("lane1")
+
+        result = ams._oams_load_inner(lane, MagicMock(), load_to_gears=False, gcmd="callback")
+
+        assert result is True
+        ams._oams_load.assert_called_once_with(lane, load_to_gears=False, gcmd="callback")
 
     def test_hardware_load_success_finalizes_lane_state(self):
         ams, afc, printer, reactor = _make_ams()
@@ -5672,6 +5732,29 @@ class TestOamsLoad:
 
         ams._advance_tool_stn_to_nozzle.assert_called_once_with(
             lane, already_advanced=ams._engagement_length, gcmd="callback")
+
+    def test_load_to_gears_skips_advance_to_nozzle(self):
+        oams = MagicMock()
+        oams.determine_current_spool.return_value = None
+        oams.load_spool_with_retry.return_value = (True, "ok")
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._verify_engagement = MagicMock(return_value=True)
+        ams._advance_tool_stn_to_nozzle = MagicMock()
+        ams._wait_for_idle = MagicMock(return_value=True)
+        follower = MagicMock()
+        monitor = MagicMock()
+        ams._follower = follower
+        ams._monitor = monitor
+        lane = self._lane()
+
+        result = ams._oams_load(lane, load_to_gears=True, gcmd="callback")
+
+        assert result is True
+        ams._advance_tool_stn_to_nozzle.assert_not_called()
+        # The rest of a successful engaged load still runs.
+        follower.enable_follower.assert_any_call(
+            ams._get_monitor_state(), oams, 1, "load complete", force=True)
+        monitor.notify_load_complete.assert_called_once_with("lane1", "oams1", 0)
 
     def test_success_enables_follower_and_starts_monitor(self):
         oams = MagicMock()

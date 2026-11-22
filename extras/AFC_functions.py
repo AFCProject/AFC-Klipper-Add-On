@@ -1607,7 +1607,11 @@ class afcFunction:
             return
 
         extruder = self.afc.tools[extruder_name]
-        lanes = [lane for lane in self.afc.lanes.values() if lane.extruder_obj is extruder]
+        lanes = []
+        for lane in self.afc.lanes.values():
+            if (lane.extruder_obj is extruder
+                and lane.load_state):
+                lanes.append(lane)
         if lane_name:
             lane = self.afc.lanes.get(lane_name)
             if (lane is None
@@ -1637,7 +1641,7 @@ class afcFunction:
                 text = ("Select a representative lane for toolhead calibration. This only "
                         "needs to be done once per toolhead/extruder, not for every lane.")
                 if not buttons:
-                    text = f"No lanes are configured for extruder '{extruder_name}'."
+                    text = f"No loaded lanes are available for extruder '{extruder_name}'."
                 prompt.create_custom_p("Toolhead Calibration", text, buttons, True, None, None)
                 return
 
