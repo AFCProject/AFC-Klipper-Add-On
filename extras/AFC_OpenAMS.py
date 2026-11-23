@@ -2006,9 +2006,11 @@ class afcAMS(afcUnit):
                     self.logger.error(f"OAMS load attempt {attempt+1} failed: {msg}")
                     continue
 
-                # Verify engagement (skip if deferred to AFC's Phase 2)
-                engaged = (True if self._defer_engagement
-                           else self._verify_engagement(cur_lane, gcmd=gcmd))
+                # Verify engagement (skip if deferred to AFC's Phase 2, or for a gear-only
+                # load: verification itself extrudes engagement_length, which would move
+                # filament past the point load_to_gears is supposed to stop at).
+                defer_verification = self._defer_engagement or load_to_gears
+                engaged = True if defer_verification else self._verify_engagement(cur_lane)
                 if engaged:
                     # Advance filament to the nozzle via tool_stn so a no-poop
                     # load ends at the nozzle (poop, if any, purges from there).

@@ -2301,6 +2301,52 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
         obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
 
 
+# ── TOOL_LOAD: custom_load_cmd rejects gear-only loading before any movement ────
+# Unlike load_sequence's own copy of this check, this one must run before
+# tool_swap/TOOL_UNLOAD of another lane, since custom_load_cmd can never honor
+# load_to_gears and there is no reason to move filament first.
+
+class TestToolLoadCustomCmdGearOnlyRejectedBeforeUnload:
+    def test_rejected_before_unloading_the_other_lane(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+
+        result = obj.TOOL_LOAD(target_lane, load_to_gears=True)
+
+        assert result is False
+        obj.TOOL_UNLOAD.assert_not_called()
+        obj.error.AFC_error.assert_called_once_with(
+            f"Lane {target_lane.name}: custom load command does not support gear-only loading.",
+            pause=False)
+
+    def test_pause_follows_in_print(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        obj.function.in_print.return_value = True
+
+        obj.TOOL_LOAD(target_lane, load_to_gears=True)
+
+        assert obj.error.AFC_error.call_args.kwargs["pause"] is True
+
+    def test_load_to_gears_false_does_not_reject_and_unloads_normally(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+
+        obj.TOOL_LOAD(target_lane, load_to_gears=False)
+
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
+        obj.error.AFC_error.assert_not_called()
+
+    def test_no_custom_load_cmd_does_not_reject_and_unloads_normally(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = None
+
+        obj.TOOL_LOAD(target_lane, load_to_gears=True)
+
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
+        obj.error.AFC_error.assert_not_called()
+
+
 # ── td1_present property ─────────────────────────────────────────────────────
 
 def _make_afc_for_td1(*, td1_present=False, last_td1_query=0.0,

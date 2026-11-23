@@ -5738,6 +5738,7 @@ class TestOamsLoad:
         oams.determine_current_spool.return_value = None
         oams.load_spool_with_retry.return_value = (True, "ok")
         ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._defer_engagement = False
         ams._verify_engagement = MagicMock(return_value=True)
         ams._advance_tool_stn_to_nozzle = MagicMock()
         ams._wait_for_idle = MagicMock(return_value=True)
@@ -5751,10 +5752,32 @@ class TestOamsLoad:
 
         assert result is True
         ams._advance_tool_stn_to_nozzle.assert_not_called()
+        # load_to_gears must also skip engagement verification itself: it
+        # extrudes engagement_length, which would move filament past the
+        # gear-only stopping point even though the nozzle advance is skipped.
+        ams._verify_engagement.assert_not_called()
         # The rest of a successful engaged load still runs.
         follower.enable_follower.assert_any_call(
             ams._get_monitor_state(), oams, 1, "load complete", force=True)
         monitor.notify_load_complete.assert_called_once_with("lane1", "oams1", 0)
+
+    def test_load_to_gears_false_does_not_skip_engagement_verification(self):
+        """The counterpart of the test above: with load_to_gears=False and
+        defer_engagement=False, verification must still run."""
+        oams = MagicMock()
+        oams.determine_current_spool.return_value = None
+        oams.load_spool_with_retry.return_value = (True, "ok")
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._defer_engagement = False
+        ams._verify_engagement = MagicMock(return_value=True)
+        ams._advance_tool_stn_to_nozzle = MagicMock()
+        ams._wait_for_idle = MagicMock(return_value=True)
+        lane = self._lane()
+
+        result = ams._oams_load(lane, load_to_gears=False)
+
+        assert result is True
+        ams._verify_engagement.assert_called_once_with(lane)
 
     def test_success_enables_follower_and_starts_monitor(self):
         oams = MagicMock()

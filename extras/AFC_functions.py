@@ -1615,7 +1615,8 @@ class afcFunction:
         if lane_name:
             lane = self.afc.lanes.get(lane_name)
             if (lane is None
-                or lane.extruder_obj is not extruder):
+                or lane.extruder_obj is not extruder
+                or not lane.load_state):
                 prompt.p_end()
                 self.afc.error.AFC_error(
                     f"'{lane_name}' is not a valid lane for extruder '{extruder_name}'",

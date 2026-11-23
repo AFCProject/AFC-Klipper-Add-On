@@ -1737,6 +1737,15 @@ class afc:
             # Exit early if no lane is provided.
             return False
 
+        # custom_load_cmd is opaque user gcode, so gear-only loading can't be honored. Reject
+        # it here, before any tool swap or unload of another lane moves filament.
+        if (load_to_gears
+            and cur_lane.custom_load_cmd):
+            error_str = (f"Lane {cur_lane.name}: custom load command does not support "
+                        "gear-only loading.")
+            self.error.AFC_error(error_str, pause=self.function.in_print())
+            return False
+
         # Check if the bypass filament sensor is triggered; abort loading if filament is already present.
         if self._check_bypass(gcmd=gcmd): return False
 

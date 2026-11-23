@@ -1238,6 +1238,30 @@ class TestCmdAfcToolheadCalibration:
 
         assert "not a valid lane" in func.afc.error.AFC_error.call_args.args[0]
 
+    def test_toolhead_menu_rejects_explicit_lane_without_load_state(self) -> None:
+        """An explicit LANE= selection must also require filament loaded into
+        the slot, closing the bypass of the picker's own load_state filter."""
+        func, _ = _make_calibration_func()
+        func.afc.lanes["lane1"].load_state = False
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        assert "not a valid lane" in func.afc.error.AFC_error.call_args.args[0]
+
+    def test_toolhead_menu_accepts_explicit_lane_with_load_state(self) -> None:
+        """The counterpart of the rejection test above: an explicit LANE=
+        selection with filament loaded into the slot must still be accepted."""
+        func, _ = _make_calibration_func()
+        func.afc.lanes["lane1"].load_state = True
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        func.afc.error.AFC_error.assert_not_called()
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("LANE=lane1" in message for message in raw_messages)
+
     def test_toolhead_menu_rejects_lane_owned_by_different_extruder(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.tools["other"] = MagicMock()
