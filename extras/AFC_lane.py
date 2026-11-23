@@ -1242,9 +1242,18 @@ class AFCLane:
 
     @property
     def load_state(self) -> bool:
-        if (self.hub_obj is not None
-            and hasattr(self.hub_obj, 'is_virtual_pin')
-            and self.hub_obj.is_virtual_pin()):
+        """
+        Whether the lane holds filament ready to load. On a virtual hub, or when the unit says
+        its lanes' load state follows staging, this is `loaded_to_hub`; otherwise it is the load
+        sensor.
+
+        :return bool: True when the lane is loaded
+        """
+        if ((self.unit_obj is not None
+             and self.unit_obj.lane_load_state_follows_staging(self))
+            or (self.hub_obj is not None
+                and hasattr(self.hub_obj, 'is_virtual_pin')
+                and self.hub_obj.is_virtual_pin())):
             return self.loaded_to_hub
         else:
             return bool(self._load_state)

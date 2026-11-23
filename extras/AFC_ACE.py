@@ -861,8 +861,8 @@ class afcACE(afcUnit):
         - Virtual (pinless) hub: no physical sensor, so synthesize the live signal
           from tool_loaded (occupied when loaded to toolhead, clear when only
           staged or empty).
-        - Real hub switch: its own pin callback drives raw_load_state, so we must
-          not override it here.
+        - Real hub switch: the hub reads its own pin, so raw_load_state is left
+          alone.
 
         :param lane: Lane whose hub-presence signal to drive.
         :param state: Unused for the live signal (kept for call-site symmetry);
@@ -1753,8 +1753,21 @@ class afcACE(afcUnit):
         if (self._ace is not None
             and self._ace.connected):
             slot = self._get_slot(cur_lane.name)
-            try:
-                hw_status = self._ace.get_status(timeout=2.0)
+            status_read = False
+            # The ACE can stay silent for a few seconds after connect, so retry a
+            # timed-out read rather than take the slot for empty.
+            attempts = 3
+            for attempt in range(1, attempts + 1):
+                try:
+                    hw_status = self._ace.get_status(timeout=2.0)
+                except ACETimeoutError as e:
+                    self.logger.debug(f"ACE get_status failed during PREP "
+                                      f"(attempt {attempt}/{attempts}): {e}")
+                    continue
+                except Exception as e:
+                    self.logger.debug(f"ACE get_status failed during PREP: {e}")
+                    break
+                status_read = True
                 if isinstance(hw_status, dict):
                     slots = hw_status.get("slots", [])
                     if (slot < len(slots)
@@ -1764,8 +1777,15 @@ class afcACE(afcUnit):
                         if not slot_ready:
                             cur_lane.loaded_to_hub = False
                             self._set_hub_state(cur_lane, False)
-            except Exception as e:
-                self.logger.debug(f"ACE get_status failed during PREP: {e}")
+                break
+            # No answer is not "empty": keep a lane saved as staged or tooled loaded,
+            # or the first heartbeat reads it as a fresh insert and stages it again.
+            if (not status_read
+                and (cur_lane.loaded_to_hub
+                     or cur_lane.tool_loaded)):
+                self.logger.info(f"ACE {self.name}: {cur_lane.name} slot status unread "
+                                 f"during PREP, keeping its saved loaded state")
+                cur_lane.prep_state = True
         else:
             msg = '<span class=error--text>ACE NOT CONNECTED</span>'
             succeeded = False
@@ -1961,9 +1981,14 @@ class afcACE(afcUnit):
                                 slot: int) -> Tuple[bool, str, float]:
         """
         Feed in calibration_step increments until the toolhead sensor trips,
-        record that distance as afc_bowden_length (and afc_unload_bowden_length),
-        retract, and rewrite the values to config. Implementation of
-        calibrate_bowden.
+        retract, and rewrite afc_bowden_length and afc_unload_bowden_length to
+        config. Implementation of calibrate_bowden.
+
+        afc_bowden_length is what a load of a staged lane feeds: from where the
+        lane parks, dist_hub out of the slot, to the toolhead sensor. A staged
+        lane starts at that park point, so its measurement is saved as-is. An
+        unstaged lane starts in the slot, dist_hub before it, so dist_hub is
+        subtracted.
 
         :param cur_lane: Lane to calibrate.
         :param cur_hub: Hub object the measured bowden length is saved to.
@@ -1976,6 +2001,10 @@ class afcACE(afcUnit):
 
         if cur_lane.get_toolhead_pre_sensor_state():
             return False, "Toolhead sensor already triggered, unload first", 0
+
+        if (not self._is_virtual_hub(cur_lane)
+            and cur_hub.state):
+            return False, "Hub sensor already triggered, clear the hub first", 0
 
         old_bowden = getattr(cur_hub, 'afc_bowden_length', 0)
         max_distance = 6000
@@ -2016,25 +2045,48 @@ class afcACE(afcUnit):
         cur_lane.extruder_obj.clear_stale_sensor_state(cur_lane)
         self.afc.reactor.pause(self.afc.reactor.monotonic() + 2.0)
 
-        unload_distance = distance
-
-        if cur_lane.loaded_to_hub:
+        if (not cur_lane.loaded_to_hub
+            and cur_lane.dist_hub > 0):
             dist_hub = cur_lane.dist_hub
-            if dist_hub > 0:
-                self.logger.info(f"ACE calibrate: filament at hub, adding dist_hub="
-                                 f"{dist_hub:.0f}mm to measured {distance:.1f}mm")
-                distance += dist_hub
+            if distance <= dist_hub:
+                return False, (f"Measured {distance:.0f}mm does not reach past "
+                               f"dist_hub={dist_hub:.0f}mm. Check dist_hub."), distance
+            self.logger.info(f"ACE calibrate: lane not staged, subtracting dist_hub="
+                             f"{dist_hub:.0f}mm from measured {distance:.1f}mm")
+            distance -= dist_hub
 
         bowden_dist = round(distance, 2)
         cal_msg = f'\n afc_bowden_length: New: {bowden_dist} Old: {old_bowden}'
         cur_hub.afc_bowden_length = bowden_dist
-        cur_hub.afc_unload_bowden_length = unload_distance
+        cur_hub.afc_unload_bowden_length = bowden_dist
         self.afc.function.ConfigRewrite(cur_hub.fullname, "afc_bowden_length", bowden_dist, cal_msg)
-        self.afc.function.ConfigRewrite(cur_hub.fullname, "afc_unload_bowden_length", unload_distance,
-                                        f'\n afc_unload_bowden_length: {unload_distance}')
+        self.afc.function.ConfigRewrite(cur_hub.fullname, "afc_unload_bowden_length", bowden_dist,
+                                        f'\n afc_unload_bowden_length: {bowden_dist}')
 
         return (True, f"afc_bowden_length calibration: {bowden_dist}mm (was {old_bowden}mm)",
                 bowden_dist)
+
+    def lane_load_state_follows_staging(self, lane: AFCLane) -> bool:
+        """
+        An ACE lane has no load sensor, so it counts as loaded once it is staged at the hub,
+        whether the hub is virtual or a real switch.
+
+        :param lane: Lane to check
+        :return bool: Always True
+        """
+        return True
+
+    def lane_ready_for_lane_calibration(self, lane: AFCLane) -> bool:
+        """
+        dist_hub is measured from where the unit grips the filament, so an ACE lane qualifies
+        once it is prepped and is neither staged at the hub nor loaded to the toolhead.
+
+        :param lane: Lane to check
+        :return bool: True when the lane is prepped and is not staged or tool loaded
+        """
+        return (lane.prep_state
+                and not lane.loaded_to_hub
+                and not lane.tool_loaded)
 
     def calibrate_lane(self, cur_lane: AFCLane, tol: float,
                        gcmd: GCodeCommand) -> Tuple[bool, str, float]:
@@ -4191,7 +4243,9 @@ class afcACE(afcUnit):
         Calibrate dist_hub by incrementally feeding until the hub sensor
         triggers; the first-detection distance is the measurement.
 
-        Requires a physical hub sensor; rewrites dist_hub to config on success.
+        Requires a physical hub sensor and a lane that is not staged, since the
+        feed is measured from where the unit grips the filament; rewrites dist_hub
+        to config on success.
 
         :param cur_lane: Lane to calibrate.
         :return tuple: (success, message, measured_distance).
@@ -4209,11 +4263,18 @@ class afcACE(afcUnit):
         if hub.state:
             return False, "Hub sensor already triggered, clear the hub first", 0
 
+        if cur_lane.loaded_to_hub:
+            return False, (f"{cur_lane.name} is staged at the hub, eject it first with "
+                           f"LANE_UNLOAD LANE={cur_lane.name} so dist_hub is measured from "
+                           "where the unit grips the filament"), 0
+
         max_distance = 4000
         step = self.calibration_step
 
         self.logger.raw(f'Calibrating dist_hub for {cur_lane.name} '
                         f'(max {max_distance}mm in {step}mm steps)')
+        self.logger.info(f"ACE hub calibrate: {cur_lane.name} is not staged, so the measurement "
+                         "starts at the filament tip's current position in the unit")
 
         coarse_fed = 0.0
         triggered = False
@@ -4422,7 +4483,8 @@ class afcACE(afcUnit):
 
     def _sync_slot_loaded_state(self) -> None:
         """
-        Sync ACE slot status to lane load/prep state at startup.
+        Sync ACE slot status to lane load/prep state at startup. A slot whose
+        status was never read keeps the lane's saved state.
         """
         if (self._ace is None
             or not self._ace.connected):
@@ -4431,11 +4493,15 @@ class afcACE(afcUnit):
             slot = self._get_slot(lane.name)
             if 0 <= slot < self.SLOTS_PER_UNIT:
                 slot_info = self._slot_inventory[slot]
-                slot_loaded = bool(slot_info and slot_info.get("status", "") == "ready")
-                lane.prep_state = slot_loaded
-                if not slot_loaded:
-                    lane.loaded_to_hub = False
-                    self._set_hub_state(lane, False)
+                # No status means the initial get_status went unanswered, which says
+                # nothing about the slot, so leave the lane's saved state alone.
+                slot_status = slot_info.get("status", "") if slot_info else ""
+                if slot_status:
+                    slot_loaded = slot_status == "ready"
+                    lane.prep_state = slot_loaded
+                    if not slot_loaded:
+                        lane.loaded_to_hub = False
+                        self._set_hub_state(lane, False)
 
                 # Only the V1 firmware read fills the inventory with tag values;
                 # the ACE 2 identifies its spools through AFC_ACE2_rfid.
