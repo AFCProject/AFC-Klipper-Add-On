@@ -2357,9 +2357,10 @@ class afcACE(afcUnit):
         at the same speed.
 
         A toolhead sensor above the extruder gears leaves the tip short of them, so the
-        extruder alone would turn on nothing. Fed in step, the tip meets the gears as the
-        extruder reaches them and still ends tool_stn past the sensor; the unit's buffer
-        absorbs any excess once the gears bite.
+        extruder alone would turn on nothing. Fed alongside, the tip meets the gears while
+        the extruder turns; the unit starts a little ahead of the queued extruder move, so
+        the tip can end a few mm past tool_stn, and the unit's buffer absorbs any excess
+        once the gears bite.
 
         :param cur_lane: Lane being loaded.
         :param cur_extruder: Extruder the lane loads into.
@@ -2368,12 +2369,12 @@ class afcACE(afcUnit):
         """
         speed = cur_extruder.tool_load_speed
         push = min(self.load_gear_push, tool_stn)
-        if push >= 0.5:
+        if push >= 1:
             # A feed refused while the unit is busy would leave the extruder turning on air.
             self._wait_for_ace_ready()
         cur_lane.activate_toolhead_extruder()
         self.afc.move_e_pos(tool_stn, speed, "tool stn")
-        if (push < 0.5
+        if (push < 1
             or self._ace is None):
             return
         feed_speed = min(speed, self.max_feed_speed)

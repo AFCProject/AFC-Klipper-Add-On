@@ -4877,10 +4877,10 @@ class TestAfcACEAdvanceToolStn:
         assert sent_at_move == [0]
         assert unit.logger.messages == []
 
-    def test_push_under_half_a_millimetre_is_skipped(self):
+    def test_push_under_a_millimetre_is_skipped(self):
         unit, lane, _wire, sent_at_move = self._unit()
 
-        unit._advance_tool_stn(lane, lane.extruder_obj, 3, 0.4)
+        unit._advance_tool_stn(lane, lane.extruder_obj, 3, 0.9)
 
         assert unit._ace.commands == []
         assert sent_at_move == [0]
