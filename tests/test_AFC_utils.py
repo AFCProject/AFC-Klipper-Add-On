@@ -959,6 +959,107 @@ class TestAFCMoonraker:
         assert len(errors) >= 1
 
 
+# ── AFC_moonraker._get_results HTTP errors ──────────────────────────────────
+
+METADATA_URL = "http://localhost:7125/server/files/metadata?filename=PA%20tower"
+
+
+def _http_error(code, reason):
+    from urllib.error import HTTPError
+    return HTTPError(METADATA_URL, code, reason, {}, None)
+
+
+class TestAFCMoonrakerGetResults:
+    def _make_moonraker(self):
+        return TestAFCMoonraker()._make_moonraker()
+
+    def test_missing_ok_404_logs_debug_only_and_returns_none(self):
+        mr = self._make_moonraker()
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen", side_effect=_http_error(404, "Not Found")):
+            result = mr._get_results(METADATA_URL, missing_ok=True)
+        assert result is None
+        assert mr.logger.messages[messages_before:] == [
+            ("debug", "Moonraker has no entry for "
+                      "http://localhost:7125/server/files/metadata?filename=PA%20tower"),
+        ]
+
+    def test_404_without_missing_ok_is_an_error(self):
+        mr = self._make_moonraker()
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen", side_effect=_http_error(404, "Not Found")):
+            result = mr._get_results(METADATA_URL)
+        assert result is None
+        assert mr.logger.messages[messages_before:] == [("error", mr.ERROR_STRING)]
+
+    def test_missing_ok_does_not_hide_a_server_error(self):
+        mr = self._make_moonraker()
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen",
+                   side_effect=_http_error(500, "Internal Server Error")):
+            result = mr._get_results(METADATA_URL, missing_ok=True)
+        assert result is None
+        assert mr.logger.messages[messages_before:] == [("error", mr.ERROR_STRING)]
+
+    def test_http_error_with_print_error_false_logs_debug(self):
+        mr = self._make_moonraker()
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen",
+                   side_effect=_http_error(500, "Internal Server Error")):
+            result = mr._get_results(METADATA_URL, print_error=False)
+        assert result is None
+        assert mr.logger.messages[messages_before:] == [("debug", mr.ERROR_STRING)]
+
+    def test_missing_ok_does_not_hide_moonraker_unreachable(self):
+        from urllib.error import URLError
+        mr = self._make_moonraker()
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen", side_effect=URLError("connection refused")):
+            result = mr._get_results(METADATA_URL, missing_ok=True)
+        assert result is None
+        assert mr.logger.messages[messages_before:] == [("error", mr.ERROR_STRING)]
+
+    def test_missing_ok_does_not_hide_bad_json(self):
+        mr = self._make_moonraker()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen", return_value=mock_resp), \
+             patch("extras.AFC_utils.json.load", side_effect=ValueError("bad json")):
+            result = mr._get_results(METADATA_URL, missing_ok=True)
+        assert result is None
+        assert mr.logger.messages[messages_before:] == [("error", mr.ERROR_STRING)]
+
+
+class TestAFCMoonrakerGetFileMetadataSync:
+    def _make_moonraker(self):
+        return TestAFCMoonraker()._make_moonraker()
+
+    def test_file_moonraker_does_not_know_is_not_an_error(self):
+        mr = self._make_moonraker()
+        callback = MagicMock()
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen", side_effect=_http_error(404, "Not Found")):
+            mr._get_file_metadata_sync("PA tower", callback)
+        callback.assert_called_once_with(None)
+        assert mr.logger.messages[messages_before:] == [
+            ("debug", "Moonraker has no entry for "
+                      "http://localhost:7125/server/files/metadata?filename=PA%20tower"),
+        ]
+
+    def test_moonraker_failure_is_still_an_error(self):
+        mr = self._make_moonraker()
+        callback = MagicMock()
+        messages_before = len(mr.logger.messages)
+        with patch("extras.AFC_utils.urlopen",
+                   side_effect=_http_error(503, "Service Unavailable")):
+            mr._get_file_metadata_sync("PA tower", callback)
+        callback.assert_called_once_with(None)
+        assert mr.logger.messages[messages_before:] == [("error", mr.ERROR_STRING)]
+
+
 # ── AFC_moonraker background writer ─────────────────────────────────────────
 
 class TestAFCMoonrakerBackgroundWriter:
