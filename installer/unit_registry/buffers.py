@@ -248,7 +248,7 @@ def apply_unit_buffer(
     elif buffer_type in FPS_STYLE_TYPES:
         default = ""
         if sel.installation_type == "EMU":
-            default = f"{target.unit_name}_lane1:TN"
+            default = f"{target.unit_name}_lane1:TH"
         elif sel.installation_type == "OpenAMS":
             default = "fps:PA2"
         adc = query_fps_pin(console, prompter, buffer_type, target.unit_name, default)

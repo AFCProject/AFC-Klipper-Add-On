@@ -247,13 +247,13 @@ TYPES = [u.display_name for u in UNIT_TYPES]
 
 
 def installed(  # type: ignore[no-untyped-def]
-    tree: PrinterTree, itype: str, name: str = "Turtle_1"
+    tree: PrinterTree, itype: str, name: str = "Turtle_1", board: str = "EBB"
 ):
     """A first install of a unit type into the fake tree; returns ctx, unit and selection."""
     ctx = make_ctx(tree)
     unit = unit_for(itype)
     assert unit is not None
-    sel = UnitSelection(installation_type=itype, unit_name=name)
+    sel = UnitSelection(installation_type=itype, unit_name=name, emu_board_type=board)
     (ctx.afc_config_dir / "mcu").mkdir(parents=True)
     (ctx.afc_config_dir / "macros").mkdir()
     unit.copy_files(ctx, RecordingConsole(), ScriptedPrompter([]), sel)
@@ -320,15 +320,25 @@ class TestApplyUnitBuffer:
         block = build_buffer_config("Compensator", target.section_name, adc_pin="PA9")
         assert block in target.extruder_file.read_text()
 
-    def test_emu_defaults_the_adc_pin_to_its_first_lane(self, printer_tree: PrinterTree) -> None:
-        ctx, unit, sel = installed(printer_tree, "EMU", name="EMU_1")
+    @pytest.mark.parametrize("board", ["EBB", "SLB"])
+    def test_emu_defaults_the_adc_pin_to_its_first_lane(
+        self, printer_tree: PrinterTree, board: str
+    ) -> None:
+        ctx, unit, sel = installed(printer_tree, "EMU", name="EMU_1", board=board)
         target = unit.buffer_target(ctx, sel)
         assert target is not None
-        apply_unit_buffer(ctx, RecordingConsole(), ScriptedPrompter([""]), sel, "FPS_PSF")
-        block = build_buffer_config(
-            "FPS_PSF", target.section_name, adc_pin=f"{target.unit_name}_lane1:TN"
-        )
-        assert block in target.extruder_file.read_text()
+        console, prompter = RecordingConsole(), ScriptedPrompter([""])
+        apply_unit_buffer(ctx, console, prompter, sel, "FPS_PSF")
+        assert "adc_pin: EMU_1_lane1:TH\n" in target.extruder_file.read_text()
+        assert "TH=PA3," in (ctx.afc_config_dir / "mcu" / "EMU_1.cfg").read_text()
+        assert prompter.prompts == ["  Enter the ADC pin (default: EMU_1_lane1:TH): "]
+        assert console.messages == [
+            ("INFO", "\nPlease enter the ADC pin for the FPS/PSF buffer 'FPS_PSF':"),
+            ("INFO", "(Leave blank to use the default value)"),
+            ("INFO", "Proportional Sync-Feedback (PSF) sensor is wired to."),
+            ("INFO", "(Default: EMU_1_lane1:TH)"),
+            ("INFO", "Set FPS_PSF ADC pin: EMU_1_lane1:TH"),
+        ]
 
     def test_openams_defaults_the_adc_pin_to_the_fps_board(
         self, printer_tree: PrinterTree
