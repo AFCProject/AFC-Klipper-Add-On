@@ -78,6 +78,29 @@ class TestBuildBufferConfig:
 
 
 class TestQueryPins:
+    @pytest.mark.parametrize("advance,trailing,expected", [
+        ("^U:TH1", "^U:TH2", ("^U:TH1", "^U:TH2")),
+        ("^U:TH1", "", ("^U:TH1", "^U:TN_TRL")),
+        ("", "^U:TH2", ("^U:TN_ADV", "^U:TH2")),
+    ])
+    def test_board_pin_defaults_override_each_pin_independently(
+        self, advance: str, trailing: str, expected: Tuple[str, str]
+    ) -> None:
+        console, prompter = RecordingConsole(), ScriptedPrompter(["", ""])
+        assert query_tn_pins(console, prompter, "TN", "U", advance, trailing) == expected
+        adv, trl = expected
+        assert prompter.prompts == [
+            f"  Enter the advance pin (default: {adv}): ",
+            f"  Enter the trailing pin (default: {trl}): ",
+        ]
+        assert console.messages == [
+            ("INFO", "\nPlease enter the pin numbers for the TurtleNeck buffer 'TN':"),
+            ("INFO", "(Leave blank to use the default values)"),
+            ("INFO", "Ensure you use a pull-up '^' if you are using a AFC end stop pin."),
+            ("INFO", f"(Default: {adv})"), ("INFO", f"(Default: {trl})"),
+            ("INFO", f"Set TN Advance pin: {adv}"), ("INFO", f"Set TN Trailing pin: {trl}"),
+        ]
+
     def test_turtleneck_defaults_use_the_unit_name_and_explain_them(self) -> None:
         console, prompter = RecordingConsole(), ScriptedPrompter(["", ""])
         pins = query_tn_pins(console, prompter, "TN", "Bob_2")
@@ -320,24 +343,82 @@ class TestApplyUnitBuffer:
         block = build_buffer_config("Compensator", target.section_name, adc_pin="PA9")
         assert block in target.extruder_file.read_text()
 
-    @pytest.mark.parametrize("board", ["EBB", "SLB"])
+    @pytest.mark.parametrize("board,pin,alias", [
+        ("EBB", "EMU_1_lane1:TH", "TH=PA3,"),
+        ("SLB", "EMU_1_lane1:TH", "TH=PA3,"),
+        ("EMB_C", "EMU_1:TH1", "TH1=PB0,"),
+    ])
     def test_emu_defaults_the_adc_pin_to_its_first_lane(
-        self, printer_tree: PrinterTree, board: str
+        self, printer_tree: PrinterTree, board: str, pin: str, alias: str
     ) -> None:
         ctx, unit, sel = installed(printer_tree, "EMU", name="EMU_1", board=board)
         target = unit.buffer_target(ctx, sel)
         assert target is not None
         console, prompter = RecordingConsole(), ScriptedPrompter([""])
         apply_unit_buffer(ctx, console, prompter, sel, "FPS_PSF")
-        assert "adc_pin: EMU_1_lane1:TH\n" in target.extruder_file.read_text()
-        assert "TH=PA3," in (ctx.afc_config_dir / "mcu" / "EMU_1.cfg").read_text()
-        assert prompter.prompts == ["  Enter the ADC pin (default: EMU_1_lane1:TH): "]
+        text = target.extruder_file.read_text()
+        assert f"adc_pin: {pin}\n" in text
+        assert text.count("[AFC_buffer EMU_1_buffer]") == 1
+        assert alias in (ctx.afc_config_dir / "mcu" / "EMU_1.cfg").read_text()
+        assert prompter.prompts == [f"  Enter the ADC pin (default: {pin}): "]
         assert console.messages == [
             ("INFO", "\nPlease enter the ADC pin for the FPS/PSF buffer 'FPS_PSF':"),
             ("INFO", "(Leave blank to use the default value)"),
             ("INFO", "Proportional Sync-Feedback (PSF) sensor is wired to."),
-            ("INFO", "(Default: EMU_1_lane1:TH)"),
-            ("INFO", "Set FPS_PSF ADC pin: EMU_1_lane1:TH"),
+            ("INFO", f"(Default: {pin})"),
+            ("INFO", f"Set FPS_PSF ADC pin: {pin}"),
+        ]
+
+    @pytest.mark.parametrize("itype,board,advance,trailing", [
+        ("EMU", "EMB_C", "^Mine:TH1", "^Mine:TH2"),
+        ("EMU", "EBB", "^Mine:TN_ADV", "^Mine:TN_TRL"),
+        ("EMU", "SLB", "^Mine:TN_ADV", "^Mine:TN_TRL"),
+        ("BoxTurtle (4-Lane)", "EMB_C", "^Mine:TN_ADV", "^Mine:TN_TRL"),
+    ])
+    def test_emb_c_switch_defaults_apply_only_to_an_emb_c_emu(
+        self, printer_tree: PrinterTree, itype: str, board: str, advance: str, trailing: str
+    ) -> None:
+        ctx, unit, sel = installed(printer_tree, itype, name="Mine", board=board)
+        target = unit.buffer_target(ctx, sel)
+        assert target is not None
+        console, prompter = RecordingConsole(), ScriptedPrompter(["", ""])
+        apply_unit_buffer(ctx, console, prompter, sel, "TurtleNeck")
+        text = target.extruder_file.read_text()
+        assert f"advance_pin: {advance}" in text
+        assert f"trailing_pin: {trailing}" in text
+        assert text.count(f"[AFC_buffer {target.section_name}]") == 1
+        assert "\ntype: FPS_PSF\n" not in text
+        assert prompter.prompts == [
+            f"  Enter the advance pin (default: {advance}): ",
+            f"  Enter the trailing pin (default: {trailing}): ",
+        ]
+        assert console.messages == [
+            ("INFO", "\nPlease enter the pin numbers for the TurtleNeck buffer 'TN':"),
+            ("INFO", "(Leave blank to use the default values)"),
+            ("INFO", "Ensure you use a pull-up '^' if you are using a AFC end stop pin."),
+            ("INFO", f"(Default: {advance})"), ("INFO", f"(Default: {trailing})"),
+            ("INFO", f"Set TN Advance pin: {advance}"),
+            ("INFO", f"Set TN Trailing pin: {trailing}"),
+        ]
+
+    @pytest.mark.parametrize("buffer", ["FPS_PSF", "Compensator"])
+    def test_emb_c_keeps_a_typed_adc_pin(self, printer_tree: PrinterTree, buffer: str) -> None:
+        ctx, unit, sel = installed(printer_tree, "EMU", name="Mine", board="EMB_C")
+        target = unit.buffer_target(ctx, sel)
+        assert target is not None
+        console, prompter = RecordingConsole(), ScriptedPrompter(["Mine:TH2"])
+        apply_unit_buffer(ctx, console, prompter, sel, buffer)
+        text = target.extruder_file.read_text()
+        assert "adc_pin: Mine:TH2\n" in text
+        assert "adc_pin: Mine:TH1\n" not in text
+        assert text.count("[AFC_buffer Mine_buffer]") == 1
+        assert prompter.prompts == ["  Enter the ADC pin (default: Mine:TH1): "]
+        assert console.messages == [
+            ("INFO", f"\nPlease enter the ADC pin for the FPS/PSF buffer '{buffer}':"),
+            ("INFO", "(Leave blank to use the default value)"),
+            ("INFO", "Proportional Sync-Feedback (PSF) sensor is wired to."),
+            ("INFO", "(Default: Mine:TH1)"),
+            ("INFO", f"Set {buffer} ADC pin: Mine:TH2"),
         ]
 
     def test_openams_defaults_the_adc_pin_to_the_fps_board(

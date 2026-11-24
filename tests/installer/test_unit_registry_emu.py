@@ -231,10 +231,12 @@ class TestEmuUnit:
         action(ctx, RecordingConsole(), ScriptedPrompter([]), sel)
         return ctx
 
+    @pytest.mark.parametrize("board", ["EBB", "EMB_C"])
     def test_a_first_install_with_the_default_name_becomes_emu_1(
-        self, printer_tree: PrinterTree
+        self, printer_tree: PrinterTree, board: str
     ) -> None:
-        sel = UnitSelection(installation_type=EMU, unit_name="Turtle_1", emu_num_lanes=2)
+        sel = UnitSelection(installation_type=EMU, unit_name="Turtle_1", emu_num_lanes=2,
+                            emu_board_type=board)
         ctx = self.run(printer_tree, sel, additional=False)
         assert sel.unit_name == "EMU_1"
         assert (ctx.afc_config_dir / "AFC_EMU_1.cfg").read_text().count("[AFC_stepper lane") == 2
@@ -252,10 +254,12 @@ class TestEmuUnit:
         assert "EMU_1" not in unit and "[AFC_EMU Mine]" in unit
         assert "RGB_button" in (ctx.afc_config_dir / "mcu" / "Mine.cfg").read_text()
 
+    @pytest.mark.parametrize("board", ["EBB", "EMB_C"])
     def test_an_additional_unit_generates_only_its_own_two_files(
-        self, printer_tree: PrinterTree
+        self, printer_tree: PrinterTree, board: str
     ) -> None:
-        sel = UnitSelection(installation_type=EMU, unit_name="EMU_2", emu_num_lanes=4)
+        sel = UnitSelection(installation_type=EMU, unit_name="EMU_2", emu_num_lanes=4,
+                            emu_board_type=board)
         ctx = self.run(printer_tree, sel, additional=True)
         found = sorted(
             str(p.relative_to(ctx.afc_config_dir))
@@ -306,6 +310,18 @@ class TestEmuUnit:
         assert install_rows(unit, sel) == ["EMU Name : E_7", *rows]
         assert additional_rows(unit, ctx, sel) == ["EMU Name : EMU_1", *rows]
         assert additional_buffer_supported(EMU) is True
+
+    def test_emb_c_message_points_to_the_single_mcu(
+        self, printer_tree: PrinterTree
+    ) -> None:
+        ctx = make_ctx(printer_tree)
+        unit = unit_for(EMU)
+        assert unit is not None
+        sel = UnitSelection(installation_type=EMU, unit_name="Mine", emu_board_type="EMB_C")
+        assert unit.message(ctx, sel) == (
+            "\n- Enter the CAN bus or serial information for your EMB-C board in "
+            f"{ctx.afc_config_dir}/AFC_Mine.cfg\n  "
+        )
 
 
 class TestTheCompleteRegistry:
