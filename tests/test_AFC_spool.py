@@ -1761,6 +1761,42 @@ class TestSetSpoolID:
         spool.set_snapmaker_filament_params.assert_called_once()
         spool.afc.function.afc_led.assert_not_called()
 
+    def test_spool_extra_field_sets_filament_id(self):
+        spool = self._make_spool_with_spoolman()
+        spool.set_snapmaker_filament_params = MagicMock()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result()
+        result["extra"] = {"orca_filament_id": '"OFHmPYRy"'}
+        result["filament"]["extra"] = {"orca_filament_id": '"GFL99"'}
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42)
+        assert lane.filament_id == "OFHmPYRy"
+
+    def test_filament_extra_field_sets_filament_id(self):
+        spool = self._make_spool_with_spoolman()
+        spool.set_snapmaker_filament_params = MagicMock()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result()
+        result["filament"]["extra"] = {"orca_filament_id": '"GFL99"'}
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42)
+        assert lane.filament_id == "GFL99"
+
+    def test_spool_without_extra_field_keeps_filament_id(self):
+        spool = self._make_spool_with_spoolman()
+        spool.set_snapmaker_filament_params = MagicMock()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        lane.filament_id = "GFL03"
+        _stub_get_spool(spool, _make_spool_result())
+        spool.set_spoolID(lane, 42)
+        assert lane.filament_id == "GFL03"
+
     def test_valid_spool_id_lane_not_loaded_lane_in_unit(self):
         gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()

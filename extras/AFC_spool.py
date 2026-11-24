@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Optional, Union, Any, Callable, TYPE_CHECKING
 import copy
+import json
 import traceback
 import re
 
@@ -698,6 +699,24 @@ class AFCSpool:
             value = filament[field]
         return value
 
+    def _get_spoolman_extra(self, record: dict, field: str) -> str:
+        """
+        Helper function for reading a text extra field from a Spoolman spool or filament
+        record. Spoolman stores each extra field's value JSON encoded.
+
+        :param record: Spoolman spool or filament dictionary
+        :param field:  Extra field name
+        :return:       The field's text, or an empty string when it is not set
+        """
+        raw = (record.get("extra") or {}).get(field)
+        if not raw:
+            return ""
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            value = raw
+        return value if isinstance(value, str) else ""
+
     def _set_values(self, cur_lane: AFCLane, on_done: Optional[Callable[[], None]] = None, *,
                     gcmd: AFCGcmd) -> None:
         """
@@ -833,6 +852,13 @@ class AFCSpool:
                 cur_lane.spool_vendor       = ""
                 if vendor_result:
                     cur_lane.spool_vendor   = self._get_filament_values(vendor_result, "name", None)
+
+                # The slicer filament id, when Spoolman stores one: the spool's own
+                # extra field first, then its filament's
+                filament_id = (self._get_spoolman_extra(result, "orca_filament_id")
+                               or self._get_spoolman_extra(result["filament"], "orca_filament_id"))
+                if filament_id:
+                    cur_lane.filament_id = filament_id
 
                 weight_check = self.disable_weight_check
 
