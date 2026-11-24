@@ -1667,8 +1667,8 @@ class afcACE(afcUnit):
 
     def lane_move(self, cur_lane: AFCLane, distance: float, speed_mode: Any) -> None:
         """
-        Move filament via ACE serial instead of stepper, then restart feed assist the
-        move ended on the active lane.
+        Move filament via ACE serial instead of stepper. Feed assist on the slot is
+        stopped for the move and restored after it on the active lane.
 
         :param cur_lane: Lane to move.
         :param distance: Signed distance in mm; positive feeds, negative unwinds.
@@ -1681,6 +1681,9 @@ class afcACE(afcUnit):
             self.logger.error("ACE not connected for lane_move")
             return
         had_assist = slot in self._feed_assist_active
+        if had_assist:
+            # A move on an assisting slot ends its assist on the unit.
+            self._stop_feed_assist(slot)
         with self._operation():
             try:
                 self._wait_for_ace_ready()
@@ -1692,11 +1695,9 @@ class afcACE(afcUnit):
                                              else self.retract_speed)
             except Exception as e:
                 self.logger.error(f"ACE lane_move failed: {e}")
-        if had_assist:
-            # The unit ends feed assist on a slot it moves; restart it on the active lane.
-            self._feed_assist_active.discard(slot)
-            if self._active_assist_lane() == cur_lane.name:
-                self._reconcile_feed_assist(cur_lane.name)
+        if (had_assist
+            and self._active_assist_lane() == cur_lane.name):
+            self._reconcile_feed_assist(cur_lane.name)
 
     def lane_unload(self, cur_lane: AFCLane) -> bool:
         """
@@ -3817,10 +3818,9 @@ class afcACE(afcUnit):
         """
         Heartbeat watchdog: reconcile feed assist to the active lane.
 
-        If the active tool's lane should be assisted but isn't (the wrong slot
-        is, or the unit reports its slot idle), schedule a reconcile.
-        Idempotent, a no-op once assist is correct. Disabled when
-        assist_watchdog is off.
+        If the active tool's lane should be assisted but isn't (or the wrong
+        slot is), schedule a reconcile. Idempotent, a no-op once assist is
+        correct. Disabled when assist_watchdog is off.
         """
         if not self._assist_watchdog:
             return
@@ -3833,30 +3833,11 @@ class afcACE(afcUnit):
             and slot in self._assist_suppressed):
             return  # manually stopped via AFC_ACE_FEED_ASSIST, leave it off
         if (slot is not None
-            and slot in self._feed_assist_active
-            and self._slot_left_assist(slot)):
-            self.logger.info(f"ACE assist watchdog: slot {slot} stopped assisting on the unit")
-            self._feed_assist_active.discard(slot)
-        if (slot is not None
             and lane is not None
             and self._use_feed_assist(lane)
             and self._feed_assist_active != {slot}):
             self.logger.info(f"ACE assist watchdog: enabling feed assist for {name} (slot {slot})")
             self.afc.reactor.register_callback(lambda et, n=name: self._reconcile_feed_assist(n))
-
-    def _slot_left_assist(self, slot: int) -> bool:
-        """
-        Whether the last status shows a slot idle that AFC tracks as assisting.
-
-        Only units that report a per-slot `slot_status` (the ACE 2) can tell.
-
-        :param slot: 0-based ACE slot index.
-        :return bool: True when the slot's `slot_status` is "ready".
-        """
-        slots = self._cached_hw_status.get("slots") or []
-        if slot >= len(slots):
-            return False
-        return bool(slots[slot].get("slot_status") == "ready")
 
     def _check_stuck(self, result: Dict[str, Any]) -> None:
         """

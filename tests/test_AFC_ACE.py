@@ -3472,6 +3472,8 @@ class TestAfcACELaneMove:
 
         unit.lane_move(lane, 50.0, None)
 
+        names = [m for m, _ in unit._ace.commands]
+        assert names.index("stop_feed_assist") < names.index("feed_filament")
         assert unit._ace.commands[-2:] == [("get_status", {}), ("start_feed_assist", {"index": 0})]
         assert [m for m, _ in unit._ace.commands].count("start_feed_assist") == 1
         assert unit._feed_assist_active == {0}
@@ -7582,42 +7584,6 @@ class TestAfcACEMaybeAssistWatchdog:
         assert unit.printer.logger.messages == []
         assert unit.printer.reactor.pending == []
 
-    def test_watchdog_restarts_assist_the_unit_dropped(self):
-        unit = self._unit(feed_assist_active=[0])
-        unit._cached_hw_status = ace_status({"slot_status": "ready"}, {"slot_status": "ready"})
-
-        unit._maybe_assist_watchdog()
-
-        assert unit._feed_assist_active == set()
-        assert unit.printer.logger.messages == [
-            ("info", "ACE assist watchdog: slot 0 stopped assisting on the unit"),
-            self._ENABLING]
-        assert len(unit.printer.reactor.pending) == 1
-        unit.printer.reactor.run_callbacks()
-        assert unit._feed_assist_active == {0}
-        assert unit._ace.commands == [("get_status", {}), ("start_feed_assist", {"index": 0})]
-
-    def test_watchdog_noop_while_the_unit_reports_assisting(self):
-        unit = self._unit(feed_assist_active=[0])
-        unit._cached_hw_status = ace_status({"slot_status": "assisting"},
-                                            {"slot_status": "ready"})
-
-        unit._maybe_assist_watchdog()
-
-        assert unit._feed_assist_active == {0}
-        assert unit.printer.logger.messages == []
-        assert unit.printer.reactor.pending == []
-
-    def test_watchdog_reads_no_dropout_for_an_untracked_slot(self):
-        unit = self._unit(feed_assist_active=[3])
-        unit._cached_hw_status = ace_status({"slot_status": "ready"}, {"slot_status": "ready"})
-
-        unit._maybe_assist_watchdog()
-
-        # Only the wrong-slot reconcile, no dropout line for slot 0.
-        assert unit.printer.logger.messages == [self._ENABLING]
-        assert unit._feed_assist_active == {3}
-
     def test_watchdog_noop_when_lane_unknown_to_afc(self):
         unit = self._unit()
         del unit.afc.lanes["lane1"]
@@ -7626,40 +7592,6 @@ class TestAfcACEMaybeAssistWatchdog:
 
         assert unit.printer.logger.messages == []
         assert unit.printer.reactor.pending == []
-
-
-class TestAfcACESlotLeftAssist:
-    def test_ready_slot_has_left_assist(self):
-        unit = ace_p1_unit("lane0")
-        unit._cached_hw_status = ace_status({"slot_status": "assisting"},
-                                            {"slot_status": "ready"})
-
-        assert unit._slot_left_assist(1) is True
-
-    def test_assisting_slot_has_not(self):
-        unit = ace_p1_unit("lane0")
-        unit._cached_hw_status = ace_status({"slot_status": "assisting"},
-                                            {"slot_status": "ready"})
-
-        assert unit._slot_left_assist(0) is False
-
-    def test_status_without_slot_status_tells_nothing(self):
-        unit = ace_p1_unit("lane0")
-        unit._cached_hw_status = ace_status("ready", "ready")
-
-        assert unit._slot_left_assist(0) is False
-
-    def test_slot_past_the_reported_slots_tells_nothing(self):
-        unit = ace_p1_unit("lane0")
-        unit._cached_hw_status = ace_status({"slot_status": "ready"})
-
-        assert unit._slot_left_assist(1) is False
-
-    def test_no_status_yet_tells_nothing(self):
-        unit = ace_p1_unit("lane0")
-        unit._cached_hw_status = {}
-
-        assert unit._slot_left_assist(0) is False
 
 
 class TestAfcACECheckStuck:
