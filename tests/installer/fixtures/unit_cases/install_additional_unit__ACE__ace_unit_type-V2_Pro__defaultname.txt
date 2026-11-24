@@ -137,14 +137,6 @@ afc_bowden_length: 900      # mm from where a lane parks (dist_hub) to the
                             # toolhead sensor. Too long pushes filament
                             # into the extruder gears, so start short and
                             # run AFC_ACE_CALIBRATE.
-# With a hub sensor of your own wired in, set switch_pin to its pin
-# instead of virtual, and AFC_ACE_CALIBRATE_HUB UNIT=Ace_1 LANE=lane0
-# measures that lane's dist_hub by feeding until the sensor triggers. If
-# the sensor sits past the point where the tubes merge, set
-# dist_hub_margin to at least that distance: calibration stores the
-# measurement less this many mm, so a staged lane parks short of the
-# merge and leaves the other lanes free.
-#dist_hub_margin: 0
 
 # Direct mode: uncomment all four hubs, one per lane, and delete the one
 # above. Each lane runs to its own tool, so each needs its own length, and

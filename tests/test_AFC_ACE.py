@@ -8281,17 +8281,17 @@ class TestAfcACECalibrateHubInner:
             ("error", "ACE hub calibrate: retract failed: unwind boom")]
 
 
-class TestAfcACECalibrateHubInnerMargin:
+class TestAfcACECalibrateHubInnerClearMove:
     @staticmethod
     def _unit(margin: float, **kwargs: Any) -> afcACE:
         """
-        :param margin: the hub's dist_hub_margin
+        :param margin: the hub's hub_clear_move_dis
         :param kwargs: make_ace_unit keywords
         :return afcACE: a unit whose lane1 (dist_hub 10) sits on a hub with a
             real switch pin and that margin
         """
         printer = make_ace_printer()
-        printer.add_hub("hub1", switch_pin="PA1", dist_hub_margin=margin)
+        printer.add_hub("hub1", switch_pin="PA1", hub_clear_move_dis=margin)
         return ace_p2_unit(LaneSpec("lane1", values={"hub": "hub1", "dist_hub": 10}),
                            printer=printer, **kwargs)
 
@@ -8320,7 +8320,7 @@ class TestAfcACECalibrateHubInnerMargin:
 
         # Hub trips after 2 x 60mm = 120mm; 120 - 40 = 80 is stored.
         assert result == (True, "dist_hub calibration: 80.0mm, hub sensor at 120.0mm less "
-                                "40.0mm dist_hub_margin (was 10.0mm)", 80.0)
+                                "40.0mm hub_clear_move_dis (was 10.0mm)", 80.0)
         assert lane.dist_hub == 80.0
         assert unit.printer.afc.function.ConfigRewrite.calls == [
             (("AFC_lane lane1", "dist_hub", 80.0, "\n dist_hub: New: 80.0 Old: 10.0"), {})]
@@ -8337,7 +8337,7 @@ class TestAfcACECalibrateHubInnerMargin:
         result = unit._calibrate_hub_inner(lane)
 
         assert result == (False, "Hub sensor triggered at 120.0mm, which is not past the hub's "
-                                 "dist_hub_margin of 120.0mm. dist_hub was not changed.", 120.0)
+                                 "hub_clear_move_dis of 120.0mm. dist_hub was not changed.", 120.0)
         assert lane.dist_hub == 10.0
         assert unit.printer.afc.function.ConfigRewrite.calls == []
         # The lane is still backed off 50mm short of the trigger point.
@@ -8356,7 +8356,7 @@ class TestAfcACECalibrateHubInnerMargin:
         result = unit._calibrate_hub_inner(lane)
 
         assert result == (True, "dist_hub calibration: 0.5mm, hub sensor at 120.0mm less "
-                                "119.5mm dist_hub_margin (was 10.0mm)", 0.5)
+                                "119.5mm hub_clear_move_dis (was 10.0mm)", 0.5)
         assert lane.dist_hub == 0.5
 
 

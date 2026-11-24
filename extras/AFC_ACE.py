@@ -4257,10 +4257,10 @@ class afcACE(afcUnit):
             except Exception as e:
                 self.logger.error(f"ACE hub calibrate: retract failed: {e}")
 
-        margin = hub.dist_hub_margin
+        margin = hub.hub_clear_move_dis
         if margin >= distance:
             msg = (f"Hub sensor triggered at {distance:.1f}mm, which is not past the hub's "
-                   f"dist_hub_margin of {margin}mm. dist_hub was not changed.")
+                   f"hub_clear_move_dis of {margin}mm. dist_hub was not changed.")
             return False, msg, distance
 
         old_dist = cur_lane.dist_hub
@@ -4271,7 +4271,7 @@ class afcACE(afcUnit):
 
         if margin:
             msg = (f"dist_hub calibration: {new_dist}mm, hub sensor at {distance:.1f}mm less "
-                   f"{margin}mm dist_hub_margin (was {old_dist}mm)")
+                   f"{margin}mm hub_clear_move_dis (was {old_dist}mm)")
         else:
             msg = f"dist_hub calibration: {new_dist}mm (was {old_dist}mm)"
         return True, msg, new_dist

@@ -414,24 +414,6 @@ class TestAFCHubInit:
             hub = afc_hub(config)
         buttons_mock.register_buttons.assert_called_once()
 
-    def test_dist_hub_margin_defaults_to_zero(self):
-        from tests.conftest import MockConfig, MockPrinter, MockAFC
-        afc = MockAFC()
-        printer = MockPrinter(afc=afc)
-        config = MockConfig(name="AFC_hub my_hub", printer=printer,
-                            values={"switch_pin": "virtual"})
-        hub = afc_hub(config)
-        assert hub.dist_hub_margin == 0.0
-
-    def test_dist_hub_margin_is_read_from_config(self):
-        from tests.conftest import MockConfig, MockPrinter, MockAFC
-        afc = MockAFC()
-        printer = MockPrinter(afc=afc)
-        config = MockConfig(name="AFC_hub my_hub", printer=printer,
-                            values={"switch_pin": "virtual", "dist_hub_margin": 40})
-        hub = afc_hub(config)
-        assert hub.dist_hub_margin == 40.0
-
 
 # ── hub_cut ───────────────────────────────────────────────────────────────────
 

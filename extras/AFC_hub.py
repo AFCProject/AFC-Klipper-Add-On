@@ -77,9 +77,6 @@ class afc_hub:
         self.debounce_delay         = config.getfloat("debounce_delay",             self.afc.debounce_delay)
         self.enable_runout          = config.getboolean("enable_hub_runout",        self.afc.enable_hub_runout)
         self.use_dist_hub           = config.getboolean("use_dist_hub", False)      # Value to indicate that lanes dist_hub variable should be used instead of afc_bowden_length value. Set true when setting hub up as a virtual hub
-        # mm AFC_ACE_CALIBRATE_HUB takes off the measured lane to hub sensor distance before it
-        # stores dist_hub, so a staged lane parks short of a sensor that sits past the merge
-        self.dist_hub_margin        = config.getfloat("dist_hub_margin", 0.0, minval=0.0)
 
         if (self.switch_pin
             and self.switch_pin.lower() != "virtual"):
