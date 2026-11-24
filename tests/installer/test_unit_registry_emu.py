@@ -30,22 +30,25 @@ def read_pair(ctx: Context, name: str) -> List[str]:
 
 
 class TestTemplates:
-    def test_all_eight_template_files_ship(self) -> None:
+    def test_all_template_files_ship(self) -> None:
         names = sorted(p.name for p in TEMPLATE_DIR.iterdir())
         assert names == sorted(
             f"{n}.tmpl"
             for n in (
                 "mcu_slb", "mcu_ebb", "header", "lane_mcu", "unit",
-                "lane_slb", "lane_ebb", "buffer_hub",
+                "lane_slb", "lane_ebb", "buffer_hub", "mcu_emb_c", "lane_emb_c",
+                "temperature_emb_c",
             )
         )
 
-    def test_only_the_three_known_placeholders_are_used_and_nothing_else_has_a_dollar(
+    def test_only_known_placeholders_are_used_and_nothing_else_has_a_dollar(
         self,
     ) -> None:
         for path in TEMPLATE_DIR.iterdir():
             text = path.read_text()
-            assert set(re.findall(r"\$\{(\w+)\}", text)) <= {"unit_name", "i", "mcu_list"}
+            assert set(re.findall(r"\$\{(\w+)\}", text)) <= {
+                "unit_name", "i", "mcu_list", "mcu_name", "uart_index", "uart_address",
+            }
             assert "$" not in re.sub(r"\$\{\w+\}", "", text), path.name
 
     def test_the_hub_comment_keeps_its_backticks(self) -> None:
@@ -53,6 +56,89 @@ class TestTemplates:
 
 
 class TestGenerateEmuConfig:
+    @pytest.mark.parametrize("lanes", [2, 3, 4, 5])
+    def test_emb_c_uses_one_mcu_and_generates_only_the_requested_lanes(
+        self, printer_tree: PrinterTree, lanes: int
+    ) -> None:
+        ctx = make_ctx(printer_tree)
+        generate(ctx, "Mine", lanes, "EMB_C")
+        unit, mcu = read_pair(ctx, "Mine")
+        assert unit.startswith(
+            "[include mcu/Mine.cfg]\n\n[mcu Mine]\n"
+            "canbus_uuid: <replace with your can UUID>\n"
+            "#canbus_interface: can1         # Uncomment if using a CAN bus other than can0\n"
+            "#serial: <replace with your /dev/serial/by-id/...> and comment out canbus_uuid "
+            "above\n\n"
+            "[AFC_EMU Mine]\n"
+        )
+        assert unit.count("[mcu ") == 1
+        assert "[mcu " not in mcu
+        assert mcu.startswith("[board_pins Mine]\nmcu: Mine\naliases:\n")
+        assert "tca9548a" not in (unit + mcu).lower()
+        mcu_sensor = ("[temperature_sensor Mine]\nsensor_type: temperature_mcu\n"
+                      "sensor_mcu: Mine\n")
+        assert unit.count("[temperature_sensor ") == 1
+        assert unit.index("[AFC_EMU Mine]") < unit.index("[temperature_sensor Mine]")
+        assert f"\n{mcu_sensor}\n[AFC_stepper lane1]" in unit
+        assert "Mine_lane" not in unit + mcu
+        assert "EMU_1" not in unit + mcu
+        assert "initial_WHITE: 0.0\n\n[AFC_stepper lane2]" in unit
+        for kind in ("AFC_stepper lane", "tmc2209 AFC_stepper lane", "AFC_button lane",
+                     "controller_fan Mine_fan_lane", "AFC_led Mine_Indicator_"):
+            assert unit.count(f"[{kind}") == lanes, kind
+            assert f"[{kind}{lanes + 1}]" not in unit
+        for i, (uart, address) in enumerate(
+            [(1, 0), (2, 0), (3, 0), (4, 0), (4, 1)][:lanes], 1
+        ):
+            for line in (
+                f"unit: Mine:{i}", f"step_pin: Mine:MOT{i}_STEP",
+                f"dir_pin: !Mine:MOT{i}_DIR", f"enable_pin: !Mine:MOT{i}_EN",
+                f"prep: ^Mine:TRG{i}", f"load: ^Mine:LOAD{i}", f"pin: ^!Mine:BUTTON{i}",
+                f"uart_pin: Mine:MOT{uart}_UART\nuart_address: {address}",
+                f"led_index: Mine_Indicator_{i}:1-4", f"led_spool_index: Mine_Indicator_{i}:5",
+                f"pin: Mine:RGB{i}", f"pin: Mine:FAN{i}",
+            ):
+                assert f"{line}\n" in unit
+        for line in ("microsteps: 4", "rotation_distance: 22.7574", "dist_hub: 2000",
+                     "print_current: 0.4", "run_current: 0.8", "chain_count: 5",
+                     "color_order: GRBW"):
+            assert unit.count(f"{line}\n") == lanes
+        assert unit.count("[AFC_buffer Mine_buffer]") == 1
+        assert "type: FPS_PSF\nadc_pin: Mine:TH1\n" in unit
+        assert "advance_pin:" not in unit and "trailing_pin:" not in unit
+        assert "[AFC_hub Mine_HUB]" in unit
+        assert "switch_pin: virtual\nuse_dist_hub: True" in unit
+
+    def test_emb_c_board_aliases_match_the_hardware(self, printer_tree: PrinterTree) -> None:
+        ctx = make_ctx(printer_tree)
+        generate(ctx, "EMU_2", 5, "EMB_C")
+        _unit, mcu = read_pair(ctx, "EMU_2")
+        pins = [
+            ("PA7", "PA6", "PC5", "PC4", "PA15", "PA8", "PA9", "PA10", "PA13", "PB0"),
+            ("PA3", "PA2", "PA5", "PA4", "PC8", "PD2", "PD3", "PD9", "PB15", "PB2"),
+            ("PC3", "PC2", "PA1", "PA0", "PC9", "PD4", "PD5", "PD8", "PB14", "PB10"),
+            ("PC15", "PC14", "PC1", "PC0", "PD0", "PD6", "PB3", "PC7", "PB13", "PB11"),
+            ("PC11", "PC10", "PC13", None, "PD1", "PB4", "PB5", "PC6", "PB1", "PB12"),
+        ]
+        for i, row in enumerate(pins, 1):
+            aliases = (f"MOT{i}_STEP", f"MOT{i}_DIR", f"MOT{i}_EN", f"MOT{i}_UART",
+                       f"RGB{i}", f"TRG{i}", f"LOAD{i}", f"BUTTON{i}", f"FAN{i}", f"TH{i}")
+            for alias, pin in zip(aliases, row):
+                if pin is not None:
+                    assert f"{alias}={pin}," in mcu
+        assert "[board_pins EMU_2]\nmcu: EMU_2\n" in mcu
+
+    @pytest.mark.parametrize("lanes", [-1, 0, 1, 6, 8])
+    def test_invalid_emb_c_lane_counts_leave_existing_files_untouched(
+        self, printer_tree: PrinterTree, lanes: int
+    ) -> None:
+        ctx = make_ctx(printer_tree)
+        generate(ctx, "Mine", 2, "EMB_C")
+        before = read_pair(ctx, "Mine")
+        with pytest.raises(ValueError, match="EMB-C supports 2 to 5 lanes"):
+            generate(ctx, "Mine", lanes, "EMB_C")
+        assert read_pair(ctx, "Mine") == before
+
     def test_the_mcu_file_lists_every_lane_comma_separated(self, printer_tree: PrinterTree) -> None:
         ctx = make_ctx(printer_tree)
         generate(ctx, "E_1", 3, "EBB")
@@ -103,6 +189,7 @@ class TestGenerateEmuConfig:
         assert "\n[AFC_led E_Indicator_1]\n" in ebb_unit
         assert "\n[AFC_led S_Indicator_Button_1]\n" in slb_unit
         assert "\n#[AFC_led S_Indicator_1]\n" in slb_unit
+        assert "[tca9548a" not in ebb_unit + ebb_mcu + slb_unit + slb_mcu
 
     def test_a_missing_or_unknown_board_means_ebb(self, printer_tree: PrinterTree) -> None:
         ctx = make_ctx(printer_tree)

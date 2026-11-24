@@ -1,0 +1,38 @@
+[AFC_stepper lane${i}]
+unit: ${unit_name}:${i}
+step_pin: ${unit_name}:MOT${i}_STEP
+dir_pin: !${unit_name}:MOT${i}_DIR
+enable_pin: !${unit_name}:MOT${i}_EN
+microsteps: 4
+rotation_distance: 22.7574
+gear_ratio: 1:1
+dist_hub: 2000
+led_index: ${unit_name}_Indicator_${i}:1-4
+led_spool_index: ${unit_name}_Indicator_${i}:5
+prep: ^${unit_name}:TRG${i}
+load: ^${unit_name}:LOAD${i}
+print_current: 0.4
+
+[tmc2209 AFC_stepper lane${i}]
+uart_pin: ${unit_name}:MOT${uart_index}_UART
+uart_address: ${uart_address}
+run_current: 0.8
+sense_resistor: 0.110
+
+[AFC_button lane${i}]
+pin: ^!${unit_name}:BUTTON${i}
+
+[controller_fan ${unit_name}_fan_lane${i}]
+pin: ${unit_name}:FAN${i}
+max_power: 1
+kick_start_time: 0.5
+stepper: AFC_stepper lane${i}
+
+[AFC_led ${unit_name}_Indicator_${i}]
+pin: ${unit_name}:RGB${i}
+chain_count: 5
+color_order: GRBW
+initial_RED: 0.0
+initial_GREEN: 0.0
+initial_BLUE: 0.0
+initial_WHITE: 0.0
