@@ -14,6 +14,7 @@ import configparser
 import json
 import threading
 from io import StringIO
+from urllib.error import HTTPError
 from unittest.mock import MagicMock, patch, call
 import pytest
 
@@ -964,13 +965,12 @@ class TestAFCMoonraker:
 METADATA_URL = "http://localhost:7125/server/files/metadata?filename=PA%20tower"
 
 
-def _http_error(code, reason):
-    from urllib.error import HTTPError
+def _http_error(code: int, reason: str) -> HTTPError:
     return HTTPError(METADATA_URL, code, reason, {}, None)
 
 
 class TestAFCMoonrakerGetResults:
-    def _make_moonraker(self):
+    def _make_moonraker(self) -> AFC_moonraker:
         return TestAFCMoonraker()._make_moonraker()
 
     def test_missing_ok_404_logs_debug_only_and_returns_none(self):
@@ -1034,7 +1034,7 @@ class TestAFCMoonrakerGetResults:
 
 
 class TestAFCMoonrakerGetFileMetadataSync:
-    def _make_moonraker(self):
+    def _make_moonraker(self) -> AFC_moonraker:
         return TestAFCMoonraker()._make_moonraker()
 
     def test_file_moonraker_does_not_know_is_not_an_error(self):
