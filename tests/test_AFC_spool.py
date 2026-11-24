@@ -2041,6 +2041,35 @@ class TestCmdSetSpoolID:
         assert call.args == (lane1, 5)
         assert callable(call.kwargs["on_done"])
 
+    def test_different_spool_clears_filament_id(self):
+        spool = _make_spool()
+        spool.afc.spoolman = MagicMock()
+        lane1 = _make_lane("lane1")
+        lane1.spool_id = 4
+        lane1.filament_id = "GFL99"
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.current = None
+        spool.set_spoolID = MagicMock()
+        spool.cmd_SET_SPOOL_ID(_make_gcmd(LANE="lane1", SPOOL_ID="5"))
+        assert lane1.filament_id == ""
+
+    def test_same_spool_or_first_spool_keeps_filament_id(self):
+        spool = _make_spool()
+        spool.afc.spoolman = MagicMock()
+        lane1 = _make_lane("lane1")
+        lane1.spool_id = 5
+        lane1.filament_id = "GFL99"
+        lane2 = _make_lane("lane2")
+        lane2.spool_id = None
+        lane2.filament_id = "GFL03"
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.afc.current = None
+        spool.set_spoolID = MagicMock()
+        spool.cmd_SET_SPOOL_ID(_make_gcmd(LANE="lane1", SPOOL_ID="5"))
+        spool.cmd_SET_SPOOL_ID(_make_gcmd(LANE="lane2", SPOOL_ID="6"))
+        assert lane1.filament_id == "GFL99"
+        assert lane2.filament_id == "GFL03"
+
     def test_no_spoolid_provided_set_spool_id(self):
         spool = _make_spool()
         spool.afc.spoolman = MagicMock()

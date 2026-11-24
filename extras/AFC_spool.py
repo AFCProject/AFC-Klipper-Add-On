@@ -623,6 +623,9 @@ class AFCSpool:
         specified by the 'LANE' parameter and updates its spool ID, material, color, and weight
         based on the information retrieved from the Spoolman API.
 
+        A different spool clears the lane's slicer filament id, which described the old
+        one: send `SET_FILAMENT_INFO FILAMENT_ID=` after this command, not before it.
+
         Usage
         -----
         `SET_SPOOL_ID LANE=<lane> SPOOL_ID=<spool_id>`
@@ -657,6 +660,13 @@ class AFCSpool:
                     and any(SpoolID == lane.spool_id for lane in self.afc.lanes.values())):
                     self.logger.error(f"SpoolId {SpoolID} already assigned to a lane, cannot assign to {lane}.")
                     return
+
+            # The slicer filament id names the filament on the old spool, and Spoolman has
+            # none to replace it with
+            if (SpoolID != ''
+                and cur_lane.spool_id not in (None, '')
+                and cur_lane.spool_id != SpoolID):
+                cur_lane.filament_id = ""
 
             # Updating the active spool in Spoolman needs to wait for set_spoolID's
             # async fetch to actually apply the new spool_id to the lane first
