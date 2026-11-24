@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-24-2026]
+### Added
+- `[AFC_hub]` option `dist_hub_margin` (default 0): `AFC_ACE_CALIBRATE_HUB` stores the measured
+  lane to hub sensor distance less this many mm as `dist_hub`, so a staged ACE lane parks short of
+  a hub sensor that sits past the point where the tubes merge. Documented in the ACE templates.
+
 ## [11-15-2026]
 ### Added
 - Added support for Creality CFS (Creality Filament System) units with `[AFC_CFS]`: up to four boxes on one
