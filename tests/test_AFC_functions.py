@@ -2704,6 +2704,10 @@ class TestLaneCalibration:
 
         assert result == (True, [lane.name], [])
         lane.unit_obj.calibrate_lane.assert_called_once()
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", "Lane calibration Done!"),
+        ]
 
     def test_lane_not_prepped_is_skipped_and_returns_checked_true(self):
         """prep_state alone (load_state True) must also trigger the skip,

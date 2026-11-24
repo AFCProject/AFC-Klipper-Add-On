@@ -4309,14 +4309,14 @@ class afcACE(afcUnit):
         distance = coarse_fed
         self.logger.info(f"ACE hub calibrate: trigger at {distance:.1f}mm")
 
-        retract_dist = max(distance - 50, 0)
-        if retract_dist > 0:
-            try:
-                self._wait_for_ace_ready()
-                self._ace.unwind_filament(slot, retract_dist, self.retract_speed)
-                self._wait_for_feed_complete(slot, retract_dist, self.retract_speed)
-            except Exception as e:
-                self.logger.error(f"ACE hub calibrate: retract failed: {e}")
+        # Retract to where the measurement started, so a repeat run or a bowden
+        # calibration of this unstaged lane measures from the same point.
+        try:
+            self._wait_for_ace_ready()
+            self._ace.unwind_filament(slot, distance, self.retract_speed)
+            self._wait_for_feed_complete(slot, distance, self.retract_speed)
+        except Exception as e:
+            self.logger.error(f"ACE hub calibrate: retract failed: {e}")
 
         old_dist = cur_lane.dist_hub
         new_dist = round(distance, 2)

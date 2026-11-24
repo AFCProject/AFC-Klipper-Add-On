@@ -3736,6 +3736,11 @@ class TestAfcACESystemTest:
         assert lane.prep_state is False
         assert lane.loaded_to_hub is False
         assert lane.current_led_state == "not_ready"
+        assert unit.logger.messages == [
+            ("debug", "ACE get_status failed during PREP (attempt 1/3): ACE command "
+                      "'get_status' (id=0) timed out after 2.0s"),
+            ("info", "lane0 tool cmd: T0  <span class=success--text>EMPTY READY FOR "
+                     "SPOOL</span>")]
 
     def test_unanswered_status_keeps_a_staged_lane_loaded(self):
         unit = make_ace2_unit(lanes=[LaneSpec("lane0", load=True)])
@@ -3749,9 +3754,17 @@ class TestAfcACESystemTest:
         assert lane.prep_state is True
         assert lane.loaded_to_hub is True
         assert lane.status == AFCLaneState.LOADED
-        assert unit.logger.messages[-2] == (
-            "info", "ACE Ace2_1: lane0 slot status unread during PREP, keeping its saved "
-                    "loaded state")
+        assert unit.logger.messages == [
+            ("debug", "ACE get_status failed during PREP (attempt 1/3): ACE2 command "
+                      "'get_status' (id=0) timed out after 2.0s"),
+            ("debug", "ACE get_status failed during PREP (attempt 2/3): ACE2 command "
+                      "'get_status' (id=1) timed out after 2.0s"),
+            ("debug", "ACE get_status failed during PREP (attempt 3/3): ACE2 command "
+                      "'get_status' (id=2) timed out after 2.0s"),
+            ("info", "ACE Ace2_1: lane0 slot status unread during PREP, keeping its saved "
+                     "loaded state"),
+            ("info", "lane0 tool cmd: T0  <span class=success--text>LOCKED</span>"
+                     "<span class=success--text> AND LOADED</span>")]
 
     def test_unanswered_status_leaves_an_unstaged_lane_empty(self):
         unit = ace_p1_unit("lane0")
@@ -4221,6 +4234,13 @@ class TestAfcACECalibrateBowdenInner:
         assert lane.loaded_to_hub is False
         assert (ok, dist) == (True, 600.0)
         assert hub.afc_bowden_length == 600.0
+        assert unit.logger.messages == [
+            ("raw", "Calibrating afc_bowden_length for lane0 (max 6000mm in 100.0mm steps)"),
+            ("info", "ACE calibration: sensor triggered at 700.0mm"),
+            ("info", "ACE calibrate: trigger at 700.0mm"),
+            ("info", "ACE calibrate: retracting 705mm"),
+            ("info", "ACE calibrate: lane not staged, subtracting dist_hub=100mm from "
+                     "measured 700.0mm")]
 
     def test_real_hub_already_triggered_bails(self):
         unit, lane, hub, wire = self._real_hub_unit(tool_at=None)
@@ -4382,7 +4402,7 @@ class TestAfcACECalibrateLane:
 
         assert result == (True, "dist_hub calibration: 50.0mm (was 60mm)", 50.0)
         assert lane.dist_hub == 50.0
-        assert seen == [True]
+        assert seen == [True, True]
         assert unit._operation_active is False
         assert unit._prev_states_stale is True
         assert unit.afc.function.ConfigRewrite.calls == [
@@ -8460,9 +8480,11 @@ class TestAfcACECalibrateHubInner:
 
         assert result == (True, "dist_hub calibration: 50.0mm (was 10.0mm)", 50.0)
         assert lane.dist_hub == 50.0
-        # A 50mm trigger leaves nothing to retract.
-        assert wire.moves() == [("feed_filament", {"index": 0, "length": 50.0,
-                                                   "speed": 100.0})]
+        # The tip is pulled back to where the measurement started.
+        assert wire.moves() == [
+            ("feed_filament", {"index": 0, "length": 50.0, "speed": 100.0}),
+            ("unwind_filament", {"index": 0, "length": 50.0, "speed": 100.0,
+                                 "mode": "normal"})]
         assert unit.printer.afc.function.ConfigRewrite.calls == [
             (("AFC_lane lane1", "dist_hub", 50.0, "\n dist_hub: New: 50.0 Old: 10.0"), {})]
         assert unit.printer.logger.messages == [
@@ -8489,11 +8511,11 @@ class TestAfcACECalibrateHubInner:
         assert lane.dist_hub == 120.0
         assert unit.printer.afc.function.ConfigRewrite.calls == [
             (("AFC_lane lane1", "dist_hub", 120.0, "\n dist_hub: New: 120.0 Old: 10.0"), {})]
-        # Back off 50mm short of the trigger point.
+        # The whole measured distance is pulled back.
         assert wire.moves() == [
             ("feed_filament", {"index": 0, "length": 60.0, "speed": 100.0}),
             ("feed_filament", {"index": 0, "length": 60.0, "speed": 100.0}),
-            ("unwind_filament", {"index": 0, "length": 70.0, "speed": 100.0,
+            ("unwind_filament", {"index": 0, "length": 120.0, "speed": 100.0,
                                  "mode": "normal"})]
         assert unit.printer.logger.messages == [
             ("raw", "Calibrating dist_hub for lane1 (max 4000mm in 60.0mm steps)"),
@@ -8501,6 +8523,33 @@ class TestAfcACECalibrateHubInner:
                      "at the filament tip's current position in the unit"),
             ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
             ("info", "ACE hub calibrate: trigger at 120.0mm")]
+
+    def test_repeat_run_measures_from_the_same_start(self):
+        unit = self._unit(values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        tip = [0.0]
+
+        def track_tip(method: str, params: Dict[str, Any]) -> None:
+            """
+            Move the tip with each feed and unwind; the hub switch sits 120mm
+            from where the tip starts.
+
+            :param method: the move
+            :param params: its params
+            """
+            sign = 1 if method == "feed_filament" else -1
+            tip[0] += sign * params["length"]
+            lane.hub_obj.state = tip[0] >= 120.0
+        AceP2Wire(unit, on_move=track_tip)
+
+        first = unit._calibrate_hub_inner(lane)
+        second = unit._calibrate_hub_inner(lane)
+
+        assert first == (True, "dist_hub calibration: 120.0mm (was 10.0mm)", 120.0)
+        assert second == (True, "dist_hub calibration: 120.0mm (was 120.0mm)", 120.0)
+        assert tip == [0.0]
+        assert lane.dist_hub == 120.0
+        assert lane.hub_obj.state is False
 
     def test_no_trigger_fails(self):
         unit = self._unit(values={"calibration_step": 4000.0})

@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `afc_bowden_length` by hand to make loads work.
 - ACE lane calibration only offers lanes that are prepped and not staged, and
   `AFC_ACE_CALIBRATE_HUB` refuses a staged lane.
+- `AFC_ACE_CALIBRATE_HUB` retracts the filament all the way back to where it started, not
+  50 mm short of it, so running it again, or running `AFC_ACE_CALIBRATE` on the same lane
+  after it, measures from the same point.
 - A restart where the ACE does not answer `get_status` in time no longer re-stages a lane
   that was saved as staged or loaded.
 
