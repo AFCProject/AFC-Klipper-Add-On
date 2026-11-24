@@ -201,6 +201,7 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane.afc = MagicMock()
     lane.unit = "Turtle_1"
     lane.unit_obj = MagicMock()
+    lane.unit_obj.lane_load_state_follows_staging.return_value = False
     lane.hub_obj = None
     lane.buffer_obj = None
     lane.extruder_obj = MagicMock()
@@ -331,6 +332,72 @@ def _make_real_afc_lane(name="lane1", values=None):
     with patch("extras.AFC_lane.add_filament_switch",
                return_value=(MagicMock(), MagicMock())):
         return AFCLane(config)
+
+
+class TestAFCLaneLoadState:
+    @staticmethod
+    def _lane(load_pin=None, follows=None, hub_pin=None):
+        values = {"load": load_pin} if load_pin else {}
+        lane = _make_real_afc_lane(values=values)
+        if follows is not None:
+            lane.unit_obj = MagicMock()
+            lane.unit_obj.lane_load_state_follows_staging.return_value = follows
+        lane.hub_obj = (None if hub_pin is None
+                        else MagicMock(is_virtual_pin=MagicMock(return_value=hub_pin == "virtual")))
+        return lane
+
+    def test_no_unit_yet_reads_the_load_sensor(self):
+        lane = self._lane(load_pin="PA1", hub_pin="PB1")
+        assert lane.unit_obj is None
+        lane._load_state = True
+        lane.loaded_to_hub = False
+        assert lane.load_state is True
+
+    def test_unit_that_does_not_follow_staging_reads_the_load_sensor(self):
+        lane = self._lane(load_pin="PA1", follows=False, hub_pin="PB1")
+        lane._load_state = False
+        lane.loaded_to_hub = True
+        assert lane.load_state is False
+        lane.unit_obj.lane_load_state_follows_staging.assert_called_with(lane)
+
+    def test_real_hub_reads_the_load_sensor(self):
+        lane = self._lane(load_pin="PA1", hub_pin="PB1")
+        lane._load_state = True
+        lane.loaded_to_hub = False
+        assert lane.load_state is True
+        lane._load_state = False
+        lane.loaded_to_hub = True
+        assert lane.load_state is False
+
+    def test_no_hub_reads_the_load_sensor(self):
+        lane = self._lane(load_pin="PA1")
+        lane._load_state = False
+        lane.loaded_to_hub = True
+        assert lane.load_state is False
+
+    def test_virtual_hub_follows_loaded_to_hub(self):
+        lane = self._lane(load_pin="PA1", hub_pin="virtual")
+        lane._load_state = False
+        lane.loaded_to_hub = True
+        assert lane.load_state is True
+        lane._load_state = True
+        lane.loaded_to_hub = False
+        assert lane.load_state is False
+
+    def test_follows_staging_on_a_real_hub(self):
+        lane = self._lane(follows=True, hub_pin="PB1")
+        lane._load_state = False
+        lane.loaded_to_hub = True
+        assert lane.load_state is True
+        lane._load_state = True
+        lane.loaded_to_hub = False
+        assert lane.load_state is False
+
+    def test_follows_staging_with_no_hub(self):
+        lane = self._lane(follows=True)
+        lane._load_state = False
+        lane.loaded_to_hub = True
+        assert lane.load_state is True
 
 
 class TestSelectorCalDis:
@@ -1005,8 +1072,9 @@ class TestGetTd1DataUnitHook:
 
     def test_hook_returns_none_falls_through_to_default_logic(self):
         lane = self._make_no_device()
-        lane.unit_obj = MagicMock(spec=["capture_td1_data"])
+        lane.unit_obj = MagicMock(spec=["capture_td1_data", "lane_load_state_follows_staging"])
         lane.unit_obj.capture_td1_data.return_value = None
+        lane.unit_obj.lane_load_state_follows_staging.return_value = False
 
         status, msg = lane.get_td1_data()
 
@@ -1018,7 +1086,8 @@ class TestGetTd1DataUnitHook:
 
     def test_no_hook_falls_through_to_default_logic(self):
         lane = self._make_no_device()
-        lane.unit_obj = MagicMock(spec=[])
+        lane.unit_obj = MagicMock(spec=["lane_load_state_follows_staging"])
+        lane.unit_obj.lane_load_state_follows_staging.return_value = False
 
         status, msg = lane.get_td1_data()
 

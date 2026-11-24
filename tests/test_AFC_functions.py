@@ -19,6 +19,7 @@ import pytest
 
 from extras.AFC_functions import afcFunction, afcDeltaTime, round_floats, get_gcode_absolute_extrude, set_gcode_absolute_extrude
 from extras.AFC_respond import AFCprompt
+from extras.AFC_unit import afcUnit
 
 from tests.test_AFC import _make_afc
 from tests.test_AFC_lane import _make_afc_lane
@@ -2629,6 +2630,9 @@ class TestLaneCalibration:
         lane.extruder_obj.is_standalone = MagicMock(return_value=standalone)
         lane._load_state = load_state
         lane.prep_state = prep_state
+        # The base unit's readiness rule, so load_state drives the skip as on a Box Turtle.
+        lane.unit_obj.lane_ready_for_lane_calibration = (
+            lambda checked: afcUnit.lane_ready_for_lane_calibration(lane.unit_obj, checked))
         afc.lanes[lane.name] = lane
         func.afc = afc
         return func, lane
@@ -2673,6 +2677,37 @@ class TestLaneCalibration:
         ]
         func._afc_cali_fail.assert_not_called()
         lane.is_direct_hub.assert_not_called()
+
+    def test_unit_hook_not_ready_skips_a_loaded_lane(self):
+        """The unit's readiness hook, not load_state, decides the skip."""
+        func, lane = self._make_func_and_lane(load_state=True, prep_state=True)
+        lane.unit_obj.lane_ready_for_lane_calibration = MagicMock(return_value=False)
+
+        result = func._lane_calibration(lane.name, None, 5, 25, MagicMock())
+
+        assert result == (True, [], [])
+        lane.unit_obj.lane_ready_for_lane_calibration.assert_called_once_with(lane)
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", f"{lane.name} not loaded skipping to next loaded lane"),
+            ("info", "Lane calibration Done!"),
+        ]
+        lane.is_direct_hub.assert_not_called()
+
+    def test_unit_hook_ready_calibrates_a_lane_without_load_state(self):
+        func, lane = self._make_func_and_lane(load_state=False, prep_state=True)
+        lane.unit_obj.lane_ready_for_lane_calibration = MagicMock(return_value=True)
+        lane.is_direct_hub.return_value = False
+        lane.unit_obj.calibrate_lane = MagicMock(return_value=(True, "ok", 0))
+
+        result = func._lane_calibration(lane.name, None, 5, 25, MagicMock())
+
+        assert result == (True, [lane.name], [])
+        lane.unit_obj.calibrate_lane.assert_called_once()
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", "Lane calibration Done!"),
+        ]
 
     def test_lane_not_prepped_is_skipped_and_returns_checked_true(self):
         """prep_state alone (load_state True) must also trigger the skip,
@@ -3694,6 +3729,7 @@ class TestHandleActivateExtruder:
         lane._load_state = load_state
         lane.tool_loaded = tool_loaded
         lane.unit_obj = MagicMock()
+        lane.unit_obj.lane_load_state_follows_staging.return_value = False
         return lane
 
     def test_handle_activate_extruder_delegates_to_underscore_variant(self):

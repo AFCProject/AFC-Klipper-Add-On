@@ -351,7 +351,7 @@ class afcUnit:
 
         # Create buttons for each lane and group every 4 lanes together
         for lane in self.lanes.values():
-            if (lane.load_state
+            if (self.lane_ready_for_lane_calibration(lane)
                 and not lane.tool_loaded):
                 button_label = "{}".format(lane)
                 # Do a bowden length calibration for direct hubs, dist_hub length gets set properly this way
@@ -864,10 +864,32 @@ class afcUnit:
         """
         lanes = None
         if self._eject_to_calibrate:
-            lanes = [ lane.name for lane in self.lanes.values() if (lane.load_state
-                                                                    and lane.calibrated_lane
-                                                                    and not lane.tool_loaded)]
+            lanes = [ lane.name for lane in self.lanes.values()
+                      if (self.lane_ready_for_lane_calibration(lane)
+                          and lane.calibrated_lane
+                          and not lane.tool_loaded)]
         return lanes
+
+    def lane_load_state_follows_staging(self, lane: AFCLane) -> bool:
+        """
+        Whether a lane's `load_state` is its staged (`loaded_to_hub`) flag on every hub type,
+        instead of its load sensor on a real hub. Units whose lanes have no load sensor
+        override this.
+
+        :param lane: Lane to check
+        :return bool: True when `load_state` follows `loaded_to_hub`
+        """
+        return False
+
+    def lane_ready_for_lane_calibration(self, lane: AFCLane) -> bool:
+        """
+        Whether a lane is in position for a dist_hub (lane) calibration. Units whose lanes
+        must start somewhere other than the load sensor override this.
+
+        :param lane: Lane to check
+        :return bool: True when the lane's load sensor sees filament
+        """
+        return lane.load_state
 
     def get_td1_data(self, cur_lane: AFCLane, compare_time: datetime,
                      ignore_time: bool=False) -> bool:

@@ -75,6 +75,7 @@ def _make_lane(name="lane1", hub="hub1", extruder="ext1", buffer_name="buf1"):
     lane.led_spool_illum = "1,1,1,0"
     lane.led_use_filament_color = False
     lane._load_state = True
+    lane.unit_obj.lane_load_state_follows_staging.return_value = False
     lane.short_moves_speed = 50
     lane.short_moves_accel = 50
     lane.led_spool_index = None
@@ -1435,3 +1436,116 @@ class TestAFCUnitLedColorValidation:
     def test_valid_color_stored_on_attribute(self, option):
         unit = _make_configured_unit({option: "0.2,0.4,0.6,0.8"})
         assert getattr(unit, self.OPTIONS[option]) == "0.2,0.4,0.6,0.8"
+
+
+# ── lane calibration readiness ───────────────────────────────────────────────
+
+def _cal_lane(name: str, load: bool, tool_loaded: bool = False, calibrated: bool = False):
+    """A lane on a real (pinned) hub whose load sensor reads `load`."""
+    lane = _make_lane(name=name)
+    lane.hub_obj = MagicMock(is_virtual_pin=MagicMock(return_value=False))
+    lane.hub_obj.use_dist_hub = False
+    lane.hub = "hub1"
+    lane._load_state = load
+    lane.loaded_to_hub = not load
+    lane.tool_loaded = tool_loaded
+    lane.calibrated_lane = calibrated
+    return lane
+
+
+class TestLaneLoadStateFollowsStaging:
+    def test_base_unit_reads_the_load_sensor(self):
+        unit = _make_unit()
+
+        assert unit.lane_load_state_follows_staging(_cal_lane("lane1", load=True)) is False
+
+
+class TestLaneReadyForLaneCalibration:
+    def test_follows_the_load_sensor(self):
+        unit = _make_unit()
+
+        assert unit.lane_ready_for_lane_calibration(_cal_lane("lane1", load=True)) is True
+        assert unit.lane_ready_for_lane_calibration(_cal_lane("lane2", load=False)) is False
+
+
+class TestGetCalibratedLanes:
+    def test_disabled_returns_none(self):
+        unit = _make_unit()
+        unit._eject_to_calibrate = False
+        unit.lanes = {"lane1": _cal_lane("lane1", load=True, calibrated=True)}
+
+        assert unit.get_calibrated_lanes() is None
+
+    def test_lists_ready_calibrated_untooled_lanes(self):
+        unit = _make_unit()
+        unit._eject_to_calibrate = True
+        unit.lanes = {
+            "lane1": _cal_lane("lane1", load=True, calibrated=True),
+            "lane2": _cal_lane("lane2", load=False, calibrated=True),
+            "lane3": _cal_lane("lane3", load=True, calibrated=False),
+            "lane4": _cal_lane("lane4", load=True, calibrated=True, tool_loaded=True),
+        }
+
+        assert unit.get_calibrated_lanes() == ["lane1"]
+
+    def test_unit_hook_decides_readiness(self):
+        unit = _make_unit()
+        unit._eject_to_calibrate = True
+        unit.lanes = {"lane1": _cal_lane("lane1", load=False, calibrated=True)}
+        unit.lane_ready_for_lane_calibration = MagicMock(return_value=True)
+
+        assert unit.get_calibrated_lanes() == ["lane1"]
+        unit.lane_ready_for_lane_calibration.assert_called_once_with(unit.lanes["lane1"])
+
+
+class TestCmdUnitLaneCalibration:
+    @staticmethod
+    def _run(unit, monkeypatch):
+        """
+        Run UNIT_LANE_CALIBRATION and return the prompt's create_custom_p call.
+        """
+        prompt = MagicMock()
+        monkeypatch.setattr("extras.AFC_unit.AFCprompt", MagicMock(return_value=prompt))
+        unit._eject_to_calibrate = False
+        unit.cmd_UNIT_LANE_CALIBRATION(MagicMock())
+        prompt.create_custom_p.assert_called_once()
+        return prompt.create_custom_p.call_args
+
+    def test_lists_only_ready_untooled_lanes(self, monkeypatch):
+        unit = _make_unit()
+        unit.lanes = {
+            "lane1": _cal_lane("lane1", load=True),
+            "lane2": _cal_lane("lane2", load=False),
+            "lane3": _cal_lane("lane3", load=True, tool_loaded=True),
+        }
+        for lane in unit.lanes.values():
+            lane.is_direct_hub = MagicMock(return_value=False)
+
+        args = self._run(unit, monkeypatch).args
+
+        title, text, all_lanes, cancel, groups, back = args
+        assert title == "Turtle_1 Lane Calibration"
+        assert text == ("Select a loaded lane from Turtle_1 to calibrate length from extruder "
+                        "to hub. Config option: dist_hub")
+        assert all_lanes is None
+        assert groups == [[("lane1", "CALIBRATE_AFC LANE=lane1", "primary")]]
+        assert back == [("Back", "UNIT_CALIBRATION UNIT=Turtle_1", "info")]
+
+    def test_no_ready_lane_says_so(self, monkeypatch):
+        unit = _make_unit()
+        unit.lanes = {"lane1": _cal_lane("lane1", load=False)}
+
+        title, text, all_lanes, cancel, groups, back = self._run(unit, monkeypatch).args
+
+        assert text == "No lanes are loaded, please load before calibration"
+        assert groups == []
+
+    def test_unit_hook_lists_a_lane_without_load_state(self, monkeypatch):
+        unit = _make_unit()
+        unit.lanes = {"lane1": _cal_lane("lane1", load=False)}
+        unit.lanes["lane1"].is_direct_hub = MagicMock(return_value=False)
+        unit.lane_ready_for_lane_calibration = MagicMock(return_value=True)
+
+        title, text, all_lanes, cancel, groups, back = self._run(unit, monkeypatch).args
+
+        assert groups == [[("lane1", "CALIBRATE_AFC LANE=lane1", "primary")]]

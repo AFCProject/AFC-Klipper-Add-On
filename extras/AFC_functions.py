@@ -1069,7 +1069,8 @@ class afcFunction:
             if lane.extruder_obj.is_standalone():
                 self.logger.info(f"{lane.name} is a standalone lane, skipping calibration")
                 continue
-            if not lane.load_state or not lane.prep_state:
+            if (not lane.unit_obj.lane_ready_for_lane_calibration(lane)
+                or not lane.prep_state):
                 self.logger.info(f"{lane.name} not loaded skipping to next loaded lane")
                 continue
             # Calibrate the specific lane, call calibrate_bowden if lane is direct hub

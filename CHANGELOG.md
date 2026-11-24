@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-23-2026]
+### Fixed
+- Anycubic ACE lanes can be loaded with a physical hub sensor (`switch_pin` on the
+  `[AFC_hub]`). ACE lanes have no load sensor, so a staged lane now counts as loaded on any
+  hub type, not only a virtual one.
+- `AFC_ACE_CALIBRATE` stores `afc_bowden_length` as the distance from where a lane parks to
+  the toolhead sensor. It no longer adds `dist_hub` to a staged lane's measurement, and it
+  subtracts `dist_hub` from an unstaged lane's. Re-run it if you shortened
+  `afc_bowden_length` by hand to make loads work.
+- ACE lane calibration only offers lanes that are prepped and not staged, and
+  `AFC_ACE_CALIBRATE_HUB` refuses a staged lane.
+- `AFC_ACE_CALIBRATE_HUB` retracts the filament all the way back to where it started, not
+  50 mm short of it, so running it again, or running `AFC_ACE_CALIBRATE` on the same lane
+  after it, measures from the same point.
+- A restart where the ACE does not answer `get_status` in time no longer re-stages a lane
+  that was saved as staged or loaded.
+
 ## [11-15-2026]
 ### Added
 - Added support for Creality CFS (Creality Filament System) units with `[AFC_CFS]`: up to four boxes on one
