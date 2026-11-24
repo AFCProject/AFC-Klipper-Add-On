@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-24-2026]
+### Fixed
+- Fixed ACE loads leaving the filament tip short of the extruder gears when the toolhead sensor
+  sits above them: the unit now keeps feeding `load_gear_push` mm (default 20) past the sensor,
+  at `tool_load_speed` alongside the extruder's `tool_stn` advance, and starts feed assist
+  after that push.
+
 ## [11-15-2026]
 ### Added
 - Added support for Creality CFS (Creality Filament System) units with `[AFC_CFS]`: up to four boxes on one

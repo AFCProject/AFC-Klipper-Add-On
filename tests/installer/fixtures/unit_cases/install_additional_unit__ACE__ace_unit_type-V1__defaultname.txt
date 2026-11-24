@@ -52,6 +52,12 @@ extruder: extruder          # the [AFC_extruder] fed; a lane can override
 # ---- Feeding (defaults shown) ----
 #feed_speed: 100            # mm/s, capped at 100. Lower both if a lane
 #retract_speed: 100         # slips or stalls.
+#load_gear_push: 20         # mm the unit keeps feeding past the toolhead
+                            # sensor while the extruder runs tool_stn, at
+                            # tool_load_speed, so a sensor above the
+                            # extruder gears still gets the tip into them.
+                            # Set it to the sensor-to-gears gap plus a
+                            # few mm; 0 leaves tool_stn to the extruder.
 
 # ---- Stuck spool detection ----
 # Pauses the print when feed assist runs without a break for stuck_time
