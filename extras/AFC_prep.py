@@ -228,6 +228,9 @@ class afcPrep:
                     if 'loaded_to_hub' in units[cur_lane.unit][cur_lane.name]: cur_lane.loaded_to_hub = units[cur_lane.unit][cur_lane.name]['loaded_to_hub']
                     if 'tool_loaded' in units[cur_lane.unit][cur_lane.name]: cur_lane.tool_loaded = units[cur_lane.unit][cur_lane.name]['tool_loaded']
                     if 'td1_data' in units[cur_lane.unit][cur_lane.name]: cur_lane.td1_data = units[cur_lane.unit][cur_lane.name]['td1_data']
+                    # Spoolman has no slicer filament id, so it is restored even with a spool_id
+                    if 'filament_id' in units[cur_lane.unit][cur_lane.name]:
+                        cur_lane.filament_id = units[cur_lane.unit][cur_lane.name]['filament_id']
                     # Commenting out until there is better handling of this variable as it could cause someone to not be able to load their lane if klipper crashes
                     # if 'status' in units[cur_lane.unit][cur_lane.name]: cur_lane.status = units[cur_lane.unit][cur_lane.name]['status']
 

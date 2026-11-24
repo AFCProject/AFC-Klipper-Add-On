@@ -5101,6 +5101,12 @@ class TestClearLaneInfo:
         assert lane.spool_vendor == ""
         assert lane.filament_name == ""
 
+    def test_clears_filament_id(self):
+        ams, afc, printer, reactor = _make_ams()
+        lane = _make_lane("lane1", filament_id="GFL99", spool_id=None)
+        ams._clear_lane_info(lane)
+        assert lane.filament_id == ""
+
     def test_removal_without_spool_id_still_clears_and_persists_filament_metadata(self):
         # Follow-up from #893: a lane can carry stale spool_vendor/filament_name
         # from a prior insert even once spool_id has already been cleared (e.g.

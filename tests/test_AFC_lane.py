@@ -233,6 +233,7 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane.need_purge = False
     lane._afc_prep_done = False
     lane.custom_load_cmd = None
+    lane.filament_id = ""
     return lane
 
 
@@ -1886,6 +1887,7 @@ def _make_lane_for_get_status(map_value):
     lane.color = ""
     lane.filament_name = ""
     lane.spool_vendor = ""
+    lane.filament_id = ""
     lane.multi_color = []
     lane.weight = 0
     lane.extruder_temp = None
@@ -2264,6 +2266,43 @@ class TestGetStatusSpoolVendor:
         lane.filament_name = "Overture Gray ASA"
         response = lane.get_status()
         assert response["filament_name"] == "Overture Gray ASA"
+
+
+class TestGetStatusFilamentId:
+    def test_filament_id_reported_live(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.filament_id = "GFL99"
+        response = lane.get_status()
+        assert response["filament_id"] == "GFL99"
+
+    def test_filament_id_persisted_when_saving_to_file(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.filament_id = "GFL99"
+        lane.td1_data = {"td": "", "color": "", "scan_time": ""}
+        response = lane.get_status(save_to_file=True)
+        assert response["filament_id"] == "GFL99"
+
+
+class TestSendLaneDataFilamentId:
+    def test_filament_id_is_published(self):
+        lane = _make_lane_for_moonraker()
+        lane.filament_id = "GFL99"
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["filament_id"] == "GFL99"
+
+    def test_filament_id_empty_when_unset(self):
+        """An unset id is published as an empty string rather than omitted."""
+        lane = _make_lane_for_moonraker()
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["filament_id"] == ""
+
+
+class TestClearLaneDataFilamentId:
+    def test_filament_id_is_cleared(self):
+        lane = _make_lane_for_moonraker()
+        lane.filament_id = "GFL99"
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["filament_id"] == ""
 
 
 class TestSendLaneDataExtruderIndex:

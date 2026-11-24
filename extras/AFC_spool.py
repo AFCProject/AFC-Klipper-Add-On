@@ -556,10 +556,11 @@ class AFCSpool:
         self.afc.save_vars()
         self.set_snapmaker_filament_params(cur_lane)
 
-    cmd_SET_FILAMENT_INFO_help = "Sets filament vendor and name for a lane"
+    cmd_SET_FILAMENT_INFO_help = "Sets filament vendor, name and slicer filament id for a lane"
     def cmd_SET_FILAMENT_INFO(self, gcmd: GCodeCommand) -> None:
         """
-        Set the filament vendor and/or filament name for a lane without needing Spoolman.
+        Set the filament vendor, filament name and/or slicer filament id for a lane without
+        needing Spoolman.
 
         Values are published in lane_data and saved across restarts. They are cleared when
         the spool is replaced. A value that is not supplied is left unchanged, and an empty
@@ -569,15 +570,17 @@ class AFCSpool:
         ----
         VENDOR - Filament vendor/brand name. eg. Polymaker, Elegoo
         NAME - Filament name. eg. PolyTerra PLA
+        FILAMENT_ID - Slicer filament preset id, which OrcaSlicer matches to pick the exact
+                      filament preset for this lane. eg. GFL99
 
         Usage
         -----
-        `SET_FILAMENT_INFO LANE=<lane> VENDOR=<vendor> NAME=<filament name>`
+        `SET_FILAMENT_INFO LANE=<lane> VENDOR=<vendor> NAME=<filament name> FILAMENT_ID=<id>`
 
         Example
         -----
         ```
-        SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyTerra PLA"
+        SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyTerra PLA" FILAMENT_ID=GFL99
         ```
         """
         lane = gcmd.get('LANE')
@@ -587,6 +590,7 @@ class AFCSpool:
         cur_lane = self.afc.lanes[lane]
         cur_lane.spool_vendor = gcmd.get('VENDOR', cur_lane.spool_vendor)
         cur_lane.filament_name = gcmd.get('NAME', cur_lane.filament_name)
+        cur_lane.filament_id = gcmd.get('FILAMENT_ID', cur_lane.filament_id)
 
         cur_lane.send_lane_data()
         self.afc.save_vars()
@@ -729,6 +733,7 @@ class AFCSpool:
         cur_lane.clear_lane_data()
         cur_lane.spool_vendor = ""
         cur_lane.filament_name = ""
+        cur_lane.filament_id = ""
 
     def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]],
                     save_vars: bool = True, on_done: Optional[Callable[[], None]] = None, *,

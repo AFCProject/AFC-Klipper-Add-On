@@ -930,6 +930,37 @@ class TestSetFilamentInfo:
         assert lane.spool_vendor == ""
         assert lane.filament_name == ""
 
+    def test_sets_filament_id(self):
+        spool, lane = self._setup()
+        lane.filament_id = ""
+        gcmd = _make_gcmd(LANE="lane1", FILAMENT_ID="GFL99")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.filament_id == "GFL99"
+        assert spool.logger.messages == []
+
+    def test_vendor_and_name_keep_existing_filament_id(self):
+        spool, lane = self._setup()
+        lane.filament_id = "GFL99"
+        gcmd = _make_gcmd(LANE="lane1", VENDOR="Elegoo", NAME="PLA")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.filament_id == "GFL99"
+
+    def test_filament_id_only_keeps_existing_vendor_and_name(self):
+        spool, lane = self._setup(vendor="Keep Me", name="Keep Me Too")
+        lane.filament_id = "Old"
+        gcmd = _make_gcmd(LANE="lane1", FILAMENT_ID="GFL99")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.spool_vendor == "Keep Me"
+        assert lane.filament_name == "Keep Me Too"
+        assert lane.filament_id == "GFL99"
+
+    def test_empty_filament_id_clears_it(self):
+        spool, lane = self._setup()
+        lane.filament_id = "GFL99"
+        gcmd = _make_gcmd(LANE="lane1", FILAMENT_ID="")
+        spool.cmd_SET_FILAMENT_INFO(gcmd)
+        assert lane.filament_id == ""
+
     def test_no_lane_param_raises_gcmd_error(self):
         spool, lane = self._setup(vendor="Old", name="Old Name")
         gcmd = _make_gcmd(VENDOR="Elegoo")
@@ -1510,6 +1541,14 @@ class TestClearValues:
         assert lane.extruder_temp is None
         assert lane.bed_temp is None
         lane.clear_lane_data.assert_called_once()
+
+    def test_clears_filament_id(self):
+        spool = _make_spool()
+        lane = _make_lane()
+        lane.filament_id = "GFL99"
+        lane.clear_lane_data = MagicMock()
+        spool.clear_values(lane)
+        assert lane.filament_id == ""
 
 
 # ── _set_values ───────────────────────────────────────────────────────────────
