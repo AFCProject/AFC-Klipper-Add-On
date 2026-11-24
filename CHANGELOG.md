@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sits above them: the unit now keeps feeding `load_gear_push` mm (default 20) past the sensor,
   at `tool_load_speed` alongside the extruder's `tool_stn` advance, and starts feed assist
   after that push.
+- Fixed ACE feed assist staying off after a `LANE_MOVE` on the loaded lane: the unit ends assist on
+  a slot it moves, so AFC now restarts it once the move is done. The assist watchdog also restarts
+  it when an ACE 2 reports the slot idle while AFC still has assist on for it.
 
 ## [11-22-2026]
 ### Updated
