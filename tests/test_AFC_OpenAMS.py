@@ -5103,7 +5103,7 @@ class TestClearLaneInfo:
 
     def test_clears_filament_id(self):
         ams, afc, printer, reactor = _make_ams()
-        lane = _make_lane("lane1", filament_id="GFL99", spool_id=None)
+        lane = _make_lane("lane1", filament_id="OGFL99", spool_id=None)
         ams._clear_lane_info(lane)
         assert lane.filament_id == ""
 

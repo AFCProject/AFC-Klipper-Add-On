@@ -572,7 +572,7 @@ class AFCSpool:
         VENDOR - Filament vendor/brand name. eg. Polymaker, Elegoo
         NAME - Filament name. eg. PolyTerra PLA
         FILAMENT_ID - Slicer filament preset id, which OrcaSlicer matches to pick the exact
-                      filament preset for this lane. eg. GFL99
+                      filament preset for this lane. eg. OGFL99 (Generic PLA)
 
         Usage
         -----
@@ -581,7 +581,7 @@ class AFCSpool:
         Example
         -----
         ```
-        SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyTerra PLA" FILAMENT_ID=GFL99
+        SET_FILAMENT_INFO LANE=lane1 VENDOR="Generic" NAME="Generic PLA" FILAMENT_ID=OGFL99
         ```
         """
         lane = gcmd.get('LANE')
@@ -853,10 +853,9 @@ class AFCSpool:
                 if vendor_result:
                     cur_lane.spool_vendor   = self._get_filament_values(vendor_result, "name", None)
 
-                # The slicer filament id, when Spoolman stores one: the spool's own
-                # extra field first, then its filament's
-                filament_id = (self._get_spoolman_extra(result, "orca_filament_id")
-                               or self._get_spoolman_extra(result["filament"], "orca_filament_id"))
+                # The slicer filament id, when Spoolman stores one on the filament:
+                # it names a product, so it lives on the filament, not the spool
+                filament_id = self._get_spoolman_extra(result["filament"], "orca_filament_id")
                 if filament_id:
                     cur_lane.filament_id = filament_id
 

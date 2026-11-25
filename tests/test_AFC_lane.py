@@ -2271,24 +2271,24 @@ class TestGetStatusSpoolVendor:
 class TestGetStatusFilamentId:
     def test_filament_id_reported_live(self):
         lane = _make_lane_for_get_status(["T0"])
-        lane.filament_id = "GFL99"
+        lane.filament_id = "OGFL99"
         response = lane.get_status()
-        assert response["filament_id"] == "GFL99"
+        assert response["filament_id"] == "OGFL99"
 
     def test_filament_id_persisted_when_saving_to_file(self):
         lane = _make_lane_for_get_status(["T0"])
-        lane.filament_id = "GFL99"
+        lane.filament_id = "OGFL99"
         lane.td1_data = {"td": "", "color": "", "scan_time": ""}
         response = lane.get_status(save_to_file=True)
-        assert response["filament_id"] == "GFL99"
+        assert response["filament_id"] == "OGFL99"
 
 
 class TestSendLaneDataFilamentId:
     def test_filament_id_is_published(self):
         lane = _make_lane_for_moonraker()
-        lane.filament_id = "GFL99"
+        lane.filament_id = "OGFL99"
         payload = _get_sent_payload(lane)
-        assert payload["value"]["filament_id"] == "GFL99"
+        assert payload["value"]["filament_id"] == "OGFL99"
 
     def test_filament_id_empty_when_unset(self):
         """An unset id is published as an empty string rather than omitted."""
@@ -2300,7 +2300,7 @@ class TestSendLaneDataFilamentId:
 class TestClearLaneDataFilamentId:
     def test_filament_id_is_cleared(self):
         lane = _make_lane_for_moonraker()
-        lane.filament_id = "GFL99"
+        lane.filament_id = "OGFL99"
         payload = _get_cleared_payload(lane)
         assert payload["value"]["filament_id"] == ""
 
