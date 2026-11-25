@@ -768,6 +768,7 @@ class TestSetColor:
         spool.afc.lanes = {"lane1": lane}
         spool.set_snapmaker_filament_params = MagicMock()
         spool.cmd_SET_COLOR(_make_gcmd(LANE="lane1", **params))
+        self.spool = spool
         return lane
 
     def test_colors_set_multi_color(self):
@@ -785,6 +786,7 @@ class TestSetColor:
     def test_unknown_color_mode_falls_back_to_gradient(self):
         lane = self._run(COLORS="AABBCC,001122", COLOR_MODE="striped")
         assert lane.color_mode == "gradient"
+        assert self.spool.logger.messages == [("info", "Unknown COLOR_MODE striped, using gradient")]
 
     def test_single_entry_colors_is_one_color(self):
         lane = self._run(COLORS="AABBCC")
@@ -1890,6 +1892,18 @@ class TestSetSpoolID:
         _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color_mode == "gradient"
+
+    def test_colorless_filament_leaves_lane_without_color(self):
+        gcmd = _make_gcmd()
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result(color_hex=None)
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
+        assert lane.color == ""
+        assert lane.multi_color == []
 
     def test_multi_color_is_none(self):
         gcmd = _make_gcmd()

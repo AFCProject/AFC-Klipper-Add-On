@@ -860,7 +860,9 @@ class AFCSpool:
                     direction = self._get_filament_values(result['filament'], 'multi_color_direction')
                     cur_lane.color_mode = "coaxial" if direction == "coaxial" else "gradient"
                 else:
-                    cur_lane.color = f"#{self._get_filament_values(result['filament'], 'color_hex')}"
+                    # A filament without a color in Spoolman leaves the lane without one
+                    color_hex = self._get_filament_values(result['filament'], 'color_hex')
+                    cur_lane.color = f"#{color_hex}" if color_hex else ""
                     cur_lane.multi_color = []
                     cur_lane.color_mode = ""
 
