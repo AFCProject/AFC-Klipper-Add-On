@@ -2310,40 +2310,44 @@ class TestToolLoadCustomCmdGearOnlyRejectedBeforeUnload:
     def test_rejected_before_unloading_the_other_lane(self):
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        gcmd = MagicMock()
 
-        result = obj.TOOL_LOAD(target_lane, load_to_gears=True)
+        result = obj.TOOL_LOAD(target_lane, load_to_gears=True, gcmd=gcmd)
 
         assert result is False
         obj.TOOL_UNLOAD.assert_not_called()
         obj.error.AFC_error.assert_called_once_with(
             f"Lane {target_lane.name}: custom load command does not support gear-only loading.",
-            pause=False)
+            pause=False, gcmd=gcmd)
 
     def test_pause_follows_in_print(self):
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
         obj.function.in_print.return_value = True
+        gcmd = MagicMock()
 
-        obj.TOOL_LOAD(target_lane, load_to_gears=True)
+        obj.TOOL_LOAD(target_lane, load_to_gears=True, gcmd=gcmd)
 
         assert obj.error.AFC_error.call_args.kwargs["pause"] is True
 
     def test_load_to_gears_false_does_not_reject_and_unloads_normally(self):
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        gcmd = MagicMock()
 
-        obj.TOOL_LOAD(target_lane, load_to_gears=False)
+        obj.TOOL_LOAD(target_lane, load_to_gears=False, gcmd=gcmd)
 
-        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
         obj.error.AFC_error.assert_not_called()
 
     def test_no_custom_load_cmd_does_not_reject_and_unloads_normally(self):
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         target_lane.custom_load_cmd = None
+        gcmd = MagicMock()
 
-        obj.TOOL_LOAD(target_lane, load_to_gears=True)
+        obj.TOOL_LOAD(target_lane, load_to_gears=True, gcmd=gcmd)
 
-        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
         obj.error.AFC_error.assert_not_called()
 
 
@@ -4592,7 +4596,7 @@ class TestLoadSequenceCustomLoadCmdGearOnlyRejection:
 
         afc.error.AFC_error.assert_called_once_with(
             f"Lane {lane.name}: custom load command does not support gear-only loading.",
-            pause=True)
+            pause=True, gcmd=gcmd)
 
     def test_load_to_gears_true_pause_follows_in_print_false(self):
         afc, lane, hub, extruder = self._make()

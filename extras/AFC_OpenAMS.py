@@ -1702,8 +1702,8 @@ class afcAMS(afcUnit):
             return False, f"PTFE calibration failed for {cur_lane.name}: {e}", 0
 
     # ── Custom load/unload gcode handlers ───────────────────────────
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder, oad_to_gears: bool=False,
-                       *, gcmd: AFCGcmd) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
+                       load_to_gears: bool=False, *, gcmd: AFCGcmd) -> bool:
         """
         Load hook called by AFC's load_sequence for OpenAMS lanes, replacing the
         stepper-based load path with the OAMS transport.
@@ -1904,6 +1904,10 @@ class afcAMS(afcUnit):
         :param gcmd: command context this load is running under, if any.
         :return bool: True if the spool loaded and engaged.
         """
+        # Deferred: AFC_OAMS imports from this module at module load time,
+        # so importing it back at module scope here would be circular.
+        from extras.AFC_OAMS import OAMSOpCode
+
         if self.oams is None:
             self.logger.error("OAMS hardware not available")
             return False
@@ -2005,12 +2009,22 @@ class afcAMS(afcUnit):
                 if not success:
                     self.logger.error(f"OAMS load attempt {attempt+1} failed: {msg}")
                     continue
+                if (load_to_gears
+                    and self.oams.action_status_code == OAMSOpCode.CANCEL):
+                    # load_spool_with_retry treats CANCEL as success since the
+                    # normal path still catches it via _verify_engagement below.
+                    # A gear-only load skips that verification, so a cancelled
+                    # load can't be waved through as if filament actually
+                    # reached the gears.
+                    self.logger.error(
+                        f"OAMS load attempt {attempt+1} cancelled before reaching the gears: {msg}")
+                    continue
 
                 # Verify engagement (skip if deferred to AFC's Phase 2, or for a gear-only
                 # load: verification itself extrudes engagement_length, which would move
                 # filament past the point load_to_gears is supposed to stop at).
                 defer_verification = self._defer_engagement or load_to_gears
-                engaged = True if defer_verification else self._verify_engagement(cur_lane)
+                engaged = True if defer_verification else self._verify_engagement(cur_lane, gcmd=gcmd)
                 if engaged:
                     # Advance filament to the nozzle via tool_stn so a no-poop
                     # load ends at the nozzle (poop, if any, purges from there).

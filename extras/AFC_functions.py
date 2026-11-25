@@ -1624,12 +1624,15 @@ class afcFunction:
                 return
         else:
             current_lane = self.afc.lanes.get(self.afc.current)
+            toolchanger_lane = self.afc.lanes.get(extruder.lane_loaded)
             if (current_lane is not None
-                and current_lane.extruder_obj is extruder):
+                and current_lane.extruder_obj is extruder
+                and current_lane.load_state):
                 lane_name = current_lane.name
             # Check for toolchangers
-            elif (extruder.lane_loaded is not None):
-                lane_name = extruder.lane_loaded
+            elif (toolchanger_lane is not None
+                  and toolchanger_lane.load_state):
+                lane_name = toolchanger_lane.name
             elif len(lanes) == 1:
                 lane_name = lanes[0].name
             else:

@@ -1348,6 +1348,47 @@ class TestCmdAfcToolheadCalibration:
         assert any("tool_stn_unload|AFC_TOOL_STN_UNLOAD_CALIBRATION" in message
                    for message in raw_messages)
 
+    def test_toolhead_menu_skips_current_lane_without_load_state(self) -> None:
+        """The auto-selected `current_lane` fallback must also require
+        load_state, same as an explicit LANE=, instead of trusting
+        afc.current alone. Falls through to the single-remaining-lane pick
+        since lane1 (the only other lane) is also unloaded here."""
+        func, extruder = _make_calibration_func()
+        func.afc.lanes["lane1"].load_state = False
+        second_lane = MagicMock()
+        second_lane.name = "lane2"
+        second_lane.extruder_obj = extruder
+        second_lane.load_state = True
+        func.afc.lanes["lane2"] = second_lane
+        extruder.lanes["lane2"] = second_lane
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("LANE=lane2" in message for message in raw_messages)
+        assert not any("LANE=lane1" in message for message in raw_messages)
+
+    def test_toolhead_menu_resolves_lane_loaded_requires_load_state(self) -> None:
+        """Independent coverage of the toolchanger-specific fallback: a stale
+        or desynced extruder.lane_loaded pointing at a lane that isn't
+        actually load_state must not be trusted either."""
+        func, extruder = _make_calibration_func()
+        func.afc.current = None
+        func.afc.lanes["lane1"].load_state = False
+        second_lane = MagicMock()
+        second_lane.name = "lane2"
+        second_lane.extruder_obj = extruder
+        second_lane.load_state = False
+        func.afc.lanes["lane2"] = second_lane
+        extruder.lanes["lane2"] = second_lane
+        extruder.lane_loaded = "lane2"
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("No loaded lanes are available" in message for message in raw_messages)
+        assert not any("LANE=lane2" in message for message in raw_messages)
+
     def test_toolhead_menu_reports_no_configured_extruders(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.tools = {}

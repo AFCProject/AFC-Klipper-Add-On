@@ -84,6 +84,7 @@ from extras.AFC_OpenAMS import (  # noqa: E402
     load_config_prefix,
 )
 from extras.AFC_lane import AFCLaneState  # noqa: E402
+from extras.AFC_OAMS import OAMSOpCode  # noqa: E402
 from extras.AFC_unit import afcUnit  # noqa: E402
 from tests.conftest import MockAFC, MockPrinter, MockReactor, MockLogger, MockConfig
 
@@ -5751,6 +5752,9 @@ class TestOamsLoad:
         result = ams._oams_load(lane, load_to_gears=True, gcmd="callback")
 
         assert result is True
+        # Nothing in the successful gear-only path logs anything.
+        assert ams.logger.messages == []
+        oams.load_spool_with_retry.assert_called_once_with(0, gcmd="callback")
         ams._advance_tool_stn_to_nozzle.assert_not_called()
         # load_to_gears must also skip engagement verification itself: it
         # extrudes engagement_length, which would move filament past the
@@ -5767,6 +5771,7 @@ class TestOamsLoad:
         oams = MagicMock()
         oams.determine_current_spool.return_value = None
         oams.load_spool_with_retry.return_value = (True, "ok")
+        oams.action_status_code = OAMSOpCode.SUCCESS
         ams, afc, printer, reactor = _make_ams(oams=oams)
         ams._defer_engagement = False
         ams._verify_engagement = MagicMock(return_value=True)
@@ -5774,10 +5779,53 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane, load_to_gears=False)
+        result = ams._oams_load(lane, load_to_gears=False, gcmd="callback")
 
         assert result is True
-        ams._verify_engagement.assert_called_once_with(lane)
+        ams._verify_engagement.assert_called_once_with(lane, gcmd="callback")
+
+    def test_load_to_gears_true_rejects_a_cancelled_load(self):
+        """CANCEL and SUCCESS both make load_spool_with_retry return success,
+        but a gear-only load skips _verify_engagement, so a cancelled attempt
+        must not be treated as filament having reached the gears."""
+        oams = MagicMock()
+        oams.determine_current_spool.return_value = None
+        oams.load_spool_with_retry.return_value = (True, "cancelled")
+        oams.action_status_code = OAMSOpCode.CANCEL
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._verify_engagement = MagicMock(return_value=True)
+        ams._advance_tool_stn_to_nozzle = MagicMock()
+        ams._wait_for_idle = MagicMock(return_value=True)
+        lane = self._lane()
+
+        result = ams._oams_load(lane, max_retries=1, load_to_gears=True, gcmd="callback")
+
+        assert result is False
+        assert ("error",
+                "OAMS load attempt 1 cancelled before reaching the gears: cancelled"
+                ) in ams.logger.messages
+        ams._verify_engagement.assert_not_called()
+
+    def test_load_to_gears_false_accepts_a_cancelled_load(self):
+        """Independent coverage of the `load_to_gears` operand: the same
+        CANCEL result must still be accepted as success when load_to_gears is
+        False, since _verify_engagement runs and independently confirms (or
+        refutes) real engagement there."""
+        oams = MagicMock()
+        oams.determine_current_spool.return_value = None
+        oams.load_spool_with_retry.return_value = (True, "cancelled")
+        oams.action_status_code = OAMSOpCode.CANCEL
+        ams, afc, printer, reactor = _make_ams(oams=oams)
+        ams._defer_engagement = False
+        ams._verify_engagement = MagicMock(return_value=True)
+        ams._advance_tool_stn_to_nozzle = MagicMock()
+        ams._wait_for_idle = MagicMock(return_value=True)
+        lane = self._lane()
+
+        result = ams._oams_load(lane, load_to_gears=False, gcmd="callback")
+
+        assert result is True
+        ams._verify_engagement.assert_called_once_with(lane, gcmd="callback")
 
     def test_success_enables_follower_and_starts_monitor(self):
         oams = MagicMock()

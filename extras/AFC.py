@@ -1743,7 +1743,7 @@ class afc:
             and cur_lane.custom_load_cmd):
             error_str = (f"Lane {cur_lane.name}: custom load command does not support "
                         "gear-only loading.")
-            self.error.AFC_error(error_str, pause=self.function.in_print())
+            self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
             return False
 
         # Check if the bypass filament sensor is triggered; abort loading if filament is already present.
@@ -1922,7 +1922,7 @@ class afc:
             if load_to_gears:
                 error_str = (f"Lane {cur_lane.name}: custom load command does not support "
                              "gear-only loading.")
-                self.error.AFC_error(error_str, pause=self.function.in_print())
+                self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
                 return False
 
             self.logger.info("Running custom load command for lane {}".format(cur_lane.name))
