@@ -133,10 +133,10 @@ class afcBoxTurtle(afcUnit):
                                 self.afc.spool.set_active_spool(cur_lane.spool_id)
                                 self.lane_tool_loaded(cur_lane, gcmd=gcmd)
                                 cur_lane.status = AFCLaneState.TOOLED
+                                cur_lane.enable_buffer()
                             else:
                                 self.lane_tool_loaded_idle(cur_lane, gcmd=gcmd)
 
-                            cur_lane.enable_buffer()
                         else:
                             if cur_lane.get_toolhead_pre_sensor_state() == True or cur_lane.extruder_obj.tool_end_state:
                                 msg +="<span class=error--text> error in ToolHead. \nLane identified as loaded \n but not identified as loaded in extruder</span>"
