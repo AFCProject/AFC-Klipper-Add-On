@@ -235,6 +235,14 @@ class TestPrepRestoreFilamentInfo:
         assert lane.spool_vendor == "Polymaker"
         assert lane.filament_name == "PolyTerra PLA"
 
+    def test_restores_multi_color_without_spoolman(self, tmp_path):
+        lane, _ = self._run_prep({"color": "#FFD700",
+                                  "multi_color_hexes": ["FFD700", "C0C0C0"],
+                                  "color_mode": "coaxial"}, tmp_path=tmp_path)
+        assert lane.color == "#FFD700"
+        assert lane.multi_color == ["FFD700", "C0C0C0"]
+        assert lane.color_mode == "coaxial"
+
     def test_missing_keys_leave_vendor_and_name_unchanged(self, tmp_path):
         lane, _ = self._run_prep({"material": "PLA"}, tmp_path=tmp_path)
         assert lane.spool_vendor == ""

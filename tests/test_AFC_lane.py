@@ -232,6 +232,8 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane.gcode = MagicMock()
     lane.need_purge = False
     lane._afc_prep_done = False
+    lane.multi_color = []
+    lane.color_mode = ""
     return lane
 
 
@@ -2183,6 +2185,65 @@ def _get_cleared_payload(lane):
     lane.clear_lane_data()
     lane.afc.moonraker.send_lane_data.assert_called_once()
     return lane.afc.moonraker.send_lane_data.call_args[0][0]
+
+
+class TestSendLaneDataColors:
+    def test_single_color_is_solid(self):
+        lane = _make_lane_for_moonraker()
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["colors"] == ["#FF0000"]
+        assert payload["value"]["color_mode"] == "solid"
+
+    def test_multi_color_lists_every_color(self):
+        lane = _make_lane_for_moonraker()
+        lane.color = "#FFD700"
+        lane.multi_color = ["FFD700", "C0C0C0"]
+        lane.color_mode = "coaxial"
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["color"] == "#FFD700"
+        assert payload["value"]["colors"] == ["#FFD700", "#C0C0C0"]
+        assert payload["value"]["color_mode"] == "coaxial"
+
+    def test_multi_color_without_mode_is_gradient(self):
+        lane = _make_lane_for_moonraker()
+        lane.multi_color = ["AABBCC", "001122"]
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["color_mode"] == "gradient"
+
+    def test_no_color_gives_empty_list(self):
+        lane = _make_lane_for_moonraker()
+        lane.color = "#"
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["colors"] == []
+        assert payload["value"]["color_mode"] == ""
+
+
+class TestClearLaneDataColors:
+    def test_colors_are_cleared(self):
+        lane = _make_lane_for_moonraker()
+        lane.multi_color = ["AABBCC", "001122"]
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["colors"] == []
+        assert payload["value"]["color_mode"] == ""
+
+
+class TestGetStatusColors:
+    def test_color_mode_reported_live(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "coaxial"
+        response = lane.get_status()
+        assert response["multi_color_hexes"] == ["AABBCC", "001122"]
+        assert response["color_mode"] == "coaxial"
+
+    def test_colors_persisted_when_saving_to_file(self):
+        lane = _make_lane_for_get_status(["T0"])
+        lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "gradient"
+        lane.td1_data = {"td": "", "color": "", "scan_time": ""}
+        response = lane.get_status(save_to_file=True)
+        assert response["multi_color_hexes"] == ["AABBCC", "001122"]
+        assert response["color_mode"] == "gradient"
 
 
 class TestGetStatusSpoolVendor:

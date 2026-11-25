@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-25-2026]
+### Added
+- Lanes keep a multi-color filament's colors and how they run. `SET_COLOR` takes
+  `COLORS=<color>,<color>,...` and `COLOR_MODE=gradient|coaxial`, and a Spoolman spool's
+  `multi_color_hexes` and `multi_color_direction` set them. `lane_data` gains `colors` (every
+  color as `#RRGGBB`) and `color_mode` (`solid`, `gradient` or `coaxial`), and the lane's
+  status gains `color_mode`. Both are saved across restarts. `SET_COLOR COLOR=` alone returns
+  the lane to one color.
+
 ## [11-21-2026]
 ### Fixed
 - Fixed buffer not getting enabled when `SET_LANE_LOADED` macro is used.

@@ -175,6 +175,10 @@ class afcPrep:
                             cur_lane.material = units[cur_lane.unit][cur_lane.name]['material']
                         if 'color' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.color = units[cur_lane.unit][cur_lane.name]['color']
+                        if 'multi_color_hexes' in units[cur_lane.unit][cur_lane.name]:
+                            cur_lane.multi_color = units[cur_lane.unit][cur_lane.name]['multi_color_hexes'] or []
+                        if 'color_mode' in units[cur_lane.unit][cur_lane.name]:
+                            cur_lane.color_mode = units[cur_lane.unit][cur_lane.name]['color_mode'] or ""
                         if 'filament_name' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.filament_name = units[cur_lane.unit][cur_lane.name]['filament_name']
                         if 'spool_vendor' in units[cur_lane.unit][cur_lane.name]:

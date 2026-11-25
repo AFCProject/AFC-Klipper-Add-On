@@ -132,6 +132,7 @@ class AFCLane:
         self.spool_id: Optional[Union[int, str]] = None
         self.color: str         = ""
         self.multi_color: list  = []
+        self.color_mode: str    = ""        # 'gradient' or 'coaxial' while multi_color holds 2+ colors
         self.spool_vendor: str  = ""
         self.filament_name: str = ""
         self.weight: float      = 0.
@@ -2049,6 +2050,7 @@ class AFCLane:
 
         scan_time = self.td1_data['scan_time'] if 'scan_time' in self.td1_data else ""
         td        = self.td1_data['td']        if 'td'        in self.td1_data else ""
+        colors, color_mode = self.lane_data_colors()
 
         for key in current_keys:
             lane_data = {
@@ -2056,6 +2058,8 @@ class AFCLane:
                 "key": key,
                 "value": {
                     "color"          : self.color,
+                    "colors"         : colors,
+                    "color_mode"     : color_mode,
                     "material"       : self.material,
                     "vendor_name"    : self.spool_vendor,
                     "name"           : self.filament_name,
@@ -2073,6 +2077,20 @@ class AFCLane:
             self.afc.moonraker.send_lane_data(lane_data)
 
         self._sent_lane_data_keys = current_keys
+
+    def lane_data_colors(self):
+        """
+        Returns the lane's colors for lane_data: every color in order as `#RRGGBB`, and
+        `solid` for one color, `gradient` (along the filament's length) or `coaxial`
+        (side by side, as in dual-color silk) for several. A lane without a color gives
+        an empty list and an empty mode.
+        """
+        if len(self.multi_color) > 1:
+            colors = [f"#{c.replace('#', '')}" for c in self.multi_color]
+            return colors, self.color_mode or "gradient"
+        if self.color and self.color != "#":
+            return [self.color], "solid"
+        return [], ""
 
     def clear_lane_data(self):
         """
@@ -2092,6 +2110,8 @@ class AFCLane:
                 "key": key,
                 "value": {
                     "color"          : "",
+                    "colors"         : [],
+                    "color_mode"     : "",
                     "material"       : "",
                     "vendor_name"    : "",
                     "name"           : "",
@@ -2565,8 +2585,9 @@ class AFCLane:
         response["color"]=self.color
         response["filament_name"] = self.filament_name
         response["spool_vendor"] = self.spool_vendor
+        response["multi_color_hexes"] = self.multi_color
+        response["color_mode"] = self.color_mode
         if not save_to_file:
-            response["multi_color_hexes"] = self.multi_color
             response["initial_weight"] = self.espooler.espooler_values.full_weight
 
         response["weight"]=self.weight
