@@ -255,8 +255,6 @@ class afcACE(afcUnit):
         self._stuck_time = config.getfloat("stuck_time", 4.0, minval=2.0)
         self.calibration_step = config.getfloat("calibration_step", 50.0)
         self.baud_rate = config.getint("baud_rate", 115200)
-        # True disables the routine heartbeat polls' log quieting.
-        self.debug = config.getboolean("debug", False)
 
         # Uncomment below once RFID and spoolman creation support is added
         # self.auto_spoolman_create = config.getboolean("auto_spoolman_create", False)
