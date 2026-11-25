@@ -1,0 +1,27 @@
+# AFC_button callback-origin integration test.
+#
+# Invokes AFCButton._button_callback directly via SIMULATE_CALLBACK,
+# faking the press/release edges this harness can't generate for real.
+# held_time is derived from the DELTA between the two calls' synthesized
+# eventtimes, not wall-clock time.
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_callback_sim.cfg
+
+AFC_CLEAR_MESSAGE
+
+G28
+
+# Short press (~0.1s, below long_press_duration): falls into
+# CHANGE_TOOL(gcmd="callback"); lane1 isn't prepped, so this fails cleanly.
+SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=_button_callback STATE=1
+SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=_button_callback STATE=0 DELTA=0.1
+
+# Long press (~1.5s, at/above long_press_duration): falls into the eject
+# branch, calling LANE_UNLOAD(gcmd="callback"); also fails cleanly.
+SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=_button_callback STATE=1
+SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=_button_callback STATE=0 DELTA=1.5

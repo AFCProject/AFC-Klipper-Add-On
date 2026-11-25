@@ -17,7 +17,7 @@ import struct
 import sys
 import termios
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -2777,11 +2777,12 @@ class TestAfcCFSMirrorPresence:
     def test_traces_changes_and_updates_lanes(self):
         unit, lanes = unit_with(lanes=(1, 2, 3))
         seen = []
-        unit.update_lane_presence = lambda lane, present: seen.append((lane.name, present))
-        unit._mirror_presence(0b0101)
+        unit.update_lane_presence = (
+            lambda lane, present, gcmd: seen.append((lane.name, present)))
+        unit._mirror_presence(0b0101, gcmd=MagicMock())
         assert seen == []                            # first reading only remembered
-        unit._mirror_presence(0b0101)
-        unit._mirror_presence(0b0101)
+        unit._mirror_presence(0b0101, gcmd=MagicMock())
+        unit._mirror_presence(0b0101, gcmd=MagicMock())
         assert seen == [("lane1", True), ("lane2", False), ("lane3", True)] * 2
         assert unit.trace.events == [("presence", {"mask": 5, "slots": "AC", "previous": None})]
         assert unit._traced_mask == 5
@@ -2791,11 +2792,12 @@ class TestAfcCFSMirrorPresence:
         # e.g. a late connection-bank reply taken as the material bank: no fake runout
         unit, lanes = unit_with(lanes=(1, 2))
         seen = []
-        unit.update_lane_presence = lambda lane, present: seen.append((lane.name, present))
-        unit._mirror_presence(0b0011)
-        unit._mirror_presence(0b0011)
-        unit._mirror_presence(0b0001)
-        unit._mirror_presence(0b0011)
+        unit.update_lane_presence = (
+            lambda lane, present, gcmd: seen.append((lane.name, present)))
+        unit._mirror_presence(0b0011, gcmd=MagicMock())
+        unit._mirror_presence(0b0011, gcmd=MagicMock())
+        unit._mirror_presence(0b0001, gcmd=MagicMock())
+        unit._mirror_presence(0b0011, gcmd=MagicMock())
         assert seen == [("lane1", True), ("lane2", True)]     # lane2 never reported empty
 
 
@@ -2839,8 +2841,9 @@ class TestAfcCFSSystemTest:
 
     def test_online_lane_with_spool(self):
         unit, lane = self._unit()
-        assert unit.system_Test(lane, 0, True, False) is True
-        assert unit.apply_lane_state.calls == [((lane, True), {})]
+        gcmd = MagicMock()
+        assert unit.system_Test(lane, 0, True, False, gcmd=gcmd) is True
+        assert unit.apply_lane_state.calls == [((lane, True), {"gcmd": gcmd})]
         assert unit.present_last["lane1"] is True
         unit.afc.function.TcmdAssign.assert_called_once_with(lane)
         assert lane._afc_prep_done is True
@@ -2852,8 +2855,9 @@ class TestAfcCFSSystemTest:
 
     def test_online_empty_slot(self):
         unit, lane = self._unit(material=0b0010)
-        unit.system_Test(lane, 0, False, False)
-        assert unit.apply_lane_state.calls == [((lane, False), {})]
+        gcmd = MagicMock()
+        unit.system_Test(lane, 0, False, False, gcmd=gcmd)
+        assert unit.apply_lane_state.calls == [((lane, False), {"gcmd": gcmd})]
         assert not unit.afc.function.TcmdAssign.called
 
     def test_reads_unknown_masks(self):
@@ -2861,7 +2865,7 @@ class TestAfcCFSSystemTest:
         unit.box.reply(P.GET_FILAMENT_SENSOR_STATE,
                        frame(P.GET_FILAMENT_SENSOR_STATE, b"\x01"),
                        frame(P.GET_FILAMENT_SENSOR_STATE, b"\x00"))
-        unit.system_Test(lane, 0, False, False)
+        unit.system_Test(lane, 0, False, False, gcmd=MagicMock())
         assert unit.box.keys() == [(1, P.GET_FILAMENT_SENSOR_STATE, b"\x00"),
                                    (1, P.GET_FILAMENT_SENSOR_STATE, b"\x01")]
         assert (unit.material_mask, unit.connected_mask) == (1, 0)
@@ -2869,25 +2873,27 @@ class TestAfcCFSSystemTest:
     def test_mask_still_unknown(self):
         unit, lane = self._unit(material=None)
         unit.box.reply(P.GET_FILAMENT_SENSOR_STATE, None)
-        unit.system_Test(lane, 0, False, False)
-        assert unit.apply_lane_state.calls == [((lane, False), {})]
+        gcmd = MagicMock()
+        unit.system_Test(lane, 0, False, False, gcmd=gcmd)
+        assert unit.apply_lane_state.calls == [((lane, False), {"gcmd": gcmd})]
 
     def test_offline_connects_and_waits_once(self):
         unit, lane = self._unit(online=False)
-        assert unit.system_Test(lane, 0, False, False) is False
+        gcmd = MagicMock()
+        assert unit.system_Test(lane, 0, False, False, gcmd=gcmd) is False
         assert unit.connect.called
         assert unit._wait_for_box.call_count == 1
         assert unit.present_last["lane1"] is None
-        assert unit.lane_not_ready.calls == [((lane,), {})]
+        assert unit.lane_not_ready.calls == [((lane,), {"gcmd": gcmd})]
         assert msgs(unit) == [("info", f"lane1 tool cmd: {lane.map_to_string():3} "
                                        f"<span class=error--text>CFS NOT RESPONDING</span>")]
-        unit.system_Test(lane, 0, False, False)
+        unit.system_Test(lane, 0, False, False, gcmd=gcmd)
         assert unit._wait_for_box.call_count == 1        # boot wait only once
 
     def test_box_comes_up_during_connect(self):
         unit, lane = self._unit(online=False)
         unit.connect = lambda: setattr(unit, "online", True)
-        assert unit.system_Test(lane, 0, False, False) is True
+        assert unit.system_Test(lane, 0, False, False, gcmd=MagicMock()) is True
         assert not unit._wait_for_box.called
         assert unit.apply_lane_state.called
 
@@ -3177,13 +3183,13 @@ class TestAfcCFSTraceBoxState:
 class TestAfcCFSLaneFail:
     def test_logs_and_hands_to_afc(self):
         unit, (lane,) = unit_with()
-        unit._lane_fail(lane, "stage 5 timed out")
+        unit._lane_fail(lane, "stage 5 timed out", gcmd="callback")
         assert unit.trace.events == [("fail", {"lane": "lane1", "slot": "A",
                                                "message": "stage 5 timed out",
                                                "toolhead_sensor": False})]
         assert msgs(unit) == [("error", "CFS lane1 (slot A): stage 5 timed out")]
         unit.afc.error.handle_lane_failure.assert_called_once_with(
-            lane, "CFS lane1: stage 5 timed out")
+            lane, "CFS lane1: stage 5 timed out", gcmd="callback")
 
 
 # Presence
@@ -3207,14 +3213,14 @@ class TestAfcCFSUpdateLanePresence:
     def test_unchanged(self):
         unit, lane = self._unit(previous=True)
         lane.prep_state = "untouched"
-        unit.update_lane_presence(lane, True)
+        unit.update_lane_presence(lane, True, gcmd=MagicMock())
         assert lane.prep_state == "untouched"
         assert not unit.afc.save_vars.called
 
     def test_before_prep_only_saves(self):
         unit, lane = self._unit()
         lane._afc_prep_done = False
-        unit.update_lane_presence(lane, True)
+        unit.update_lane_presence(lane, True, gcmd=MagicMock())
         assert (lane.prep_state, lane.loaded_to_hub) == (True, True)
         assert unit.present_last["lane1"] is True
         unit.afc.save_vars.assert_called_once_with()
@@ -3223,8 +3229,9 @@ class TestAfcCFSUpdateLanePresence:
 
     def test_first_reading_present(self):
         unit, lane = self._unit(previous=None)
-        unit.update_lane_presence(lane, True)
-        assert unit.apply_lane_state.calls == [((lane, True), {})]
+        gcmd = MagicMock()
+        unit.update_lane_presence(lane, True, gcmd=gcmd)
+        assert unit.apply_lane_state.calls == [((lane, True), {"gcmd": gcmd})]
         assert not lane.set_unloaded.called
         assert not unit.on_filament_insert.called
         assert msgs(unit) == [("debug", "CFS lane1: box online, slot A: msg")]
@@ -3232,20 +3239,21 @@ class TestAfcCFSUpdateLanePresence:
 
     def test_first_reading_empty(self):
         unit, lane = self._unit(previous=None)
-        unit.update_lane_presence(lane, False)
+        unit.update_lane_presence(lane, False, gcmd=MagicMock())
         assert lane.set_unloaded.called
         assert not unit.on_filament_remove.called
 
     def test_first_reading_empty_but_in_the_toolhead(self):
         unit, lane = self._unit(previous=None, tool_loaded=True)
-        unit.update_lane_presence(lane, False)
+        unit.update_lane_presence(lane, False, gcmd=MagicMock())
         assert not lane.set_unloaded.called
 
     def test_insert(self):
         unit, lane = self._unit()
-        unit.update_lane_presence(lane, True)
+        gcmd = MagicMock()
+        unit.update_lane_presence(lane, True, gcmd=gcmd)
         assert lane.set_loaded.called
-        assert unit.on_filament_insert.calls == [((lane,), {})]
+        assert unit.on_filament_insert.calls == [((lane,), {"gcmd": gcmd})]
         assert msgs(unit) == [("debug", "CFS lane1: spool detected in slot A")]
         unit.afc.save_vars.assert_called_once_with()
 
@@ -3254,35 +3262,37 @@ class TestAfcCFSUpdateLanePresence:
     def test_insert_already_loaded(self, state):
         unit, lane = self._unit()
         lane.status = state
-        unit.update_lane_presence(lane, True)
+        unit.update_lane_presence(lane, True, gcmd=MagicMock())
         assert not lane.set_loaded.called
         assert unit.on_filament_insert.called
 
     def test_remove_idle_lane(self):
         unit, lane = self._unit(previous=True)
-        unit.update_lane_presence(lane, False)
-        assert unit.on_filament_remove.calls == [((lane,), {})]
+        gcmd = MagicMock()
+        unit.update_lane_presence(lane, False, gcmd=gcmd)
+        assert unit.on_filament_remove.calls == [((lane,), {"gcmd": gcmd})]
         assert lane.set_unloaded.called
         assert msgs(unit) == [("debug", "CFS lane1: slot A is empty")]
         unit.afc.save_vars.assert_called_once_with()
 
     def test_remove_loaded_lane_not_printing(self):
         unit, lane = self._unit(previous=True, tool_loaded=True, printing=False)
-        unit.update_lane_presence(lane, False)
+        unit.update_lane_presence(lane, False, gcmd=MagicMock())
         assert not lane.set_unloaded.called
         assert not lane._perform_pause_runout.called
         assert unit.trace.events == []
 
     def test_printing_but_lane_not_loaded(self):
         unit, lane = self._unit(previous=True, tool_loaded=False, printing=True)
-        unit.update_lane_presence(lane, False)
+        unit.update_lane_presence(lane, False, gcmd=MagicMock())
         assert lane.set_unloaded.called
         assert not lane._perform_pause_runout.called
 
     def test_runout_pauses(self):
         unit, lane = self._unit(previous=True, tool_loaded=True, printing=True)
-        unit.update_lane_presence(lane, False)
-        assert lane._perform_pause_runout.called
+        gcmd = MagicMock()
+        unit.update_lane_presence(lane, False, gcmd=gcmd)
+        assert lane._perform_pause_runout.calls == [((), {"gcmd": gcmd})]
         assert not lane._perform_infinite_runout.called
         assert unit.trace.events == [("runout", {"lane": "lane1", "slot": "A",
                                                  "runout_lane": None})]
@@ -3290,8 +3300,9 @@ class TestAfcCFSUpdateLanePresence:
     def test_runout_to_the_next_spool(self):
         unit, lane = self._unit(previous=True, tool_loaded=True, printing=True)
         lane.runout_lane = "lane2"
-        unit.update_lane_presence(lane, False)
-        assert lane._perform_infinite_runout.called
+        gcmd = MagicMock()
+        unit.update_lane_presence(lane, False, gcmd=gcmd)
+        assert lane._perform_infinite_runout.calls == [((), {"gcmd": gcmd})]
         assert not lane._perform_pause_runout.called
 
 
@@ -3662,7 +3673,8 @@ class TestAfcCFSCmdToolLoad:
 
     def test_loads(self):
         unit, lane = self._unit()
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
         assert unit.wait_for_tag_reads.called
         assert lane.select_lane.called
         unit.afc._check_extruder_temp.assert_called_once_with(lane)
@@ -3670,7 +3682,7 @@ class TestAfcCFSCmdToolLoad:
         # tool_stn 60 minus the 15 mm the primes already pushed
         assert unit.afc.move_e_pos.calls == [((45.0, 10.0, "CFS tool_stn"), {"wait_tool": True})]
         assert lane._load_state is True
-        assert unit._mark_tool_state.calls == [((lane,), {"loaded": True})]
+        assert unit._mark_tool_state.calls == [((lane,), {"loaded": True, "gcmd": cmd})]
         assert unit.load_reports["lane1"] == {"slot": "A", "result": "loaded"}
         assert unit.trace.events[0] == ("load_start", {"lane": "lane1", "slot": "A",
                                                        "toolhead_sensor": False})
@@ -3695,7 +3707,8 @@ class TestAfcCFSCmdToolLoad:
         unit.afc.run_script = Recorder()
         cmd = gcmd()
         unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
-        assert unit.afc.run_script.calls == [(("AFC_CFS_PARK EXTRUDER=extruder", cmd), {})]
+        assert unit.afc.run_script.calls == [
+            (("AFC_CFS_PARK EXTRUDER=extruder",), {"gcmd": cmd})]
 
     def test_park_on_without_a_macro(self):
         unit, lane = self._unit()
@@ -3709,8 +3722,9 @@ class TestAfcCFSCmdToolLoad:
         unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
         assert not unit.afc.gcode.run_script_from_command.called
 
-    def _failed(self, unit, lane, message):
-        unit.afc.error.handle_lane_failure.assert_called_once_with(lane, f"CFS lane1: {message}")
+    def _failed(self, unit, lane, message, gcmd):
+        unit.afc.error.handle_lane_failure.assert_called_once_with(
+            lane, f"CFS lane1: {message}", gcmd=gcmd)
         assert msgs(unit)[-1] == ("error", f"CFS lane1 (slot A): {message}")
 
     def test_offline_box_connects(self):
@@ -3726,37 +3740,43 @@ class TestAfcCFSCmdToolLoad:
         unit.online = False
         unit.connect = Recorder(result=False)
         unit.transport.last_error = "open /dev/fake_cfs failed: gone"
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
-        self._failed(unit, lane, "box is offline (open /dev/fake_cfs failed: gone)")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
+        self._failed(unit, lane, "box is offline (open /dev/fake_cfs failed: gone)", gcmd=cmd)
         assert unit.attempts == []
 
     def test_offline_box_no_error_text(self):
         unit, lane = self._unit()
         unit.online = False
         unit.connect = Recorder(result=False)
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
-        self._failed(unit, lane, "box is offline (no reply)")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
+        self._failed(unit, lane, "box is offline (no reply)", gcmd=cmd)
 
     def test_cutter_engaged(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         unit.cutter_sensor_state = True
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
-        self._failed(unit, lane, "cutter sensor is engaged; reset the cutter before loading")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
+        self._failed(unit, lane, "cutter sensor is engaged; reset the cutter before loading",
+                     gcmd=cmd)
 
     def test_toolhead_already_loaded(self):
         unit, lane = self._unit()
         sensor(lane)
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
         self._failed(unit, lane, "toolhead sensor already sees filament; unload the other lane "
-                                 "first")
+                                 "first", gcmd=cmd)
 
     def test_empty_slot(self):
         unit, lane = self._unit(lanes=(2,))
         unit.box._queues.clear()
         unit.box.reply(P.GET_FILAMENT_SENSOR_STATE, frame(P.GET_FILAMENT_SENSOR_STATE, b"\x01"))
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
         unit.afc.error.handle_lane_failure.assert_called_once_with(
-            lane, "CFS lane2: no filament in slot B")
+            lane, "CFS lane2: no filament in slot B", gcmd=cmd)
         assert unit.attempts == []
 
     def test_presence_unknown_still_loads(self):
@@ -3786,21 +3806,23 @@ class TestAfcCFSCmdToolLoad:
             sensor(loading_lane)
             return False, "toolhead sensor cleared after the handoff"
         unit._load_attempt = stuck
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
         assert unit.attempts == [0]
         self._failed(unit, lane, "load failed after 1 attempt(s): toolhead sensor cleared after "
-                                 "the handoff")
+                                 "the handoff", gcmd=cmd)
 
     def test_every_attempt_fails(self):
         unit, lane = self._unit()
         unit.attempt_results = [(False, "a"), (False, "timed out after 60s")]
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
         assert unit.attempts == [0, 1]
         assert unit.load_reports["lane1"]["result"] == "timed out after 60s"
         assert unit.trace.events[-2] == ("load_end", {"lane": "lane1", "slot": "A", "ok": False,
                                                       "detail": "timed out after 60s",
                                                       "attempts": 2, "seconds": 0.0})
-        self._failed(unit, lane, "load failed after 2 attempt(s): timed out after 60s")
+        self._failed(unit, lane, "load failed after 2 attempt(s): timed out after 60s", gcmd=cmd)
         assert not unit._mark_tool_state.called
         assert lane._load_state is False
 
@@ -3808,8 +3830,9 @@ class TestAfcCFSCmdToolLoad:
         # AFC's load hook: the same load, then the lane is recorded as loaded
         unit, lane = self._unit()
         unit.afc.save_vars.reset_mock()
-        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd()) is True
-        assert unit._mark_tool_state.calls == [((lane,), {"loaded": True})]
+        cmd = gcmd()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd=cmd) is True
+        assert unit._mark_tool_state.calls == [((lane,), {"loaded": True, "gcmd": cmd})]
         assert lane.status == AFCLaneState.TOOL_LOADED
         unit.afc.save_vars.assert_called_once_with()
 
@@ -3823,21 +3846,23 @@ class TestAfcCFSCmdToolLoad:
             return False, "box did not enter print mode (NO_REPLY)"
         unit._load_attempt = fed_but_no_print_mode
         unit.afc.save_vars.reset_mock()
-        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd()) is False
+        cmd = gcmd()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd=cmd) is False
         assert lane.status != AFCLaneState.TOOL_LOADED
         assert not unit.afc.save_vars.called
         self._failed(unit, lane, "load failed after 1 attempt(s): box did not enter print "
-                                 "mode (NO_REPLY)")
+                                 "mode (NO_REPLY)", gcmd=cmd)
 
     def test_attempt_error_cleans_up(self):
         unit, lane = self._unit({"load_attempts": 1})
         unit.attempt_results = [RuntimeError("serial gone")]
         unit.box.clear()
-        unit.cmd_AFC_CFS_TOOL_LOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_LOAD(lane, cmd)
         assert unit.box.keys()[-3:] == CLEANUP
         debug = [m for lvl, m in msgs(unit) if lvl == "debug" and m.startswith("Traceback")]
         assert len(debug) == 1 and debug[0].rstrip().endswith("RuntimeError: serial gone")
-        self._failed(unit, lane, "load failed after 1 attempt(s): error: serial gone")
+        self._failed(unit, lane, "load failed after 1 attempt(s): error: serial gone", gcmd=cmd)
 
 
 # Cut
@@ -3866,15 +3891,16 @@ class TestAfcCFSRunCutterSequence:
     def test_cutting_off(self):
         unit, lane = self._unit()
         unit.afc.tool_cut = False
-        assert unit._run_cutter_sequence(lane, gcmd()) is None
+        assert unit._run_cutter_sequence(lane, gcmd=gcmd()) is None
         assert not unit.afc.gcode.run_script_from_command.called
 
     def test_no_switch_cut_once_unverified(self):
         unit, lane = self._unit()
         unit.afc.run_script = Recorder()
         cmd = gcmd()
-        assert unit._run_cutter_sequence(lane, cmd) is None
-        assert unit.afc.run_script.calls == [(("AFC_CUT EXTRUDER=extruder", cmd), {})]
+        assert unit._run_cutter_sequence(lane, gcmd=cmd) is None
+        assert unit.afc.run_script.calls == [
+            (("AFC_CUT EXTRUDER=extruder",), {"gcmd": cmd})]
         assert lane.extruder_obj.estats.increase_cut_total.call_count == 1
         assert unit.trace.events == [("cut", {"lane": "lane1", "slot": "A", "attempt": 1,
                                               "verified": False})]
@@ -3883,7 +3909,7 @@ class TestAfcCFSRunCutterSequence:
     def test_switch_fired_and_released(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         self._cuts(unit, (1, 0))
-        assert unit._run_cutter_sequence(lane, gcmd()) is None
+        assert unit._run_cutter_sequence(lane, gcmd=gcmd()) is None
         assert unit.afc.toolhead.wait_moves.called
         assert self._cut_events(unit) == [("cut", {"lane": "lane1", "slot": "A", "attempt": 1,
                                               "verified": True, "fired": True, "released": True,
@@ -3895,14 +3921,14 @@ class TestAfcCFSRunCutterSequence:
         self._cuts(unit, (1,))
         unit.reactor.on_pause.append(
             lambda now: unit._cutter_callback(0.0, 0) if len(unit.reactor.pauses) == 3 else None)
-        assert unit._run_cutter_sequence(lane, gcmd()) is None
+        assert unit._run_cutter_sequence(lane, gcmd=gcmd()) is None
         assert self._cut_events(unit)[-1][1]["released"] is True
 
     def test_switch_never_released(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1", "cutter_wait_time": 0.2})
         self._cuts(unit, (1,))
         reason = "cutter sensor did not release after cutting"
-        assert unit._run_cutter_sequence(lane, gcmd()) == reason
+        assert unit._run_cutter_sequence(lane, gcmd=gcmd()) == reason
         # load_attempts (2) + 1 cuts, each one warned
         assert msgs(unit) == [("warning", f"CFS lane1: cut {n} not confirmed: {reason}")
                               for n in (1, 2, 3)]
@@ -3912,18 +3938,18 @@ class TestAfcCFSRunCutterSequence:
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         reason = ("cutter switch never fired during the cut (blade did not reach the end of its "
                   "travel; check pin_loc_xy / cut_move_dist)")
-        assert unit._run_cutter_sequence(lane, gcmd()) == reason
+        assert unit._run_cutter_sequence(lane, gcmd=gcmd()) == reason
         assert msgs(unit)[0] == ("warning", f"CFS lane1: cut 1 not confirmed: {reason}")
 
     def test_fired_on_a_retry(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         self._cuts(unit, (), (1, 0))
-        assert unit._run_cutter_sequence(lane, gcmd()) is None
+        assert unit._run_cutter_sequence(lane, gcmd=gcmd()) is None
         assert [e[1]["fired"] for e in self._cut_events(unit)] == [False, True]
 
     def test_trigger_not_required(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1", "cutter_require_trigger": False})
-        assert unit._run_cutter_sequence(lane, gcmd()) is None
+        assert unit._run_cutter_sequence(lane, gcmd=gcmd()) is None
         assert self._cut_events(unit)[-1][1]["fired"] is False
 
     def test_uses_the_chains_switch(self):
@@ -3932,14 +3958,14 @@ class TestAfcCFSRunCutterSequence:
         b, lane = self._unit({"box_addr": 2, "box_uid": UID_B.hex()}, printer=printer, name="CFS_2")
         b.cutter_source = a
         self._cuts(b, (1, 0))
-        assert b._run_cutter_sequence(lane, gcmd()) is None
+        assert b._run_cutter_sequence(lane, gcmd=gcmd()) is None
         assert a.cutter_trigger_count == 1
 
 
 class TestAfcCFSRunPostCutMacros:
     def test_nothing_enabled(self):
         unit, (lane,) = ready_unit()
-        unit._run_post_cut_macros(lane, gcmd())
+        unit._run_post_cut_macros(lane, gcmd=gcmd())
         assert not unit.afc.gcode.run_script_from_command.called
 
     def test_park(self):
@@ -3948,13 +3974,14 @@ class TestAfcCFSRunPostCutMacros:
         unit.afc.park_cmd = "AFC_CFS_PARK"
         unit.afc.run_script = Recorder()
         cmd = gcmd()
-        unit._run_post_cut_macros(lane, cmd)
-        assert unit.afc.run_script.calls == [(("AFC_CFS_PARK EXTRUDER=extruder", cmd), {})]
+        unit._run_post_cut_macros(lane, gcmd=cmd)
+        assert unit.afc.run_script.calls == [
+            (("AFC_CFS_PARK EXTRUDER=extruder",), {"gcmd": cmd})]
 
     def test_park_without_macro(self):
         unit, (lane,) = ready_unit()
         unit.afc.park = True
-        unit._run_post_cut_macros(lane, gcmd())
+        unit._run_post_cut_macros(lane, gcmd=gcmd())
         assert not unit.afc.gcode.run_script_from_command.called
 
     def test_afc_tip_forming(self):
@@ -3963,7 +3990,7 @@ class TestAfcCFSRunPostCutMacros:
         unit.afc.form_tip_cmd = "AFC"
         tip = type("Tip", (), {"tip_form": Recorder()})()
         unit.printer._objects["AFC_form_tip"] = tip
-        unit._run_post_cut_macros(lane, gcmd())
+        unit._run_post_cut_macros(lane, gcmd=gcmd())
         assert tip.tip_form.called
         assert not unit.afc.gcode.run_script_from_command.called
 
@@ -3973,13 +4000,13 @@ class TestAfcCFSRunPostCutMacros:
         unit.afc.form_tip_cmd = "MY_TIP"
         unit.afc.run_script = Recorder()
         cmd = gcmd()
-        unit._run_post_cut_macros(lane, cmd)
-        assert unit.afc.run_script.calls == [(("MY_TIP", cmd), {})]
+        unit._run_post_cut_macros(lane, gcmd=cmd)
+        assert unit.afc.run_script.calls == [(("MY_TIP",), {"gcmd": cmd})]
 
     def test_tip_forming_without_macro(self):
         unit, (lane,) = ready_unit()
         unit.afc.form_tip = True
-        unit._run_post_cut_macros(lane, gcmd())
+        unit._run_post_cut_macros(lane, gcmd=gcmd())
         assert not unit.afc.gcode.run_script_from_command.called
 
 
@@ -4086,8 +4113,9 @@ class TestAfcCFSCmdToolUnload:
         unit._mark_tool_state = Recorder()
         return unit, lane
 
-    def _failed(self, unit, lane, message):
-        unit.afc.error.handle_lane_failure.assert_called_once_with(lane, f"CFS lane1: {message}")
+    def _failed(self, unit, lane, message, gcmd):
+        unit.afc.error.handle_lane_failure.assert_called_once_with(
+            lane, f"CFS lane1: {message}", gcmd=gcmd)
         assert msgs(unit)[-1] == ("error", f"CFS lane1 (slot A): {message}")
 
     def test_unloads(self):
@@ -4098,10 +4126,10 @@ class TestAfcCFSCmdToolUnload:
         assert unit.wait_for_tag_reads.called
         assert lane.select_lane.called and lane.disable_buffer.called
         unit.afc._check_extruder_temp.assert_called_once_with(lane)
-        assert unit._run_cutter_sequence.calls == [((lane, cmd), {})]
-        assert unit._run_post_cut_macros.calls == [((lane, cmd), {})]
+        assert unit._run_cutter_sequence.calls == [((lane,), {"gcmd": cmd})]
+        assert unit._run_post_cut_macros.calls == [((lane,), {"gcmd": cmd})]
         assert lane._load_state is False
-        assert unit._mark_tool_state.calls == [((lane,), {"loaded": False})]
+        assert unit._mark_tool_state.calls == [((lane,), {"loaded": False, "gcmd": cmd})]
         assert unit.trace.events == [
             ("unload_start", {"lane": "lane1", "slot": "A", "toolhead_sensor": False}),
             ("unload_end", {"lane": "lane1", "slot": "A", "ok": True,
@@ -4121,8 +4149,9 @@ class TestAfcCFSCmdToolUnload:
         unit, lane = self._unit()
         unit.online = False
         unit.connect = Recorder(result=False)
-        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, gcmd())
-        self._failed(unit, lane, "box is offline (no reply)")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, cmd)
+        self._failed(unit, lane, "box is offline (no reply)", gcmd=cmd)
         assert not unit._run_cutter_sequence.called
 
     def test_offline_box_error_text(self):
@@ -4130,29 +4159,34 @@ class TestAfcCFSCmdToolUnload:
         unit.online = False
         unit.connect = Recorder(result=False)
         unit.transport.last_error = "read error: gone"
-        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, gcmd())
-        self._failed(unit, lane, "box is offline (read error: gone)")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, cmd)
+        self._failed(unit, lane, "box is offline (read error: gone)", gcmd=cmd)
 
     def test_cutter_engaged_before_cutting(self):
         unit, lane = self._unit({"cutter_sensor_pin": "PA1"})
         unit.cutter_sensor_state = True
-        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, gcmd())
-        self._failed(unit, lane, "cutter sensor is engaged before cutting; check the cutter lever")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, cmd)
+        self._failed(unit, lane, "cutter sensor is engaged before cutting; check the cutter lever",
+                     gcmd=cmd)
         assert not unit._run_cutter_sequence.called
 
     def test_cut_failed(self):
         unit, lane = self._unit()
         unit._run_cutter_sequence = Recorder(result="cutter sensor did not release after cutting")
-        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, gcmd())
-        self._failed(unit, lane, "cutter sensor did not release after cutting")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, cmd)
+        self._failed(unit, lane, "cutter sensor did not release after cutting", gcmd=cmd)
         assert not unit._retract_to_box.called
 
     def test_retract_failed(self):
         unit, lane = self._unit()
         lane._load_state = True
         unit._retract_to_box = Recorder(result=(False, "box did not answer RETRUDE start"))
-        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, gcmd())
-        self._failed(unit, lane, "unload failed: box did not answer RETRUDE start")
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, cmd)
+        self._failed(unit, lane, "unload failed: box did not answer RETRUDE start", gcmd=cmd)
         assert lane._load_state is True
         assert not unit._mark_tool_state.called
 
@@ -4163,9 +4197,9 @@ class TestAfcCFSCmdToolUnload:
         unit.afc.post_unload_macro = "AFC_CFS_LEAVE_PURGE"
         unit.afc.run_script = Recorder()
         cmd = gcmd()
-        assert unit.unit_unload_lane(lane, lane.extruder_obj, cmd) is True
-        assert unit._mark_tool_state.calls == [((lane,), {"loaded": False})]
-        assert unit.afc.run_script.calls == [(("AFC_CFS_LEAVE_PURGE", cmd), {})]
+        assert unit.unit_unload_lane(lane, lane.extruder_obj, gcmd=cmd) is True
+        assert unit._mark_tool_state.calls == [((lane,), {"loaded": False, "gcmd": cmd})]
+        assert unit.afc.run_script.calls == [(("AFC_CFS_LEAVE_PURGE",), {"gcmd": cmd})]
         assert lane.status == AFCLaneState.NONE
 
     def test_unit_unload_lane_without_post_macro(self):
@@ -4173,7 +4207,7 @@ class TestAfcCFSCmdToolUnload:
         lane._load_state = True
         unit.afc.post_unload_macro = None
         unit.afc.run_script = Recorder()
-        assert unit.unit_unload_lane(lane, lane.extruder_obj) is True
+        assert unit.unit_unload_lane(lane, lane.extruder_obj, gcmd=gcmd()) is True
         assert not unit.afc.run_script.called
 
     def test_unit_unload_lane_failure_stops_afc(self):
@@ -4183,22 +4217,24 @@ class TestAfcCFSCmdToolUnload:
         unit.afc.post_unload_macro = "AFC_CFS_LEAVE_PURGE"
         unit.afc.run_script = Recorder()
         unit._retract_to_box = Recorder(result=(False, "box did not answer RETRUDE start"))
-        assert unit.unit_unload_lane(lane, lane.extruder_obj, gcmd()) is False
+        cmd = gcmd()
+        assert unit.unit_unload_lane(lane, lane.extruder_obj, gcmd=cmd) is False
         assert not unit._mark_tool_state.called
         assert not unit.afc.run_script.called
         assert lane.status == AFCLaneState.TOOL_UNLOADING
-        self._failed(unit, lane, "unload failed: box did not answer RETRUDE start")
+        self._failed(unit, lane, "unload failed: box did not answer RETRUDE start", gcmd=cmd)
 
     def test_retract_error(self):
         unit, lane = self._unit()
         unit._retract_to_box = Recorder(raises=RuntimeError("serial gone"))
-        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, gcmd())
+        cmd = gcmd()
+        unit.cmd_AFC_CFS_TOOL_UNLOAD(lane, cmd)
         assert unit.box.keys() == [(1, P.SET_BOX_MODE, b"\x00\x01")]
         debug = [m for lvl, m in msgs(unit) if lvl == "debug"]
         assert debug[0].startswith("Traceback") and debug[0].rstrip().endswith(
             "RuntimeError: serial gone")
         assert debug[1] == "CFS lane1: unload error: serial gone"
-        self._failed(unit, lane, "unload failed: error: serial gone")
+        self._failed(unit, lane, "unload failed: error: serial gone", gcmd=cmd)
         assert unit._operation_depth == 0
 
 
@@ -4206,20 +4242,20 @@ class TestAfcCFSMarkToolState:
     def test_loaded(self):
         unit, (lane,) = ready_unit()
         unit.afc.save_vars.reset_mock()
-        unit._mark_tool_state(lane, loaded=True)
+        unit._mark_tool_state(lane, loaded=True, gcmd=gcmd())
         assert lane.tool_loaded is True
         unit.afc.save_vars.assert_called_once_with()
 
     def test_unloaded(self):
         unit, (lane,) = ready_unit()
-        lane.set_tool_loaded(normal_toolchange=True)
-        unit._mark_tool_state(lane, loaded=False)
+        lane.set_tool_loaded(normal_toolchange=True, gcmd=gcmd())
+        unit._mark_tool_state(lane, loaded=False, gcmd=gcmd())
         assert lane.tool_loaded is False
 
     def test_failure_is_a_warning(self):
         unit, (lane,) = ready_unit()
         lane.set_tool_loaded = Recorder(raises=RuntimeError("no extruder"))
-        unit._mark_tool_state(lane, loaded=True)
+        unit._mark_tool_state(lane, loaded=True, gcmd=gcmd())
         assert msgs(unit) == [("warning", "CFS lane1: could not record tool state: no extruder")]
 
 
@@ -4363,13 +4399,13 @@ class TestAfcCFSOnFilamentInsert:
         unit, (lane,) = rfid_unit()
         seen = Recorder()
         unit.printer.register_event_handler("afc:lane_inserted", seen)
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd=gcmd())
         assert seen.calls == [((lane,), {})]
         assert unit._rfid_queue == {}
 
     def test_queues_a_read(self):
         unit, (lane,) = rfid_unit({"rfid_read": True, "rfid_insert_delay": 7.0})
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd=gcmd())
         assert unit._rfid_queue == {"lane1": 1007.0}
 
 
@@ -4378,12 +4414,12 @@ class TestAfcCFSOnFilamentRemove:
         unit, (lane1, lane2) = rfid_unit(lanes=(1, 2))
         unit._rfid_queue = {"lane1": 5.0, "lane2": 6.0}
         unit.lane_tags = {"lane1": tag(), "lane2": None}
-        unit.on_filament_remove(lane1)
+        unit.on_filament_remove(lane1, gcmd=gcmd())
         assert (unit._rfid_queue, unit.lane_tags) == ({"lane2": 6.0}, {"lane2": None})
 
     def test_nothing_known(self):
         unit, (lane,) = rfid_unit()
-        unit.on_filament_remove(lane)
+        unit.on_filament_remove(lane, gcmd=gcmd())
         assert (unit._rfid_queue, unit.lane_tags) == ({}, {})
 
 
@@ -4543,13 +4579,14 @@ class TestAfcCFSRfidTick:
     def test_reads_and_applies_the_tag(self):
         unit, (lane, _) = self._unit()
         unit.read_tag = Recorder(result=tag())
-        unit.afc.gcode.get_mutex().test.return_value = False   # timer: mutex not held
+        unit.afc.run_script = Recorder()
         unit._rfid_queue = {"lane1": 990.0}
         assert unit._rfid_tick(1000.0) == unit.reactor.NEVER
         assert unit.read_tag.calls == [((lane,), {})]
-        assert [c[0][0] for c in unit.afc.gcode.run_script.calls] == [
+        assert [c[0][0] for c in unit.afc.run_script.calls] == [
             "SET_COLOR LANE=lane1 COLOR=E7A18E", "SET_MATERIAL LANE=lane1 MATERIAL=PLA",
             "SET_WEIGHT LANE=lane1 WEIGHT=1000"]
+        assert all(c[1] == {"gcmd": "callback"} for c in unit.afc.run_script.calls)
         assert (unit._rfid_queue, unit._rfid_timer) == ({}, None)
 
     def test_no_tag_nothing_applied(self):
@@ -4682,38 +4719,39 @@ class TestAfcCFSApplyTag:
     def test_color_material_weight(self):
         unit, lane, run = self._unit()
         cmd = gcmd()
-        cmds = unit.apply_tag(lane, tag(), cmd)
+        cmds = unit.apply_tag(lane, tag(), gcmd=cmd)
         assert cmds == ["SET_COLOR LANE=lane1 COLOR=E7A18E",
                         "SET_MATERIAL LANE=lane1 MATERIAL=PLA",
                         "SET_WEIGHT LANE=lane1 WEIGHT=1000"]
-        assert run.calls == [((c, cmd), {}) for c in cmds]
+        assert run.calls == [((c,), {"gcmd": cmd}) for c in cmds]
 
     def test_timer_has_no_command(self):
         unit, lane, run = self._unit()
-        cmds = unit.apply_tag(lane, tag())
-        assert run.calls == [((c, None), {}) for c in cmds]
+        cmds = unit.apply_tag(lane, tag(), gcmd="callback")
+        assert run.calls == [((c,), {"gcmd": "callback"}) for c in cmds]
         assert msgs(unit) == []
 
     def test_spoolman_id_wins(self):
         unit, lane, run = self._unit()
         unit.afc.spoolman = "http://spoolman"
-        assert unit.apply_tag(lane, tag(spool_id=7)) == [
+        assert unit.apply_tag(lane, tag(spool_id=7), gcmd=gcmd()) == [
             "SET_SPOOL_ID LANE=lane1 SPOOL_ID=7"]
 
     def test_spool_id_without_spoolman(self):
         unit, lane, run = self._unit()
-        assert unit.apply_tag(lane, tag(spool_id=7))[0] == "SET_COLOR LANE=lane1 COLOR=E7A18E"
+        assert unit.apply_tag(lane, tag(spool_id=7), gcmd=gcmd())[0] == (
+            "SET_COLOR LANE=lane1 COLOR=E7A18E")
 
     def test_lane_already_has_a_spool(self):
         unit, lane, run = self._unit()
         lane.spool_id = 1
-        assert unit.apply_tag(lane, tag()) == []
+        assert unit.apply_tag(lane, tag(), gcmd=gcmd()) == []
         assert not run.called
         assert msgs(unit) == [("info", "CFS lane1: lane has Spoolman spool 1; tag not applied")]
 
     def test_unknown_material_code(self):
         unit, lane, run = self._unit()
-        cmds = unit.apply_tag(lane, tag(material=None, material_code="09999"))
+        cmds = unit.apply_tag(lane, tag(material=None, material_code="09999"), gcmd=gcmd())
         assert cmds == ["SET_COLOR LANE=lane1 COLOR=E7A18E", "SET_WEIGHT LANE=lane1 WEIGHT=1000"]
         assert msgs(unit) == [("info", "CFS lane1: material code 09999 isn't known; add it to "
                                        "rfid_materials in [AFC_CFS CFS_1], e.g. rfid_materials: "
@@ -4722,7 +4760,7 @@ class TestAfcCFSApplyTag:
     def test_nothing_usable(self):
         unit, lane, run = self._unit()
         empty = tag(material=None, material_code="", color=None, weight=None)
-        assert unit.apply_tag(lane, empty) == []
+        assert unit.apply_tag(lane, empty, gcmd=gcmd()) == []
         assert msgs(unit) == []
 
 
@@ -4737,17 +4775,19 @@ class TestAfcCFSApplyLaneState:
     def test_empty_slot(self):
         unit, lane = self._unit()
         unit.connected_mask = 0
-        assert unit.apply_lane_state(lane, False) == "EMPTY READY FOR SPOOL"
+        gcmd = MagicMock()
+        assert unit.apply_lane_state(lane, False, gcmd=gcmd) == "EMPTY READY FOR SPOOL"
         assert (lane.prep_state, lane.loaded_to_hub, lane._load_state) == (False, False, False)
-        assert unit.lane_not_ready.calls == [((lane,), {})]
+        assert unit.lane_not_ready.calls == [((lane,), {"gcmd": gcmd})]
         assert not unit.lane_loaded.called
 
     def test_spool_in_the_slot(self):
         unit, lane = self._unit()
         unit.connected_mask = 0b0001
-        assert unit.apply_lane_state(lane, True) == "FILAMENT PRESENT"
+        gcmd = MagicMock()
+        assert unit.apply_lane_state(lane, True, gcmd=gcmd) == "FILAMENT PRESENT"
         assert (lane.prep_state, lane._load_state) == (True, True)
-        assert unit.lane_loaded.calls == [((lane,), {})]
+        assert unit.lane_loaded.calls == [((lane,), {"gcmd": gcmd})]
         assert not unit.ensure_print_mode.called
 
     def test_current_tool(self):
@@ -4755,7 +4795,8 @@ class TestAfcCFSApplyLaneState:
         lane.tool_loaded = True
         lane.extruder_obj.lane_loaded = "lane1"
         unit.afc.current = "lane1"
-        assert unit.apply_lane_state(lane, True) == "FILAMENT PRESENT in ToolHead"
+        gcmd = MagicMock()
+        assert unit.apply_lane_state(lane, True, gcmd=gcmd) == "FILAMENT PRESENT in ToolHead"
         assert unit.ensure_print_mode.calls == [((lane,), {})]
         assert unit.lane_tool_loaded.called and not unit.lane_tool_loaded_idle.called
 
@@ -4764,21 +4805,21 @@ class TestAfcCFSApplyLaneState:
         lane.tool_loaded = True
         lane.extruder_obj.lane_loaded = "lane1"
         unit.afc.current = "lane5"
-        assert unit.apply_lane_state(lane, True) == "FILAMENT PRESENT in ToolHead"
+        assert unit.apply_lane_state(lane, True, gcmd=MagicMock()) == "FILAMENT PRESENT in ToolHead"
         assert unit.lane_tool_loaded_idle.called and not unit.lane_tool_loaded.called
 
     def test_extruder_holds_another_lane(self):
         unit, lane = self._unit()
         lane.tool_loaded = True
         lane.extruder_obj.lane_loaded = "lane2"
-        assert unit.apply_lane_state(lane, True) == "FILAMENT PRESENT"
+        assert unit.apply_lane_state(lane, True, gcmd=MagicMock()) == "FILAMENT PRESENT"
         assert not unit.ensure_print_mode.called
 
     def test_no_extruder(self):
         unit, lane = self._unit()
         lane.tool_loaded = True
         lane.extruder_obj = None
-        assert unit.apply_lane_state(lane, True) == "FILAMENT PRESENT"
+        assert unit.apply_lane_state(lane, True, gcmd=MagicMock()) == "FILAMENT PRESENT"
         assert not unit.ensure_print_mode.called
 
 
@@ -4829,14 +4870,14 @@ class TestModuleImportGuards:
 class TestAfcCFSPrepLoad:
     def test_nothing_to_do(self):
         unit, (lane,) = ready_unit()
-        assert unit.prep_load(lane) is None
+        assert unit.prep_load(lane, gcmd=gcmd()) is None
         assert unit.box.sent == []
 
 
 class TestAfcCFSPrepPostLoad:
     def test_nothing_to_do(self):
         unit, (lane,) = ready_unit()
-        assert unit.prep_post_load(lane) is None
+        assert unit.prep_post_load(lane, gcmd=gcmd()) is None
         assert unit.box.sent == []
 
 
@@ -4844,14 +4885,14 @@ class TestAfcCFSEjectLane:
     def test_done(self):
         unit, (lane,) = ready_unit()
         unit.reel_back = Recorder(result=(True, "retrude stages OK/OK, box finished"))
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd())
         assert msgs(unit) == [("info", "CFS CFS_1: eject lane1: retrude stages OK/OK, box "
                                        "finished")]
 
     def test_failed(self):
         unit, (lane,) = ready_unit()
         unit.reel_back = Recorder(result=(False, "lane is loaded in the toolhead"))
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd())
         assert msgs(unit) == [("error", "CFS CFS_1: eject lane1: lane is loaded in the toolhead")]
 
 
@@ -4938,7 +4979,8 @@ class TestAfcCFSReelSlot:
 class TestAfcCFSMoveToHub:
     def test_not_used(self):
         unit, (lane,) = ready_unit()
-        assert unit.move_to_hub(lane, 100.0, None) == (False, 0, AFCMoveWarning.ERROR)
+        assert unit.move_to_hub(lane, 100.0, None,
+                                gcmd="callback") == (False, 0, AFCMoveWarning.ERROR)
         assert msgs(unit) == [("debug", "CFS CFS_1: move_to_hub not supported, box handles "
                                         "feeding")]
 
@@ -4946,7 +4988,8 @@ class TestAfcCFSMoveToHub:
 class TestAfcCFSLoadThenHome:
     def test_not_used(self):
         unit, (lane,) = ready_unit()
-        assert unit.load_then_home(lane, 100.0, None, None) == (False, 0, AFCMoveWarning.ERROR)
+        assert unit.load_then_home(lane, 100.0, None, None,
+                                   gcmd="callback") == (False, 0, AFCMoveWarning.ERROR)
         assert msgs(unit) == [("debug", "CFS CFS_1: load_then_home not supported, box handles "
                                         "feeding")]
 
@@ -4969,7 +5012,7 @@ class TestAfcCFSCalibrateBowden:
 class TestAfcCFSPrepCaptureTd1:
     def test_says_not_supported(self):
         unit, (lane,) = unit_with()
-        assert unit.prep_capture_td1(lane) == (
+        assert unit.prep_capture_td1(lane, gcmd=gcmd()) == (
             False, "CFS lane1: TD-1 capture isn't supported on CFS lanes")
         assert msgs(unit) == [("info", "CFS lane1: TD-1 capture isn't supported on CFS lanes; "
                                        "ignoring capture_td1_when_loaded")]
@@ -4978,7 +5021,7 @@ class TestAfcCFSPrepCaptureTd1:
         unit, (lane,) = unit_with()
         lane.td1_when_loaded = True
         lane.get_td1_data = MagicMock()
-        lane._prep_capture_td1()
+        lane._prep_capture_td1(gcmd=gcmd())
         assert not lane.get_td1_data.called
         assert msgs(unit) == [("info", "CFS lane1: TD-1 capture isn't supported on CFS lanes; "
                                        "ignoring capture_td1_when_loaded")]
@@ -4987,7 +5030,7 @@ class TestAfcCFSPrepCaptureTd1:
 class TestAfcCFSCalibrateTd1:
     def test_nothing_to_calibrate(self):
         unit, (lane,) = ready_unit()
-        assert unit.calibrate_td1(lane, 900.0, 1.0) == (False, NOTHING, 0.0)
+        assert unit.calibrate_td1(lane, 900.0, 1.0, gcmd()) == (False, NOTHING, 0.0)
 
 
 PROMPT = ["// action:prompt_begin CFS_1 Calibration",

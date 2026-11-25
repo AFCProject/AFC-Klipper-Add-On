@@ -11,7 +11,7 @@ Covers:
   - afc._heat_next_extruder: explicit next_temp path
   - afc.CHANGE_TOOL: adjusting_temperature with new_extruder_temp
   - afc.CHANGE_TOOL: early-exit paths (bypass active, _heat_next_extruder failure)
-  - afc.CHANGE_TOOL: same-lane branch (_handle_activate_extruder, current_toolchange)
+  - afc.CHANGE_TOOL: same-lane branch (handle_activate_extruder, current_toolchange)
   - afc.CHANGE_TOOL: unload path (current=None, prep_done=False, unknown lane, TOOL_UNLOAD failure)
   - afc.CHANGE_TOOL: load path (restore_pos flag, in_toolchange, stats callbacks, error_state guard)
   - afc.CHANGE_TOOL: state management (next_lane_load lifecycle, in_toolchange flag, toolchange counter)
@@ -30,6 +30,7 @@ import pytest
 
 from extras.AFC import afc, State, AFC_VERSION
 from extras.AFC_lane import AFCLaneState, AFCMoveWarning
+from gcode import CommandError
 from klippy import Printer
 
 from tests.test_AFC_lane import _make_afc_lane
@@ -131,6 +132,7 @@ def _make_afc():
     obj._var_write_thread = MagicMock()
     obj.function = MagicMock()
     obj.gcode = MagicMock()
+    obj._rsfc_accepts_gcmd = False
     obj.message_queue = []
     obj.current_loading = None
     obj.next_lane_load = None
@@ -447,18 +449,21 @@ def _make_afc_for_check_extruder_temp(
 
 
 class TestRunScript:
-    """Covers afc.run_script's three-way mutex dispatch.
+    """Covers afc.run_script's dispatch.
 
-    `gcmd.run_script` (newer Kalico) is preferred whenever `gcmd` has it.
-    Otherwise, whether the gcode mutex is already held decides between
-    `run_script_from_command` (reentrant: must not re-acquire it, or it
-    deadlocks) and `self.gcode.run_script` (not reentrant: must acquire it,
-    or a legacy/unprotected call can fail outright -- e.g. a macro that
-    itself calls other macros).
+    On newer Kalico (`_rsfc_accepts_gcmd`), a real `gcmd` (anything other
+    than the literal `"callback"`) uses `gcmd.run_script` directly; the
+    literal `"callback"` uses `self.gcode.run_script` directly instead of
+    `run_script_from_command`, since the latter with no gcmd would create a
+    legacy g-code context on new Kalico that can't later re-acquire the
+    mutex. On everything else (`_rsfc_accepts_gcmd` is False), `gcmd` is
+    always run through `self.gcode.run_script_from_command`, regardless of
+    its value or of the gcode mutex's state.
     """
 
-    def test_gcmd_with_run_script_uses_it(self):
+    def test_real_gcmd_and_new_kalico_uses_gcmd_run_script(self):
         obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
         gcmd = MagicMock(spec=["run_script"])
 
         obj.run_script("G28", gcmd)
@@ -467,43 +472,74 @@ class TestRunScript:
         obj.gcode.run_script_from_command.assert_not_called()
         obj.gcode.run_script.assert_not_called()
 
-    def test_gcmd_without_run_script_and_mutex_held_uses_run_script_from_command(self):
+    def test_callback_and_new_kalico_uses_gcode_run_script_directly(self):
         obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
+
+        obj.run_script("PAUSE", "callback")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_callback_and_new_kalico_ignores_mutex_state(self):
+        obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
         obj.gcode.get_mutex.return_value.test.return_value = True
-        gcmd = MagicMock(spec=[])
+
+        obj.run_script("PAUSE", "callback")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_real_gcmd_exception_is_not_swallowed(self):
+        obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
+        gcmd = MagicMock(spec=["run_script"])
+        gcmd.run_script.side_effect = CommandError(
+            "A legacy G-code context cannot acquire the mutex")
+
+        with pytest.raises(CommandError, match="legacy G-code context"):
+            obj.run_script("PAUSE", gcmd)
+
+        obj.gcode.run_script.assert_not_called()
+
+    def test_real_gcmd_without_new_kalico_uses_run_script_from_command(self):
+        obj = _make_afc()
+        gcmd = MagicMock(spec=["run_script"])
 
         obj.run_script("G28", gcmd)
 
+        gcmd.run_script.assert_not_called()
         obj.gcode.run_script_from_command.assert_called_once_with("G28")
         obj.gcode.run_script.assert_not_called()
 
-    def test_gcmd_without_run_script_and_mutex_not_held_uses_gcode_run_script(self):
+    def test_callback_without_new_kalico_uses_run_script_from_command(self):
         obj = _make_afc()
-        obj.gcode.get_mutex.return_value.test.return_value = False
-        gcmd = MagicMock(spec=[])
 
-        obj.run_script("G28", gcmd)
-
-        obj.gcode.run_script.assert_called_once_with("G28")
-        obj.gcode.run_script_from_command.assert_not_called()
-
-    def test_no_gcmd_and_mutex_held_uses_run_script_from_command(self):
-        obj = _make_afc()
-        obj.gcode.get_mutex.return_value.test.return_value = True
-
-        obj.run_script("PAUSE")
+        obj.run_script("PAUSE", "callback")
 
         obj.gcode.run_script_from_command.assert_called_once_with("PAUSE")
         obj.gcode.run_script.assert_not_called()
 
-    def test_no_gcmd_and_mutex_not_held_uses_gcode_run_script(self):
+    def test_without_new_kalico_mutex_held_still_uses_run_script_from_command(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = True
+        gcmd = MagicMock(spec=["run_script"])
+
+        obj.run_script("PAUSE", gcmd)
+
+        obj.gcode.run_script_from_command.assert_called_once_with("PAUSE")
+        obj.gcode.run_script.assert_not_called()
+
+    def test_without_new_kalico_mutex_not_held_still_uses_run_script_from_command(self):
         obj = _make_afc()
         obj.gcode.get_mutex.return_value.test.return_value = False
+        gcmd = MagicMock(spec=["run_script"])
 
-        obj.run_script("PAUSE")
+        obj.run_script("PAUSE", gcmd)
 
-        obj.gcode.run_script.assert_called_once_with("PAUSE")
-        obj.gcode.run_script_from_command.assert_not_called()
+        obj.gcode.run_script_from_command.assert_called_once_with("PAUSE")
+        obj.gcode.run_script.assert_not_called()
 
 
 class TestCheckExtruderTemp:
@@ -1001,34 +1037,38 @@ class TestHeatNextExtruderWithExplicitTemp:
 
     def test_explicit_temp_used_instead_of_current_heater(self):
         """When next_temp is given, the next heater is set to that value, not the current target."""
+        gcmd = MagicMock()
         obj, next_ext, next_heater, current_heater, pheaters = _make_afc_for_heat_next(
             current_target=220.0
         )
-        result = obj._heat_next_extruder(wait=False, next_temp=190.0)
+        result = obj._heat_next_extruder(wait=False, next_temp=190.0, gcmd=gcmd)
         pheaters.set_temperature.assert_called_once_with(next_heater, 190.0, False)
 
     def test_explicit_temp_returns_extruder_and_temp(self):
         """Return value is (AFCExtruder object, set_temp) — not the heater."""
+        gcmd = MagicMock()
         obj, next_ext, next_heater, current_heater, pheaters = _make_afc_for_heat_next()
-        result = obj._heat_next_extruder(wait=False, next_temp=200.0)
+        result = obj._heat_next_extruder(wait=False, next_temp=200.0, gcmd=gcmd)
         assert result[0] is next_ext
         assert result[1] == 200.0
 
     def test_none_next_temp_reads_current_heater_target(self):
         """When next_temp=None (infinite runout path), target is read from current heater."""
+        gcmd = MagicMock()
         obj, next_ext, next_heater, current_heater, pheaters = _make_afc_for_heat_next(
             current_target=215.0
         )
-        result = obj._heat_next_extruder(wait=False, next_temp=None)
+        result = obj._heat_next_extruder(wait=False, next_temp=None, gcmd=gcmd)
         pheaters.set_temperature.assert_called_once_with(next_heater, 215.0, False)
         assert result[1] == 215.0
 
     def test_current_heater_not_touched_when_next_temp_given(self):
         """Providing next_temp must NOT set or reset the current heater temperature."""
+        gcmd = MagicMock()
         obj, next_ext, next_heater, current_heater, pheaters = _make_afc_for_heat_next(
             current_target=220.0
         )
-        obj._heat_next_extruder(wait=False, next_temp=200.0)
+        obj._heat_next_extruder(wait=False, next_temp=200.0, gcmd=gcmd)
         # set_temperature must only be called for the next heater, never the current one
         for call in pheaters.set_temperature.call_args_list:
             assert call.args[0] is next_heater, "set_temperature was called on unexpected heater"
@@ -1037,10 +1077,11 @@ class TestHeatNextExtruderWithExplicitTemp:
         """
         When the next extruder is the same as the current one, wait should be skipped.
         """
+        gcmd = MagicMock()
         obj, next_ext, next_heater, current_heater, pheaters = _make_afc_for_heat_next(
             next_extruder_name="extruder0",  # same as current (get_current_extruder returns "extruder0")
         )
-        obj._heat_next_extruder(wait=True, next_temp=200.0)
+        obj._heat_next_extruder(wait=True, next_temp=200.0, gcmd=gcmd)
         obj._wait_for_temp_within_tolerance.assert_not_called()
 
     def test_wait_triggered_when_next_extruder_differs_from_current(self):
@@ -1048,10 +1089,11 @@ class TestHeatNextExtruderWithExplicitTemp:
         When the next extruder differs from the current one, _wait_for_temp_within_tolerance
         must be called with the next heater and the target temp.
         """
+        gcmd = MagicMock()
         obj, next_ext, next_heater, current_heater, pheaters = _make_afc_for_heat_next(
             next_extruder_name="extruder1",  # different from current ("extruder0")
         )
-        obj._heat_next_extruder(wait=True, next_temp=200.0)
+        obj._heat_next_extruder(wait=True, next_temp=200.0, gcmd=gcmd)
         obj._wait_for_temp_within_tolerance.assert_called_once_with(next_heater, 200.0, 3.0)
 
 
@@ -1107,7 +1149,7 @@ def _make_afc_for_change_tool(lane_name="lane2", next_extruder_name="extruder1",
     obj.function.in_print.return_value = False
     obj.function.is_paused.return_value = False
     obj.function.log_toolhead_pos = MagicMock()
-    obj.function._handle_activate_extruder = MagicMock()
+    obj.function.handle_activate_extruder = MagicMock()
 
     # _heat_next_extruder stub: return (next_extruder_obj, set_temp)
     obj._heat_next_extruder.return_value = (next_extruder, 200.0)
@@ -1120,22 +1162,25 @@ class TestChangeTool_NewExtruderTemp:
 
     def test_heat_next_called_with_explicit_temp(self):
         """Providing new_extruder_temp causes _heat_next_extruder to receive that value."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
-        obj._heat_next_extruder.assert_called_once_with(wait=False, next_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
+        obj._heat_next_extruder.assert_called_once_with(wait=False, next_temp=200.0, gcmd=gcmd)
 
     def test_heat_next_called_with_explicit_temp_current_lane_None(self):
         """Providing new_extruder_temp causes _heat_next_extruder to receive that value."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.function.get_current_lane.return_value = None
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
-        obj._heat_next_extruder.assert_called_once_with(wait=False, next_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
+        obj._heat_next_extruder.assert_called_once_with(wait=False, next_temp=200.0, gcmd=gcmd)
         obj._cooldown_last_extruder.assert_not_called()
 
     def test_cooldown_called_for_old_extruder(self):
         """Old extruder is cooled down when new_extruder_temp is provided."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj._cooldown_last_extruder.assert_called_once()
         called_extruder = obj._cooldown_last_extruder.call_args.args[0]
         assert called_extruder is current_lane.extruder_obj
@@ -1148,6 +1193,7 @@ class TestChangeTool_NewExtruderTemp:
         case is properly setting the new extruder temperature, because currently this order is
         required to read the current target temp before adjustment.
         """
+        gcmd = MagicMock()
         call_order = []
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj._heat_next_extruder.side_effect = lambda **kw: (
@@ -1159,53 +1205,59 @@ class TestChangeTool_NewExtruderTemp:
             obj.TOOL_UNLOAD.return_value
         )[1]
         obj._cooldown_last_extruder.side_effect = lambda *a, **kw: call_order.append("cool")
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         assert call_order == ["heat", "cool", "unload"], f"Wrong call order: {call_order}"
 
     def test_wait_for_temp_called_after_unload(self):
         """_wait_for_temp_within_tolerance is called (after unload) when adjusting temps."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj._wait_for_temp_within_tolerance.assert_called_once()
 
     def test_no_adjusting_temperature_without_param(self):
         """Without new_extruder_temp, _heat_next_extruder and _cooldown are not called."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)  # no new_extruder_temp
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)  # no new_extruder_temp
         obj._heat_next_extruder.assert_not_called()
         obj._cooldown_last_extruder.assert_not_called()
 
     def test_lane_status_not_set_to_loaded_for_normal_toolchange(self):
         """For a normal toolchange (not infinite runout), cur_lane.status is NOT forced to LOADED."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         cur_lane.status = AFCLaneState.LOADED  # already loaded
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         # status should not have been touched by the infinite_runout branch
         assert cur_lane.status == AFCLaneState.LOADED
 
     def test_no_cooldown_when_same_extruder(self):
         """If cur_lane uses the same extruder as current, cooldown is not called."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool(
             next_extruder_name="extruder0",   # same as current
             current_extruder_name="extruder0",
         )
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj._cooldown_last_extruder.assert_not_called()
 
 class TestChangeTool_NewExtruderTemp_Park_Wipe: 
     def test_no_park_called(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Parking while waiting for extruder to heat." in m for m in info_msgs)
     
     def test_park_called_infinite_runout(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.park = True
         obj.park_cmd = "AFC_PARK"
         cur_lane.status = AFCLaneState.INFINITE_RUNOUT
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_called_once()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("Parking while waiting for extruder to heat." in m for m in info_msgs)
@@ -1213,41 +1265,46 @@ class TestChangeTool_NewExtruderTemp_Park_Wipe:
             f"{obj.park_cmd} EXTRUDER={current_lane.extruder_obj.name}"
     
     def test_park_set_not_infinite_runout(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.park = True
         obj.park_cmd = "AFC_PARK"
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
     
     def test_park_bool_set_cmd_not_set(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.park = True
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Parking while waiting for extruder to heat." in m for m in info_msgs)
     
     def test_park_bool_not_set_cmd_set(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.park_cmd = "AFC_PARK"
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Parking while waiting for extruder to heat." in m for m in info_msgs)
 
     def test_no_wipe_called(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Wiping ooze..." in m for m in info_msgs)
     
     def test_wipe_called_infinite_runout(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.wipe = True
         obj.wipe_cmd = "AFC_WIPE"
         cur_lane.status = AFCLaneState.INFINITE_RUNOUT
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_called_once()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("Wiping ooze..." in m for m in info_msgs)
@@ -1255,24 +1312,27 @@ class TestChangeTool_NewExtruderTemp_Park_Wipe:
             f"{obj.wipe_cmd} EXTRUDER={current_lane.extruder_obj.name}"
     
     def test_wipe_set_not_infinite_runout(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.wipe = True
         obj.wipe_cmd = "AFC_WIPE"
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
     
     def test_wipe_bool_set_cmd_not_set(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.wipe = True
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Wiping ooze..." in m for m in info_msgs)
     
     def test_wipe_bool_not_set_cmd_set(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.wipe_cmd = "AFC_WIPE"
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.gcode.run_script_from_command.assert_not_called()
         info_msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert not any("Wiping ooze..." in m for m in info_msgs)
@@ -1293,58 +1353,66 @@ class TestChangeTool_EarlyExits:
 
     def test_bypass_active_does_not_call_save_pos(self):
         """When _check_bypass returns True the method returns without calling save_pos."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._check_bypass.return_value = True
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.save_pos.assert_not_called()
 
     def test_bypass_active_does_not_call_tool_load(self):
         """When bypass is active TOOL_LOAD is never reached."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._check_bypass.return_value = True
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_LOAD.assert_not_called()
 
     def test_bypass_active_does_not_call_tool_unload(self):
         """When bypass is active TOOL_UNLOAD is never reached."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._check_bypass.return_value = True
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_UNLOAD.assert_not_called()
 
     def test_bypass_active_still_resets_next_lane_load(self):
         """next_lane_load is reset to None in the finally block even after bypass return."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._check_bypass.return_value = True
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.next_lane_load is None
 
     def test_heat_next_extruder_failure_calls_error_fix(self):
         """When _heat_next_extruder returns falsy, error.fix is called and execution stops."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._heat_next_extruder.return_value = None
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.error.fix.assert_called_once()
 
     def test_heat_next_extruder_failure_does_not_call_tool_load(self):
         """When _heat_next_extruder returns falsy, TOOL_LOAD is never reached."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._heat_next_extruder.return_value = None
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj.TOOL_LOAD.assert_not_called()
 
     def test_heat_next_extruder_failure_passes_next_lane_name_to_error(self):
         """error.fix second arg is the requested lane name (self.next_lane_load)."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._heat_next_extruder.return_value = None
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         assert obj.error.fix.call_args.args[1] == cur_lane.name
 
     def test_heat_next_extruder_failure_still_resets_next_lane_load(self):
         """next_lane_load is reset to None in finally even after heat failure return."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj._heat_next_extruder.return_value = None
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         assert obj.next_lane_load is None
 
 
@@ -1366,58 +1434,67 @@ class TestChangeTool_SameLane:
         return obj, cur_lane
 
     def test_handle_activate_extruder_called_with_zero(self):
-        """_handle_activate_extruder(0) is called to re-sync the lane."""
+        """handle_activate_extruder(0) is called to re-sync the lane."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make()
-        obj.CHANGE_TOOL(cur_lane)
-        obj.function._handle_activate_extruder.assert_called_once_with(0, None)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
+        obj.function.handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
 
     def test_save_pos_not_called(self):
         """save_pos is NOT called when the lane is already loaded."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.save_pos.assert_not_called()
 
     def test_tool_unload_not_called(self):
         """TOOL_UNLOAD is NOT called when the lane is already loaded."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_UNLOAD.assert_not_called()
 
     def test_tool_load_not_called(self):
         """TOOL_LOAD is NOT called when the lane is already loaded."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_LOAD.assert_not_called()
 
     def test_logs_already_loaded(self):
         """An 'already loaded' message is appended to logger.messages at info level."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         msgs = [m for lvl, m in obj.logger.messages if lvl == "info"]
         assert any("already loaded" in m for m in msgs)
 
     def test_current_toolchange_incremented_from_minus_one(self):
         """current_toolchange increments from -1 to 0 when not in error_state."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make(error_state=False, current_toolchange=-1)
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.current_toolchange == 0
 
     def test_current_toolchange_not_incremented_when_not_minus_one(self):
         """current_toolchange is left unchanged when it is already 0."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make(error_state=False, current_toolchange=0)
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.current_toolchange == 0
 
     def test_current_toolchange_not_incremented_in_error_state(self):
         """current_toolchange is NOT incremented when error_state is True, even from -1."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make(error_state=True, current_toolchange=-1)
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.current_toolchange == -1
 
     def test_next_lane_load_reset_to_none(self):
         """next_lane_load is reset to None by the finally block on the same-lane path."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.next_lane_load is None
 
 
@@ -1428,66 +1505,75 @@ class TestChangeTool_UnloadPath:
 
     def test_tool_unload_skipped_when_nothing_loaded(self):
         """When self.current is None (nothing loaded) TOOL_UNLOAD is not called."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.function.get_current_lane.return_value = None
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_UNLOAD.assert_not_called()
 
     def test_tool_load_still_called_when_nothing_loaded(self):
         """When self.current is None the toolchange still proceeds to TOOL_LOAD."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.function.get_current_lane.return_value = None
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_LOAD.assert_called_once()
 
     def test_tool_unload_skipped_when_prep_not_done(self):
         """When cur_lane._afc_prep_done is False the whole unload block is skipped."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         cur_lane._afc_prep_done = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_UNLOAD.assert_not_called()
 
     def test_tool_load_still_called_when_prep_not_done(self):
         """Even with _afc_prep_done=False, TOOL_LOAD is still attempted."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         cur_lane._afc_prep_done = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_LOAD.assert_called_once()
 
     def test_afc_error_called_when_current_lane_not_in_lanes_dict(self):
         """AFC_error is called when lanes.get(self.current) returns None."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         del obj.lanes["lane1"]
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.error.AFC_error.assert_called_once()
 
     def test_afc_error_message_contains_missing_lane_name(self):
         """The AFC_error message contains the name of the unresolvable current lane."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         del obj.lanes["lane1"]
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         error_msg = obj.error.AFC_error.call_args.args[0]
         assert "lane1" in error_msg
 
     def test_tool_load_not_called_when_current_lane_unknown(self):
         """TOOL_LOAD is never reached when the current lane cannot be resolved."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         del obj.lanes["lane1"]
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_LOAD.assert_not_called()
 
     def test_tool_unload_called_with_correct_lane_object(self):
         """TOOL_UNLOAD receives the lane object for the snapshot of self.current.
         Because current_lane_name = self.current is captured before TOOL_UNLOAD
         is invoked, the reference is stable even if get_current_lane() changes later."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.TOOL_UNLOAD.call_args.args[0] is current_lane
 
     def test_tool_unload_called_with_set_start_time_false(self):
         """TOOL_UNLOAD is always called with set_start_time=False during a toolchange."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.TOOL_UNLOAD.call_args.kwargs["set_start_time"] is False
 
     def test_error_fix_called_when_tool_unload_returns_false(self):
@@ -1495,31 +1581,35 @@ class TestChangeTool_UnloadPath:
         failure, and increase_unload_error_count() is called to record it
         (whether that actually counts the error depends on afc.testing,
         which is AFCStats's responsibility -- see tests/test_AFC_stats.py)."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.error.fix.assert_called_once()
         obj.afc_stats.increase_unload_error_count.assert_called_once()
 
     def test_error_fix_receives_unload_lane_object(self):
         """error.fix second arg is the pre-resolved unload_lane, not None or cur_lane."""
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.error.fix.call_args.args[1] is current_lane
 
     def test_tool_load_not_called_when_tool_unload_fails(self):
         """Execution aborts after failed TOOL_UNLOAD; TOOL_LOAD is never called."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.TOOL_LOAD.assert_not_called()
 
     def test_next_lane_load_reset_after_unload_failure(self):
         """The finally block resets next_lane_load to None even after TOOL_UNLOAD failure."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.next_lane_load is None
 
     def test_increase_unload_error_count_called_with_afc_instance(self):
@@ -1527,9 +1617,10 @@ class TestChangeTool_UnloadPath:
         (it, not the call site, decides whether to skip based on
         afc.testing -- see tests/test_AFC_stats.py), so this verifies the
         call is made with the correct argument regardless of obj.testing."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.afc_stats.increase_unload_error_count.assert_called_once_with(obj)
 
 
@@ -1540,62 +1631,71 @@ class TestChangeTool_LoadPath:
 
     def test_tool_load_called_with_correct_lane(self):
         """TOOL_LOAD receives cur_lane as its first positional argument."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.TOOL_LOAD.call_args.args[0] is cur_lane
 
     def test_tool_load_called_with_purge_length(self):
         """TOOL_LOAD receives the purge_length value passed to CHANGE_TOOL."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane, purge_length=50.0)
+        obj.CHANGE_TOOL(cur_lane, purge_length=50.0, gcmd=gcmd)
         assert obj.TOOL_LOAD.call_args.args[1] == 50.0
 
     def test_tool_load_called_with_set_start_time_false(self):
         """TOOL_LOAD is called with set_start_time=False during a toolchange."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.TOOL_LOAD.call_args.kwargs["set_start_time"] is False
 
     def test_restore_pos_called_on_success_with_default_restore_pos(self):
         """restore_pos() is called when TOOL_LOAD succeeds and restore_pos=True (default)."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.restore_pos.assert_called_once()
 
     def test_restore_pos_not_called_with_restore_pos_false(self):
         """restore_pos() is NOT called when restore_pos=False even on a successful load."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane, restore_pos=False)
+        obj.CHANGE_TOOL(cur_lane, restore_pos=False, gcmd=gcmd)
         obj.restore_pos.assert_not_called()
 
     def test_restore_pos_suppressed_when_error_state_set_during_load(self):
         """If TOOL_LOAD sets error_state=True, restore_pos is not called."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         def _load_sets_error(*args, **kwargs):
             obj.error_state = True
             return True
         obj.TOOL_LOAD.side_effect = _load_sets_error
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.restore_pos.assert_not_called()
 
     def test_in_toolchange_cleared_after_successful_load(self):
         """in_toolchange is False after a successful TOOL_LOAD."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.in_toolchange is False
 
     def test_increase_toolcount_change_called_on_success(self):
         """cur_lane.extruder_obj.estats.increase_toolcount_change() fires on success.
         increase_toolcount_change lives on AFCExtruderStats (confirmed from AFC_extruder.py)."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         cur_lane.extruder_obj.estats.increase_toolcount_change.assert_called_once()
 
     def test_average_toolchange_time_recorded_on_success(self):
         """afc_stats.average_toolchange_time.average_time() is called with the elapsed time."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.afcDeltaTime.log_total_time.return_value = 7.5
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.afc_stats.average_toolchange_time.average_time.assert_called_once_with(7.5)
 
     def test_increase_load_error_count_called_with_afc_instance(self):
@@ -1603,19 +1703,21 @@ class TestChangeTool_LoadPath:
         not the call site, decides whether to skip based on afc.testing --
         see tests/test_AFC_stats.py), so this verifies the call is made with
         the correct argument regardless of obj.testing."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_LOAD.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.afc_stats.increase_load_error_count.assert_called_once_with(obj)
 
     def test_wait_for_temp_called_with_heater_target_and_deadband(self):
         """_wait_for_temp_within_tolerance(heater, target_temp, deadband) is called.
         deadband defaults to 2.0 on AFCExtruder (confirmed from AFC_extruder.py)."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         next_extruder_obj, target_temp = obj._heat_next_extruder.return_value
         next_extruder_obj.deadband = 2.0
         expected_heater = next_extruder_obj.get_heater()
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         obj._wait_for_temp_within_tolerance.assert_called_once_with(
             expected_heater, target_temp, 2.0
         )
@@ -1628,6 +1730,7 @@ class TestChangeTool_StateManagement:
 
     def test_next_lane_load_set_to_cur_lane_name_before_save_pos(self):
         """next_lane_load is set to cur_lane.name before save_pos is called."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         captured = {}
         original_save = obj.save_pos
@@ -1635,24 +1738,27 @@ class TestChangeTool_StateManagement:
             captured["next_lane_load"] = obj.next_lane_load
             return original_save(*a, **kw)
         obj.save_pos = _capture
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert captured["next_lane_load"] == cur_lane.name
 
     def test_next_lane_load_reset_to_none_after_successful_change(self):
         """next_lane_load is None at the end of a successful toolchange (finally block)."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.next_lane_load is None
 
     def test_next_lane_load_reset_to_none_after_unload_failure(self):
         """next_lane_load is None in the finally block even when TOOL_UNLOAD fails."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.TOOL_UNLOAD.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.next_lane_load is None
 
     def test_in_toolchange_true_when_tool_unload_is_called(self):
         """in_toolchange is True by the time TOOL_UNLOAD fires (set before the prep block)."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         captured = {}
         original_unload = obj.TOOL_UNLOAD
@@ -1660,57 +1766,63 @@ class TestChangeTool_StateManagement:
             captured["in_toolchange"] = obj.in_toolchange
             return original_unload(*args, **kwargs)
         obj.TOOL_UNLOAD = _capture
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert captured["in_toolchange"] is True
 
     def test_save_pos_called_when_switching_lanes(self):
         """save_pos() is called when the requested lane differs from self.current."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.save_pos.assert_called_once()
 
     def test_save_pos_not_called_for_same_lane(self):
         """save_pos() is NOT called when the requested lane is already current."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.function.get_current_lane.return_value = cur_lane.name
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.save_pos.assert_not_called()
 
     def test_current_toolchange_incremented_when_within_total(self):
         """current_toolchange increments when error_state=False, number_of_toolchanges != 0,
         and current_toolchange < number_of_toolchanges."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.error_state = False
         obj.number_of_toolchanges = 5
         obj.current_toolchange = 2
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.current_toolchange == 3
 
     def test_current_toolchange_not_incremented_in_error_state(self):
         """current_toolchange is NOT incremented when error_state is True."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.error_state = True
         obj.number_of_toolchanges = 5
         obj.current_toolchange = 2
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.current_toolchange == 2
 
     def test_current_toolchange_not_incremented_when_number_of_toolchanges_zero(self):
         """current_toolchange is NOT incremented when number_of_toolchanges == 0."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.error_state = False
         obj.number_of_toolchanges = 0
         obj.current_toolchange = 0
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.current_toolchange == 0
 
     def test_current_toolchange_not_incremented_when_already_at_max(self):
         """current_toolchange is NOT incremented when it already equals number_of_toolchanges."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         obj.error_state = False
         obj.number_of_toolchanges = 3
         obj.current_toolchange = 3
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.current_toolchange == 3
 
 
@@ -1740,6 +1852,7 @@ class TestChangeTool_InfiniteRunout:
 
     def test_adjusting_temperature_true_when_extruder_changes(self):
         """adjusting_temperature is True (heat path entered) when the extruder differs."""
+        gcmd = MagicMock()
         call_order = []
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=False)
         obj._heat_next_extruder.side_effect = lambda **kw: (
@@ -1751,53 +1864,60 @@ class TestChangeTool_InfiniteRunout:
             obj.TOOL_UNLOAD.return_value
         )[1]
         obj._cooldown_last_extruder.side_effect = lambda *a, **kw: call_order.append("cool")
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj._heat_next_extruder.assert_called_once()
         assert call_order == ["heat", "unload", "cool"], f"Wrong call order: {call_order}"
 
     def test_adjusting_temperature_false_when_same_extruder(self):
         """adjusting_temperature is False when infinite_runout but the extruder is unchanged."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=True)
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj._heat_next_extruder.assert_not_called()
 
     def test_heat_next_extruder_called_with_next_temp_none(self):
         """_heat_next_extruder is called with next_temp=None for infinite_runout
         so that it reads the current target temp rather than forcing a new value."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=False)
-        obj.CHANGE_TOOL(cur_lane)
-        obj._heat_next_extruder.assert_called_once_with(wait=False, next_temp=None)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
+        obj._heat_next_extruder.assert_called_once_with(wait=False, next_temp=None, gcmd=gcmd)
 
     def test_cur_lane_status_set_to_loaded(self):
         """cur_lane.status is forced to AFCLaneState.LOADED during infinite_runout."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = self._make_infinite_runout(same_extruder=False)
         assert cur_lane.status == AFCLaneState.INFINITE_RUNOUT
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert cur_lane.status == AFCLaneState.LOADED
 
     def test_normal_toolchange_does_not_alter_cur_lane_status(self):
         """A normal toolchange (not infinite_runout) leaves cur_lane.status untouched."""
+        gcmd = MagicMock()
         obj, cur_lane, _ = _make_afc_for_change_tool()
         cur_lane.status = AFCLaneState.LOADED
-        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0)
+        obj.CHANGE_TOOL(cur_lane, new_extruder_temp=200.0, gcmd=gcmd)
         assert cur_lane.status == AFCLaneState.LOADED
     
     def test_force_unload_not_standalone_lane(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = self._make_infinite_runout(same_extruder=False)
         current_lane.extruder_obj.is_standalone.return_value = False
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.LANE_UNLOAD.assert_called_once()
     
     def test_force_unload_standalone_lane(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = self._make_infinite_runout(same_extruder=False)
         current_lane.extruder_obj.is_standalone.return_value = True
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.LANE_UNLOAD.assert_not_called()
     
     def test_force_unload_direct_lane(self):
+        gcmd = MagicMock()
         obj, cur_lane, current_lane = self._make_infinite_runout(same_extruder=False)
         current_lane.is_direct_hub = MagicMock(return_value = True)
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.LANE_UNLOAD.assert_not_called()
 
 
@@ -1821,7 +1941,7 @@ class TestChangeTool_PrepNotDoneAdjustingTemperature:
         obj.wipe = True
         obj.wipe_cmd = "WIPE_MACRO"
 
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=MagicMock())
 
         # CHANGE_TOOL catches all exceptions broadly, so an UnboundLocalError
         # on current_lane_name/unload_lane would surface here as this generic
@@ -1855,36 +1975,41 @@ class TestChangeTool_ExceptionHandling:
 
     def test_unexpected_exception_is_swallowed(self):
         """An unexpected exception from TOOL_LOAD must not propagate to the caller."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make_raising_fixture()
         try:
-            obj.CHANGE_TOOL(cur_lane)   # must not raise
+            obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)   # must not raise
         except Exception as exc:
             pytest.fail(f"CHANGE_TOOL propagated an unexpected exception: {exc}")
 
     def test_unexpected_exception_calls_afc_error(self):
         """error.AFC_error is called when an unexpected exception is caught."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make_raising_fixture()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         obj.error.AFC_error.assert_called_once()
 
     def test_unexpected_exception_logs_error_message(self):
         """An error-level entry is appended to logger.messages on unexpected exception."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make_raising_fixture()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         error_msgs = [m for lvl, m in obj.logger.messages if lvl == "error"]
         assert any("CHANGE_TOOL" in m for m in error_msgs)
 
     def test_next_lane_load_always_reset_on_exception(self):
         """The finally block resets next_lane_load to None even when an exception fires."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make_raising_fixture()
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         assert obj.next_lane_load is None
 
     def test_afc_error_pause_arg_reflects_in_print(self):
         """error.AFC_error is called with pause= matching function.in_print()."""
+        gcmd = MagicMock()
         obj, cur_lane = self._make_raising_fixture()
         obj.function.in_print.return_value = True
-        obj.CHANGE_TOOL(cur_lane)
+        obj.CHANGE_TOOL(cur_lane, gcmd=gcmd)
         call_kwargs = obj.error.AFC_error.call_args.kwargs
         assert call_kwargs.get("pause") is True
 
@@ -2092,10 +2217,11 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
 
     def test_aborts_with_clear_error_when_stale_lane_not_in_lanes(self):
         """If the stale loaded lane name is not in self.lanes, report an explicit error and abort."""
+        gcmd = MagicMock()
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         # Remove lane4 from lanes so it is unmapped
         del obj.lanes["lane4"]
-        result = obj.TOOL_LOAD(target_lane)
+        result = obj.TOOL_LOAD(target_lane, gcmd=gcmd)
         assert result is False
         obj.error.AFC_error.assert_called_once()
         error_msg = obj.error.AFC_error.call_args.args[0]
@@ -2106,32 +2232,36 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
     def test_unloads_when_extruder_already_has_different_lane_loaded(self):
         """TOOL_UNLOAD is called for the already-loaded lane before proceeding,
         and since it succeeds, no unload error is recorded."""
+        gcmd = MagicMock()
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
-        obj.TOOL_LOAD(target_lane)
-        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
+        obj.TOOL_LOAD(target_lane, gcmd=gcmd)
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
         obj.afc_stats.increase_unload_error_count.assert_not_called()
 
     def test_aborts_if_unload_fails(self):
         """If TOOL_UNLOAD returns False, TOOL_LOAD returns False immediately
         and records the failure via increase_unload_error_count(self)."""
+        gcmd = MagicMock()
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         obj.TOOL_UNLOAD.return_value = False
-        result = obj.TOOL_LOAD(target_lane)
+        result = obj.TOOL_LOAD(target_lane, gcmd=gcmd)
         assert result is False
         obj.afc_stats.increase_unload_error_count.assert_called_once_with(obj)
 
     def test_no_unload_when_extruder_already_has_target_lane_loaded(self):
         """If the extruder already has the target lane loaded, no unload is triggered."""
+        gcmd = MagicMock()
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         dest_extruder.lane_loaded = "lane2"   # already the target
-        obj.TOOL_LOAD(target_lane)
+        obj.TOOL_LOAD(target_lane, gcmd=gcmd)
         obj.TOOL_UNLOAD.assert_not_called()
 
     def test_no_unload_when_extruder_has_nothing_loaded(self):
         """If the extruder has lane_loaded=None, no unload is triggered."""
+        gcmd = MagicMock()
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
         dest_extruder.lane_loaded = None
-        obj.TOOL_LOAD(target_lane)
+        obj.TOOL_LOAD(target_lane, gcmd=gcmd)
         obj.TOOL_UNLOAD.assert_not_called()
 
     def test_unloads_stale_lane_after_tool_swap(self):
@@ -2150,6 +2280,7 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
         This path is distinct from the other stale-lane tests which start with
         the active extruder already being extruder1 (no swap needed).
         """
+        gcmd = MagicMock()
         obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
 
         # Override: active extruder is 'extruder', not 'extruder1' — swap needed
@@ -2160,14 +2291,14 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
         target_lane.tool_swap.side_effect = lambda gcmd=None: call_order.append("swap")
         obj.TOOL_UNLOAD.side_effect = lambda *a, **kw: (call_order.append("unload"), True)[1]
 
-        obj.TOOL_LOAD(target_lane)
+        obj.TOOL_LOAD(target_lane, gcmd=gcmd)
 
         assert "swap" in call_order, "tool_swap was not called"
         assert "unload" in call_order, "TOOL_UNLOAD was not called for the stale lane"
         assert call_order.index("swap") < call_order.index("unload"), (
             f"tool_swap must precede TOOL_UNLOAD; order was {call_order}"
         )
-        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=None)
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
 
 
 # ── td1_present property ─────────────────────────────────────────────────────
@@ -3713,6 +3844,7 @@ class TestUnitOrdering:
 
 class TestDoPoopKickWipe:
     def test_poop_no_purge(self):
+        gcmd = MagicMock()
         afc = _make_afc()
         lane = _make_afc_lane()
         lane.extruder_obj.name = "e0"
@@ -3721,7 +3853,7 @@ class TestDoPoopKickWipe:
         afc.poop = True
         afc.poop_cmd = "AFC_POOP"
 
-        afc.do_poop_kick_wipe( lane, lane.extruder_obj)
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, gcmd=gcmd)
 
         afc.gcode.run_script_from_command.assert_called_once_with("AFC_POOP EXTRUDER=e0")
         afc.afcDeltaTime.log_with_time.assert_called_once_with("TOOL_LOAD: After poop")
@@ -3731,6 +3863,7 @@ class TestDoPoopKickWipe:
         assert not lane.need_purge
     
     def test_poop_purge_length(self):
+        gcmd = MagicMock()
         afc = _make_afc()
         lane = _make_afc_lane()
         lane.extruder_obj.name = "e0"
@@ -3739,7 +3872,7 @@ class TestDoPoopKickWipe:
         afc.poop = True
         afc.poop_cmd = "AFC_POOP"
 
-        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, purge_length=100, gcmd=gcmd)
 
         afc.gcode.run_script_from_command.assert_called_once_with("AFC_POOP PURGE_LENGTH=100 EXTRUDER=e0")
         afc.afcDeltaTime.log_with_time.assert_called_once_with("TOOL_LOAD: After poop")
@@ -3750,6 +3883,7 @@ class TestDoPoopKickWipe:
         assert not lane.need_purge
     
     def test_poop_wipe(self):
+        gcmd = MagicMock()
         afc = _make_afc()
         lane = _make_afc_lane()
         lane.extruder_obj.name = "e0"
@@ -3761,7 +3895,7 @@ class TestDoPoopKickWipe:
         afc.wipe = True
         afc.wipe_cmd = "AFC_BRUSH"
 
-        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, purge_length=100, gcmd=gcmd)
 
         gcode_calls = [
             call("AFC_POOP PURGE_LENGTH=100 EXTRUDER=e0"),
@@ -3779,6 +3913,7 @@ class TestDoPoopKickWipe:
         assert afc.function.log_toolhead_pos.call_count == 3
 
     def test_poop_kick_wipe(self):
+        gcmd = MagicMock()
         afc = _make_afc()
         lane = _make_afc_lane()
         lane.extruder_obj.name = "e0"
@@ -3793,7 +3928,7 @@ class TestDoPoopKickWipe:
         afc.kick = True
         afc.kick_cmd = "AFC_KICK"
 
-        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, purge_length=100, gcmd=gcmd)
 
         gcode_calls = [
             call("AFC_POOP PURGE_LENGTH=100 EXTRUDER=e0"),
@@ -3814,6 +3949,7 @@ class TestDoPoopKickWipe:
         assert afc.function.log_toolhead_pos.call_count == 4
 
     def test_kick_wipe(self):
+        gcmd = MagicMock()
         afc = _make_afc()
         lane = _make_afc_lane()
         lane.extruder_obj.name = "e0"
@@ -3825,7 +3961,7 @@ class TestDoPoopKickWipe:
         afc.kick = True
         afc.kick_cmd = "AFC_KICK"
 
-        afc.do_poop_kick_wipe( lane, lane.extruder_obj, 100)
+        afc.do_poop_kick_wipe( lane, lane.extruder_obj, purge_length=100, gcmd=gcmd)
 
         gcode_calls = [
             call("AFC_KICK EXTRUDER=e0"),
@@ -3874,23 +4010,26 @@ class TestLoadSequenceDefaultPathSuccess:
         return afc, lane, hub, extruder
 
     def test_sync_to_extruder_called(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
-        afc.load_sequence(lane, hub, extruder)
-        lane.sync_to_extruder.assert_called_once_with(gcmd=None)
+        afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
+        lane.sync_to_extruder.assert_called_once_with(gcmd=gcmd)
 
     def test_status_set_to_tool_loaded(self):
         """status passes through TOOL_LOADED right after sync_to_extruder,
         then set_tool_loaded() (called later in the same sequence) advances
         it to TOOLED -- asserting the final state here."""
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
-        afc.load_sequence(lane, hub, extruder)
+        afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
         assert lane.status == AFCLaneState.TOOLED
 
     def test_lane_tool_loaded_gears_called(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
-        afc.load_sequence(lane, hub, extruder)
+        afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
         assert not hasattr(lane.unit_obj, "unit_load_lane")
-        lane.unit_obj.lane_tool_loaded_gears.assert_called_once_with(lane)
+        lane.unit_obj.lane_tool_loaded_gears.assert_called_once_with(lane, gcmd=gcmd)
 
 
 class TestLoadSequenceToolStartVirtualSkip:
@@ -3914,22 +4053,25 @@ class TestLoadSequenceToolStartVirtualSkip:
         return afc, lane, hub, extruder
 
     def test_virtual_tool_start_skips_retry_loop(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make("virtual")
-        result = afc.load_sequence(lane, hub, extruder)
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
         assert result is not False
         lane.move_to.assert_not_called()
 
     def test_no_tool_start_pin_skips_retry_loop(self):
         """Covers the `cur_extruder.tool_start` guard's falsy branch (no
         tool_start pin configured at all, e.g. a buffer-only setup)."""
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make(None)
-        result = afc.load_sequence(lane, hub, extruder)
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
         assert result is not False
         lane.move_to.assert_not_called()
 
     def test_real_tool_start_pin_runs_retry_loop(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make("^PD3")
-        result = afc.load_sequence(lane, hub, extruder)
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
         assert result is not False
         lane.move_to.assert_called_once()
 
@@ -3937,9 +4079,10 @@ class TestLoadSequenceToolStartVirtualSkip:
         """A U1-style motion sensor (u1_filament_sensor_name) leaves tool_start
         None, so has_toolhead_sensor -- not a raw tool_start truthy check --
         must be what gates this loop."""
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make(None)
         extruder.has_toolhead_sensor = True
-        result = afc.load_sequence(lane, hub, extruder)
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
         assert result is not False
         lane.move_to.assert_called_once()
 
@@ -3967,26 +4110,28 @@ class TestToolLoadNeedPurge:
         return afc,lane
 
     def test_no_purge_needed(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge(need_purge=False)
         purge_length = None
 
-        assert afc.TOOL_LOAD(lane)
+        assert afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_not_called()
         afc.restore_toolhead_temp.assert_not_called()
         afc.save_vars.assert_not_called()
 
     def test_need_purge_no_purge_length(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge()
         purge_length = None
 
-        assert afc.TOOL_LOAD(lane)
+        assert afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length, gcmd=None)
+                                                      purge_length=purge_length, gcmd=gcmd)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_not_called()
@@ -3995,68 +4140,73 @@ class TestToolLoadNeedPurge:
         assert any(f"Flag set to purge for {lane.extruder_obj.name}:{lane.current_map}" in m for m in info_msgs)
 
     def test_need_purge_with_purge_length(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge()
         purge_length = 100
 
-        assert afc.TOOL_LOAD(lane, purge_length=purge_length)
+        assert afc.TOOL_LOAD(lane, purge_length=purge_length, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length, gcmd=None)
+                                                      purge_length=purge_length, gcmd=gcmd)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_not_called()
     
     def test_need_purge_with_purge_length_no_heating(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge(check_extruder_temp_return=False)
         purge_length = 100
 
-        assert afc.TOOL_LOAD(lane, purge_length=purge_length)
+        assert afc.TOOL_LOAD(lane, purge_length=purge_length, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_not_called()
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length, gcmd=None)
+                                                      purge_length=purge_length, gcmd=gcmd)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_not_called()
 
     def test_need_purge_with_purge_length_post_load_macro(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge()
         afc.post_load_macro = "AFC_TEST"
         purge_length = 100
 
-        assert afc.TOOL_LOAD(lane, purge_length=purge_length)
+        assert afc.TOOL_LOAD(lane, purge_length=purge_length, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
         afc.do_poop_kick_wipe.assert_called_once_with(cur_lane=lane, cur_extruder=lane.extruder_obj,
-                                                      purge_length=purge_length, gcmd=None)
+                                                      purge_length=purge_length, gcmd=gcmd)
         afc.restore_toolhead_temp.assert_called_once_with(100)
         afc.save_vars.assert_called_once_with()
         afc.gcode.run_script_from_command.assert_called_once_with(afc.post_load_macro)
 
     def test_partial_load_skips_purge_processing(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge()
         afc.post_load_macro = "AFC_TEST"
 
-        assert afc.TOOL_LOAD(lane, purge_length=100, load_to_gears=True)
+        assert afc.TOOL_LOAD(lane, purge_length=100, load_to_gears=True, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_not_called()
         afc.do_poop_kick_wipe.assert_not_called()
         afc.gcode.run_script_from_command.assert_not_called()
 
     def test_need_purge_raise_error_no_printing(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge(check_extruder_temp_return=False)
         purge_length = 100
 
         afc._check_extruder_temp = MagicMock(side_effect = Exception("Error Occurred"))
 
-        assert not afc.TOOL_LOAD(lane, purge_length=purge_length)
+        assert not afc.TOOL_LOAD(lane, purge_length=purge_length, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)
@@ -4069,18 +4219,19 @@ class TestToolLoadNeedPurge:
             (f"Error occurred when trying to purge {lane.extruder_obj.name}."
              " See AFC.log for error trace."),
             pause=False
-        )
+        , gcmd=gcmd)
 
         debug_msgs = [m for lvl, m in afc.logger.messages if lvl == "debug"]
         assert any(f"Exception: Error Occurred" in m for m in debug_msgs)
 
     def test_need_purge_raise_error_printing(self):
+        gcmd = MagicMock()
         afc, lane = self._make_afc_lane_for_need_purge(check_extruder_temp_return=False, printing=True)
         purge_length = 100
 
         afc._check_extruder_temp = MagicMock(side_effect = Exception("Error Occurred"))
 
-        assert not afc.TOOL_LOAD(lane, purge_length=purge_length)
+        assert not afc.TOOL_LOAD(lane, purge_length=purge_length, gcmd=gcmd)
 
         afc.capture_toolhead_temp.assert_called_once()
         afc._check_extruder_temp.assert_called_once_with(lane)
@@ -4093,7 +4244,7 @@ class TestToolLoadNeedPurge:
             (f"Error occurred when trying to purge {lane.extruder_obj.name}."
              " See AFC.log for error trace."),
             pause=True
-        )
+        , gcmd=gcmd)
 
         debug_msgs = [m for lvl, m in afc.logger.messages if lvl == "debug"]
         assert any("Exception: Error Occurred" in m for m in debug_msgs)
@@ -4117,13 +4268,14 @@ class TestDoToolCutTipForm:
         return afc, lane
 
     def test_tool_cut_true_park_true_cuts_and_parks(self):
+        gcmd = MagicMock()
         afc, lane = self._make()
         afc.tool_cut = True
         afc.tool_cut_cmd = "AFC_CUT"
         afc.park = True
         afc.park_cmd = "AFC_PARK"
 
-        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj, gcmd=gcmd)
 
         lane.extruder_obj.estats.increase_cut_total.assert_called_once_with()
         gcode_calls = [
@@ -4139,12 +4291,13 @@ class TestDoToolCutTipForm:
         assert afc.function.log_toolhead_pos.call_count == 2
 
     def test_tool_cut_true_park_false_cuts_without_parking(self):
+        gcmd = MagicMock()
         afc, lane = self._make()
         afc.tool_cut = True
         afc.tool_cut_cmd = "AFC_CUT"
         afc.park = False
 
-        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj, gcmd=gcmd)
 
         lane.extruder_obj.estats.increase_cut_total.assert_called_once_with()
         assert afc.gcode.run_script_from_command.call_args_list == [call("AFC_CUT EXTRUDER=e0")]
@@ -4152,18 +4305,20 @@ class TestDoToolCutTipForm:
         assert afc.function.log_toolhead_pos.call_count == 1
 
     def test_tool_cut_false_skips_cut_entirely(self):
+        gcmd = MagicMock()
         afc, lane = self._make()
         afc.tool_cut = False
         afc.park = True
         afc.park_cmd = "AFC_PARK"
 
-        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj, gcmd=gcmd)
 
         lane.extruder_obj.estats.increase_cut_total.assert_not_called()
         afc.gcode.run_script_from_command.assert_not_called()
         afc.afcDeltaTime.log_with_time.assert_not_called()
 
     def test_form_tip_true_park_true_afc_cmd_uses_afc_form_tip(self):
+        gcmd = MagicMock()
         afc, lane = self._make()
         afc.form_tip = True
         afc.form_tip_cmd = "AFC"
@@ -4172,7 +4327,7 @@ class TestDoToolCutTipForm:
         tip_obj = MagicMock()
         afc.printer._objects["AFC_form_tip"] = tip_obj
 
-        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj, gcmd=gcmd)
 
         tip_obj.tip_form.assert_called_once_with()
         assert afc.tip is tip_obj
@@ -4186,6 +4341,7 @@ class TestDoToolCutTipForm:
         assert afc.function.log_toolhead_pos.call_count == 2
 
     def test_form_tip_true_park_false_afc_cmd_skips_park(self):
+        gcmd = MagicMock()
         afc, lane = self._make()
         afc.form_tip = True
         afc.form_tip_cmd = "AFC"
@@ -4193,7 +4349,7 @@ class TestDoToolCutTipForm:
         tip_obj = MagicMock()
         afc.printer._objects["AFC_form_tip"] = tip_obj
 
-        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj, gcmd=gcmd)
 
         tip_obj.tip_form.assert_called_once_with()
         assert afc.gcode.run_script_from_command.call_args_list == []
@@ -4201,12 +4357,13 @@ class TestDoToolCutTipForm:
         assert afc.function.log_toolhead_pos.call_count == 1
 
     def test_form_tip_true_custom_cmd_runs_custom_gcode(self):
+        gcmd = MagicMock()
         afc, lane = self._make()
         afc.form_tip = True
         afc.form_tip_cmd = "MY_CUSTOM_TIP"
         afc.park = False
 
-        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj, gcmd=gcmd)
 
         assert afc.gcode.run_script_from_command.call_args_list == [call("MY_CUSTOM_TIP")]
         assert afc.afcDeltaTime.log_with_time.call_args_list == [
@@ -4215,13 +4372,14 @@ class TestDoToolCutTipForm:
         assert afc.function.log_toolhead_pos.call_count == 1
 
     def test_form_tip_false_skips_tip_forming_entirely(self):
+        gcmd = MagicMock()
         afc, lane = self._make()
         afc.form_tip = False
         afc.park = True
         afc.park_cmd = "AFC_PARK"
         afc.form_tip_cmd = "AFC"
 
-        afc.do_tool_cut_tip_form(lane, lane.extruder_obj)
+        afc.do_tool_cut_tip_form(lane, lane.extruder_obj, gcmd=gcmd)
 
         afc.gcode.run_script_from_command.assert_not_called()
         afc.afcDeltaTime.log_with_time.assert_not_called()
@@ -4248,25 +4406,27 @@ class TestLoadSequenceUnitLoadLane:
         return afc, lane, hub, extruder
 
     def test_unit_load_lane_success_returns_true_and_finalizes(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj.unit_load_lane.return_value = True
 
-        result = afc.load_sequence(lane, hub, extruder)
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is True
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=None)
-        lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
+        lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
         afc.save_vars.assert_called_once_with()
 
     def test_unit_load_lane_failure_returns_false_without_finalizing(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj.unit_load_lane.return_value = False
 
-        result = afc.load_sequence(lane, hub, extruder)
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is False
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=None)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
         lane.set_tool_loaded.assert_not_called()
         afc.save_vars.assert_not_called()
 
@@ -4274,6 +4434,7 @@ class TestLoadSequenceUnitLoadLane:
         # Without the unit_load_lane hook, load_sequence must take the
         # default hub/toolhead move path instead, which calls load_then_home
         # and returns early via the pre-existing homing-error branch.
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         afc.homing_enabled = True
         lane.unit_obj = MagicMock(spec=["move_to_hub", "load_then_home"])
@@ -4282,7 +4443,7 @@ class TestLoadSequenceUnitLoadLane:
         lane.is_direct_hub = MagicMock(return_value=True)
         lane.unit_obj.load_then_home.return_value = (None, None, AFCMoveWarning.ERROR)
 
-        result = afc.load_sequence(lane, hub, extruder)
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert not hasattr(lane.unit_obj, "unit_load_lane")
         assert result is False
@@ -4291,10 +4452,11 @@ class TestLoadSequenceUnitLoadLane:
     def test_check_extruder_temp_runs_before_branch_selection(self):
         # _check_extruder_temp moved to the top of load_sequence so it now
         # runs for every path, including the unit_load_lane delegation path.
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj.unit_load_lane.return_value = True
 
-        afc.load_sequence(lane, hub, extruder)
+        afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_not_called()
@@ -4302,15 +4464,17 @@ class TestLoadSequenceUnitLoadLane:
     def test_check_extruder_temp_true_logs_done_heating(self):
         # When _check_extruder_temp reports it heated the toolhead, the new
         # top-of-function log call must fire before any branch is selected.
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         afc._check_extruder_temp = MagicMock(return_value=True)
         lane.unit_obj.unit_load_lane.return_value = True
 
-        afc.load_sequence(lane, hub, extruder)
+        afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
 
     def test_load_to_gears_stops_before_tool_stn_move(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         afc.homing_enabled = True
         afc.home_to_tool = True
@@ -4324,12 +4488,12 @@ class TestLoadSequenceUnitLoadLane:
         lane.sync_to_extruder = MagicMock()
         extruder.tool_start = None
 
-        result = afc.load_sequence(lane, hub, extruder, load_to_gears=True)
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
 
         assert result is True
-        lane.sync_to_extruder.assert_called_once_with(gcmd=None)
+        lane.sync_to_extruder.assert_called_once_with(gcmd=gcmd)
         afc.move_e_pos.assert_not_called()
-        lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True)
+        lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
         assert afc.save_vars.call_count == 2
 
@@ -4350,41 +4514,45 @@ class TestUnloadSequenceUnitUnloadLane:
         return afc, lane, hub, extruder
 
     def test_unit_unload_lane_failure_returns_false(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj.unit_unload_lane.return_value = False
 
-        result = afc.unload_sequence(lane, hub, extruder)
+        result = afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is False
-        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder, gcmd=None)
+        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
 
     def test_unit_unload_lane_success_does_not_return_false(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj.unit_unload_lane.return_value = True
         lane.disable_buffer = MagicMock()
         lane.do_enable = MagicMock()
 
-        result = afc.unload_sequence(lane, hub, extruder)
+        result = afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
-        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder, gcmd=None)
+        lane.unit_obj.unit_unload_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
         assert result is True
         lane.disable_buffer.assert_called_once_with()
 
     def test_lane_unloading_led_activated_before_branch_selection(self):
         # lane_unloading() call was moved to the top of unload_sequence, so
         # it now fires regardless of which unload path is subsequently taken.
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj.unit_unload_lane.return_value = False
 
-        afc.unload_sequence(lane, hub, extruder)
+        afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
-        lane.unit_obj.lane_unloading.assert_called_once_with(lane)
+        lane.unit_obj.lane_unloading.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_check_extruder_temp_runs_before_branch_selection(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj.unit_unload_lane.return_value = False
 
-        afc.unload_sequence(lane, hub, extruder)
+        afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
         afc._check_extruder_temp.assert_called_once_with(lane)
         afc.afcDeltaTime.log_with_time.assert_not_called()
@@ -4392,11 +4560,12 @@ class TestUnloadSequenceUnitUnloadLane:
     def test_check_extruder_temp_true_logs_done_heating(self):
         # When _check_extruder_temp reports it heated the toolhead, the new
         # top-of-function log call must fire before any branch is selected.
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         afc._check_extruder_temp = MagicMock(return_value=True)
         lane.unit_obj.unit_unload_lane.return_value = False
 
-        afc.unload_sequence(lane, hub, extruder)
+        afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
         afc.afcDeltaTime.log_with_time.assert_called_once_with("Done heating toolhead")
 
@@ -4404,6 +4573,7 @@ class TestUnloadSequenceUnitUnloadLane:
         # Without the unit_unload_lane hook, unload_sequence must take the
         # default toolhead-retract path instead, which returns early via the
         # pre-existing "filament stuck in toolhead" branch.
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj = MagicMock(spec=["lane_unloading"])
         afc.tool_cut = False
@@ -4418,11 +4588,11 @@ class TestUnloadSequenceUnitUnloadLane:
         extruder.tool_stn_unload = 5
         extruder.tool_end_state = False
 
-        result = afc.unload_sequence(lane, hub, extruder)
+        result = afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert not hasattr(lane.unit_obj, "unit_unload_lane")
         assert result is False
-        lane.select_lane.assert_called_once_with()
+        lane.select_lane.assert_called_once_with(gcmd=gcmd)
         afc.error.handle_lane_failure.assert_called_once()
 
     def test_default_path_success_calls_lane_loaded_not_lane_tool_unloaded(self):
@@ -4430,6 +4600,7 @@ class TestUnloadSequenceUnitUnloadLane:
         finalization, distinct from the early-failure variant above. Also
         locks in that this now calls lane_loaded (not the old lane_tool_unloaded)
         once the lane is safely back at the hub."""
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         lane.unit_obj = MagicMock(
             spec=["lane_unloading", "move_to_hub", "lane_loaded", "return_to_home"])
@@ -4454,10 +4625,10 @@ class TestUnloadSequenceUnitUnloadLane:
         hub.state = False
         hub.cut = False
 
-        result = afc.unload_sequence(lane, hub, extruder)
+        result = afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is not False
-        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane, gcmd=gcmd)
         assert lane.status == AFCLaneState.NONE
         assert lane.loaded_to_hub is True
 
@@ -4482,57 +4653,63 @@ class TestUnloadSequenceCustomCmdPostUnloadMacro:
         return afc, lane, hub, extruder
 
     def test_post_unload_macro_set_runs_macro(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         afc.post_unload_macro = "MY_POST_MACRO"
 
-        afc.unload_sequence(lane, hub, extruder)
+        afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
         gcode_calls = [call("MY_CUSTOM_UNLOAD"), call("MY_POST_MACRO")]
         assert afc.gcode.run_script_from_command.call_args_list == gcode_calls
-        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True)
+        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
 
     def test_post_unload_macro_none_skips_macro(self):
+        gcmd = MagicMock()
         afc, lane, hub, extruder = self._make()
         afc.post_unload_macro = None
 
-        afc.unload_sequence(lane, hub, extruder)
+        afc.unload_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert afc.gcode.run_script_from_command.call_args_list == [call("MY_CUSTOM_UNLOAD")]
-        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True)
+        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
 
 # ── _set_display_status ──────────────────────────────────────────────────────
 
 class TestSetDisplayStatus:
     def test_noop_when_display_hook_not_configured(self):
+        gcmd = MagicMock()
         afc_obj = _make_afc()
-        afc_obj._set_display_status('pushing', True)
+        afc_obj._set_display_status('pushing', True, gcmd=gcmd)
         afc_obj.gcode.run_script_from_command.assert_not_called()
 
     def test_calls_display_status_macro_when_configured(self):
+        gcmd = MagicMock()
         afc_obj = _make_afc()
         afc_obj.printer.objects['gcode_macro _AFC_DISPLAY_STATUS'] = MagicMock()
 
-        afc_obj._set_display_status('pushing', True)
+        afc_obj._set_display_status('pushing', True, gcmd=gcmd)
 
         afc_obj.gcode.run_script_from_command.assert_called_once_with(
             "_AFC_DISPLAY_STATUS VARIABLE=pushing VALUE=True")
 
     def test_sends_false_value(self):
+        gcmd = MagicMock()
         afc_obj = _make_afc()
         afc_obj.printer.objects['gcode_macro _AFC_DISPLAY_STATUS'] = MagicMock()
 
-        afc_obj._set_display_status('retraction', False)
+        afc_obj._set_display_status('retraction', False, gcmd=gcmd)
 
         afc_obj.gcode.run_script_from_command.assert_called_once_with(
             "_AFC_DISPLAY_STATUS VARIABLE=retraction VALUE=False")
 
     def test_exception_from_macro_does_not_propagate(self):
         """A broken user _AFC_DISPLAY_STATUS macro must not abort the tool change."""
+        gcmd = MagicMock()
         afc_obj = _make_afc()
         afc_obj.printer.objects['gcode_macro _AFC_DISPLAY_STATUS'] = MagicMock()
         afc_obj.gcode.run_script_from_command.side_effect = Exception("macro exploded")
 
-        afc_obj._set_display_status('pushing', True)  # must not raise
+        afc_obj._set_display_status('pushing', True, gcmd=gcmd)  # must not raise
 
         debug_msgs = [m for lvl, m in afc_obj.logger.messages if lvl == "debug"]
         assert any("_AFC_DISPLAY_STATUS" in m for m in debug_msgs)
@@ -4585,42 +4762,46 @@ class TestToolLoadDisplayStatusLifecycle:
         return afc, lane, events
 
     def test_pushing_true_then_false_around_successful_load(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.load_sequence = MagicMock(side_effect=_recorder(events, 'load_sequence', return_value=True))
 
-        assert afc.TOOL_LOAD(lane)
+        assert afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         assert events == [
             ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
 
     def test_pushing_false_still_called_when_load_fails(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.load_sequence = MagicMock(side_effect=_recorder(events, 'load_sequence', return_value=False))
 
-        assert not afc.TOOL_LOAD(lane)
+        assert not afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         assert events == [
             ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
 
     def test_pushing_false_still_called_when_load_raises(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.load_sequence = MagicMock(side_effect=_recorder(events, 'load_sequence', exc=Exception("boom")))
 
         with pytest.raises(Exception):
-            afc.TOOL_LOAD(lane)
+            afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         assert events == [
             ('display', 'pushing', True), 'load_sequence', ('display', 'pushing', False)]
 
     def test_load_to_gears_skips_purge_post_load_and_statistics(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.post_load_macro = "POST_LOAD"
         afc.load_sequence = MagicMock(return_value=True)
 
-        assert afc.TOOL_LOAD(lane, load_to_gears=True)
+        assert afc.TOOL_LOAD(lane, load_to_gears=True, gcmd=gcmd)
 
         afc.load_sequence.assert_called_once_with(
-            lane, lane.hub_obj, lane.extruder_obj, True, gcmd=None)
+            lane, lane.hub_obj, lane.extruder_obj, True, gcmd=gcmd)
         lane.espooler.do_assist_move.assert_not_called()
         afc.do_poop_kick_wipe.assert_not_called()
         lane.get_td1_data_load.assert_not_called()
@@ -4630,17 +4811,18 @@ class TestToolLoadDisplayStatusLifecycle:
         afc.gcode.run_script_from_command.assert_not_called()
 
     def test_normal_load_keeps_purge_post_load_and_statistics(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.post_load_macro = "POST_LOAD"
         afc.load_sequence = MagicMock(return_value=True)
 
-        assert afc.TOOL_LOAD(lane)
+        assert afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         afc.load_sequence.assert_called_once_with(
-            lane, lane.hub_obj, lane.extruder_obj, False, gcmd=None)
+            lane, lane.hub_obj, lane.extruder_obj, False, gcmd=gcmd)
         lane.espooler.do_assist_move.assert_called_once_with()
         afc.do_poop_kick_wipe.assert_called_once_with(
-            cur_lane=lane, cur_extruder=lane.extruder_obj, purge_length=None, gcmd=None)
+            cur_lane=lane, cur_extruder=lane.extruder_obj, purge_length=None, gcmd=gcmd)
         lane.get_td1_data_load.assert_called_once_with()
         lane.extruder_obj.estats.tc_tool_load.increase_count.assert_called_once_with()
         lane.lane_load_count.increase_count.assert_called_once_with()
@@ -4650,10 +4832,11 @@ class TestToolLoadDisplayStatusLifecycle:
     def test_restore_temp_default_restores_toolhead_temp(self) -> None:
         """Independent coverage of the `if restore_temp:` True side (the
         default) of the finally block wrapping load_sequence."""
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.load_sequence = MagicMock(return_value=True)
 
-        assert afc.TOOL_LOAD(lane)
+        assert afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         afc.restore_toolhead_temp.assert_called_once_with(100)
 
@@ -4661,10 +4844,11 @@ class TestToolLoadDisplayStatusLifecycle:
         """Independent coverage of the `if restore_temp:` False side: the
         calibration macros pass restore_temp=False since they (or the
         caller doing the restore) manage temperature separately."""
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.load_sequence = MagicMock(return_value=True)
 
-        assert afc.TOOL_LOAD(lane, restore_temp=False)
+        assert afc.TOOL_LOAD(lane, restore_temp=False, gcmd=gcmd)
 
         afc.restore_toolhead_temp.assert_not_called()
 
@@ -4692,29 +4876,32 @@ class TestToolUnloadDisplayStatusLifecycle:
         return afc, lane, events
 
     def test_retraction_true_then_false_around_successful_unload(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.unload_sequence = MagicMock(side_effect=_recorder(events, 'unload_sequence', return_value=True))
 
-        assert afc.TOOL_UNLOAD(lane, force_unload=True)
+        assert afc.TOOL_UNLOAD(lane, force_unload=True, gcmd=gcmd)
 
         assert events == [
             ('display', 'retraction', True), 'unload_sequence', ('display', 'retraction', False)]
 
     def test_retraction_false_still_called_when_unload_fails(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.unload_sequence = MagicMock(side_effect=_recorder(events, 'unload_sequence', return_value=False))
 
-        assert not afc.TOOL_UNLOAD(lane, force_unload=True)
+        assert not afc.TOOL_UNLOAD(lane, force_unload=True, gcmd=gcmd)
 
         assert events == [
             ('display', 'retraction', True), 'unload_sequence', ('display', 'retraction', False)]
 
     def test_retraction_false_still_called_when_unload_raises(self):
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.unload_sequence = MagicMock(side_effect=_recorder(events, 'unload_sequence', exc=Exception("boom")))
 
         with pytest.raises(Exception):
-            afc.TOOL_UNLOAD(lane, force_unload=True)
+            afc.TOOL_UNLOAD(lane, force_unload=True, gcmd=gcmd)
 
         assert events == [
             ('display', 'retraction', True), 'unload_sequence', ('display', 'retraction', False)]
@@ -4722,20 +4909,22 @@ class TestToolUnloadDisplayStatusLifecycle:
     def test_restore_temp_default_restores_toolhead_temp(self) -> None:
         """Independent coverage of the `if restore_temp:` True side (the
         default) of the finally block wrapping unload_sequence."""
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.unload_sequence = MagicMock(return_value=True)
 
-        assert afc.TOOL_UNLOAD(lane, force_unload=True)
+        assert afc.TOOL_UNLOAD(lane, force_unload=True, gcmd=gcmd)
 
         afc.restore_toolhead_temp.assert_called_once_with(100)
 
     def test_restore_temp_false_skips_restoring_toolhead_temp(self) -> None:
         """Independent coverage of the `if restore_temp:` False side: the
         calibration macros pass restore_temp=False."""
+        gcmd = MagicMock()
         afc, lane, events = self._make()
         afc.unload_sequence = MagicMock(return_value=True)
 
-        assert afc.TOOL_UNLOAD(lane, force_unload=True, restore_temp=False)
+        assert afc.TOOL_UNLOAD(lane, force_unload=True, restore_temp=False, gcmd=gcmd)
 
         afc.restore_toolhead_temp.assert_not_called()
 
@@ -4760,7 +4949,7 @@ class TestToolUnload_CurLaneNoneAfterToolSwap:
     def test_no_attribute_error_and_unload_sequence_skipped(self):
         afc, lane = self._make()
 
-        result = afc.TOOL_UNLOAD(lane, force_unload=False)
+        result = afc.TOOL_UNLOAD(lane, force_unload=False, gcmd=MagicMock())
 
         assert result is True
         lane.tool_swap.assert_called_once()
@@ -4768,7 +4957,7 @@ class TestToolUnload_CurLaneNoneAfterToolSwap:
 
     def test_state_is_idle_after_no_lane_path(self):
         afc, lane = self._make()
-        afc.TOOL_UNLOAD(lane, force_unload=False)
+        afc.TOOL_UNLOAD(lane, force_unload=False, gcmd=MagicMock())
         assert afc.current_state == State.IDLE
 
     def test_unload_sequence_still_runs_when_cur_lane_survives_swap(self):
@@ -4781,7 +4970,7 @@ class TestToolUnload_CurLaneNoneAfterToolSwap:
         afc.function.get_current_extruder_obj.return_value = survivor_extruder
         afc.function.get_current_lane_obj.return_value = survivor_lane
 
-        result = afc.TOOL_UNLOAD(lane, force_unload=False)
+        result = afc.TOOL_UNLOAD(lane, force_unload=False, gcmd=MagicMock())
 
         assert result is True
         afc.unload_sequence.assert_called_once()
@@ -4794,14 +4983,16 @@ class TestToolLoadFailureState:
         return TestToolLoadDisplayStatusLifecycle()._make()
 
     def test_unpaused_failure_returns_state_to_idle(self):
+        gcmd = MagicMock()
         afc, lane, _ = self._make()
         afc.load_sequence = MagicMock(return_value=False)
 
-        assert not afc.TOOL_LOAD(lane)
+        assert not afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         assert afc.current_state == State.IDLE
 
     def test_paused_failure_keeps_error_state(self):
+        gcmd = MagicMock()
         afc, lane, _ = self._make()
 
         def fail_with_pause(*args, **kwargs):
@@ -4809,17 +5000,18 @@ class TestToolLoadFailureState:
             return False
         afc.load_sequence = MagicMock(side_effect=fail_with_pause)
 
-        assert not afc.TOOL_LOAD(lane)
+        assert not afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         assert afc.current_state == State.ERROR
 
     def test_state_is_loading_while_load_sequence_runs(self):
+        gcmd = MagicMock()
         afc, lane, _ = self._make()
         seen = []
         afc.load_sequence = MagicMock(
             side_effect=lambda *args, **kwargs: seen.append(afc.current_state) or False)
 
-        assert not afc.TOOL_LOAD(lane)
+        assert not afc.TOOL_LOAD(lane, gcmd=gcmd)
 
         assert seen == [State.LOADING]
         assert afc.current_state == State.IDLE
@@ -4832,14 +5024,16 @@ class TestToolUnloadFailureState:
         return TestToolUnloadDisplayStatusLifecycle()._make()
 
     def test_unpaused_failure_returns_state_to_idle(self):
+        gcmd = MagicMock()
         afc, lane, _ = self._make()
         afc.unload_sequence = MagicMock(return_value=False)
 
-        assert not afc.TOOL_UNLOAD(lane, force_unload=True)
+        assert not afc.TOOL_UNLOAD(lane, force_unload=True, gcmd=gcmd)
 
         assert afc.current_state == State.IDLE
 
     def test_paused_failure_keeps_error_state(self):
+        gcmd = MagicMock()
         afc, lane, _ = self._make()
 
         def fail_with_pause(*args, **kwargs):
@@ -4847,17 +5041,18 @@ class TestToolUnloadFailureState:
             return False
         afc.unload_sequence = MagicMock(side_effect=fail_with_pause)
 
-        assert not afc.TOOL_UNLOAD(lane, force_unload=True)
+        assert not afc.TOOL_UNLOAD(lane, force_unload=True, gcmd=gcmd)
 
         assert afc.current_state == State.ERROR
 
     def test_state_is_unloading_while_unload_sequence_runs(self):
+        gcmd = MagicMock()
         afc, lane, _ = self._make()
         seen = []
         afc.unload_sequence = MagicMock(
             side_effect=lambda *args, **kwargs: seen.append(afc.current_state) or False)
 
-        assert not afc.TOOL_UNLOAD(lane, force_unload=True)
+        assert not afc.TOOL_UNLOAD(lane, force_unload=True, gcmd=gcmd)
 
         assert seen == [State.UNLOADING]
         assert afc.current_state == State.IDLE
@@ -4879,11 +5074,12 @@ class TestBypassUnloadDisplayStatus:
         return afc, events
 
     def test_retraction_true_then_false_around_bypass_unload(self):
+        gcmd = MagicMock()
         afc, events = self._make()
         afc.gcode.run_script_from_command = MagicMock(
             side_effect=_recorder(events, 'run_script'))
 
-        result = afc._check_bypass(unload=True)
+        result = afc._check_bypass(unload=True, gcmd=gcmd)
 
         assert result is True
         assert events == [
@@ -4893,11 +5089,12 @@ class TestBypassUnloadDisplayStatus:
     def test_retraction_false_still_called_when_bypass_unload_raises(self):
         # _check_bypass has an outer bare except that swallows exceptions and
         # returns False - the inner finally must still fire before that happens.
+        gcmd = MagicMock()
         afc, events = self._make()
         afc.gcode.run_script_from_command = MagicMock(
             side_effect=_recorder(events, 'run_script', exc=Exception("boom")))
 
-        result = afc._check_bypass(unload=True)
+        result = afc._check_bypass(unload=True, gcmd=gcmd)
 
         assert result is False
         assert events == [
@@ -4932,50 +5129,57 @@ class TestLaneUnload:
     # ── arm 1: lane is not in the toolhead and the extruder is not standalone ──
 
     def test_ejects_when_lane_not_loaded_and_not_standalone(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
-        obj.LANE_UNLOAD(cur_lane)
-        cur_lane.unit_obj.eject_lane.assert_called_once_with(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
+        cur_lane.unit_obj.eject_lane.assert_called_once_with(cur_lane, gcmd=gcmd)
         assert cur_lane.status == AFCLaneState.NONE
         assert cur_lane.loaded_to_hub is False
 
     def test_eject_clears_spool_and_returns_home(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
-        obj.LANE_UNLOAD(cur_lane)
-        obj.spool.set_spoolID.assert_called_once_with(cur_lane, None)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
+        obj.spool.set_spoolID.assert_called_once_with(cur_lane, None, gcmd=gcmd)
         cur_lane.unit_obj.return_to_home.assert_called_once()
-        cur_lane.unit_obj.lane_unloading.assert_called_once_with(cur_lane)
-        cur_lane.unit_obj.lane_unloaded.assert_called_once_with(cur_lane)
+        cur_lane.unit_obj.lane_unloading.assert_called_once_with(cur_lane, gcmd=gcmd)
+        cur_lane.unit_obj.lane_unloaded.assert_called_once_with(cur_lane, gcmd=gcmd)
 
     def test_eject_logs_completion_only(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         assert obj.logger.messages == [("info", "LANE lane1 eject done")]
 
     # ── arm 2: standalone extruder with a lane loaded ──────────────────────────
 
     def test_standalone_with_lane_loaded_runs_unload_sequence(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=True)
-        obj.LANE_UNLOAD(cur_lane)
-        cur_lane.extruder_obj.load_unload_sequence.assert_called_once_with(-25.0)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
+        cur_lane.extruder_obj.load_unload_sequence.assert_called_once_with(-25.0, gcmd=gcmd)
         assert cur_lane.status == AFCLaneState.EJECTING
         cur_lane.unit_obj.eject_lane.assert_not_called()
 
     def test_standalone_with_lane_loaded_logs_nothing(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=True)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         assert obj.logger.messages == []
 
     # ── arm 3: the lane is the one loaded in the toolhead ──────────────────────
 
     def test_lane_in_toolhead_refuses_and_warns(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane1", standalone=False)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         assert obj.logger.messages == [
             ("warning", "LANE lane1 is loaded in toolhead, can't unload. Run TOOL_UNLOAD first.")]
 
     def test_lane_in_toolhead_does_not_eject(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane1", standalone=False)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         cur_lane.unit_obj.eject_lane.assert_not_called()
         cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
         assert cur_lane.status == AFCLaneState.LOADED
@@ -4983,14 +5187,16 @@ class TestLaneUnload:
     # ── arm 4: standalone extruder with nothing loaded (previously silent) ─────
 
     def test_standalone_without_lane_loaded_warns(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded=None, standalone=True)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         assert obj.logger.messages == [
             ("warning", "LANE lane1 not ejected: standalone extruder reports no lane loaded.")]
 
     def test_standalone_without_lane_loaded_does_not_eject(self):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded=None, standalone=True)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         cur_lane.unit_obj.eject_lane.assert_not_called()
         cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
         assert cur_lane.status == AFCLaneState.LOADED
@@ -4999,28 +5205,32 @@ class TestLaneUnload:
 
     def test_name_differs_alone_does_not_eject_when_standalone(self):
         """name != lane_loaded is not enough: standalone must also be false."""
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=True)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         cur_lane.unit_obj.eject_lane.assert_not_called()
 
     def test_not_standalone_alone_does_not_eject_when_name_matches(self):
         """not standalone is not enough: the name must also differ from lane_loaded."""
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane1", standalone=False)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         cur_lane.unit_obj.eject_lane.assert_not_called()
 
     # ── second condition: each variable independently gates arm 2 ─────────────
 
     def test_standalone_alone_does_not_run_unload_sequence(self):
         """is_standalone() is not enough: lane_loaded must also be truthy."""
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded=None, standalone=True)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
 
     def test_lane_loaded_alone_does_not_run_unload_sequence(self):
         """A truthy lane_loaded is not enough: the extruder must also be standalone."""
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         cur_lane.extruder_obj.load_unload_sequence.assert_not_called()
 
     # ── state transitions ─────────────────────────────────────────────────────
@@ -5032,19 +5242,21 @@ class TestLaneUnload:
         (None, True),       # arm 4
     ])
     def test_state_returns_to_idle_on_every_arm(self, lane_loaded, standalone):
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(
             lane_loaded=lane_loaded, standalone=standalone)
         obj.current_state = State.INIT
-        obj.LANE_UNLOAD(cur_lane)
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         assert obj.current_state == State.IDLE
 
     def test_state_is_ejecting_while_unit_eject_runs(self):
         """current_state is EJECTING_LANE for the duration, not just at the end."""
+        gcmd = MagicMock()
         obj, cur_lane = _make_afc_for_lane_unload(lane_loaded="lane2", standalone=False)
         seen = []
         cur_lane.unit_obj.eject_lane = MagicMock(
-            side_effect=lambda _lane: seen.append(obj.current_state))
-        obj.LANE_UNLOAD(cur_lane)
+            side_effect=lambda _lane, gcmd=None: seen.append(obj.current_state))
+        obj.LANE_UNLOAD(cur_lane, gcmd=gcmd)
         assert seen == [State.EJECTING_LANE]
 
 

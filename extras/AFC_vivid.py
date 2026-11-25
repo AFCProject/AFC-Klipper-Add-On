@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_lane import AFCLane, AFCMoveWarning
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.stepper_enable import PrinterStepperEnable
@@ -101,7 +102,8 @@ class AFC_vivid(afcBoxTurtle):
         self.logo = '<span class=success--text>ViViD Ready\n</span>'
         self.logo_error = '<span class=error--text>ViViD Not Ready</span>\n'
 
-    def _move_lane(self, lane: AFCLane, delay: float=1, enable_movement: bool=True) -> bool:
+    def _move_lane(self, lane: AFCLane, delay: float=1, enable_movement: bool=True,
+                   *, gcmd: AFCGcmd) -> bool:
         """
         Method to check and see if filament is loaded into lane. This method tries to move filament
         to load sensor, once successful lane is retracted by hubs `hub_clear_move_dis`. If homing
@@ -110,26 +112,27 @@ class AFC_vivid(afcBoxTurtle):
         :param lane: Lane to move and check if filament is present
         :param delay: Not used
         :param enable_movement: Not used
+        :param gcmd: command context the moves/led macros are run through, if any
         :return: Returns True if homing was successful, False when homing is not successful
         """
         loaded = False
         homed = False
         if lane.prep_state:
             homed, _, _ = self.move_to_load(lane, lane.dist_hub, MoveDirection.POS,
-                                            True, SpeedMode.SHORT)
+                                            True, SpeedMode.SHORT, gcmd=gcmd)
             if homed:
                 loaded = True
                 lane.loaded_to_hub = True
                 if (not lane.tool_loaded
                     and lane.hub_obj):
                     lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
-                                 SpeedMode.SHORT, use_homing=False)
+                                 SpeedMode.SHORT, use_homing=False, gcmd=gcmd)
         # Resetting internal states when prep sensor is not triggered but loaded to hub is still
         # set, or when failed to home to load sensor
         if ((not lane.prep_state
              and lane.loaded_to_hub)
              or not homed):
-            self.lane_unloaded(lane)
+            self.lane_unloaded(lane, gcmd=gcmd)
             lane.tool_loaded = False
             lane.status = AFCLaneState.NONE
             lane.loaded_to_hub = False
@@ -139,7 +142,7 @@ class AFC_vivid(afcBoxTurtle):
         return loaded
 
     def system_Test(self, cur_lane: AFCLane, delay: float,
-                    assignTcmd: bool, enable_movement: bool) -> bool:
+                    assignTcmd: bool, enable_movement: bool, gcmd: AFCGcmd) -> bool:
         """
         Runs the standard system test. ViViD units don't support movement
         during the test, so enable_movement is always forced to False.
@@ -148,9 +151,10 @@ class AFC_vivid(afcBoxTurtle):
         :param delay: Delay amount to wait between forward/backward movements
         :param assignTcmd: When True assigns a tool number to cur_lane
         :param enable_movement: Ignored, ViViD units always run with movement disabled
+        :param gcmd: command context the led macros are run through, if any
         :return: True if the system test succeeded
         """
-        return super().system_Test( cur_lane, delay, assignTcmd, enable_movement=False)
+        return super().system_Test( cur_lane, delay, assignTcmd, enable_movement=False, gcmd=gcmd)
 
     def _get_lane_selector_state(self, lane: AFCLane) -> bool:
         """
@@ -181,8 +185,8 @@ class AFC_vivid(afcBoxTurtle):
                 pass
         return enabled
 
-    def select_lane( self, lane: AFCLane, sel_dir:bool=False,
-                     disable_selector:bool=False ) -> tuple[bool, float|int]:
+    def select_lane(self, lane: AFCLane, sel_dir: bool=False,
+                    disable_selector: bool=False, *, gcmd: AFCGcmd) -> tuple[bool, float|int]:
         """
         Helper method to use homing to rotate cam until lanes selector
         is triggered.
@@ -192,6 +196,7 @@ class AFC_vivid(afcBoxTurtle):
                         this is useful when loading filament so the filament properly
                         goes into the PTFE
         :param disable_selector: When True disables selectors motor after selecting a lane
+        :param gcmd: command context the homing pause would be run through, if homing fails
         :return tuple: Returns tuple of homed(True/False) and distance moved
         """
         if lane.selector_endstop_name:
@@ -207,7 +212,7 @@ class AFC_vivid(afcBoxTurtle):
                 else:
                     if (not selector_enabled
                         and selector_state):
-                        self.unselect_lane()
+                        self.unselect_lane(gcmd=gcmd)
 
                     self.logger.debug(f"{self.type}: Selecting {lane.name}")
                     homed, distance = self.selector_stepper_obj.do_homing_move(
@@ -218,7 +223,7 @@ class AFC_vivid(afcBoxTurtle):
                         assist_active=False
                     )
                     # Applying selector_cal_dis move if specified in users config
-                    self._selector_cal_dis_adjust(lane)
+                    self._selector_cal_dis_adjust(lane, gcmd=gcmd)
 
                     self.logger.debug(
                         f"{self.type}: Homing done, success:{homed}, distance:{distance}")
@@ -230,7 +235,7 @@ class AFC_vivid(afcBoxTurtle):
         # there's no distance moved to report.
         return False, 0
 
-    def prep_load(self, lane: AFCLane) -> None:
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Helper method for initially loading spools when prep sensor is triggered.
         Upon first load, if lanes do not have calibrated_lanes variable set, filament
@@ -247,9 +252,10 @@ class AFC_vivid(afcBoxTurtle):
         toolhead.
 
         :param lane: AFCLane object for which to activate and load filament to load sensor
+        :param gcmd: command context the moves/led macros are run through, if any
         """
-        self.lane_loading(lane)
-        self.select_lane(lane, sel_dir=True)
+        self.lane_loading(lane, gcmd=gcmd)
+        self.select_lane(lane, sel_dir=True, gcmd=gcmd)
         num_tries = 0
         distance: float
         if not lane.calibrated_lane:
@@ -263,7 +269,8 @@ class AFC_vivid(afcBoxTurtle):
                and lane.prep_state
                and not lane.raw_load_state):
             homed, distance, _ = lane.move_to(distance, move_speed, assist_active=AssistActive.NO,
-                                              endstop=lane.load_endstop_name, use_homing=True)
+                                              endstop=lane.load_endstop_name, use_homing=True,
+                                              gcmd=gcmd)
             num_tries += 1
         if homed:
             lane.loaded_to_hub = True
@@ -277,35 +284,37 @@ class AFC_vivid(afcBoxTurtle):
             # Retract so load sensor is not triggered
             if lane.hub_obj is not None:
                 lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
-                             SpeedMode.SHORT, use_homing=False)
-            self.lane_loaded(lane)
+                             SpeedMode.SHORT, use_homing=False, gcmd=gcmd)
+            self.lane_loaded(lane, gcmd=gcmd)
         else:
             self.logger.error(f"Failed to move {lane.name} to load sensor.")
 
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
-        self.afc.function.select_loaded_lane()
+        self.afc.function.select_loaded_lane(gcmd=gcmd)
 
-    def prep_post_load(self, lane: AFCLane) -> None:
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         This method does nothing and just returns for ViViD units
 
         :param lane: Unused
+        :param gcmd: Unused, accepted for interface parity
         """
         # Do nothing and return
         return
 
-    def unselect_lane(self, move_distance: float=50) -> None:
+    def unselect_lane(self, move_distance: float=50, *, gcmd: AFCGcmd) -> None:
         """
         Move the selector by a configurable distance to free filament in a lane, e.g. when
         ejecting filament.
 
-        :param move_distance: Distance in millimeters to move the selector. Defaults to 50 mm.
+        :param move_distance: Distance in millimeters to move the selector. Defaults to 50 mm.
+        :param gcmd: command context the move is run through
         """
         self.selector_stepper_obj.move(move_distance, self.selector_homing_speed,
-                                       self.selector_homing_accel, False)
+                                       self.selector_homing_accel, False, gcmd=gcmd)
 
-    def eject_lane(self, lane: AFCLane) -> None:
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
         will stop once prep sensor is no longer triggered if movement has not already stopped.
@@ -314,8 +323,9 @@ class AFC_vivid(afcBoxTurtle):
         be easily removed.
 
         :param lane: Lane to eject spool
+        :param gcmd: command context the eject is run through, if any
         """
-        self.select_lane(lane)
+        self.select_lane(lane, gcmd=gcmd)
         move_dis = lane.dist_hub
         if move_dis > 400:
             hub_clear_move_dis = 0.0
@@ -326,15 +336,15 @@ class AFC_vivid(afcBoxTurtle):
                         hub_clear_move_dis - lane.homing_overshoot)
         lane.move_to(move_dis * MoveDirection.NEG, SpeedMode.LONG,
                      endstop=lane.prep_endstop_name,
-                     assist_active=AssistActive.NO, use_homing=True)
-        self.unselect_lane()
+                     assist_active=AssistActive.NO, use_homing=True, gcmd=gcmd)
+        self.unselect_lane(gcmd=gcmd)
         self.selector_stepper_obj.do_enable(False)
         self.drive_stepper_obj.do_enable(False)
 
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
-                    assist_active: AssistActive=AssistActive.DYNAMIC
+                    assist_active: AssistActive=AssistActive.DYNAMIC, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
@@ -346,6 +356,7 @@ class AFC_vivid(afcBoxTurtle):
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
         :param speed_mode: SpeedMode type to use when moving stepper
         :param assist_active: ViViD does not have spoolers, setting this parameter does nothing.
+        :param gcmd: command context the pause is run through, if homing fails
 
         :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
 
@@ -357,11 +368,11 @@ class AFC_vivid(afcBoxTurtle):
                   True, 0, AFCMoveWarning.NONE.
         """
         homed, distance, warn = lane.move_to(dist * dir, speed_mode, assist_active=assist_active,
-                                             endstop=lane.load_es, use_homing=use_homing)
+                                             endstop=lane.load_es, use_homing=use_homing, gcmd=gcmd)
         return homed, distance, warn
 
     def calibrate_lane(self, cur_lane: AFCLane, tol: float,
-                      gcmd: GCodeCommand) -> tuple[bool, str, float]:
+                       gcmd: GCodeCommand) -> tuple[bool, str, float]:
         """
         Method to calibrate lane for ViViD units. Since ViViD units are unique, this method ejects
         filament and sets calibration flag to False. Once user reinserts filament lane will be
@@ -369,14 +380,14 @@ class AFC_vivid(afcBoxTurtle):
 
         :param cur_lane: Lane object to eject
         :param tol: Unused for this method
-        :param gcmd: command context, unused here but accepted for interface parity
+        :param gcmd: command context to run the eject through, if any
         :return tuple: Always returns True, lane name, 0
         """
-        self.eject_lane(cur_lane)
+        self.eject_lane(cur_lane, gcmd=gcmd)
         cur_lane.loaded_to_hub = False
         cur_lane.status = AFCLaneState.NONE
         cur_lane.calibrated_lane = False
-        cur_lane.unit_obj.lane_unloaded(cur_lane)
+        cur_lane.unit_obj.lane_unloaded(cur_lane, gcmd=gcmd)
         return True, "calibration_lane", 0.0
 
     def calibration_lane_message(self) -> str:

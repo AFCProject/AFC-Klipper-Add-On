@@ -14,11 +14,12 @@ from __future__ import annotations
 import traceback
 from configparser import Error as error
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_lane import AFCLane, MoveDirection, AFCHomingPoints
     from extras.AFC_functions import afcFunction
     from extras.AFC_stepper import AFCExtruderStepper
@@ -56,7 +57,8 @@ class AfcToolchanger(afcUnit):
                                          self.cmd_AFC_SET_TOOLHEAD_LED_help,
                                          self.cmd_AFC_SET_TOOLHEAD_LED_options)
 
-    def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: str, enable_movement: bool):
+    def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: str, enable_movement: bool,
+                    gcmd: AFCGcmd):
         if assignTcmd: self.afc.function.TcmdAssign(cur_lane)
         # Now that a T command is assigned, send lane data to moonraker
         cur_lane.send_lane_data()
@@ -65,7 +67,7 @@ class AfcToolchanger(afcUnit):
             and cur_lane.load_state
             and cur_lane.extruder_obj.lane_loaded == cur_lane.name):
             msg = "<span class=success--text>LOADED</span>"
-            msg += cur_lane.extruder_obj.prep_on_shuttle_check(cur_lane)
+            msg += cur_lane.extruder_obj.prep_on_shuttle_check(cur_lane, gcmd=gcmd)
 
         self.logger.raw(f'{cur_lane.name} tool cmd: {cur_lane.map_to_string():3} {msg}')
         cur_lane.set_afc_prep_done()
@@ -82,7 +84,7 @@ class AfcToolchanger(afcUnit):
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
-                    assist_active: AssistActive=AssistActive.DYNAMIC
+                    assist_active: AssistActive=AssistActive.DYNAMIC, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Overriding method from AFC_unit
@@ -93,7 +95,7 @@ class AfcToolchanger(afcUnit):
 
     def move_to_load(self, lane: AFCLane, dist: float,
                      dir: MoveDirection, use_homing: bool=True,
-                     speed_mode: SpeedMode=SpeedMode.LONG
+                     speed_mode: SpeedMode=SpeedMode.LONG, *, gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Overriding method from AFC_unit
@@ -103,7 +105,7 @@ class AfcToolchanger(afcUnit):
         return True, 0, AFCMoveWarning.NONE
 
     def load_then_home(self, lane: AFCLane|AFCExtruderStepper, distance: float,
-                       assist_active: AssistActive, endstop: AFCHomingPoints
+                       assist_active: AssistActive, endstop: AFCHomingPoints, gcmd: AFCGcmd
                     ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Overriding method from AFC_unit
@@ -174,20 +176,20 @@ class AfcToolchanger(afcUnit):
         if (current_extruder
             and current_extruder.custom_unselect):
             self.logger.info(f"Running custom unselect: {current_extruder.custom_unselect}")
-            self.afc.run_script(f"{current_extruder.custom_unselect}", gcmd)
+            self.afc.run_script(f"{current_extruder.custom_unselect}", gcmd=gcmd)
         else:
-            self.afc.run_script("UNSELECT_TOOL", gcmd)
+            self.afc.run_script("UNSELECT_TOOL", gcmd=gcmd)
 
-        self.afc.function.handle_activate_extruder(gcmd)
+        self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
 
         lane_obj = self.afc.function.get_current_lane_obj()
         if lane_obj:
             if (lane_obj.prep_state
                 and lane_obj.load_state):
                 if lane_obj.tool_loaded:
-                    lane_obj.unit_obj.lane_tool_loaded_idle(lane_obj)
+                    lane_obj.unit_obj.lane_tool_loaded_idle(lane_obj, gcmd=gcmd)
                 else:
-                    lane_obj.unit_obj.lane_tool_unloaded(lane_obj)
+                    lane_obj.unit_obj.lane_tool_unloaded(lane_obj, gcmd=gcmd)
             else:
                 lane_obj.extruder_obj.set_status_led(lane_obj.led_tool_unloaded)
 
@@ -197,7 +199,7 @@ class AfcToolchanger(afcUnit):
             current_extruder.status = State.IDLE
 
 
-    def tool_swap(self, lane: AFCLane, set_start_time=True, gcmd: Optional[GCodeCommand]=None):
+    def tool_swap(self, lane: AFCLane, set_start_time=True, *, gcmd: AFCGcmd):
         """
         Perform a tool swap operation for the specified lane.
 
@@ -233,9 +235,9 @@ class AfcToolchanger(afcUnit):
 
         if lane.extruder_obj.custom_tool_swap:
             self.logger.info(f"Running custom select: {lane.extruder_obj.custom_tool_swap}")
-            self.afc.run_script(f"{lane.extruder_obj.custom_tool_swap}", gcmd)
+            self.afc.run_script(f"{lane.extruder_obj.custom_tool_swap}", gcmd=gcmd)
         else:
-            self.afc.run_script('SELECT_TOOL T={}'.format(tool_index), gcmd)
+            self.afc.run_script('SELECT_TOOL T={}'.format(tool_index), gcmd=gcmd)
         lane.extruder_obj.next_pickup = False
 
         if current_extruder:
@@ -245,7 +247,7 @@ class AfcToolchanger(afcUnit):
         lane.activate_toolhead_extruder()
         # Need to call again since KTC activate callback happens before switching to new extruder
         # TODO: Take double call out once transitioned away from KTC
-        self.afc.function._handle_activate_extruder(0, gcmd)
+        self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
 
         self.afc.toolhead.wait_moves()
         self.afc.afcDeltaTime.log_with_time("Tool swap done", debug=False)

@@ -91,7 +91,9 @@ class AFCButton:
             return
 
         if self.afc.function.is_printing(check_movement=True):
-            self.afc.error.AFC_error("Cannot use buttons while printer is actively moving or homing", False)
+            self.afc.error.AFC_error(
+                "Cannot use buttons while printer is actively moving or homing", False,
+                gcmd="callback")
             return
 
         held_time = eventtime - self._press_time
@@ -108,25 +110,25 @@ class AFCButton:
             if (cur_lane is not None
                 and cur_lane.name == self.lane_id):
                 self.afc.logger.info(f"Unloading {self.lane_id} before ejecting.")
-                if self.afc.TOOL_UNLOAD(self.lane_obj):
-                    self.afc.LANE_UNLOAD(self.lane_obj)
+                if self.afc.TOOL_UNLOAD(self.lane_obj, gcmd="callback"):
+                    self.afc.LANE_UNLOAD(self.lane_obj, gcmd="callback")
                 else:
                     self.afc.afc_stats.increase_unload_error_count(self.afc)
             else:
                 # If another lane is active, just eject this one
                 self.afc.logger.info(f"Ejecting {self.lane_id}.")
-                self.afc.LANE_UNLOAD(self.lane_obj)
+                self.afc.LANE_UNLOAD(self.lane_obj, gcmd="callback")
         # Short Press
         else:
             self.afc.logger.info(f"{self.lane_id}: Short press detected.")
             if (cur_lane is not None
                 and cur_lane.name == self.lane_id):
                 self.afc.logger.info(f"Unloading tool from {self.lane_id}.")
-                if not self.afc.TOOL_UNLOAD(cur_lane):
+                if not self.afc.TOOL_UNLOAD(cur_lane, gcmd="callback"):
                     self.afc.afc_stats.increase_unload_error_count(self.afc)
             else:
                 self.afc.logger.info(f"Loading tool to {self.lane_id}.")
-                self.afc.CHANGE_TOOL(self.lane_obj)
+                self.afc.CHANGE_TOOL(self.lane_obj, gcmd="callback")
 
 
 def load_config_prefix(config: ConfigWrapper) -> AFCButton:
