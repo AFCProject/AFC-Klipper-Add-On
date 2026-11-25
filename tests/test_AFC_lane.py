@@ -2883,8 +2883,11 @@ class TestPerformPauseRunout:
 #        - Call logger.error(msg), return early.
 #   3. Happy path (load_state True, get_bypass_state() False):
 #        unset_lane_loaded() → handle_activate_extruder() → set_tool_loaded()
-#        → sync_to_extruder() → save_vars() → unit_obj.select_lane(self)
-#        → logger.info(message mentioning lane name)
+#        → sync_to_extruder() → do_enable(True) → enable_buffer() → save_vars()
+#        → unit_obj.select_lane(self) → logger.info(message mentioning lane name)
+#        (do_enable/enable_buffer re-enable what handle_activate_extruder's own
+#        lane loop disabled for this lane, since it can't yet tell this is the
+#        lane becoming active -- see GH #910)
 #
 # get_bypass_state() delegates to afc, so tests mock it directly on afc rather
 # than wiring the full bypass object internals. This also makes the tests
@@ -2923,8 +2926,10 @@ def _make_lane_for_set_loaded(
     # Methods called on the happy path
     lane.set_tool_loaded    = MagicMock()
     lane.sync_to_extruder   = MagicMock()
+    lane.do_enable          = MagicMock()
+    lane.enable_buffer      = MagicMock()
     lane.unit_obj.select_lane = MagicMock()
- 
+
     return lane
 
 
@@ -3093,6 +3098,8 @@ class TestCmdSetLaneLoaded:
         lane.afc.function.handle_activate_extruder.assert_not_called()
         lane.set_tool_loaded.assert_not_called()
         lane.sync_to_extruder.assert_not_called()
+        lane.do_enable.assert_not_called()
+        lane.enable_buffer.assert_not_called()
         lane.afc.save_vars.assert_not_called()
         lane.unit_obj.select_lane.assert_not_called()
  
@@ -3141,6 +3148,8 @@ class TestCmdSetLaneLoaded:
         lane.afc.function.handle_activate_extruder.assert_not_called()
         lane.set_tool_loaded.assert_not_called()
         lane.sync_to_extruder.assert_not_called()
+        lane.do_enable.assert_not_called()
+        lane.enable_buffer.assert_not_called()
         lane.afc.save_vars.assert_not_called()
         lane.unit_obj.select_lane.assert_not_called()
  
@@ -3208,7 +3217,23 @@ class TestCmdSetLaneLoaded:
         lane = _make_lane_for_set_loaded()
         lane.cmd_SET_LANE_LOADED(MagicMock())
         lane.sync_to_extruder.assert_called_once()
- 
+
+    def test_do_enable_called_with_true(self):
+        """GH #910: handle_activate_extruder's own lane loop disables this
+        lane's stepper (it can't yet tell this is the lane becoming active),
+        so cmd_SET_LANE_LOADED must explicitly re-enable it."""
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.do_enable.assert_called_once_with(True)
+
+    def test_enable_buffer_called(self):
+        """GH #910: handle_activate_extruder's own lane loop disables this
+        lane's buffer (it can't yet tell this is the lane becoming active),
+        so cmd_SET_LANE_LOADED must explicitly re-enable it."""
+        lane = _make_lane_for_set_loaded()
+        lane.cmd_SET_LANE_LOADED(MagicMock())
+        lane.enable_buffer.assert_called_once()
+
     def test_save_vars_called(self):
         lane = _make_lane_for_set_loaded()
         lane.cmd_SET_LANE_LOADED(MagicMock())
@@ -3236,16 +3261,20 @@ class TestCmdSetLaneLoaded:
         lane.afc.function.handle_activate_extruder.side_effect = lambda *a, **kw: order.append("handle_activate_extruder")
         lane.set_tool_loaded.side_effect                        = lambda *a, **kw: order.append("set_tool_loaded")
         lane.sync_to_extruder.side_effect                       = lambda *a, **kw: order.append("sync_to_extruder")
+        lane.do_enable.side_effect                              = lambda *a, **kw: order.append("do_enable")
+        lane.enable_buffer.side_effect                          = lambda *a, **kw: order.append("enable_buffer")
         lane.afc.save_vars.side_effect                          = lambda *a, **kw: order.append("save_vars")
         lane.unit_obj.select_lane.side_effect                   = lambda *a, **kw: order.append("select_lane")
- 
+
         lane.cmd_SET_LANE_LOADED(MagicMock())
- 
+
         assert order == [
             "unset_lane_loaded",
             "handle_activate_extruder",
             "set_tool_loaded",
             "sync_to_extruder",
+            "do_enable",
+            "enable_buffer",
             "save_vars",
             "select_lane",
         ]
