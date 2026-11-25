@@ -2432,8 +2432,8 @@ class afcFunction:
 
                 previous_rotation_distance = td1_lane.reset_drive_stepper()
                 try:
-                    checked, msg, pos = td1_lane.unit_obj.calibrate_td1(
-                        td1_lane, dis, tol, gcmd=gcmd)
+                    checked, msg, pos = td1_lane.unit_obj.calibrate_td1(td1_lane, dis, tol,
+                                                                        gcmd=gcmd)
                 finally:
                     td1_lane.restore_drive_stepper(previous_rotation_distance)
                 if not checked:

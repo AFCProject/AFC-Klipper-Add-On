@@ -359,6 +359,31 @@ class TestCmdAFCUnselectTool:
 
         tool.afc.function.handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
 
+    def test_waits_for_toolhead_moves(self):
+        extruder = _make_extruder_obj()
+        tool = _make_toolchanger_for_unselect(current_extruder=extruder)
+        gcmd = _build_gcmd()
+
+        tool.cmd_AFC_UNSELECT_TOOL(gcmd)
+
+        tool.afc.toolhead.wait_moves.assert_called_once()
+
+    def test_waits_for_moves_before_activating_extruder(self):
+        """The wait must happen before handle_activate_extruder runs, not after,
+        to avoid the race condition it's guarding against."""
+        extruder = _make_extruder_obj()
+        tool = _make_toolchanger_for_unselect(current_extruder=extruder)
+        call_order = []
+        tool.afc.toolhead.wait_moves = MagicMock(
+            side_effect=lambda: call_order.append("wait_moves"))
+        tool.afc.function.handle_activate_extruder = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("handle_activate_extruder"))
+        gcmd = _build_gcmd()
+
+        tool.cmd_AFC_UNSELECT_TOOL(gcmd)
+
+        assert call_order == ["wait_moves", "handle_activate_extruder"]
+
     def test_current_state_goes_tool_dock_during_unselect_then_idle(self):
         extruder = _make_extruder_obj()
         extruder.custom_unselect = None

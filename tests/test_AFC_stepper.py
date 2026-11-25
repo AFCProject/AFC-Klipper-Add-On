@@ -254,6 +254,25 @@ class TestUpdateRotationDistance:
         s.extruder_stepper.stepper.set_rotation_distance.assert_called_once_with(2.0)
 
 
+# ── get_current_rotation_distance ────────────────────────────────────────────
+
+class TestGetCurrentRotationDistance:
+    def test_returns_steppers_currently_set_rotation_distance(self):
+        s = _make_stepper()
+        s.extruder_stepper.stepper.get_rotation_distance.return_value = (3.21, 16)
+        assert s.get_current_rotation_distance() == 3.21
+
+
+# ── set_current_rotation_distance ────────────────────────────────────────────
+
+class TestSetCurrentRotationDistance:
+    def test_sets_rotation_distance_directly_without_base_multiplier_math(self):
+        s = _make_stepper()
+        s.base_rotation_dist = 8.0
+        s.set_current_rotation_distance(5.55)
+        s.extruder_stepper.stepper.set_rotation_distance.assert_called_once_with(5.55)
+
+
 # ── get_kinematics / get_steppers / calc_position ────────────────────────────
 
 class TestKinematicsShims:

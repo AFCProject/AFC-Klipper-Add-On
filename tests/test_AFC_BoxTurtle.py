@@ -138,6 +138,69 @@ class TestSystemTestLoadedLane:
         assert lane.status == AFCLaneState.LOADED
 
 
+# ── system_Test: tool loaded (prep=T, load=T, tool_loaded=T) ────────────────
+
+def _make_tool_loaded_lane():
+    """A lane that's prepped, loaded, and already in the toolhead -- set up to
+    reach the `cur_lane.tool_loaded` branch in system_Test without tripping
+    the ram-sensor or toolhead-mismatch side paths."""
+    lane = _make_lane(prep_state=True, load_state=True, tool_loaded=True)
+    lane.extruder_obj.lane_loaded = lane.name
+    lane.extruder_obj.tool_start = None
+    lane.extruder_obj.tool_end_state = False
+    lane.get_toolhead_pre_sensor_state = MagicMock(return_value=True)
+    lane.extruder_obj.prep_on_shuttle_check = MagicMock(return_value="")
+    return lane
+
+
+class TestSystemTestToolLoaded:
+    def test_current_lane_enables_buffer(self):
+        """The lane actively on the shuttle (afc.current) gets TOOLED and
+        enables its buffer."""
+        unit = _make_box_turtle()
+        lane = _make_tool_loaded_lane()
+        unit.afc.current = lane.name
+        gcmd = MagicMock()
+
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
+
+        lane.enable_buffer.assert_called_once_with()
+
+    def test_current_lane_sets_status_tooled(self):
+        from extras.AFC_lane import AFCLaneState
+        unit = _make_box_turtle()
+        lane = _make_tool_loaded_lane()
+        unit.afc.current = lane.name
+        gcmd = MagicMock()
+
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
+
+        assert lane.status == AFCLaneState.TOOLED
+
+    def test_non_current_lane_does_not_enable_buffer(self):
+        """A lane that's loaded into a toolhead but not the one active on the
+        shuttle goes idle instead, and must not enable its buffer."""
+        unit = _make_box_turtle()
+        lane = _make_tool_loaded_lane()
+        unit.afc.current = "other_lane"
+        gcmd = MagicMock()
+
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
+
+        lane.enable_buffer.assert_not_called()
+
+    def test_non_current_lane_goes_tool_loaded_idle(self):
+        unit = _make_box_turtle()
+        lane = _make_tool_loaded_lane()
+        unit.afc.current = "other_lane"
+        unit.lane_tool_loaded_idle = MagicMock()
+        gcmd = MagicMock()
+
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
+
+        unit.lane_tool_loaded_idle.assert_called_once_with(lane, gcmd=gcmd)
+
+
 # ── system_Test: locked not loaded (prep=T, load=F) ──────────────────────────
 
 class TestSystemTestLockedNotLoaded:

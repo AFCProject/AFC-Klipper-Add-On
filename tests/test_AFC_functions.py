@@ -2764,6 +2764,42 @@ class TestLaneCalibration:
         ]
         func._afc_cali_fail.assert_not_called()
 
+    def test_resets_drive_stepper_before_calibrating_lane(self):
+        func, lane = self._make_func_and_lane()
+        lane.is_direct_hub.return_value = False
+        lane.unit_obj.calibrate_lane = MagicMock(return_value=(True, "ok", 0))
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+
+        func._lane_calibration(lane.name, None, 5, 25, MagicMock())
+
+        lane.reset_drive_stepper.assert_called_once_with()
+
+    def test_restores_drive_stepper_after_calibrating_lane(self):
+        func, lane = self._make_func_and_lane()
+        lane.is_direct_hub.return_value = False
+        lane.unit_obj.calibrate_lane = MagicMock(return_value=(True, "ok", 0))
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        lane.restore_drive_stepper = MagicMock()
+
+        func._lane_calibration(lane.name, None, 5, 25, MagicMock())
+
+        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+
+    def test_restores_drive_stepper_even_when_calibration_fails(self):
+        """The restore must happen on every exit path out of the per-lane
+        calibration, including the early return on a failed calibration, not
+        just the success path."""
+        func, lane = self._make_func_and_lane()
+        lane.is_direct_hub.return_value = False
+        lane.unit_obj.calibrate_lane = MagicMock(return_value=(False, "bad reading", 12))
+        lane.hub_obj.state = True
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        lane.restore_drive_stepper = MagicMock()
+
+        func._lane_calibration(lane.name, None, 5, 25, MagicMock())
+
+        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+
 # ── end _lane_calibration ─────────────────────────────────────────────────────
 
 class TestCalibrateAFC:
@@ -3579,6 +3615,89 @@ class TestCalibrateAFC:
         self._assert_afc_cali_comp_called(
             func, [f"'TD1_Bowden_length: {lane.name}'"], [], title="TD-1 Calibration", gcmd=gcmd
         )
+
+    def test_resets_drive_stepper_before_bowden_calibration(self):
+        func, afc, lane = self._setup_calibration()
+        gcmd = self._make_gcmd_for_calibration(bowden=lane.name)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        lane.reset_drive_stepper.assert_called_once_with()
+
+    def test_restores_drive_stepper_after_bowden_calibration_success(self):
+        func, afc, lane = self._setup_calibration()
+        gcmd = self._make_gcmd_for_calibration(bowden=lane.name)
+        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        lane.restore_drive_stepper = MagicMock()
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+
+    def test_restores_drive_stepper_even_when_bowden_calibration_fails(self):
+        func, afc, lane = self._setup_calibration()
+        gcmd = self._make_gcmd_for_calibration(bowden=lane.name)
+        self._set_calibrate_bowden_result(lane, (False, "bad reading", 12))
+        lane.hub_obj.state = True
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        lane.restore_drive_stepper = MagicMock()
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+
+    def test_resets_drive_stepper_before_td1_calibration(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.tool_loaded = False
+        lane.hub_obj.state = False
+        lane.hub_obj.name = "Hub_1"
+        gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+        lane.unit_obj.calibrate_td1 = MagicMock(
+            return_value=(True, "td1_bowden_length calibration successful", 1000))
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        lane.reset_drive_stepper.assert_called_once_with()
+
+    def test_restores_drive_stepper_after_td1_calibration_success(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.tool_loaded = False
+        lane.hub_obj.state = False
+        lane.hub_obj.name = "Hub_1"
+        gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+        lane.unit_obj.calibrate_td1 = MagicMock(
+            return_value=(True, "td1_bowden_length calibration successful", 1000))
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        lane.restore_drive_stepper = MagicMock()
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+
+    def test_restores_drive_stepper_even_when_td1_calibration_fails(self):
+        func, afc, lane = self._setup_calibration(td1_present=True)
+        lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
+        lane.is_direct_hub = MagicMock(return_value=True)
+        lane.tool_loaded = False
+        lane.hub_obj.state = False
+        lane.hub_obj.name = "Hub_1"
+        gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+        lane.unit_obj.calibrate_td1 = MagicMock(
+            return_value=(False, "TD-1 failed to detect filament after moving 1000mm", 1000))
+        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        lane.restore_drive_stepper = MagicMock()
+
+        self._call_cmd_calibrate_afc(func, gcmd)
+
+        lane.restore_drive_stepper.assert_called_once_with(22.6789)
 
 
 # ── cmd_AFC_LANE_RESET: stepperless unit delegation ─────────────────────────

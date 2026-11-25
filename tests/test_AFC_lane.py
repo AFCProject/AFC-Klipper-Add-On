@@ -654,6 +654,57 @@ class TestSetPrintCurrent:
         lane.drive_stepper.set_print_current.assert_called_once_with(gcmd=gcmd)
 
 
+class TestResetDriveStepper:
+    def test_no_drive_stepper_returns_none(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        assert lane.reset_drive_stepper() is None
+
+    def test_sets_rotation_distance_to_base(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        lane.drive_stepper.get_current_rotation_distance.return_value = 22.6789
+
+        lane.reset_drive_stepper()
+
+        lane.drive_stepper.update_rotation_distance.assert_called_once_with(1)
+
+    def test_returns_previous_rotation_distance(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+        lane.drive_stepper.get_current_rotation_distance.return_value = 22.6789
+
+        assert lane.reset_drive_stepper() == 22.6789
+
+
+class TestRestoreDriveStepper:
+    def test_no_drive_stepper_does_nothing(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = None
+
+        lane.restore_drive_stepper(22.6789)
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the guard fired.
+
+    def test_previous_rotation_distance_none_does_nothing(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+
+        lane.restore_drive_stepper(None)
+
+        lane.drive_stepper.set_current_rotation_distance.assert_not_called()
+
+    def test_restores_previous_rotation_distance(self):
+        lane = _make_afc_lane()
+        lane.drive_stepper = MagicMock()
+
+        lane.restore_drive_stepper(22.6789)
+
+        lane.drive_stepper.set_current_rotation_distance.assert_called_once_with(22.6789)
+
+
 class TestToolSwap:
     def test_noop_when_no_toolchanger(self):
         lane = _make_afc_lane()

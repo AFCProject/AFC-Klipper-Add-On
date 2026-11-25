@@ -3764,6 +3764,7 @@ class TestAfcACESystemTest:
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True, tool_loaded=True),
                            current="other")
         lane = unit.lanes["lane0"]
+        lane.enable_buffer = Hook(lane.enable_buffer)
 
         gcmd = make_gcmd()
         ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
@@ -3774,6 +3775,9 @@ class TestAfcACESystemTest:
         assert lane.current_led_state == "tool_loaded_idle"
         assert unit.afc.spool.set_active_spool.calls == []
         assert unit.printer.events == []
+        # An idle (not actively tooled) lane must not enable its buffer: only
+        # the lane actually active on the shuttle should run buffer correction.
+        assert lane.enable_buffer.calls == []
 
 
 class TestAfcACEFeedUntilSensor:
