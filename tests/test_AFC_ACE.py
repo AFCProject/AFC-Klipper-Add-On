@@ -9506,6 +9506,9 @@ class TestACEConnectionDisconnect:
         conn._pending[5] = pending
         conn._pending_cmd[5] = 1
         conn._async_ids.append(6)
+        conn._quiet_async_ids.add(6)
+        conn._quiet_request_methods[6] = "get_status"
+        conn._quiet_last_payload["get_status"] = {"result": 1}
         conn._read_buffer = b"\xff\xaa"
         conn._fd_handle = ("fd", 3)
         conn._resolved_port = "/dev/ttyACM0"
@@ -9525,6 +9528,8 @@ class TestACEConnectionDisconnect:
         # A waiting request wakes with no reply.
         assert (pending.done, pending.result) == (True, None)
         assert (conn._pending, conn._pending_cmd, list(conn._async_ids)) == ({}, {}, [])
+        assert (conn._quiet_async_ids, conn._quiet_request_methods,
+               conn._quiet_last_payload) == (set(), {}, {})
         assert conn._read_buffer == b""
         assert afc_ace_module._ACE_CLAIMED_PORTS == set()
         assert conn._logger.messages == [("info", "ACE serial disconnected")]
@@ -9982,6 +9987,68 @@ class TestACEConnectionSendCommandAsync:
             ("info", "ACE serial disconnected"),
             ("info", "ACE scheduling reconnect in 5s (next backoff: 8s)")]
 
+    def test_quiet_true_skips_tx_log(self):
+        """Covers quiet's True branch: the TX debug line must not fire."""
+        conn = ace_p2_connection()
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert list(conn._async_ids) == [0]
+        assert conn._logger.messages == []
+
+    def test_quiet_true_records_quiet_async_id(self):
+        conn = ace_p2_connection()
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert conn._quiet_async_ids == {0}
+
+    def test_quiet_false_does_not_record_quiet_async_id(self):
+        """Covers quiet's False branch, independent of the True case above."""
+        conn = ace_p2_connection()
+
+        conn.send_command_async("get_status", quiet=False)
+
+        assert conn._quiet_async_ids == set()
+
+    def test_debug_true_logs_tx_even_when_quiet(self):
+        """debug=True must override quiet's TX suppression too."""
+        conn = ace_p2_connection()
+        conn._debug = True
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert conn._logger.messages == [
+            ("debug", "ACE TX (async): {'id': 0, 'method': 'get_status'}")]
+
+    def test_evicts_quiet_metadata_for_id_dropped_by_full_deque(self):
+        """When _async_ids is full, the id it drops must leave the quiet maps too."""
+        conn = ace_p2_connection()
+        for request_id in range(conn._async_ids.maxlen):
+            conn._async_ids.append(request_id)
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = conn._async_ids.maxlen
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert 0 not in conn._quiet_async_ids
+        assert 0 not in conn._quiet_request_methods
+        assert conn._quiet_async_ids == {conn._async_ids.maxlen}
+        assert conn._quiet_request_methods == {conn._async_ids.maxlen: "get_temp"}
+
+    def test_does_not_evict_quiet_metadata_when_deque_not_full(self):
+        """No eviction should happen before _async_ids reaches its maxlen."""
+        conn = ace_p2_connection()
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = 1
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert conn._quiet_async_ids == {0, 1}
+        assert conn._quiet_request_methods == {0: "get_status", 1: "get_temp"}
+
 
 class TestACEConnectionStartHeartbeat:
     def test_start_registers_once(self):
@@ -10031,6 +10098,9 @@ class TestACEConnectionStopHeartbeat:
 
 class TestACEConnectionHeartbeatTick:
     def test_tick_sends_and_reschedules(self):
+        """The routine heartbeat get_status poll is sent quiet=True, so it
+        must not spam a TX debug line every HEARTBEAT_INTERVAL (GH report:
+        ACE continuously logs to AFC.log)."""
         conn = ace_p2_connection()
         conn._last_rx_time = 95.0
 
@@ -10038,8 +10108,8 @@ class TestACEConnectionHeartbeatTick:
         assert [f[4:-3] for f in conn._serial.frames] == [b'{"id":0,"method":"get_status"}']
         # The health check ran too.
         assert conn._last_supervision_check == 100.0
-        assert conn._logger.messages == [
-            ("debug", "ACE TX (async): {'id': 0, 'method': 'get_status'}")]
+        assert conn._logger.messages == []
+        assert conn._quiet_async_ids == {0}
 
     def test_tick_reconnects_on_silence(self):
         conn = ace_p2_connection(reconnect_enabled=True)
@@ -10371,6 +10441,141 @@ class TestACEConnectionParseFrames:
             ("warning", "ACE frame: JSON parse error: Expecting value: line 1 column 1 "
                         "(char 0)")]
 
+    def test_quiet_async_id_first_reply_logs_and_caches(self):
+        """The first reply to a quiet=True request has nothing to compare
+        against yet, so it must log (and cache its payload for next time)."""
+        conn = ace_p2_connection()
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 1}")]
+        assert conn._quiet_last_payload == {"get_status": {"result": 1}}
+
+    def test_quiet_async_id_unchanged_payload_skips_rx_log(self):
+        """A reply whose payload matches the last one logged for that method
+        must be skipped (GH report: ACE continuously logs to AFC.log)."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": 1}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+
+    def test_quiet_async_id_changed_payload_logs_and_updates_cache(self):
+        """A reply whose payload differs from the last one logged for that
+        method must log, and the cache must advance to the new value."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": 1}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":2}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 2}")]
+        assert conn._quiet_last_payload == {"get_status": {"result": 2}}
+
+    def test_get_temp_reply_never_logs_even_when_changed(self):
+        """get_temp's reading drifts continuously, so even a changed payload
+        must stay suppressed (it's in _NEVER_LOG_QUIET_METHODS)."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_temp"] = {"result": 99}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_temp"
+        conn._read_buffer = self._frame(b'{"id":1,"result":2}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+        # The cache is left untouched since the reply was never evaluated against it.
+        assert conn._quiet_last_payload == {"get_temp": {"result": 99}}
+
+    def test_debug_true_logs_get_temp_reply(self):
+        """debug=True must override every quiet suppression, including
+        _NEVER_LOG_QUIET_METHODS."""
+        conn = ace_p2_connection()
+        conn._debug = True
+        conn._quiet_last_payload["get_temp"] = {"result": 99}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_temp"
+        conn._read_buffer = self._frame(b'{"id":1,"result":2}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 2}")]
+
+    def test_get_status_reply_with_only_noisy_fields_changed_skips_rx_log(self):
+        """get_status embeds temp/humidity, which drift on their own; a reply
+        that only differs in those fields must still be skipped."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": {"status": "ready"}}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(
+            b'{"id":1,"result":{"status":"ready","temp":27,"humidity":33}}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+
+    def test_get_status_reply_with_real_change_logs_despite_noisy_fields(self):
+        """A genuine status change must still log (and update the cache)
+        even though temp/humidity also changed in the same reply."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": {"status": "ready"}}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(
+            b'{"id":1,"result":{"status":"busy","temp":27,"humidity":33}}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [(
+            "debug",
+            "ACE RX: {'id': 1, 'result': {'status': 'busy', 'temp': 27, 'humidity': 33}}")]
+        # Cached with the noisy fields already stripped, same as the compared value.
+        assert conn._quiet_last_payload == {"get_status": {"result": {"status": "busy"}}}
+
+    def test_quiet_reply_with_non_dict_result_is_compared_as_is(self):
+        """Covers the isinstance(result, dict) check's False branch: a quiet
+        method whose result isn't a dict (nothing to strip) is still
+        compared and cached normally."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": 1}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+
+    def test_non_quiet_id_still_logs_rx(self):
+        """Covers the quiet-id check's False branch independently: a reply
+        whose id isn't in _quiet_async_ids still logs normally."""
+        conn = ace_p2_connection()
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(99)
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 1}")]
+
 
 class TestACEConnectionResponseMatchesPending:
     def test_base_always_true(self):
@@ -10420,6 +10625,29 @@ class TestACEConnectionHandleResponse:
         assert conn._unsolicited_timestamps == []
         assert list(conn._async_ids) == [8]
         assert conn._logger.messages == []
+
+    def test_matched_async_id_discards_quiet_id(self):
+        """A matched async reply must clear its id from _quiet_async_ids too,
+        or a lost reply's id would linger there forever."""
+        conn = ace_p2_connection()
+        conn._async_ids.extend([9])
+        conn._quiet_async_ids.add(9)
+
+        conn._handle_response({"id": 9, "result": 2})
+
+        assert conn._quiet_async_ids == set()
+
+    def test_matched_async_id_discards_quiet_method(self):
+        """A matched async reply must also clear its id from
+        _quiet_request_methods, or a lost reply's id would linger forever."""
+        conn = ace_p2_connection()
+        conn._async_ids.extend([9])
+        conn._quiet_async_ids.add(9)
+        conn._quiet_request_methods[9] = "get_status"
+
+        conn._handle_response({"id": 9, "result": 2})
+
+        assert conn._quiet_request_methods == {}
 
     def test_unknown_id_counted_and_logged(self):
         conn = ace_p2_connection()

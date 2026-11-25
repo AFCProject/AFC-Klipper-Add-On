@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [11-21-2026]
+### Added
+- Filtering of message that get logged to AFC_ACE_serial.log, before it was very chatty and would constantly log to file. Logging that has been suppressed can be turned back on by adding `debug: True` into your unit config.
+
 ### Fixed
 - Fixed buffer not getting enabled when `SET_LANE_LOADED` macro is used.
 

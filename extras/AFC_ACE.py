@@ -527,7 +527,7 @@ class afcACE(afcUnit):
         :return ACEConnection: the new connection
         """
         return ACEConnection(reactor=reactor, serial_port=serial_port, logger=logger,
-                             baud_rate=baud_rate, ace_index=self.ace_index)
+                             baud_rate=baud_rate, ace_index=self.ace_index, debug=self.debug)
 
     def _deferred_ace_connect(self, eventtime: float) -> None:
         """
@@ -4791,7 +4791,8 @@ class ACEConnection:
 
     def __init__(self, reactor: Reactor, serial_port: str, logger: Optional[Any] = None,
                  baud_rate: int = DEFAULT_BAUD, ace_index: int = 1,
-                 ace_uid: Optional[Tuple[int, int, int]] = None) -> None:
+                 ace_uid: Optional[Tuple[int, int, int]] = None,
+                 debug: bool = False) -> None:
         """
         Initialize the serial connection state (no port is opened yet).
 
@@ -4804,6 +4805,7 @@ class ACEConnection:
         :param ace_index: When serial_port is 'auto', bind to the unit whose
             get_info id equals this (1-based, cable order).
         :param ace_uid: optional STM32 UID pin (ACE2 only)
+        :param debug: True disables the routine heartbeat polls' log quieting.
         """
         # 'auto' resolves to a real tty on every connect via the unit's
         # firmware id; _resolved_port holds the last-resolved path for logs.
@@ -4811,6 +4813,7 @@ class ACEConnection:
         self._ace_index = ace_index
         # Optional per-box pin (ACE2 only: the STM32 UID tuple from discover).
         self._ace_uid = ace_uid
+        self._debug = debug
         self._resolved_port: Optional[str] = None
         self._reactor = reactor
         self._serial_port = serial_port
@@ -4832,6 +4835,10 @@ class ACEConnection:
         # Async request IDs we've sent, whose replies go to status_callback.
         # Bounded so lost responses can't grow it forever.
         self._async_ids: collections.deque[int] = collections.deque(maxlen=256)
+        # Request ids sent with quiet=True, see send_command_async.
+        self._quiet_async_ids: set[int] = set()
+        self._quiet_request_methods: Dict[int, str] = {}
+        self._quiet_last_payload: Dict[Optional[str], Any] = {}
 
         self._read_buffer = b''
 
@@ -4997,6 +5004,9 @@ class ACEConnection:
         self._pending.clear()
         self._pending_cmd.clear()
         self._async_ids.clear()
+        self._quiet_async_ids.clear()
+        self._quiet_request_methods.clear()
+        self._quiet_last_payload.clear()
         self._read_buffer = b''
 
         if was_connected:
@@ -5174,12 +5184,14 @@ class ACEConnection:
 
         return result
 
-    def send_command_async(self, method: str, params: Optional[Dict[str, Any]] = None) -> None:
+    def send_command_async(self, method: str, params: Optional[Dict[str, Any]] = None,
+                           quiet: bool = False) -> None:
         """
         Send a JSON-RPC command without waiting for a response.
 
         :param method: ACE protocol method name.
         :param params: Optional params dict for the request.
+        :param quiet: True for a routine heartbeat poll, see `_maybe_log_rx`.
         """
         if (not self._connected
             or self._serial is None):
@@ -5187,7 +5199,14 @@ class ACEConnection:
 
         request_id = self._next_request_id
         self._next_request_id += 1
+        if len(self._async_ids) == self._async_ids.maxlen:
+            evicted_id = self._async_ids[0]
+            self._quiet_async_ids.discard(evicted_id)
+            self._quiet_request_methods.pop(evicted_id, None)
         self._async_ids.append(request_id)
+        if quiet:
+            self._quiet_async_ids.add(request_id)
+            self._quiet_request_methods[request_id] = method
 
         request = {"id": request_id, "method": method}
         if params is not None:
@@ -5206,7 +5225,9 @@ class ACEConnection:
             self.reconnect()
             return
 
-        self._logger.debug(f"ACE TX (async): {request}")
+        if (not quiet
+            or self._debug):
+            self._logger.debug(f"ACE TX (async): {request}")
 
     # Heartbeat
     def _start_heartbeat(self) -> None:
@@ -5247,7 +5268,7 @@ class ACEConnection:
             return self._reactor.NEVER
 
         try:
-            self.send_command_async("get_status")
+            self.send_command_async("get_status", quiet=True)
         except Exception:
             pass
 
@@ -5366,6 +5387,40 @@ class ACEConnection:
     # Maximum sane payload size to reject false headers with garbage lengths
     _MAX_PAYLOAD = 8192
 
+    # Quiet methods that never log even on change: get_temp drifts continuously.
+    _NEVER_LOG_QUIET_METHODS = frozenset({"get_temp"})
+
+    # result fields ignored only for the change comparison, not from what's logged.
+    _NOISY_RESULT_FIELDS = frozenset({"temp", "humidity"})
+
+    def _maybe_log_rx(self, response: Dict[str, Any], prefix: str) -> None:
+        """
+        Log an RX debug line, shared by the V1 and ACE2 frame parsers.
+
+        A quiet reply only logs when its payload changed from the last one
+        logged for that method, ignoring `_NOISY_RESULT_FIELDS`. debug=True
+        or a non-quiet reply always logs.
+
+        :param response: Decoded response dict, as received on the wire.
+        :param prefix: Log line prefix ("ACE" or "ACE2").
+        """
+        response_id = response.get("id")
+        if (self._debug
+            or response_id not in self._quiet_async_ids):
+            self._logger.debug(f"{prefix} RX: {response}")
+            return
+        method = self._quiet_request_methods.get(response_id)
+        if method in self._NEVER_LOG_QUIET_METHODS:
+            return
+        payload = {k: v for k, v in response.items() if k != "id"}
+        result = payload.get("result")
+        if isinstance(result, dict):
+            payload["result"] = {k: v for k, v in result.items()
+                                 if k not in self._NOISY_RESULT_FIELDS}
+        if payload != self._quiet_last_payload.get(method):
+            self._logger.debug(f"{prefix} RX: {response}")
+            self._quiet_last_payload[method] = payload
+
     def _parse_frames(self) -> None:
         """
         Extract and process complete frames from the read buffer.
@@ -5423,7 +5478,7 @@ class ACEConnection:
                 self._logger.warning(f"ACE frame: JSON parse error: {e}")
                 continue
 
-            self._logger.debug(f"ACE RX: {response}")
+            self._maybe_log_rx(response, "ACE")
             self._handle_response(response)
 
     def _response_matches_pending(self, response_id: Any, response: Dict[str, Any]) -> bool:
@@ -5484,6 +5539,8 @@ class ACEConnection:
             is_async = True
         except ValueError:
             is_async = False
+        self._quiet_async_ids.discard(response_id)
+        self._quiet_request_methods.pop(response_id, None)
 
         # Only replies not matching an async request count as unsolicited, or
         # heartbeat replies would trip the health check on a healthy link.
