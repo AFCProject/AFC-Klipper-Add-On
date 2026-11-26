@@ -47,6 +47,21 @@ def _make_func():
     return func
 
 
+def _make_real_func():
+    """Build an afcFunction through its real __init__, mocking its config
+    and printer dependencies."""
+    from tests.conftest import MockAFC, MockConfig, MockLogger, MockPrinter
+
+    afc = MockAFC()
+    printer = MockPrinter(afc=afc)
+    config = MockConfig(name="AFC_functions", printer=printer)
+    config.access_tracking = {}
+    func = afcFunction(config)
+    func.afc = afc
+    func.logger = MockLogger()
+    return func
+
+
 # ── round_floats ─────────────────────────────────────────────────────────────
 
 class TestRoundFloats:
@@ -2670,7 +2685,7 @@ class TestLaneCalibration:
     """
 
     def _make_func_and_lane(self, standalone=False, load_state=True, prep_state=True):
-        func = _make_func()
+        func = _make_real_func()
         func._afc_cali_fail = MagicMock()
         afc = _make_afc()
         afc.error = MagicMock()
@@ -2765,40 +2780,63 @@ class TestLaneCalibration:
         func._afc_cali_fail.assert_not_called()
 
     def test_resets_drive_stepper_before_calibrating_lane(self):
+        """Not just that reset ran, but that it ran before calibrate_lane,
+        not merely alongside or after it."""
         func, lane = self._make_func_and_lane()
         lane.is_direct_hub.return_value = False
-        lane.unit_obj.calibrate_lane = MagicMock(return_value=(True, "ok", 0))
-        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        call_order = []
+        lane.reset_drive_stepper = MagicMock(
+            side_effect=lambda: call_order.append("reset") or 22.6789)
+        lane.unit_obj.calibrate_lane = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("calibrate") or (True, "ok", 0))
 
         func._lane_calibration(lane.name, None, 5, 25, MagicMock())
 
-        lane.reset_drive_stepper.assert_called_once_with()
+        assert call_order == ["reset", "calibrate"]
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", "Lane calibration Done!"),
+        ]
 
     def test_restores_drive_stepper_after_calibrating_lane(self):
+        """Not just that restore ran with the reset value, but that it ran
+        after calibrate_lane, not before it."""
         func, lane = self._make_func_and_lane()
         lane.is_direct_hub.return_value = False
-        lane.unit_obj.calibrate_lane = MagicMock(return_value=(True, "ok", 0))
+        call_order = []
         lane.reset_drive_stepper = MagicMock(return_value=22.6789)
-        lane.restore_drive_stepper = MagicMock()
+        lane.unit_obj.calibrate_lane = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("calibrate") or (True, "ok", 0))
+        lane.restore_drive_stepper = MagicMock(
+            side_effect=lambda v: call_order.append(("restore", v)))
 
         func._lane_calibration(lane.name, None, 5, 25, MagicMock())
 
-        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+        assert call_order == ["calibrate", ("restore", 22.6789)]
+        assert func.logger.messages == [
+            ("info", "Starting AFC distance Calibrations"),
+            ("info", "Lane calibration Done!"),
+        ]
 
     def test_restores_drive_stepper_even_when_calibration_fails(self):
         """The restore must happen on every exit path out of the per-lane
         calibration, including the early return on a failed calibration, not
-        just the success path."""
+        just the success path, and must still run after calibrate_lane."""
         func, lane = self._make_func_and_lane()
         lane.is_direct_hub.return_value = False
-        lane.unit_obj.calibrate_lane = MagicMock(return_value=(False, "bad reading", 12))
         lane.hub_obj.state = True
+        call_order = []
         lane.reset_drive_stepper = MagicMock(return_value=22.6789)
-        lane.restore_drive_stepper = MagicMock()
+        lane.unit_obj.calibrate_lane = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("calibrate")
+            or (False, "bad reading", 12))
+        lane.restore_drive_stepper = MagicMock(
+            side_effect=lambda v: call_order.append(("restore", v)))
 
         func._lane_calibration(lane.name, None, 5, 25, MagicMock())
 
-        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+        assert call_order == ["calibrate", ("restore", 22.6789)]
+        assert func.logger.messages == [("info", "Starting AFC distance Calibrations")]
 
 # ── end _lane_calibration ─────────────────────────────────────────────────────
 
@@ -2834,9 +2872,15 @@ class TestCalibrateAFC:
             "TOLERANCE": tolerance,
         })
 
-    def _setup_calibration(self, standalone=False, td1_present=False, moonraker=None):
-        """Builds func/afc/lane with the defaults nearly every test relies on."""
-        func = _make_func()
+    def _setup_calibration(self, standalone=False, td1_present=False, moonraker=None,
+                           real_func=False):
+        """Builds func/afc/lane with the defaults nearly every test relies on.
+
+        :param real_func: Build `func` through its real `__init__` instead of
+            `_make_func()`'s `__new__` bypass, for tests that care about
+            constructor-initialized state.
+        """
+        func = _make_real_func() if real_func else _make_func()
         func._lane_calibration = MagicMock()
         func._afc_cali_comp = MagicMock()
         func._afc_cali_fail = MagicMock()
@@ -3617,87 +3661,120 @@ class TestCalibrateAFC:
         )
 
     def test_resets_drive_stepper_before_bowden_calibration(self):
-        func, afc, lane = self._setup_calibration()
+        """Not just that reset ran, but that it ran before calibrate_bowden,
+        not merely alongside or after it."""
+        func, afc, lane = self._setup_calibration(real_func=True)
         gcmd = self._make_gcmd_for_calibration(bowden=lane.name)
-        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
-        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+        call_order = []
+        lane.unit_obj.calibrate_bowden = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("calibrate")
+            or (True, "afc_bowden_length successful", 1000))
+        lane.reset_drive_stepper = MagicMock(
+            side_effect=lambda: call_order.append("reset") or 22.6789)
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        lane.reset_drive_stepper.assert_called_once_with()
+        assert call_order == ["reset", "calibrate"]
 
     def test_restores_drive_stepper_after_bowden_calibration_success(self):
-        func, afc, lane = self._setup_calibration()
+        """Not just that restore ran with the reset value, but that it ran
+        after calibrate_bowden, not before it."""
+        func, afc, lane = self._setup_calibration(real_func=True)
         gcmd = self._make_gcmd_for_calibration(bowden=lane.name)
-        self._set_calibrate_bowden_result(lane, (True, "afc_bowden_length successful", 1000))
+        call_order = []
+        lane.unit_obj.calibrate_bowden = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("calibrate")
+            or (True, "afc_bowden_length successful", 1000))
         lane.reset_drive_stepper = MagicMock(return_value=22.6789)
-        lane.restore_drive_stepper = MagicMock()
+        lane.restore_drive_stepper = MagicMock(
+            side_effect=lambda v: call_order.append(("restore", v)))
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+        assert call_order == ["calibrate", ("restore", 22.6789)]
 
     def test_restores_drive_stepper_even_when_bowden_calibration_fails(self):
-        func, afc, lane = self._setup_calibration()
+        """The restore must still run after calibrate_bowden on the failure
+        path, not just when calibration succeeds."""
+        func, afc, lane = self._setup_calibration(real_func=True)
         gcmd = self._make_gcmd_for_calibration(bowden=lane.name)
-        self._set_calibrate_bowden_result(lane, (False, "bad reading", 12))
         lane.hub_obj.state = True
+        call_order = []
+        lane.unit_obj.calibrate_bowden = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("calibrate")
+            or (False, "bad reading", 12))
         lane.reset_drive_stepper = MagicMock(return_value=22.6789)
-        lane.restore_drive_stepper = MagicMock()
+        lane.restore_drive_stepper = MagicMock(
+            side_effect=lambda v: call_order.append(("restore", v)))
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+        assert call_order == ["calibrate", ("restore", 22.6789)]
 
     def test_resets_drive_stepper_before_td1_calibration(self):
-        func, afc, lane = self._setup_calibration(td1_present=True)
+        """Not just that reset ran, but that it ran before calibrate_td1,
+        not merely alongside or after it."""
+        func, afc, lane = self._setup_calibration(td1_present=True, real_func=True)
         lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
         lane.is_direct_hub = MagicMock(return_value=True)
         lane.tool_loaded = False
         lane.hub_obj.state = False
         lane.hub_obj.name = "Hub_1"
         gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+        call_order = []
         lane.unit_obj.calibrate_td1 = MagicMock(
-            return_value=(True, "td1_bowden_length calibration successful", 1000))
-        lane.reset_drive_stepper = MagicMock(return_value=22.6789)
+            side_effect=lambda *a, **k: call_order.append("calibrate")
+            or (True, "td1_bowden_length calibration successful", 1000))
+        lane.reset_drive_stepper = MagicMock(
+            side_effect=lambda: call_order.append("reset") or 22.6789)
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        lane.reset_drive_stepper.assert_called_once_with()
+        assert call_order == ["reset", "calibrate"]
 
     def test_restores_drive_stepper_after_td1_calibration_success(self):
-        func, afc, lane = self._setup_calibration(td1_present=True)
+        """Not just that restore ran with the reset value, but that it ran
+        after calibrate_td1, not before it."""
+        func, afc, lane = self._setup_calibration(td1_present=True, real_func=True)
         lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
         lane.is_direct_hub = MagicMock(return_value=True)
         lane.tool_loaded = False
         lane.hub_obj.state = False
         lane.hub_obj.name = "Hub_1"
         gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+        call_order = []
         lane.unit_obj.calibrate_td1 = MagicMock(
-            return_value=(True, "td1_bowden_length calibration successful", 1000))
+            side_effect=lambda *a, **k: call_order.append("calibrate")
+            or (True, "td1_bowden_length calibration successful", 1000))
         lane.reset_drive_stepper = MagicMock(return_value=22.6789)
-        lane.restore_drive_stepper = MagicMock()
+        lane.restore_drive_stepper = MagicMock(
+            side_effect=lambda v: call_order.append(("restore", v)))
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+        assert call_order == ["calibrate", ("restore", 22.6789)]
 
     def test_restores_drive_stepper_even_when_td1_calibration_fails(self):
-        func, afc, lane = self._setup_calibration(td1_present=True)
+        """The restore must still run after calibrate_td1 on the failure
+        path, not just when calibration succeeds."""
+        func, afc, lane = self._setup_calibration(td1_present=True, real_func=True)
         lane.extruder_obj.tool_start = MagicMock(return_value="buffer")
         lane.is_direct_hub = MagicMock(return_value=True)
         lane.tool_loaded = False
         lane.hub_obj.state = False
         lane.hub_obj.name = "Hub_1"
         gcmd = self._make_gcmd_for_calibration(TD1=lane.name)
+        call_order = []
         lane.unit_obj.calibrate_td1 = MagicMock(
-            return_value=(False, "TD-1 failed to detect filament after moving 1000mm", 1000))
+            side_effect=lambda *a, **k: call_order.append("calibrate")
+            or (False, "TD-1 failed to detect filament after moving 1000mm", 1000))
         lane.reset_drive_stepper = MagicMock(return_value=22.6789)
-        lane.restore_drive_stepper = MagicMock()
+        lane.restore_drive_stepper = MagicMock(
+            side_effect=lambda v: call_order.append(("restore", v)))
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        lane.restore_drive_stepper.assert_called_once_with(22.6789)
+        assert call_order == ["calibrate", ("restore", 22.6789)]
 
 
 # ── cmd_AFC_LANE_RESET: stepperless unit delegation ─────────────────────────

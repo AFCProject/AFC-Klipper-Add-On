@@ -50,6 +50,15 @@ def _make_box_turtle(name="Turtle_1"):
     return unit
 
 
+def _make_real_box_turtle(name="Turtle_1"):
+    """Build an afcBoxTurtle through its real __init__, mocking its config
+    and printer dependencies."""
+    from tests.conftest import MockConfig, MockPrinter
+    printer = MockPrinter()
+    config = MockConfig(name=f"AFC_BoxTurtle {name}", printer=printer)
+    return afcBoxTurtle(config)
+
+
 def _make_lane(prep_state=False, load_state=False, tool_loaded=False):
     lane = MagicMock()
     lane.move = MagicMock()
@@ -153,11 +162,17 @@ def _make_tool_loaded_lane():
     return lane
 
 
+_TOOL_LOADED_LOG = (
+    "info",
+    "lane1 tool cmd: T0  <span class=success--text>LOCKED</span>"
+    "<span class=success--text> AND LOADED</span>")
+
+
 class TestSystemTestToolLoaded:
     def test_current_lane_enables_buffer(self):
         """The lane actively on the shuttle (afc.current) gets TOOLED and
         enables its buffer."""
-        unit = _make_box_turtle()
+        unit = _make_real_box_turtle()
         lane = _make_tool_loaded_lane()
         unit.afc.current = lane.name
         gcmd = MagicMock()
@@ -165,10 +180,11 @@ class TestSystemTestToolLoaded:
         unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
 
         lane.enable_buffer.assert_called_once_with()
+        assert unit.logger.messages == [_TOOL_LOADED_LOG]
 
     def test_current_lane_sets_status_tooled(self):
         from extras.AFC_lane import AFCLaneState
-        unit = _make_box_turtle()
+        unit = _make_real_box_turtle()
         lane = _make_tool_loaded_lane()
         unit.afc.current = lane.name
         gcmd = MagicMock()
@@ -176,11 +192,12 @@ class TestSystemTestToolLoaded:
         unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
 
         assert lane.status == AFCLaneState.TOOLED
+        assert unit.logger.messages == [_TOOL_LOADED_LOG]
 
     def test_non_current_lane_does_not_enable_buffer(self):
         """A lane that's loaded into a toolhead but not the one active on the
         shuttle goes idle instead, and must not enable its buffer."""
-        unit = _make_box_turtle()
+        unit = _make_real_box_turtle()
         lane = _make_tool_loaded_lane()
         unit.afc.current = "other_lane"
         gcmd = MagicMock()
@@ -188,9 +205,10 @@ class TestSystemTestToolLoaded:
         unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
 
         lane.enable_buffer.assert_not_called()
+        assert unit.logger.messages == [_TOOL_LOADED_LOG]
 
     def test_non_current_lane_goes_tool_loaded_idle(self):
-        unit = _make_box_turtle()
+        unit = _make_real_box_turtle()
         lane = _make_tool_loaded_lane()
         unit.afc.current = "other_lane"
         unit.lane_tool_loaded_idle = MagicMock()
@@ -199,6 +217,7 @@ class TestSystemTestToolLoaded:
         unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
 
         unit.lane_tool_loaded_idle.assert_called_once_with(lane, gcmd=gcmd)
+        assert unit.logger.messages == [_TOOL_LOADED_LOG]
 
 
 # ── system_Test: locked not loaded (prep=T, load=F) ──────────────────────────
