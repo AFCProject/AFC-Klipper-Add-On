@@ -712,6 +712,7 @@ class TestBufferToggle:
         buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
         assert buf.enable is True
         assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
 
     def test_enable_buffer_compressed_overrides_trailing_last_state_fault_enabled(self):
         buf = _make_buffer(error_sensitivity=5)
@@ -720,9 +721,10 @@ class TestBufferToggle:
         buf.last_state = TRAILING_STATE_NAME
         buf.trailing_state = True
         buf.enable_buffer(lane)
-        buf.start_fault_detection.assert_called_once_with(0, buf.multiplier_high * 1.5)
+        buf.start_fault_detection.assert_called_once_with(0, pytest.approx(1.65))
         assert buf.enable is True
         assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
 
     def test_enable_buffer_expanded_overrides_advancing_last_state(self):
         # Buffer already on its expanded switch with a stale advancing state: feed slower
@@ -735,6 +737,7 @@ class TestBufferToggle:
         buf.set_multiplier.assert_called_once_with(buf.multiplier_low)
         assert buf.enable is True
         assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
 
     def test_enable_buffer_expanded_overrides_advancing_last_state_fault_enabled(self):
         buf = _make_buffer(error_sensitivity=5)
@@ -743,9 +746,10 @@ class TestBufferToggle:
         buf.last_state = ADVANCING_STATE_NAME
         buf.advance_state = True
         buf.enable_buffer(lane)
-        buf.start_fault_detection.assert_called_once_with(0, (buf.multiplier_low * 2) / 5)
+        buf.start_fault_detection.assert_called_once_with(0, pytest.approx(0.36))
         assert buf.enable is True
         assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
 
     def test_enable_buffer_toolchange_onto_compressed_buffer(self):
         # Previous lane last slowed (trailing state). The new lane's load leaves the buffer on its
@@ -763,12 +767,15 @@ class TestBufferToggle:
         buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
         assert buf.enable is True
         assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
 
         buf.restore_fault_sensitivity()
         buf.enable_buffer(lane)
-        buf.start_fault_detection.assert_called_once_with(0, buf.multiplier_high * 1.5)
+        buf.start_fault_detection.assert_called_once_with(0, pytest.approx(1.65))
         assert buf.enable is True
         assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1"),
+                                       ("debug", "TN buffer enabled for lane1")]
 
 class TestSetMultiplier:
     def test_set_multi_not_enabled(self):
