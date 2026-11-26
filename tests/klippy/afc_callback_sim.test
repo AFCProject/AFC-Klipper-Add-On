@@ -25,3 +25,12 @@ SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=button_callback STATE=0 DELTA
 # branch, calling LANE_UNLOAD(gcmd="callback"); also fails cleanly.
 SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=button_callback STATE=1
 SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=button_callback STATE=0 DELTA=1.5
+
+# BUTTON_CALIBRATION CANCEL=1 short-circuits before any ADC button lookup,
+# so it runs the same whether or not ADC buttons are configured (none are,
+# here). afcFunction has no get_status(), so ASSERT can't read its session
+# state back directly; this proves the command's own real gcmd dispatch
+# (prompt_end plus resetting session state) completes without raising or
+# deadlocking, same as every other line in this file with no trailing
+# ASSERT.
+BUTTON_CALIBRATION CANCEL=1
