@@ -1909,6 +1909,14 @@ class afc:
         :param gcmd: command context to run load macros through, if any
         :return bool: True when loading succeeds, otherwise False
         """
+        # Reject before the pre-load macro/temperature prep run
+        if (cur_lane.custom_load_cmd
+            and load_to_gears):
+            error_str = (f"Lane {cur_lane.name}: custom load command does not support "
+                         "gear-only loading.")
+            self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
+            return False
+
         if (self.park_pre_load
             and self.park_pre_load_cmd):
             self.run_script(self.park_pre_load_cmd, gcmd=gcmd)
@@ -1919,12 +1927,6 @@ class afc:
 
         # Placeholder for custom load sequence
         if cur_lane.custom_load_cmd:
-            if load_to_gears:
-                error_str = (f"Lane {cur_lane.name}: custom load command does not support "
-                             "gear-only loading.")
-                self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
-                return False
-
             self.logger.info("Running custom load command for lane {}".format(cur_lane.name))
 
             self.run_script(cur_lane.custom_load_cmd, gcmd=gcmd)

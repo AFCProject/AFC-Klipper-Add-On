@@ -2018,7 +2018,11 @@ class afcAMS(afcUnit):
                     # reached the gears.
                     self.logger.error(
                         f"OAMS load attempt {attempt+1} cancelled before reaching the gears: {msg}")
-                    continue
+                    # Don't retry: a later attempt succeeding would let this
+                    # cancellation be reported as success, and gear-only
+                    # loads skip _verify_engagement, so nothing downstream
+                    # would catch that the lane isn't actually loaded.
+                    return False
 
                 # Verify engagement (skip if deferred to AFC's Phase 2, or for a gear-only
                 # load: verification itself extrudes engagement_length, which would move

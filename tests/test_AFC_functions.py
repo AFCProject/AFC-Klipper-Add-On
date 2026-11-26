@@ -1248,6 +1248,7 @@ class TestCmdAfcToolheadCalibration:
             _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
 
         assert "not a valid lane" in func.afc.error.AFC_error.call_args.args[0]
+        assert func.logger.messages == [("raw", "// action:prompt_end")]
 
     def test_toolhead_menu_accepts_explicit_lane_with_load_state(self) -> None:
         """The counterpart of the rejection test above: an explicit LANE=
@@ -1364,9 +1365,25 @@ class TestCmdAfcToolheadCalibration:
 
         func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
 
-        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
-        assert any("LANE=lane2" in message for message in raw_messages)
-        assert not any("LANE=lane1" in message for message in raw_messages)
+        assert func.logger.messages == [
+            ("raw", "// action:prompt_begin Toolhead Calibration"),
+            ("raw", "// action:prompt_text Calibrate extruder with lane2."),
+            ("raw", "// action:prompt_text tool_stn controls loading to the nozzle(Note: "
+             "Button only shows up when toolhead is unloaded)"),
+            ("raw", "// action:prompt_text tool_stn_unload controls the movement after "
+             "cutting that clears the toolhead sensor or extruder gears."),
+            ("raw", "// action:prompt_text Cutter Retract helps you find how much to "
+             "retract when cutting."),
+            ("raw", "// action:prompt_button tool_stn|AFC_TOOL_STN_CALIBRATION EXTRUDER=extruder "
+             "LANE=lane2|primary"),
+            ("raw", "// action:prompt_button Cutter Retract|AFC_CUTTER_CALIBRATION "
+             "EXTRUDER=extruder LANE=lane2|info"),
+            ("raw", "// action:prompt_button tool_stn_unload|AFC_TOOL_STN_UNLOAD_CALIBRATION "
+             "EXTRUDER=extruder LANE=lane2|secondary"),
+            ("raw", "// action:prompt_footer_button Cancel|RESPOND TYPE=command "
+             "MSG=action:prompt_end|warning"),
+            ("raw", "// action:prompt_show"),
+        ]
 
     def test_toolhead_menu_resolves_lane_loaded_requires_load_state(self) -> None:
         """Independent coverage of the toolchanger-specific fallback: a stale
@@ -1385,9 +1402,14 @@ class TestCmdAfcToolheadCalibration:
 
         func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
 
-        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
-        assert any("No loaded lanes are available" in message for message in raw_messages)
-        assert not any("LANE=lane2" in message for message in raw_messages)
+        assert func.logger.messages == [
+            ("raw", "// action:prompt_begin Toolhead Calibration"),
+            ("raw", "// action:prompt_text No loaded lanes are available for extruder "
+             "'extruder'."),
+            ("raw", "// action:prompt_footer_button Cancel|RESPOND TYPE=command "
+             "MSG=action:prompt_end|warning"),
+            ("raw", "// action:prompt_show"),
+        ]
 
     def test_toolhead_menu_reports_no_configured_extruders(self) -> None:
         func, _ = _make_calibration_func()

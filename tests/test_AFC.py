@@ -4570,6 +4570,8 @@ class TestLoadSequenceCustomLoadCmdGearOnlyRejection:
         afc._check_extruder_temp = MagicMock(return_value=False)
         afc.save_vars = MagicMock()
         afc.run_script = MagicMock()
+        afc.park_pre_load = True
+        afc.park_pre_load_cmd = "PARK_PRE_LOAD_CMD"
         lane = _make_afc_lane()
         lane.custom_load_cmd = "MY_CUSTOM_LOAD"
         lane.unit_obj = MagicMock(spec=[])
@@ -4584,7 +4586,10 @@ class TestLoadSequenceCustomLoadCmdGearOnlyRejection:
         result = afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
 
         assert result is False
+        # The rejection must happen before the pre-load macro and temperature
+        # prep run, since park_pre_load_cmd can itself extrude filament.
         afc.run_script.assert_not_called()
+        afc._check_extruder_temp.assert_not_called()
         afc.save_vars.assert_not_called()
 
     def test_load_to_gears_true_reports_gear_only_error(self):
@@ -4617,7 +4622,9 @@ class TestLoadSequenceCustomLoadCmdGearOnlyRejection:
         result = afc.load_sequence(lane, hub, extruder, load_to_gears=False, gcmd=gcmd)
 
         assert result is not False
-        afc.run_script.assert_called_once_with("MY_CUSTOM_LOAD", gcmd=gcmd)
+        afc.run_script.assert_any_call("MY_CUSTOM_LOAD", gcmd=gcmd)
+        afc.run_script.assert_any_call("PARK_PRE_LOAD_CMD", gcmd=gcmd)
+        assert afc.run_script.call_count == 2
         afc.error.AFC_error.assert_not_called()
         assert lane.status == AFCLaneState.TOOL_LOADED
         assert afc.save_vars.call_count == 2

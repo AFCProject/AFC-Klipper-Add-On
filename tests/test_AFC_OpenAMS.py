@@ -5783,11 +5783,15 @@ class TestOamsLoad:
 
         assert result is True
         ams._verify_engagement.assert_called_once_with(lane, gcmd="callback")
+        assert ams.logger.messages == []
 
     def test_load_to_gears_true_rejects_a_cancelled_load(self):
         """CANCEL and SUCCESS both make load_spool_with_retry return success,
         but a gear-only load skips _verify_engagement, so a cancelled attempt
-        must not be treated as filament having reached the gears."""
+        must not be treated as filament having reached the gears. Uses the
+        default max_retries so a later successful attempt can't paper over
+        the cancellation: the cancelled attempt must fail outright rather
+        than retry."""
         oams = MagicMock()
         oams.determine_current_spool.return_value = None
         oams.load_spool_with_retry.return_value = (True, "cancelled")
@@ -5798,13 +5802,14 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane, max_retries=1, load_to_gears=True, gcmd="callback")
+        result = ams._oams_load(lane, load_to_gears=True, gcmd="callback")
 
         assert result is False
-        assert ("error",
-                "OAMS load attempt 1 cancelled before reaching the gears: cancelled"
-                ) in ams.logger.messages
+        assert ams.logger.messages == [
+            ("error",
+             "OAMS load attempt 1 cancelled before reaching the gears: cancelled")]
         ams._verify_engagement.assert_not_called()
+        oams.load_spool_with_retry.assert_called_once_with(0, gcmd="callback")
 
     def test_load_to_gears_false_accepts_a_cancelled_load(self):
         """Independent coverage of the `load_to_gears` operand: the same
