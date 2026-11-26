@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from gcode import CommandError
 
-from typing import Optional, Union, TYPE_CHECKING
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -132,7 +132,7 @@ class AFCLane:
         self.spool_id: Optional[Union[int, str]] = None
         self.color: str         = ""
         self.multi_color: list  = []
-        self.color_mode: str    = ""        # 'gradient' or 'coaxial' while multi_color holds 2+ colors
+        self.color_mode: str    = ""
         self.spool_vendor: str  = ""
         self.filament_name: str = ""
         self.weight: float      = 0.
@@ -2078,12 +2078,15 @@ class AFCLane:
 
         self._sent_lane_data_keys = current_keys
 
-    def lane_data_colors(self):
+    def lane_data_colors(self) -> Tuple[List[str], str]:
         """
         Returns the lane's colors for lane_data: every color in order as `#RRGGBB`, and
         `solid` for one color, `gradient` (along the filament's length) or `coaxial`
         (side by side, as in dual-color silk) for several. A lane without a color gives
         an empty list and an empty mode.
+
+        :return tuple: (colors, color_mode) -- list of `#RRGGBB` strings and `solid`,
+                       `gradient`, `coaxial`, or `""` when the lane has no color.
         """
         if len(self.multi_color) > 1:
             colors = [f"#{c.replace('#', '')}" for c in self.multi_color]
