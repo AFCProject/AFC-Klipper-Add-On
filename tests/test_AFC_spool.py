@@ -1899,6 +1899,23 @@ class TestSetSpoolID:
         spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color_mode == "gradient"
 
+    def test_colorless_filament_publishes_no_colors(self):
+        from tests.test_AFC_lane import _make_real_lane_for_colors
+        gcmd = _make_gcmd()
+        spool = self._make_spool_with_spoolman()
+        lane = _make_real_lane_for_colors()
+        lane.afc.common_density_values = ["PLA:1.24"]
+        lane.remember_spool = False
+        lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "coaxial"
+        result = _make_spool_result(color_hex=None)
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
+        payload = lane.afc.moonraker.send_lane_data.call_args[0][0]
+        assert payload["value"]["color"] == ""
+        assert payload["value"]["colors"] == []
+        assert payload["value"]["color_mode"] == ""
+
     def test_colorless_filament_leaves_lane_without_color(self):
         gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()

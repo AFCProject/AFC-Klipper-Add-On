@@ -451,8 +451,8 @@ class AFCSpool:
         A multi-color filament takes 'COLORS', a comma-separated list of two or more hex colors,
         and 'COLOR_MODE': `gradient` when the color changes along the filament's length, or
         `coaxial` when the colors run side by side, as in dual-color silk (default `gradient`).
-        The lane's color becomes the first entry of 'COLORS'. Sending 'COLOR' alone returns
-        the lane to one color.
+        The lane's color is 'COLOR', or the first entry of 'COLORS' when 'COLOR' is omitted.
+        Sending 'COLOR' alone returns the lane to one color.
 
         Usage
         -----
