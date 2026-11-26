@@ -710,6 +710,8 @@ class TestBufferToggle:
         buf.trailing_state = True
         buf.enable_buffer(lane)
         buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
+        assert buf.enable is True
+        assert buf.current_lane is lane
 
     def test_enable_buffer_compressed_overrides_trailing_last_state_fault_enabled(self):
         buf = _make_buffer(error_sensitivity=5)
@@ -719,6 +721,8 @@ class TestBufferToggle:
         buf.trailing_state = True
         buf.enable_buffer(lane)
         buf.start_fault_detection.assert_called_once_with(0, buf.multiplier_high * 1.5)
+        assert buf.enable is True
+        assert buf.current_lane is lane
 
     def test_enable_buffer_expanded_overrides_advancing_last_state(self):
         # Buffer already on its expanded switch with a stale advancing state: feed slower
@@ -729,6 +733,8 @@ class TestBufferToggle:
         buf.advance_state = True
         buf.enable_buffer(lane)
         buf.set_multiplier.assert_called_once_with(buf.multiplier_low)
+        assert buf.enable is True
+        assert buf.current_lane is lane
 
     def test_enable_buffer_expanded_overrides_advancing_last_state_fault_enabled(self):
         buf = _make_buffer(error_sensitivity=5)
@@ -738,6 +744,8 @@ class TestBufferToggle:
         buf.advance_state = True
         buf.enable_buffer(lane)
         buf.start_fault_detection.assert_called_once_with(0, (buf.multiplier_low * 2) / 5)
+        assert buf.enable is True
+        assert buf.current_lane is lane
 
     def test_enable_buffer_toolchange_onto_compressed_buffer(self):
         # Previous lane last slowed (trailing state). The new lane's load leaves the buffer on its
@@ -753,10 +761,14 @@ class TestBufferToggle:
         buf.disable_fault_sensitivity()
         buf.enable_buffer(lane)
         buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
+        assert buf.enable is True
+        assert buf.current_lane is lane
 
         buf.restore_fault_sensitivity()
         buf.enable_buffer(lane)
         buf.start_fault_detection.assert_called_once_with(0, buf.multiplier_high * 1.5)
+        assert buf.enable is True
+        assert buf.current_lane is lane
 
 class TestSetMultiplier:
     def test_set_multi_not_enabled(self):
