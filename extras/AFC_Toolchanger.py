@@ -179,7 +179,7 @@ class AfcToolchanger(afcUnit):
             self.afc.run_script(f"{current_extruder.custom_unselect}", gcmd=gcmd)
         else:
             self.afc.run_script("UNSELECT_TOOL", gcmd=gcmd)
-        
+
         # Need to wait for moves to finish before calling activate again to prevent race condition
         self.afc.toolhead.wait_moves()
         self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
