@@ -29,6 +29,7 @@ except: raise config_error(ERROR_STR.format(import_lib="AFC_utils", trace=traceb
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from mcu import MCU_endstop
     from extras.AFC_stepper import AFCExtruderStepper
 
@@ -118,7 +119,7 @@ class AFC_HTLF(afcBoxTurtle):
         self.logo_error = '<span class=error--text>HTLF Not Ready</span>\n'
 
     def system_Test(self, cur_lane: AFCLane|AFCExtruderStepper, delay: float,
-                    assignTcmd: bool, enable_movement: bool) -> bool:
+                    assignTcmd: bool, enable_movement: bool, gcmd: AFCGcmd) -> bool:
         """
         Runs the standard system test, homing the selector first (if not
         already prep-homed) and again after the test so the selector always
@@ -128,13 +129,14 @@ class AFC_HTLF(afcBoxTurtle):
         :param delay: Delay amount to wait between forward/backward movements
         :param assignTcmd: When True assigns a tool number to cur_lane
         :param enable_movement: When True movement is enabled during the test
+        :param gcmd: command context the led macros are run through, if any
         :return: True if the selector prep-homed successfully and the test succeeded
         """
         cur_lane.prep_state = cur_lane.load_state
         if not self.prep_homed:
-            self.return_to_home( prep = True, disable_selector=False)
-        status = super().system_Test( cur_lane, delay, assignTcmd, enable_movement)
-        self.return_to_home()
+            self.return_to_home(prep=True, disable_selector=False, gcmd=gcmd)
+        status = super().system_Test( cur_lane, delay, assignTcmd, enable_movement, gcmd=gcmd)
+        self.return_to_home(gcmd=gcmd)
 
         return self.prep_homed and status
 
@@ -164,14 +166,15 @@ class AFC_HTLF(afcBoxTurtle):
         AFC_HOME_UNIT UNIT=HTLF_1
         ```
         """
-        self.return_to_home()
+        self.return_to_home(gcmd=gcmd)
 
-    def _move_selector_home(self, distance: float) -> None:
+    def _move_selector_home(self, distance: float, *, gcmd: AFCGcmd) -> None:
         """
         Helper function to move stepper with correct function call depending on if homing is enabled
         or not
 
         :param distance: Distance to move selector stepper
+        :param gcmd: command context the move is run through
         """
         if self.afc.homing_enabled:
             homed, self._homed_distance = self.selector_stepper_obj.do_homing_move(
@@ -186,9 +189,10 @@ class AFC_HTLF(afcBoxTurtle):
             self.selector_stepper_obj.move(distance * MoveDirection.NEG,
                                            self.selector_movement_speed,
                                            self.selector_movement_accel,
-                                           False)
+                                           False, gcmd=gcmd)
 
-    def return_to_home(self, prep: bool=False, disable_selector: bool=True) -> bool:
+    def return_to_home(self, prep: bool=False, disable_selector: bool=True, *,
+                       gcmd: AFCGcmd) -> bool:
         """
         Moves lobes to home position, if a current lane was selected this function moves back that amount and then performs smaller
         moves until home switch is triggered
@@ -196,6 +200,7 @@ class AFC_HTLF(afcBoxTurtle):
         :param prep: Set to True if this function is being called within prep function, once set the fast move back if another lane
                       was selected is bypassed and only move in smaller increments
         :param disable_selector: When True disables the selector stepper motor once homing succeeds
+        :param gcmd: command context the homing-failure pause is run through
         :return boolean: Returns True if homing was successful
         """
         total_moved: float = 0
@@ -205,19 +210,19 @@ class AFC_HTLF(afcBoxTurtle):
             if not self.afc.homing_enabled:
                 move_distance = self.calculate_lobe_movement(self.current_selected_lane.index)
 
-            self._move_selector_home(move_distance)
+            self._move_selector_home(move_distance, gcmd=gcmd)
 
         while not self.home_state and not self.failed_to_home:
             if not self.afc.homing_enabled:
                 move_distance = 1
-            self._move_selector_home(move_distance)
+            self._move_selector_home(move_distance, gcmd=gcmd)
             if self.afc.homing_enabled:
                 total_moved += self._homed_distance
             else:
                 total_moved += move_distance
             if total_moved > (self.mm_move_per_rotation/360)*(self.MAX_ANGLE_MOVEMENT+self.cam_angle):
                 self.failed_to_home = True
-                self.afc.error.AFC_error("Failed to home {}".format(self.name), False)
+                self.afc.error.AFC_error(f"Failed to home {self.name}", False, gcmd=gcmd)
                 return False
 
         self.prep_homed = True
@@ -240,12 +245,16 @@ class AFC_HTLF(afcBoxTurtle):
         self.logger.debug("HTLF: Lobe Movement angle : {}".format(angle_movement))
         return (self.mm_move_per_rotation/360)*angle_movement
 
-    def select_lane( self, lane: AFCLane, disable_selector: bool=False ) -> tuple[bool, float|int]:
+    def select_lane(self, lane: AFCLane, sel_dir: bool=False,
+                    disable_selector: bool=False, *, gcmd: AFCGcmd) -> tuple[bool, float|int]:
         """
         Moves lobe selector to specified lane based off lanes index
 
         :param lane: Lane object to move selector to
+        :param sel_dir: Not used by HTLF, lobe selection has no direction concept. Kept
+                        so select_lane has the same parameters across all unit types.
         :param disable_selector: When True disables selectors motor after selecting a lane
+        :param gcmd: command context the homing pause is run through, if homing fails
         :return boolean: Returns True if movement of selector succeeded
         """
         if "stepper" in lane.fullname.lower():
@@ -253,13 +262,13 @@ class AFC_HTLF(afcBoxTurtle):
         try:
             if self.current_selected_lane != lane:
                 self.logger.debug("HTLF: {} Homing to endstop.".format(self.name))
-                if self.return_to_home( disable_selector=False ):
+                if self.return_to_home(disable_selector=False, gcmd=gcmd):
                     self.selector_stepper_obj.move(self.calculate_lobe_movement( lane.index ),
                                                    self.selector_movement_speed,
                                                    self.selector_movement_accel,
-                                                   False)
+                                                   False, gcmd=gcmd)
                     # Applying selector_cal_dis move if specified in users config
-                    self._selector_cal_dis_adjust(lane)
+                    self._selector_cal_dis_adjust(lane, gcmd=gcmd)
 
                     self.logger.debug("HTLF: Selecting {}".format(lane))
                     self.current_selected_lane = lane
@@ -285,20 +294,22 @@ class AFC_HTLF(afcBoxTurtle):
                 and cur_lane.status != AFCLaneState.EJECTING
                 and cur_lane.status != AFCLaneState.CALIBRATING)
 
-    def prep_load(self, lane: AFCLane) -> None:
+    def prep_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         HTLF does not have prep switches, so there is nothing to do here.
 
         :param lane: Lane prep loading would otherwise apply to
+        :param gcmd: command context, unused here but accepted for interface parity
         """
         # HTLF does not have prep switches returning
         return
 
-    def prep_post_load(self, lane: AFCLane) -> None:
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         HTLF does not have prep switches, so there is nothing to do here.
 
         :param lane: Lane prep post-load would otherwise apply to
+        :param gcmd: Unused, accepted for interface parity
         """
         # HTLF does not have prep switches returning
         return

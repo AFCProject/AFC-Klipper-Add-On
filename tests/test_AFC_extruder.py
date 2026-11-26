@@ -71,6 +71,7 @@ def _make_stats(extruder_name="extruder", cut_threshold=200, cut_since_changed=0
     stats.tc_tool_load = _make_var(0)
     stats.tool_selected = _make_var(0)
     stats.tool_unselected = _make_var(0)
+    stats._stats_ready = True
 
     return stats
 
@@ -143,6 +144,14 @@ class TestCheckCutThreshold:
         raw_msgs = [m for lvl, m in stats.logger.messages if lvl == "raw"]
         assert len(raw_msgs) == 0
 
+    def test_no_message_when_stats_not_ready(self):
+        """Fields are unset until handle_moonraker_stats runs; must not touch them."""
+        stats = _make_stats(cut_threshold=200, cut_since_changed=250)
+        stats._stats_ready = False
+        stats.check_cut_threshold()
+        assert stats.threshold_error_sent is False
+        assert stats.logger.messages == []
+
 
 # ── increase_cut_total ────────────────────────────────────────────────────────
 
@@ -165,6 +174,15 @@ class TestIncreaseCutTotal:
         stats.increase_cut_total()
         stats.check_cut_threshold.assert_called_once()
 
+    def test_does_nothing_when_stats_not_ready(self):
+        stats = _make_stats()
+        stats.check_cut_threshold = MagicMock()
+        stats._stats_ready = False
+        stats.increase_cut_total()
+        stats.cut_total.increase_count.assert_not_called()
+        stats.cut_total_since_changed.increase_count.assert_not_called()
+        stats.check_cut_threshold.assert_not_called()
+
 
 # ── increase_toolcount_change ──────────────────────────────────────────────────
 
@@ -178,6 +196,13 @@ class TestIncreaseToolcountChange:
         stats = _make_stats()
         stats.increase_toolcount_change()
         stats.obj.afc.afc_stats.increase_toolchange_wo_error.assert_called_once()
+
+    def test_does_nothing_when_stats_not_ready(self):
+        stats = _make_stats()
+        stats._stats_ready = False
+        stats.increase_toolcount_change()
+        stats.tc_total.increase_count.assert_not_called()
+        stats.obj.afc.afc_stats.increase_toolchange_wo_error.assert_not_called()
 
 
 # ── reset_stats ────────────────────────────────────────────────────────────────
@@ -207,6 +232,16 @@ class TestResetStats:
         stats = _make_stats()
         stats.reset_stats()
         stats.tool_unselected.reset_count.assert_called_once()
+
+    def test_does_nothing_when_stats_not_ready(self):
+        stats = _make_stats()
+        stats._stats_ready = False
+        stats.reset_stats()
+        stats.tc_total.reset_count.assert_not_called()
+        stats.tc_tool_unload.reset_count.assert_not_called()
+        stats.tc_tool_load.reset_count.assert_not_called()
+        stats.tool_selected.reset_count.assert_not_called()
+        stats.tool_unselected.reset_count.assert_not_called()
 
 
 # ── AFCExtruder helpers ────────────────────────────────────────────────────────
@@ -363,7 +398,7 @@ class TestVirtualToolStart:
 
     def test_set_filament_sensor_disable_unloads_lane(self):
         ext = self._make_standalone_virtual()
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd="callback")
 
         ext.fila_tool_start.cmd_SET_FILAMENT_SENSOR(MockGCodeCommand(params={"ENABLE": 0}))
 
@@ -404,7 +439,7 @@ class TestVirtualToolStart:
     def test_restore_from_vars_enables_sensor_and_lane(self):
         ext = self._make_standalone_virtual()
 
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd="callback")
 
         assert ext.tool_start_state is True
         assert ext.fila_tool_start.runout_helper.filament_present is True
@@ -415,7 +450,7 @@ class TestVirtualToolStart:
     def test_restore_defaults_to_disabled_noop(self):
         ext = self._make_standalone_virtual()
 
-        ext.restore_virtual_tool_start(False)
+        ext.restore_virtual_tool_start(False, gcmd="callback")
 
         assert ext.tool_start_state is False
         assert ext.tc_lane._load_state is False
@@ -441,7 +476,7 @@ class TestVirtualToolStart:
 
     def test_temp_check_cb_unload_clears_virtual_sensor(self):
         ext = self._make_standalone_virtual()
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd="callback")
         heater = MagicMock()
         heater.get_temp.return_value = (200.0, 200.0)
         ext.get_heater = MagicMock(return_value=heater)
@@ -709,7 +744,7 @@ class TestHandleToolheadSensorRunout:
         lane = MagicMock()
         ext.lanes = {"lane1": lane}
         ext.lane_loaded = "lane1"
-        ext._handle_toolhead_sensor_runout(True, "tool_start")
+        ext._handle_toolhead_sensor_runout(True, "tool_start", gcmd="callback")
         lane.handle_toolhead_runout.assert_not_called()
 
     def test_no_runout_when_no_lane_loaded(self):
@@ -717,7 +752,7 @@ class TestHandleToolheadSensorRunout:
         lane = MagicMock()
         ext.lanes = {"lane1": lane}
         ext.lane_loaded = None
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
         lane.handle_toolhead_runout.assert_not_called()
 
     def test_bypass_runout_does_not_pause_when_disabled_by_default(self):
@@ -725,7 +760,7 @@ class TestHandleToolheadSensorRunout:
         ext.lane_loaded = None
         ext.enable_runout_in_bypass = False
         ext.afc.function.is_printing.return_value = True
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
         ext.afc.error.AFC_error.assert_not_called()
 
     def test_bypass_runout_pauses_when_enabled(self):
@@ -733,9 +768,10 @@ class TestHandleToolheadSensorRunout:
         ext.lane_loaded = None
         ext.enable_runout_in_bypass = True
         ext.afc.function.is_printing.return_value = True
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
         ext.afc.error.AFC_error.assert_called_once_with(
-            "Toolhead runout detected by tool_start sensor in bypass/manual mode."
+            "Toolhead runout detected by tool_start sensor in bypass/manual mode.",
+            gcmd="callback"
         )
 
     def test_bypass_runout_does_not_pause_during_toolchange(self):
@@ -744,7 +780,7 @@ class TestHandleToolheadSensorRunout:
         ext.enable_runout_in_bypass = True
         ext.afc.in_toolchange = True
         ext.afc.function.is_printing.return_value = True
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
         ext.afc.error.AFC_error.assert_not_called()
 
     def test_bypass_runout_does_not_pause_during_error_state(self):
@@ -753,7 +789,7 @@ class TestHandleToolheadSensorRunout:
         ext.enable_runout_in_bypass = True
         ext.afc.error_state = True
         ext.afc.function.is_printing.return_value = True
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
         ext.afc.error.AFC_error.assert_not_called()
 
     def test_bypass_runout_does_not_pause_when_not_on_shuttle(self):
@@ -762,14 +798,14 @@ class TestHandleToolheadSensorRunout:
         ext.enable_runout_in_bypass = True
         ext.on_shuttle = MagicMock(return_value=False)
         ext.afc.function.is_printing.return_value = True
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
         ext.afc.error.AFC_error.assert_not_called()
 
     def test_no_runout_when_lane_not_in_lanes_dict(self):
         ext = _make_afc_extruder()
         ext.lanes = {}
         ext.lane_loaded = "lane1"
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
         # no KeyError, just silently skips
 
     def test_runout_calls_lane_handle_toolhead_runout(self):
@@ -777,23 +813,23 @@ class TestHandleToolheadSensorRunout:
         lane = MagicMock()
         ext.lanes = {"lane1": lane}
         ext.lane_loaded = "lane1"
-        ext._handle_toolhead_sensor_runout(False, "tool_start")
-        lane.handle_toolhead_runout.assert_called_once_with(sensor="tool_start")
+        ext._handle_toolhead_sensor_runout(False, "tool_start", gcmd="callback")
+        lane.handle_toolhead_runout.assert_called_once_with(sensor="tool_start", gcmd="callback")
 
     def test_runout_passes_sensor_name(self):
         ext = _make_afc_extruder()
         lane = MagicMock()
         ext.lanes = {"lane1": lane}
         ext.lane_loaded = "lane1"
-        ext._handle_toolhead_sensor_runout(False, "tool_end")
-        lane.handle_toolhead_runout.assert_called_once_with(sensor="tool_end")
+        ext._handle_toolhead_sensor_runout(False, "tool_end", gcmd="callback")
+        lane.handle_toolhead_runout.assert_called_once_with(sensor="tool_end", gcmd="callback")
     
     def test_runout_no_handle_toolhead_runout_attr(self):
         ext = _make_afc_extruder()
         lane = MagicMock(spec=[])
         ext.lanes = {"lane1": lane}
         ext.lane_loaded = "lane1"
-        ext._handle_toolhead_sensor_runout(False, "tool_end")
+        ext._handle_toolhead_sensor_runout(False, "tool_end", gcmd="callback")
         assert not hasattr(lane, "handle_toolhead_runout")
 
 
@@ -861,7 +897,8 @@ class TestHandleStartRunout:
         ext.fila_tool_start.runout_helper.filament_present = False
         ext.fila_tool_start.runout_helper.event_delay = 0.5
         ext.handle_start_runout(100.0)
-        ext._handle_toolhead_sensor_runout.assert_called_once_with(False, "tool_start")
+        ext._handle_toolhead_sensor_runout.assert_called_once_with(
+            False, "tool_start", gcmd="callback")
 
 
 # ── handle_end_runout ──────────────────────────────────────────────────────────
@@ -883,7 +920,8 @@ class TestHandleEndRunout:
         ext.fila_tool_end.runout_helper.filament_present = True
         ext.fila_tool_end.runout_helper.event_delay = 0.5
         ext.handle_end_runout(100.0)
-        ext._handle_toolhead_sensor_runout.assert_called_once_with(True, "tool_end")
+        ext._handle_toolhead_sensor_runout.assert_called_once_with(
+            True, "tool_end", gcmd="callback")
 
 
 # ── _update_tool_stn ──────────────────────────────────────────────────────────
@@ -1105,6 +1143,14 @@ class TestGetStatus:
         ext.no_lanes = False
         result = ext.get_status()
         assert result["is_standalone"] is False
+
+    def test_contains_extruder_name(self):
+        """extruder_name exposes th_extruder_name (the real toolhead extruder),
+        which can differ from the AFC_extruder section's own name -- GH #784."""
+        ext = _make_afc_extruder()
+        ext.th_extruder_name = "extruder1"
+        result = ext.get_status()
+        assert result["extruder_name"] == "extruder1"
 
 # ── on_shuttle ────────────────────────────────────────────────────────────────
 # Sentinel value that mirrors the real DETECT_PRESENT constant
@@ -1478,7 +1524,7 @@ class TestToolStartCallback_StateChanged_WithToolchanger:
         ext = self._make_tc_ext(printer_ready=True, prep_done=True,
                                 state=True, load_active=False)
         ext.tool_start_callback(100.0, True)
-        ext.load_unload_sequence.assert_called_once_with(ext.tool_stn)
+        ext.load_unload_sequence.assert_called_once_with(ext.tool_stn, gcmd="callback")
 
     def test_load_sequence_not_called_when_load_already_active(self):
         ext = self._make_tc_ext(printer_ready=True, prep_done=True,
@@ -1669,17 +1715,17 @@ class TestPrepOnShuttleCheck:
     def test_in_toolhead(self):
         ext = _make_afc_extruder()
         lane = MagicMock()
-        msg = ext.prep_on_shuttle_check(lane)
+        msg = ext.prep_on_shuttle_check(lane, gcmd=MagicMock())
 
         assert "<span class=primary--text> in ToolHead</span>" in msg
         lane.unit_obj.lane_tool_loaded.assert_not_called()
         lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
-    
+
     def test_in_toolhead_tool_obj(self):
         ext = _make_afc_extruder()
         ext.tool_obj = MagicMock()
         lane = MagicMock()
-        msg = ext.prep_on_shuttle_check(lane)
+        msg = ext.prep_on_shuttle_check(lane, gcmd=MagicMock())
 
         lane.unit_obj.lane_tool_loaded.assert_not_called()
         lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
@@ -1688,31 +1734,33 @@ class TestPrepOnShuttleCheck:
         ext = _make_afc_extruder()
         ext.tc_unit_name = MagicMock()
         lane = MagicMock()
-        msg = ext.prep_on_shuttle_check(lane)
+        msg = ext.prep_on_shuttle_check(lane, gcmd=MagicMock())
 
         lane.unit_obj.lane_tool_loaded.assert_not_called()
         lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
-    
+
     def test_in_toolhead_tc_unit_name_tool_obj_not_on_shuttle(self):
         ext = _make_afc_extruder()
         ext.tc_unit_name = MagicMock()
         ext.tool_obj = MagicMock()
         lane = MagicMock()
-        msg = ext.prep_on_shuttle_check(lane)
+        gcmd = MagicMock()
+        msg = ext.prep_on_shuttle_check(lane, gcmd=gcmd)
 
         lane.unit_obj.lane_tool_loaded.assert_not_called()
-        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
-    
+        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane, gcmd=gcmd)
+
     def test_in_toolhead_tc_unit_name_tool_obj_on_shuttle(self):
         ext = _make_afc_extruder()
         ext.tc_unit_name = MagicMock()
         ext.tool_obj = MagicMock()
         ext.tool_obj.detect_state = "mounted"
         lane = MagicMock()
-        msg = ext.prep_on_shuttle_check(lane)
+        gcmd = MagicMock()
+        msg = ext.prep_on_shuttle_check(lane, gcmd=gcmd)
 
-        lane.unit_obj.lane_tool_loaded.assert_called_once_with(lane)
-        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
+        lane.unit_obj.lane_tool_loaded.assert_called_once_with(lane, gcmd=gcmd)
+        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane, gcmd=gcmd)
         assert "<span class=primary--text> in ToolHead and toolhead on shuttle</span>" in msg
 
 
@@ -1873,26 +1921,26 @@ class TestLoadUnloadSequence:
 
     def test_enabled_starts_heating(self):
         ext = self._make(standalone_auto_load_unload=True)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         ext.afc._check_extruder_temp.assert_called_once_with(ext.tc_lane, no_wait=True)
         ext.afc.capture_toolhead_temp.assert_called_once_with(extruder=ext, async_capture=True)
         ext.reactor.update_timer.assert_called_once()
 
     def test_enabled_sets_load_active_and_move_distance(self):
         ext = self._make(standalone_auto_load_unload=True)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         assert ext.load_active is True
         assert ext.current_move_distance == 100
 
     def test_enabled_loading_sets_tool_loading_status_and_led(self):
         ext = self._make(standalone_auto_load_unload=True)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         assert ext.tc_lane.status == AFCLaneState.TOOL_LOADING
-        ext.tc_lane.unit_obj.lane_loading.assert_called_once_with(ext.tc_lane)
+        ext.tc_lane.unit_obj.lane_loading.assert_called_once_with(ext.tc_lane, gcmd="callback")
 
     def test_enabled_unloading_sets_tool_unloading_status(self):
         ext = self._make(standalone_auto_load_unload=True)
-        ext.load_unload_sequence(-100)
+        ext.load_unload_sequence(-100, gcmd="callback")
         assert ext.tc_lane.status == AFCLaneState.TOOL_UNLOADING
         ext.tc_lane.unit_obj.lane_loading.assert_not_called()
 
@@ -1901,43 +1949,43 @@ class TestLoadUnloadSequence:
         is only for the disabled branch -- the enabled path leaves that to the
         temp/move callbacks instead."""
         ext = self._make(standalone_auto_load_unload=True)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         ext._set_standalone_lane_states.assert_not_called()
         ext._apply_virtual_tool_start_state.assert_not_called()
         ext.afc.save_vars.assert_not_called()
 
     def test_disabled_does_not_start_heating_or_timer(self):
         ext = self._make(standalone_auto_load_unload=False)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         ext.afc._check_extruder_temp.assert_not_called()
         ext.afc.capture_toolhead_temp.assert_not_called()
         ext.reactor.update_timer.assert_not_called()
 
     def test_disabled_does_not_set_load_active_or_move_distance(self):
         ext = self._make(standalone_auto_load_unload=False)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         assert ext.load_active is False
         assert ext.current_move_distance == 0
 
     def test_disabled_loading_sets_final_tooled_status(self):
         ext = self._make(standalone_auto_load_unload=False)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         assert ext.tc_lane.status == AFCLaneState.TOOLED
         ext.tc_lane.unit_obj.lane_loading.assert_not_called()
-        ext._set_standalone_lane_states.assert_called_once_with(True)
+        ext._set_standalone_lane_states.assert_called_once_with(True, gcmd="callback")
         ext._apply_virtual_tool_start_state.assert_called_once_with(True)
 
     def test_disabled_unloading_sets_final_none_status(self):
         ext = self._make(standalone_auto_load_unload=False)
-        ext.load_unload_sequence(-100)
+        ext.load_unload_sequence(-100, gcmd="callback")
         assert ext.tc_lane.status == AFCLaneState.NONE
-        ext._set_standalone_lane_states.assert_called_once_with(False)
+        ext._set_standalone_lane_states.assert_called_once_with(False, gcmd="callback")
         ext._apply_virtual_tool_start_state.assert_called_once_with(False)
 
     def test_disabled_clears_need_purge(self):
         ext = self._make(standalone_auto_load_unload=False)
         ext.tc_lane.need_purge = True
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         assert ext.tc_lane.need_purge is False
 
     def test_disabled_does_not_save_vars(self):
@@ -1946,12 +1994,12 @@ class TestLoadUnloadSequence:
         extruder_move_cb -- load_unload_sequence itself never saves synchronously
         for either branch."""
         ext = self._make(standalone_auto_load_unload=False)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         ext.afc.save_vars.assert_not_called()
 
     def test_disabled_logs_skip_message(self):
         ext = self._make(standalone_auto_load_unload=False)
-        ext.load_unload_sequence(100)
+        ext.load_unload_sequence(100, gcmd="callback")
         info_msgs = [m for lvl, m in ext.logger.messages if lvl == "info"]
         assert any("standalone_auto_load_unload is disabled" in m for m in info_msgs)
         assert any("hotend heating and filament move were not performed" in m for m in info_msgs)
@@ -1984,17 +2032,18 @@ class TestSetStandaloneLaneStates:
     def test_none_lane_returns_without_error(self):
         ext = self._make()
         ext.tc_lane = None
-        ext._set_standalone_lane_states(True)  # must not raise
+        ext._set_standalone_lane_states(True, gcmd=MagicMock())  # must not raise
 
     def test_enabled_calls_set_tool_loaded_and_set_loaded(self):
         ext = self._make()
-        ext._set_standalone_lane_states(True)
-        ext.tc_lane.set_tool_loaded.assert_called_once_with()
-        ext.tc_lane.set_loaded.assert_called_once_with()
+        gcmd = MagicMock()
+        ext._set_standalone_lane_states(True, gcmd=gcmd)
+        ext.tc_lane.set_tool_loaded.assert_called_once_with(gcmd=gcmd)
+        ext.tc_lane.set_loaded.assert_called_once_with(gcmd=gcmd)
 
     def test_enabled_does_not_call_unload_helpers(self):
         ext = self._make()
-        ext._set_standalone_lane_states(True)
+        ext._set_standalone_lane_states(True, gcmd=MagicMock())
         ext.tc_lane.set_tool_unloaded.assert_not_called()
         ext.tc_lane.set_unloaded.assert_not_called()
 
@@ -2002,40 +2051,44 @@ class TestSetStandaloneLaneStates:
         """Covers the `not self.on_shuttle()` guard's True branch."""
         ext = self._make()
         ext.on_shuttle = MagicMock(return_value=False)
-        ext._set_standalone_lane_states(True)
-        ext.tc_lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(ext.tc_lane)
+        gcmd = MagicMock()
+        ext._set_standalone_lane_states(True, gcmd=gcmd)
+        ext.tc_lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(
+            ext.tc_lane, gcmd=gcmd)
 
     def test_enabled_on_shuttle_skips_lane_tool_loaded_idle(self):
         """Covers the `not self.on_shuttle()` guard's False branch."""
         ext = self._make()
         ext.on_shuttle = MagicMock(return_value=True)
-        ext._set_standalone_lane_states(True)
+        ext._set_standalone_lane_states(True, gcmd=MagicMock())
         ext.tc_lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
 
     def test_disabled_does_not_call_lane_tool_loaded_idle(self):
         """The on_shuttle/idle-led check only runs on the enabled path."""
         ext = self._make(tool_start="virtual")
         ext.on_shuttle = MagicMock(return_value=False)
-        ext._set_standalone_lane_states(False)
+        ext._set_standalone_lane_states(False, gcmd=MagicMock())
         ext.tc_lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
 
     def test_disabled_real_sensor_calls_set_tool_unloaded_only(self):
         """Covers the `self.tool_start == "virtual"` guard's False branch."""
         ext = self._make(tool_start="^PD3")
-        ext._set_standalone_lane_states(False)
-        ext.tc_lane.set_tool_unloaded.assert_called_once_with()
+        gcmd = MagicMock()
+        ext._set_standalone_lane_states(False, gcmd=gcmd)
+        ext.tc_lane.set_tool_unloaded.assert_called_once_with(gcmd=gcmd)
         ext.tc_lane.set_unloaded.assert_not_called()
 
     def test_disabled_virtual_sensor_also_calls_set_unloaded(self):
         """Covers the `self.tool_start == "virtual"` guard's True branch."""
         ext = self._make(tool_start="virtual")
-        ext._set_standalone_lane_states(False)
-        ext.tc_lane.set_tool_unloaded.assert_called_once_with()
-        ext.tc_lane.set_unloaded.assert_called_once_with()
+        gcmd = MagicMock()
+        ext._set_standalone_lane_states(False, gcmd=gcmd)
+        ext.tc_lane.set_tool_unloaded.assert_called_once_with(gcmd=gcmd)
+        ext.tc_lane.set_unloaded.assert_called_once_with(gcmd=gcmd)
 
     def test_disabled_does_not_call_load_helpers(self):
         ext = self._make(tool_start="virtual")
-        ext._set_standalone_lane_states(False)
+        ext._set_standalone_lane_states(False, gcmd=MagicMock())
         ext.tc_lane.set_tool_loaded.assert_not_called()
         ext.tc_lane.set_loaded.assert_not_called()
 
@@ -2101,38 +2154,39 @@ class TestVirtualToolStartToggle:
 
     def test_calls_note_tool_start_callback(self):
         ext = self._make()
-        ext._virtual_tool_start_toggle(True)
-        ext.note_tool_start_callback.assert_called_once_with(True)
+        gcmd = MockGCodeCommand()
+        ext._virtual_tool_start_toggle(True, gcmd=gcmd)
+        ext.note_tool_start_callback.assert_called_once_with(True, gcmd=gcmd)
 
     def test_calls_apply_virtual_tool_start_state(self):
         ext = self._make()
-        ext._virtual_tool_start_toggle(False)
+        ext._virtual_tool_start_toggle(False, gcmd=MockGCodeCommand())
         ext._apply_virtual_tool_start_state.assert_called_once_with(False)
 
     def test_logs_enabled_message(self):
         """Covers the `'enabled.' if enabled else 'disabled'` ternary's True side."""
         ext = self._make()
-        ext._virtual_tool_start_toggle(True)
+        ext._virtual_tool_start_toggle(True, gcmd=MockGCodeCommand())
         assert ext.logger.messages == [
             ("info", "Virtual toolhead sensor for extruder enabled.")]
 
     def test_logs_disabled_message(self):
         """Covers the `'enabled.' if enabled else 'disabled'` ternary's False side."""
         ext = self._make()
-        ext._virtual_tool_start_toggle(False)
+        ext._virtual_tool_start_toggle(False, gcmd=MockGCodeCommand())
         assert ext.logger.messages == [
             ("info", "Virtual toolhead sensor for extruder disabled")]
 
     def test_saves_vars_when_prep_done(self):
         """Covers the `if self.afc.prep_done` guard's True branch."""
         ext = self._make(prep_done=True)
-        ext._virtual_tool_start_toggle(True)
+        ext._virtual_tool_start_toggle(True, gcmd=MockGCodeCommand())
         ext.afc.save_vars.assert_called_once_with()
 
     def test_skips_save_vars_when_prep_not_done(self):
         """Covers the `if self.afc.prep_done` guard's False branch."""
         ext = self._make(prep_done=False)
-        ext._virtual_tool_start_toggle(True)
+        ext._virtual_tool_start_toggle(True, gcmd=MockGCodeCommand())
         ext.afc.save_vars.assert_not_called()
 
 
@@ -2151,7 +2205,7 @@ class TestRestoreVirtualToolStart:
     def test_noop_when_state_already_matches(self):
         """Covers the `enabled == self.tool_start_state` guard's True branch."""
         ext = self._make(tool_start_state=True)
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd=MagicMock())
         ext._apply_virtual_tool_start_state.assert_not_called()
         ext._set_standalone_lane_states.assert_not_called()
         assert ext.logger.messages == []
@@ -2160,49 +2214,50 @@ class TestRestoreVirtualToolStart:
         """Covers the `self.tc_lane is None` guard's True branch."""
         ext = self._make(tool_start_state=False)
         ext.tc_lane = None
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd=MagicMock())
         ext._apply_virtual_tool_start_state.assert_not_called()
         assert ext.logger.messages == []
 
     def test_applies_virtual_tool_start_state(self):
         ext = self._make(tool_start_state=False)
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd=MagicMock())
         ext._apply_virtual_tool_start_state.assert_called_once_with(True)
 
     def test_sets_standalone_lane_states(self):
         ext = self._make(tool_start_state=False)
-        ext.restore_virtual_tool_start(True)
-        ext._set_standalone_lane_states.assert_called_once_with(True)
+        gcmd = MagicMock()
+        ext.restore_virtual_tool_start(True, gcmd=gcmd)
+        ext._set_standalone_lane_states.assert_called_once_with(True, gcmd=gcmd)
 
     def test_enabled_sets_load_state_and_prep_state_true(self):
         ext = self._make(tool_start_state=False)
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd=MagicMock())
         assert ext.tc_lane._load_state is True
         assert ext.tc_lane.prep_state is True
 
     def test_disabled_sets_load_state_and_prep_state_false(self):
         ext = self._make(tool_start_state=True)
-        ext.restore_virtual_tool_start(False)
+        ext.restore_virtual_tool_start(False, gcmd=MagicMock())
         assert ext.tc_lane._load_state is False
         assert ext.tc_lane.prep_state is False
 
     def test_logs_enabled_message(self):
         """Covers the restore-message ternary's True side."""
         ext = self._make(tool_start_state=False)
-        ext.restore_virtual_tool_start(True)
+        ext.restore_virtual_tool_start(True, gcmd=MagicMock())
         assert ext.logger.messages == [
             ("info", "Virtual toolhead sensor for extruder restored as enabled, filament loaded")]
 
     def test_logs_disabled_message(self):
         """Covers the restore-message ternary's False side."""
         ext = self._make(tool_start_state=True)
-        ext.restore_virtual_tool_start(False)
+        ext.restore_virtual_tool_start(False, gcmd=MagicMock())
         assert ext.logger.messages == [
             ("info", "Virtual toolhead sensor for extruder restored as disabled")]
 
     def test_non_bool_truthy_value_coerced_to_true(self):
         """Covers `enabled = bool(enabled)` -- a truthy non-bool must behave like True."""
         ext = self._make(tool_start_state=False)
-        ext.restore_virtual_tool_start(1)
+        ext.restore_virtual_tool_start(1, gcmd=MagicMock())
         assert ext.tc_lane._load_state is True
         ext._apply_virtual_tool_start_state.assert_called_once_with(True)

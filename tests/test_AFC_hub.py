@@ -215,7 +215,7 @@ class TestHandleRunout:
         hub.lanes = {"lane1": lane}
         hub.afc.current = "lane1"
         hub.handle_runout(100.0)
-        lane.handle_hub_runout.assert_called_once_with(sensor=hub.name)
+        lane.handle_hub_runout.assert_called_once_with(gcmd="callback", sensor=hub.name)
 
     def test_runout_does_not_trigger_if_current_lane_not_in_hub(self):
         hub = _make_hub()
@@ -427,7 +427,7 @@ class TestHubCut:
         #           loop3 enter(F), loop3 exit(T)
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
-            hub.hub_cut(cur_lane)
+            hub.hub_cut(cur_lane, gcmd=MagicMock())
         # cut_confirm=False must skip the extra prep/clip pair, leaving
         # exactly prep + clip + pass -- not just "at least" 3, since a bug
         # that accidentally also ran the confirm branch would still pass a
@@ -441,7 +441,7 @@ class TestHubCut:
         cur_lane = MagicMock()
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
-            hub.hub_cut(cur_lane)
+            hub.hub_cut(cur_lane, gcmd=MagicMock())
         # cut_servo_name="cut", prep=75.0, clip=160.0, pass=0.0 (from
         # _make_hub's defaults) computed by hand, not via the source's own
         # format-string construction.
@@ -458,7 +458,7 @@ class TestHubCut:
         cur_lane = MagicMock()
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
-            hub.hub_cut(cur_lane)
+            hub.hub_cut(cur_lane, gcmd=MagicMock())
         # cut_confirm=True adds an extra prep+clip pair before the final
         # pass angle: prep, clip, prep, clip, pass.
         assert hub.gcode.run_script_from_command.call_args_list == [
@@ -476,7 +476,7 @@ class TestHubCut:
         cur_lane = MagicMock()
         with patch.object(type(hub), "state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False, True, True, False, False, True]
-            hub.hub_cut(cur_lane)
+            hub.hub_cut(cur_lane, gcmd=MagicMock())
         # Final move must retract by exactly cut_clear (120.0 from
         # _make_hub's defaults), not merely "some negative distance".
         last_call = cur_lane.move.call_args_list[-1]

@@ -1,0 +1,30 @@
+# Reproduces GH #910: SET_LANE_LOADED does not enable the buffer.
+#
+# SET_LANE_LOADED calls handle_activate_extruder before marking this lane as
+# loaded (set_tool_loaded runs after it). At that point get_current_lane_obj()
+# still returns None, so handle_activate_extruder's own lane loop disables
+# every lane's buffer (this one included) and returns early without
+# re-enabling anything for the lane actually being set as loaded.
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_with_buffer.cfg
+
+PREP
+
+AFC_CLEAR_MESSAGE
+
+G28
+
+# Simulate the lane's load switch being tripped, as if filament were
+# manually reloaded after an error, without needing a real load sequence.
+SET_ATTR OBJECT="AFC_stepper lane1" ATTR=_load_state VALUE=True
+
+SET_LANE_LOADED LANE=lane1
+
+# Bug: the buffer ends up disabled even though it was enabled going in and
+# SET_LANE_LOADED is telling AFC this lane is now the one loaded.
+ASSERT TEST="{ printer['AFC_buffer buf1'].enabled == True }"

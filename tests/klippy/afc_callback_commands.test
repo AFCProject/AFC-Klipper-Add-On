@@ -1,0 +1,20 @@
+# AFC callback-origin integration test.
+#
+# SDCARD_RESET_FILE fires virtual_sdcard's "virtual_sdcard:reset_file"
+# event, which AFC._reset_file_callback handles with gcmd="callback" --
+# a genuine async-callback origin, unlike every other command-driven test
+# in this suite.
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_callback_commands.cfg
+
+AFC_CLEAR_MESSAGE
+
+# Pause so CLEAR_PAUSE (run from the callback) has something to clear.
+PAUSE
+
+SDCARD_RESET_FILE

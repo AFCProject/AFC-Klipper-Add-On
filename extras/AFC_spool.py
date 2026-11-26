@@ -18,6 +18,7 @@ except: raise error("Error when trying to import AFC_utils.natural_sort_key\n{tr
 
 if TYPE_CHECKING:
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from configfile import ConfigWrapper
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
@@ -345,11 +346,13 @@ class AFCSpool:
 
         for m in mapping_list:
             if not re.fullmatch(r"T\d+", m):
-                self.afc.error.AFC_error(f"'{m}' is not a valid mapping, expect T(n) format.", False)
+                self.afc.error.AFC_error(f"'{m}' is not a valid mapping, expect T(n) format.",
+                                         False, gcmd=gcmd)
                 continue
 
             if m in self.afc.tool_cmds:
-                self.afc.error.AFC_error(f"Cannot map {m} to {lane}, as mapping already exists.", False)
+                self.afc.error.AFC_error(
+                    f"Cannot map {m} to {lane}, as mapping already exists.", False, gcmd=gcmd)
                 continue
             self.logger.info(f"Adding {m} to {lane}")
             self.afc.tool_cmds.update({m: lane})
@@ -389,7 +392,7 @@ class AFCSpool:
 
         for m in mapping_list:
             if m not in self.afc.tool_cmds:
-                self.afc.error.AFC_error(f"Mapping {m} does not exist", False)
+                self.afc.error.AFC_error(f"Mapping {m} does not exist", False, gcmd=gcmd)
                 continue
             lane = self.afc.tool_cmds.pop(m)
             lane_obj = self.afc.lanes.get(lane)
@@ -470,7 +473,7 @@ class AFCSpool:
         # Refresh LED only if filament is loaded — empty lanes keep their state color
         if (cur_lane.load_state
             and cur_lane.unit in self.afc.units):
-            cur_lane.unit_obj.lane_loaded(cur_lane,force=True)
+            cur_lane.unit_obj.lane_loaded(cur_lane, force=True, gcmd=gcmd)
         self.afc.save_vars()
         self.set_snapmaker_filament_params(cur_lane)
 
@@ -653,7 +656,7 @@ class AFCSpool:
 
             # Updating the active spool in Spoolman needs to wait for set_spoolID's
             # async fetch to actually apply the new spool_id to the lane first
-            self.set_spoolID(cur_lane, SpoolID,
+            self.set_spoolID(cur_lane, SpoolID, gcmd=gcmd,
                              on_done=lambda: self._update_active_spool_if_current(cur_lane))
 
     def _update_active_spool_if_current(self, cur_lane: AFCLane) -> None:
@@ -681,13 +684,15 @@ class AFCSpool:
             value = filament[field]
         return value
 
-    def _set_values(self, cur_lane: AFCLane, on_done: Optional[Callable[[], None]] = None) -> None:
+    def _set_values(self, cur_lane: AFCLane, on_done: Optional[Callable[[], None]] = None, *,
+                    gcmd: AFCGcmd) -> None:
         """
         Helper function for setting lane spool values
 
         :param on_done: Called once this lane's spool values have actually settled, called
                         immediately if there's no next_spool_id to apply, or once set_spoolID's
                         async fetch resolves
+        :param gcmd: command context the int-conversion-error pause would be run through, if any
         """
         # Always reset debounce on spool change
         cur_lane.auto_switch_triggered = False
@@ -705,7 +710,7 @@ class AFCSpool:
             and self.next_spool_id is not None):
             spool_id = self.next_spool_id
             self.next_spool_id = None
-            self.set_spoolID(cur_lane, spool_id, on_done=on_done)
+            self.set_spoolID(cur_lane, spool_id, on_done=on_done, gcmd=gcmd)
         elif on_done is not None:
             on_done()
 
@@ -726,7 +731,8 @@ class AFCSpool:
         cur_lane.filament_name = ""
 
     def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]],
-                    save_vars: bool = True, on_done: Optional[Callable[[], None]] = None) -> None:
+                    save_vars: bool = True, on_done: Optional[Callable[[], None]] = None, *,
+                    gcmd: AFCGcmd) -> None:
         """
         Assigns a spool from Spoolman to a lane, pulling material, color, weight,
         and temperature values from Spoolman and updating the lane accordingly.
@@ -741,6 +747,7 @@ class AFCSpool:
         :param on_done:   Called once this lane's spool data has actually been
                           applied (immediately for the synchronous branches
                           below, or once the async Spoolman fetch resolves)
+        :param gcmd: command context the int-conversion-error pause is run through, if any
         """
         if (self.afc.spoolman is not None
             and self.afc.moonraker is not None):
@@ -750,7 +757,9 @@ class AFCSpool:
                 try:
                     spool_id_int = int(SpoolID)
                 except Exception as e:
-                    self.afc.error.AFC_error(f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}", False)
+                    self.afc.error.AFC_error(
+                        f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}",
+                        False, gcmd=gcmd)
                 else:
                     self.afc.moonraker.get_spool(
                         spool_id_int,
@@ -819,7 +828,7 @@ class AFCSpool:
                         or cur_lane.weight <= 0):
                         error_str = (f"Invalid weight for spoolID: {SpoolID}. "
                                     "Please check remaining weight before assigning.")
-                        self.afc.error.AFC_error(error_str, False)
+                        self.afc.error.AFC_error(error_str, False, gcmd="callback")
                         self.clear_values(cur_lane)
                         return
 
@@ -837,10 +846,12 @@ class AFCSpool:
                 # Refresh LED only if filament is loaded — empty lanes keep their state color
                 if (cur_lane.load_state
                     and cur_lane.unit in self.afc.units):
-                        cur_lane.unit_obj.lane_loaded(cur_lane, force=True)
+                        cur_lane.unit_obj.lane_loaded(cur_lane, force=True, gcmd="callback")
 
             except Exception as e:
-                self.afc.error.AFC_error(f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}", False)
+                self.afc.error.AFC_error(
+                    f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}",
+                    False, gcmd="callback")
         finally:
             self.set_snapmaker_filament_params(cur_lane)
             if save_vars: self.afc.save_vars()

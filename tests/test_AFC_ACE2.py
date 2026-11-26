@@ -1936,6 +1936,9 @@ class TestACE2ConnectionPreInfoHandshake:
 
 class TestACE2ConnectionPollExtras:
     def test_polls_temp_and_sensor_state(self):
+        """Both routine polls are sent quiet=True, so they must not spam a
+        TX debug line every heartbeat (GH report: ACE continuously logs to
+        AFC.log)."""
         printer, conn = ace2_link(next_id=4)
 
         conn._poll_extras()
@@ -1943,8 +1946,8 @@ class TestACE2ConnectionPollExtras:
         assert conn._serial.frames == [Ace2Wire.frame(4, Ace2Wire.GET_TEMP),
                                        Ace2Wire.frame(5, Ace2Wire.GET_SENSOR_STATE)]
         assert list(conn._async_ids) == [4, 5]
-        assert printer.logger.messages == [("debug", "ACE2 TX (async): id=4 get_temp"),
-                                           ("debug", "ACE2 TX (async): id=5 get_sensor_state")]
+        assert conn._quiet_async_ids == {4, 5}
+        assert printer.logger.messages == []
 
 
 class TestACE2ConnectionSendCommand:
@@ -2252,6 +2255,68 @@ class TestACE2ConnectionSendCommandAsync:
         assert conn._next_request_id == 6
         assert printer.logger.messages == [("debug", "ACE2 TX (async): id=5 get_status")]
 
+    def test_quiet_true_skips_tx_log(self):
+        """Covers quiet's True branch: the TX debug line must not fire
+        (GH report: ACE continuously logs to AFC.log)."""
+        printer, conn = ace2_link()
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert list(conn._async_ids) == [0]
+        assert printer.logger.messages == []
+
+    def test_quiet_true_records_quiet_async_id(self):
+        printer, conn = ace2_link()
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert conn._quiet_async_ids == {0}
+
+    def test_quiet_false_does_not_record_quiet_async_id(self):
+        """Covers quiet's False branch, independent of the True case above."""
+        printer, conn = ace2_link()
+
+        conn.send_command_async("get_status", quiet=False)
+
+        assert conn._quiet_async_ids == set()
+
+    def test_debug_true_logs_tx_even_when_quiet(self):
+        """debug=True must override quiet's TX suppression too."""
+        printer, conn = ace2_link()
+        conn._debug = True
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert printer.logger.messages == [("debug", "ACE2 TX (async): id=0 get_status")]
+
+    def test_evicts_quiet_metadata_for_id_dropped_by_full_deque(self):
+        """When _async_ids is full, the id it drops must leave the quiet maps too."""
+        printer, conn = ace2_link()
+        for request_id in range(conn._async_ids.maxlen):
+            conn._async_ids.append(request_id)
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = conn._async_ids.maxlen
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert 0 not in conn._quiet_async_ids
+        assert 0 not in conn._quiet_request_methods
+        assert conn._quiet_async_ids == {conn._async_ids.maxlen}
+        assert conn._quiet_request_methods == {conn._async_ids.maxlen: "get_temp"}
+
+    def test_does_not_evict_quiet_metadata_when_deque_not_full(self):
+        """No eviction should happen before _async_ids reaches its maxlen."""
+        printer, conn = ace2_link()
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = 1
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert conn._quiet_async_ids == {0, 1}
+        assert conn._quiet_request_methods == {0: "get_status", 1: "get_temp"}
+
 
 class TestACE2ConnectionResponseMatchesPending:
     def test_no_recorded_opcode_accepts(self):
@@ -2320,6 +2385,117 @@ class TestACE2ConnectionParseFrames:
 
         assert conn._read_buffer == partial
         assert printer.logger.messages == []
+
+    def test_quiet_async_id_first_reply_logs_and_caches(self):
+        """The first reply to a quiet=True request has nothing to compare
+        against yet, so it must log (and cache its payload for next time)."""
+        printer, conn = ace2_link()
+        conn._async_ids.append(7)
+        conn._quiet_async_ids.add(7)
+        conn._quiet_request_methods[7] = "get_sensor_state"
+        conn._read_buffer = Ace2Wire.reply(7, Ace2Wire.GET_TEMP, bytes([0x08, 0x15]))
+
+        conn._parse_frames()
+
+        expected = {"_cmd": 64, "code": 0, "msg": "success",
+                    "result": {"box1_temp": 21, "box2_temp": 0.0, "ptc1_temp": 0.0,
+                               "ptc2_temp": 0.0, "env_temp": 0.0, "env_humidity": 0.0}}
+        assert printer.logger.messages == [(
+            "debug", "ACE2 RX: {'id': 7, '_cmd': 64, 'code': 0, 'msg': 'success', "
+                     "'result': {'box1_temp': 21, 'box2_temp': 0.0, 'ptc1_temp': 0.0, "
+                     "'ptc2_temp': 0.0, 'env_temp': 0.0, 'env_humidity': 0.0}}")]
+        assert conn._quiet_last_payload == {"get_sensor_state": expected}
+
+    def test_quiet_async_id_unchanged_payload_skips_rx_log(self):
+        """A reply whose payload matches the last one logged for that method
+        must be skipped (GH report: ACE continuously logs to AFC.log)."""
+        printer, conn = ace2_link()
+        conn._quiet_last_payload["get_sensor_state"] = {
+            "_cmd": 64, "code": 0, "msg": "success",
+            "result": {"box1_temp": 21, "box2_temp": 0.0, "ptc1_temp": 0.0,
+                      "ptc2_temp": 0.0, "env_temp": 0.0, "env_humidity": 0.0}}
+        conn._async_ids.append(7)
+        conn._quiet_async_ids.add(7)
+        conn._quiet_request_methods[7] = "get_sensor_state"
+        conn._read_buffer = Ace2Wire.reply(7, Ace2Wire.GET_TEMP, bytes([0x08, 0x15]))
+
+        conn._parse_frames()
+
+        assert printer.logger.messages == []
+
+    def test_quiet_async_id_changed_payload_logs_and_updates_cache(self):
+        """A reply whose payload differs from the last one logged for that
+        method must log, and the cache must advance to the new value."""
+        printer, conn = ace2_link()
+        conn._quiet_last_payload["get_sensor_state"] = {"_cmd": 64, "code": 0, "msg": "success",
+                                                        "result": {"box1_temp": 99}}
+        conn._async_ids.append(7)
+        conn._quiet_async_ids.add(7)
+        conn._quiet_request_methods[7] = "get_sensor_state"
+        conn._read_buffer = Ace2Wire.reply(7, Ace2Wire.GET_TEMP, bytes([0x08, 0x15]))
+
+        conn._parse_frames()
+
+        expected = {"_cmd": 64, "code": 0, "msg": "success",
+                    "result": {"box1_temp": 21, "box2_temp": 0.0, "ptc1_temp": 0.0,
+                               "ptc2_temp": 0.0, "env_temp": 0.0, "env_humidity": 0.0}}
+        assert printer.logger.messages == [(
+            "debug", "ACE2 RX: {'id': 7, '_cmd': 64, 'code': 0, 'msg': 'success', "
+                     "'result': {'box1_temp': 21, 'box2_temp': 0.0, 'ptc1_temp': 0.0, "
+                     "'ptc2_temp': 0.0, 'env_temp': 0.0, 'env_humidity': 0.0}}")]
+        assert conn._quiet_last_payload == {"get_sensor_state": expected}
+
+    def test_get_temp_reply_never_logs_even_when_changed(self):
+        """get_temp's reading drifts continuously, so even a changed payload
+        must stay suppressed (it's in _NEVER_LOG_QUIET_METHODS)."""
+        printer, conn = ace2_link()
+        conn._quiet_last_payload["get_temp"] = {"_cmd": 64, "code": 0, "msg": "success",
+                                                "result": {"box1_temp": 99}}
+        conn._async_ids.append(7)
+        conn._quiet_async_ids.add(7)
+        conn._quiet_request_methods[7] = "get_temp"
+        conn._read_buffer = Ace2Wire.reply(7, Ace2Wire.GET_TEMP, bytes([0x08, 0x15]))
+
+        conn._parse_frames()
+
+        assert printer.logger.messages == []
+        # The cache is left untouched since the reply was never evaluated against it.
+        assert conn._quiet_last_payload == {"get_temp": {"_cmd": 64, "code": 0, "msg": "success",
+                                                          "result": {"box1_temp": 99}}}
+
+    def test_debug_true_logs_get_temp_reply(self):
+        """debug=True must override every quiet suppression, including
+        _NEVER_LOG_QUIET_METHODS."""
+        printer, conn = ace2_link()
+        conn._debug = True
+        conn._quiet_last_payload["get_temp"] = {"_cmd": 64, "code": 0, "msg": "success",
+                                                "result": {"box1_temp": 99}}
+        conn._async_ids.append(7)
+        conn._quiet_async_ids.add(7)
+        conn._quiet_request_methods[7] = "get_temp"
+        conn._read_buffer = Ace2Wire.reply(7, Ace2Wire.GET_TEMP, bytes([0x08, 0x15]))
+
+        conn._parse_frames()
+
+        assert printer.logger.messages == [(
+            "debug", "ACE2 RX: {'id': 7, '_cmd': 64, 'code': 0, 'msg': 'success', "
+                     "'result': {'box1_temp': 21, 'box2_temp': 0.0, 'ptc1_temp': 0.0, "
+                     "'ptc2_temp': 0.0, 'env_temp': 0.0, 'env_humidity': 0.0}}")]
+
+    def test_non_quiet_id_still_logs_rx(self):
+        """Covers the quiet-id check's False branch independently: a reply
+        whose id isn't in _quiet_async_ids still logs normally."""
+        printer, conn = ace2_link()
+        conn._async_ids.append(7)
+        conn._quiet_async_ids.add(99)
+        conn._read_buffer = Ace2Wire.reply(7, Ace2Wire.GET_TEMP, bytes([0x08, 0x15]))
+
+        conn._parse_frames()
+
+        assert printer.logger.messages == [(
+            "debug", "ACE2 RX: {'id': 7, '_cmd': 64, 'code': 0, 'msg': 'success', "
+                     "'result': {'box1_temp': 21, 'box2_temp': 0.0, 'ptc1_temp': 0.0, "
+                     "'ptc2_temp': 0.0, 'env_temp': 0.0, 'env_humidity': 0.0}}")]
 
 
 class TestACE2ConnectionEnableRfid:
@@ -2632,7 +2808,7 @@ class TestAfcACE2CheckStuck:
         printer.reactor.run_callbacks()
         assert unit._ace.commands == [("get_status", {}), ("stop_feed_assist", {"index": 0})]
         assert printer.afc.error.AFC_error.calls == [
-            ((ace2_jam_message("lane1", self.STUCK),), {"pause": True})]
+            ((ace2_jam_message("lane1", self.STUCK),), {"pause": True, "gcmd": "callback"})]
         assert printer.logger.messages == []
 
     @pytest.mark.parametrize("state,what", [
@@ -2651,7 +2827,7 @@ class TestAfcACE2CheckStuck:
         # The deferred handler is told the lane and the state that tripped.
         unit.printer.reactor.run_callbacks()
         assert unit.printer.afc.error.AFC_error.calls == [
-            ((ace2_jam_message("lane1", what),), {"pause": True})]
+            ((ace2_jam_message("lane1", what),), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.logger.messages == []
 
     def test_recovery_rearms_latch(self):
@@ -2801,7 +2977,8 @@ class TestAfcACE2HandleEncoderJam:
         assert printer.timeline == [("send_command", ("get_status", {})),
                                     ("send_command", ("stop_feed_assist", {"index": 0})),
                                     ("AFC_error", message)]
-        assert printer.afc.error.AFC_error.calls == [((message,), {"pause": True})]
+        assert printer.afc.error.AFC_error.calls == [
+            ((message,), {"pause": True, "gcmd": "callback"})]
         assert printer.gcode.run_script_from_command.calls == []
         assert printer.logger.messages == []
 
@@ -2819,7 +2996,7 @@ class TestAfcACE2HandleEncoderJam:
 
         assert unit._feed_assist_active == {0}
         assert unit.printer.afc.error.AFC_error.calls == [
-            ((ace2_jam_message("lane2", what),), {"pause": True})]
+            ((ace2_jam_message("lane2", what),), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.logger.messages == []
 
     def test_stop_assist_exception_is_swallowed(self):
@@ -2834,7 +3011,7 @@ class TestAfcACE2HandleEncoderJam:
         assert link.commands == []
         assert printer.afc.error.AFC_error.calls == [
             ((ace2_jam_message("lane1", "stuck spool (encoder saw no movement while "
-                                        "feeding)"),), {"pause": True})]
+                                        "feeding)"),), {"pause": True, "gcmd": "callback"})]
         assert printer.gcode.run_script_from_command.calls == []
         assert printer.logger.messages == []
 
@@ -2847,9 +3024,11 @@ class TestAfcACE2HandleEncoderJam:
 
         unit._handle_encoder_jam("lane1", 0, "stuck_error")
 
-        assert printer.afc.error.AFC_error.calls == [((message,), {"pause": True})]
+        assert printer.afc.error.AFC_error.calls == [
+            ((message,), {"pause": True, "gcmd": "callback"})]
         assert printer.logger.messages == [("error", message)]
         assert printer.gcode.run_script_from_command.calls == [(("PAUSE",), {})]
+        assert printer.gcode.run_script.calls == []
         assert unit._feed_assist_active == {1}
 
 

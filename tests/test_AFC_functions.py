@@ -669,26 +669,28 @@ class TestResetCutterCalibrationValues:
 class TestResolveCalibrationLane:
     def test_rejects_unknown_extruder(self) -> None:
         func, _ = _make_calibration_func()
+        gcmd = MagicMock()
 
-        lane = func._resolve_calibration_lane("other", "lane1")
+        lane = func._resolve_calibration_lane("other", "lane1", gcmd)
 
         assert lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid extruder", pause=False)
+            "'other' is not a valid extruder", pause=False, gcmd=gcmd)
 
     def test_rejects_unknown_lane(self) -> None:
         func, _ = _make_calibration_func()
+        gcmd = MagicMock()
 
-        lane = func._resolve_calibration_lane("extruder", "other")
+        lane = func._resolve_calibration_lane("extruder", "other", gcmd)
 
         assert lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid lane", pause=False)
+            "'other' is not a valid lane", pause=False, gcmd=gcmd)
 
     def test_resolves_loaded_lane_when_name_is_omitted(self) -> None:
         func, _ = _make_calibration_func()
 
-        lane = func._resolve_calibration_lane("extruder", None)
+        lane = func._resolve_calibration_lane("extruder", None, MagicMock())
 
         assert lane is func.afc.lanes["lane1"]
 
@@ -696,7 +698,7 @@ class TestResolveCalibrationLane:
         func, _ = _make_calibration_func()
         func.afc.current = None
 
-        lane = func._resolve_calibration_lane("extruder", None)
+        lane = func._resolve_calibration_lane("extruder", None, MagicMock())
 
         assert lane is func.afc.lanes["lane1"]
 
@@ -707,42 +709,47 @@ class TestResolveCalibrationLane:
         second_lane.name = "lane2"
         second_lane.extruder_obj = extruder
         func.afc.lanes["lane2"] = second_lane
+        gcmd = MagicMock()
 
-        lane = func._resolve_calibration_lane("extruder", None)
+        lane = func._resolve_calibration_lane("extruder", None, gcmd)
 
         assert lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False)
+            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False,
+            gcmd=gcmd)
 
     def test_rejects_lane_owned_by_different_extruder(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.tools["other"] = MagicMock()
+        gcmd = MagicMock()
 
-        lane = func._resolve_calibration_lane("other", "lane1")
+        lane = func._resolve_calibration_lane("other", "lane1", gcmd)
 
         assert lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' does not belong to extruder 'other'.", pause=False)
+            "Lane 'lane1' does not belong to extruder 'other'.", pause=False, gcmd=gcmd)
 
 
 class TestLoadCalibrationLane:
     def test_rejects_unknown_extruder(self) -> None:
         func, _ = _make_calibration_func()
+        prompt = MagicMock()
 
-        lane = func._load_calibration_lane("other", "lane1", MagicMock())
+        lane = func._load_calibration_lane("other", "lane1", prompt)
 
         assert lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid extruder", pause=False)
+            "'other' is not a valid extruder", pause=False, gcmd=prompt.gcode)
 
     def test_rejects_unknown_lane(self) -> None:
         func, _ = _make_calibration_func()
+        prompt = MagicMock()
 
-        lane = func._load_calibration_lane("extruder", "other", MagicMock())
+        lane = func._load_calibration_lane("extruder", "other", prompt)
 
         assert lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid lane", pause=False)
+            "'other' is not a valid lane", pause=False, gcmd=prompt.gcode)
 
     def test_returns_lane_that_is_already_loaded(self) -> None:
         func, _ = _make_calibration_func()
@@ -785,34 +792,39 @@ class TestLoadCalibrationLane:
         second_lane.extruder_obj = extruder
         func.afc.lanes["lane2"] = second_lane
         extruder.lanes["lane2"] = second_lane
+        prompt = MagicMock()
 
-        lane = func._load_calibration_lane("extruder", None, MagicMock())
+        lane = func._load_calibration_lane("extruder", None, prompt)
 
         assert lane is None
         func.afc.CHANGE_TOOL.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False)
+            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False,
+            gcmd=prompt.gcode)
 
     def test_rejects_lane_owned_by_different_extruder(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.tools["other"] = MagicMock()
+        prompt = MagicMock()
 
-        lane = func._load_calibration_lane("other", "lane1", MagicMock())
+        lane = func._load_calibration_lane("other", "lane1", prompt)
 
         assert lane is None
         func.afc.CHANGE_TOOL.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' does not belong to extruder 'other'.", pause=False)
+            "Lane 'lane1' does not belong to extruder 'other'.", pause=False, gcmd=prompt.gcode)
 
     def test_reports_failed_lane_load(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.current = None
+        prompt = MagicMock()
 
-        lane = func._load_calibration_lane("extruder", "lane1", MagicMock())
+        lane = func._load_calibration_lane("extruder", "lane1", prompt)
 
         assert lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' did not load for toolhead calibration.", pause=False)
+            "Lane 'lane1' did not load for toolhead calibration.", pause=False,
+            gcmd=prompt.gcode)
 
 
 class TestCmdAfcCutterCalibration:
@@ -828,66 +840,75 @@ class TestCmdAfcCutterCalibration:
     def test_reports_failed_automatic_lane_load(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.current = None
+        gcmd = _make_gcmd()
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' did not load for toolhead calibration.", pause=False)
+            "Lane 'lane1' did not load for toolhead calibration.", pause=False, gcmd=gcmd)
 
     def test_requires_a_configured_lane(self) -> None:
         func = self._make_loaded_func()
         del func.afc.lanes["lane1"]
+        gcmd = _make_gcmd()
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False)
+            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False,
+            gcmd=gcmd)
 
     def test_rejects_extruder_that_does_not_own_loaded_lane(self) -> None:
         func = self._make_loaded_func()
         func.afc.tools["other"] = MagicMock()
+        gcmd = _make_gcmd(EXTRUDER="other", LANE="lane1")
 
-        func.cmd_AFC_CUTTER_CALIBRATION(
-            _make_gcmd(EXTRUDER="other", LANE="lane1"))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' does not belong to extruder 'other'.", pause=False)
+            "Lane 'lane1' does not belong to extruder 'other'.", pause=False, gcmd=gcmd)
 
     def test_rejects_unknown_extruder(self) -> None:
         func = self._make_loaded_func()
+        gcmd = _make_gcmd(EXTRUDER="other")
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(EXTRUDER="other"))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Select a valid extruder for cutter calibration.", pause=False)
+            "Select a valid extruder for cutter calibration.", pause=False, gcmd=gcmd)
 
     def test_rejects_calibration_during_print(self) -> None:
         func = self._make_loaded_func()
         print_stats = func.printer.lookup_object("print_stats")
         print_stats.get_status.return_value = {"state": "printing", "filename": "part.gcode"}
+        gcmd = _make_gcmd()
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Cutter retract calibration cannot run during a print.", pause=False)
+            "Cutter retract calibration cannot run during a print.", pause=False, gcmd=gcmd)
 
     def test_rejects_prompt_action_before_start(self) -> None:
         func = self._make_loaded_func()
+        gcmd = _make_gcmd(MOVE=-1)
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(MOVE=-1))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Start AFC_CUTTER_CALIBRATION before using its prompt actions.", pause=False)
+            "Start AFC_CUTTER_CALIBRATION before using its prompt actions.", pause=False,
+            gcmd=gcmd)
 
     @pytest.mark.parametrize("action", [{"COMPLETE": 1}, {"CANCEL": 1}])
     def test_rejects_other_prompt_actions_before_start(self,
                                                        action: Dict[str, int]) -> None:
         func = self._make_loaded_func()
+        gcmd = _make_gcmd(**action)
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(**action))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Start AFC_CUTTER_CALIBRATION before using its prompt actions.", pause=False)
+            "Start AFC_CUTTER_CALIBRATION before using its prompt actions.", pause=False,
+            gcmd=gcmd)
 
     def test_start_opens_prompt_without_moving(self) -> None:
         func = self._make_loaded_func()
@@ -931,53 +952,56 @@ class TestCmdAfcCutterCalibration:
         func = self._make_loaded_func()
         func.afc.current = None
         func.afc.tools["other"] = MagicMock()
+        gcmd = _make_gcmd()
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Select a valid extruder for cutter calibration.", pause=False)
+            "Select a valid extruder for cutter calibration.", pause=False, gcmd=gcmd)
         func.afc.CHANGE_TOOL.assert_not_called()
 
     def test_active_session_rejects_a_different_extruder(self) -> None:
         func = self._make_loaded_func()
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
         func.cutter_calibration_extruder = "other"
+        gcmd = _make_gcmd(EXTRUDER="extruder")
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active cutter calibration first.", pause=False)
+            "Finish or cancel the active cutter calibration first.", pause=False, gcmd=gcmd)
 
     def test_active_session_rejects_a_different_lane(self) -> None:
         func = self._make_loaded_func()
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
         func.cutter_calibration_lane = "other"
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
 
-        func.cmd_AFC_CUTTER_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active cutter calibration first.", pause=False)
+            "Finish or cancel the active cutter calibration first.", pause=False, gcmd=gcmd)
 
     def test_active_session_rejects_when_loaded_lane_changes(self) -> None:
         func = self._make_loaded_func()
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
         func.afc.current = "other"
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
 
-        func.cmd_AFC_CUTTER_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active cutter calibration first.", pause=False)
+            "Finish or cancel the active cutter calibration first.", pause=False, gcmd=gcmd)
 
     def test_start_rejects_active_tool_stn_unload_calibration(self) -> None:
         func = self._make_loaded_func()
         func.stn_unload_calibration_active = True
+        gcmd = _make_gcmd()
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "tool_stn_unload calibration is already active.", pause=False)
+            "tool_stn_unload calibration is already active.", pause=False, gcmd=gcmd)
         assert func.cutter_calibration_active is False
 
     def test_retract_tracks_total_distance(self) -> None:
@@ -1040,33 +1064,36 @@ class TestCmdAfcCutterCalibration:
     def test_complete_without_retraction_rejects_save(self) -> None:
         func = self._make_loaded_func()
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
+        gcmd = _make_gcmd(COMPLETE=1)
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(COMPLETE=1))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.move_e_pos.assert_not_called()
         func.ConfigRewrite.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Retract filament past the safety margin before saving.", pause=False)
+            "Retract filament past the safety margin before saving.", pause=False, gcmd=gcmd)
         assert func.cutter_calibration_active is True
 
     def test_rejects_move_larger_than_limit(self) -> None:
         func = self._make_loaded_func()
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
+        gcmd = _make_gcmd(MOVE=-26)
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(MOVE=-26))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Cutter calibration MOVE must be between -25mm and 25mm.", pause=False)
+            "Cutter calibration MOVE must be between -25mm and 25mm.", pause=False, gcmd=gcmd)
 
     def test_rejects_total_retraction_larger_than_limit(self) -> None:
         func = self._make_loaded_func()
         func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd())
         func.cutter_calibration_distance = 190.0
+        gcmd = _make_gcmd(MOVE=-11)
 
-        func.cmd_AFC_CUTTER_CALIBRATION(_make_gcmd(MOVE=-11))
+        func.cmd_AFC_CUTTER_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Cutter calibration is limited to 200mm of total retraction.", pause=False)
+            "Cutter calibration is limited to 200mm of total retraction.", pause=False, gcmd=gcmd)
 
     def test_undo_at_start_does_not_move(self) -> None:
         func = self._make_loaded_func()
@@ -2498,11 +2525,12 @@ class TestCmdAfcToolheadCalibration:
 
     def test_toolhead_menu_rejects_unknown_extruder(self) -> None:
         func, _ = _make_calibration_func()
+        gcmd = _make_gcmd(EXTRUDER="other")
 
-        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="other"))
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid extruder", pause=False)
+            "'other' is not a valid extruder", pause=False, gcmd=gcmd)
 
 
 class TestCmdAfcToolStnCalibration:
@@ -2516,9 +2544,10 @@ class TestCmdAfcToolStnCalibration:
         func.afc.current = None
         func.afc.TOOL_LOAD.side_effect = (
             lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
+        func._test_start_gcmd = gcmd
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         return func, extruder
 
@@ -2526,7 +2555,8 @@ class TestCmdAfcToolStnCalibration:
         func, extruder = self._start()
 
         func.afc.TOOL_LOAD.assert_called_once_with(
-            func.afc.lanes["lane1"], load_to_gears=True, restore_temp=False, gcmd=ANY)
+            func.afc.lanes["lane1"], load_to_gears=True, restore_temp=False,
+            gcmd=func._test_start_gcmd)
         assert func.stn_calibration_active is True
         assert func.stn_calibration_distance == 0.0
         assert func.stn_calibration_original == 72.0
@@ -2563,21 +2593,22 @@ class TestCmdAfcToolStnCalibration:
 
     def test_tool_stn_rejects_unknown_extruder(self) -> None:
         func, _ = _make_calibration_func()
+        gcmd = _make_gcmd(EXTRUDER="other")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="other"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid extruder", pause=False)
+            "'other' is not a valid extruder", pause=False, gcmd=gcmd)
 
     def test_rejects_start_while_toolhead_is_loaded(self) -> None:
         func, extruder = _make_calibration_func()
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         extruder._update_tool_stn.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Unload the toolhead before starting tool_stn calibration.", pause=False)
+            "Unload the toolhead before starting tool_stn calibration.", pause=False, gcmd=gcmd)
 
     def test_rejects_move_behind_starting_point(self) -> None:
         """Unlike the sibling calibration macros, an out-of-range MOVE here
@@ -2611,12 +2642,12 @@ class TestCmdAfcToolStnCalibration:
         func, _ = _make_calibration_func()
         func.afc.current = None
         func.afc.TOOL_LOAD.return_value = False
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' did not load to the extruder gears or sensor.", pause=False)
+            "Lane 'lane1' did not load to the extruder gears or sensor.", pause=False, gcmd=gcmd)
         assert func.stn_calibration_active is False
 
     def test_unload_and_reload_tests_current_distance(self) -> None:
@@ -2705,14 +2736,14 @@ class TestCmdAfcToolStnCalibration:
     def test_rejects_save_before_filament_has_moved(self) -> None:
         func, extruder = self._start()
         extruder._update_tool_stn.reset_mock()
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1", SAVE=1)
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1", SAVE=1))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.ConfigRewrite.assert_not_called()
         assert func.stn_calibration_active is True
         func.afc.error.AFC_error.assert_called_once_with(
-            "Move filament to the nozzle before saving tool_stn.", pause=False)
+            "Move filament to the nozzle before saving tool_stn.", pause=False, gcmd=gcmd)
 
     @pytest.mark.parametrize("active_attr", [
         "stn_unload_calibration_active",
@@ -2722,24 +2753,24 @@ class TestCmdAfcToolStnCalibration:
         func, _ = _make_calibration_func()
         func.afc.current = None
         setattr(func, active_attr, True)
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.TOOL_LOAD.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active toolhead calibration first.", pause=False)
+            "Finish or cancel the active toolhead calibration first.", pause=False, gcmd=gcmd)
 
     def test_rejects_unknown_lane_before_loading(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.current = None
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="other")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="other"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.TOOL_LOAD.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid lane", pause=False)
+            "'other' is not a valid lane", pause=False, gcmd=gcmd)
 
     def test_failed_test_unload_resets_session(self) -> None:
         """A failed test-unload resets the calibration session, matching
@@ -2747,9 +2778,9 @@ class TestCmdAfcToolStnCalibration:
         confirmed by the user."""
         func, _ = self._start()
         func.afc.TOOL_UNLOAD.return_value = False
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1", TEST=1)
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1", TEST=1))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         assert func.stn_calibration_active is False
         assert func.stn_calibration_distance == 0.0
@@ -2757,7 +2788,7 @@ class TestCmdAfcToolStnCalibration:
         assert func.stn_calibration_extruder is None
         assert func.stn_calibration_lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' did not unload during the tool_stn test.", pause=False)
+            "Lane 'lane1' did not unload during the tool_stn test.", pause=False, gcmd=gcmd)
 
     def test_failed_test_reload_restores_original_and_resets_session(self) -> None:
         func, extruder = self._start()
@@ -2765,9 +2796,9 @@ class TestCmdAfcToolStnCalibration:
         func.afc.TOOL_LOAD.reset_mock()
         func.afc.TOOL_LOAD.side_effect = None
         func.afc.TOOL_LOAD.return_value = False
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1", TEST=1)
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1", TEST=1))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         extruder._update_tool_stn.assert_called_once_with(72.0)
         assert extruder.tool_stn == 72.0
@@ -2777,46 +2808,49 @@ class TestCmdAfcToolStnCalibration:
         assert func.stn_calibration_extruder is None
         assert func.stn_calibration_lane is None
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' did not reload; the original tool_stn was restored.", pause=False)
+            "Lane 'lane1' did not reload; the original tool_stn was restored.",
+            pause=False, gcmd=gcmd)
 
     def test_active_session_rejects_different_extruder(self) -> None:
         func, _ = self._start()
         func.afc.tools["other"] = MagicMock()
+        gcmd = _make_gcmd(EXTRUDER="other", LANE="lane1")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="other", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active tool_stn calibration first.", pause=False)
+            "Finish or cancel the active tool_stn calibration first.", pause=False, gcmd=gcmd)
 
     def test_active_session_rejects_different_lane(self) -> None:
         func, _ = self._start()
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="other")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="other"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active tool_stn calibration first.", pause=False)
+            "Finish or cancel the active tool_stn calibration first.", pause=False, gcmd=gcmd)
 
     def test_active_session_rejects_missing_lane(self) -> None:
         func, _ = self._start()
         del func.afc.lanes["lane1"]
+        gcmd = _make_gcmd(EXTRUDER="extruder")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
             "The calibrated lane is no longer loaded; cancel and restart calibration.",
-            pause=False)
+            pause=False, gcmd=gcmd)
 
     def test_active_session_rejects_changed_loaded_lane(self) -> None:
         func, _ = self._start()
         func.afc.current = None
+        gcmd = _make_gcmd(EXTRUDER="extruder")
 
-        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
             "The calibrated lane is no longer loaded; cancel and restart calibration.",
-            pause=False)
+            pause=False, gcmd=gcmd)
 
     def test_cancel_remains_available_after_loaded_lane_changes(self) -> None:
         func, extruder = self._start()
@@ -2833,39 +2867,44 @@ class TestCmdAfcToolStnCalibration:
 class TestCmdAfcToolStnUnloadCalibration:
     def test_tool_stn_unload_rejects_unknown_extruder(self) -> None:
         func, _ = _make_calibration_func()
+        gcmd = _make_gcmd(EXTRUDER="other")
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="other"))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "'other' is not a valid extruder", pause=False)
+            "'other' is not a valid extruder", pause=False, gcmd=gcmd)
 
     def test_tool_stn_unload_reports_failed_automatic_lane_load(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.current = None
+        gcmd = _make_gcmd(EXTRUDER="extruder")
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' did not load for toolhead calibration.", pause=False)
+            "Lane 'lane1' did not load for toolhead calibration.", pause=False, gcmd=gcmd)
 
     def test_tool_stn_unload_requires_a_configured_lane(self) -> None:
         func, _ = _make_calibration_func()
         del func.afc.lanes["lane1"]
+        gcmd = _make_gcmd(EXTRUDER="extruder")
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False)
+            "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.", pause=False,
+            gcmd=gcmd)
 
     def test_tool_stn_unload_rejects_calibration_during_print(self) -> None:
         func, _ = _make_calibration_func()
         print_stats = func.printer.lookup_object("print_stats")
         print_stats.get_status.return_value = {"state": "printing", "filename": "part.gcode"}
+        gcmd = _make_gcmd(EXTRUDER="extruder")
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "tool_stn_unload calibration cannot run during a print.", pause=False)
+            "tool_stn_unload calibration cannot run during a print.", pause=False, gcmd=gcmd)
 
     def test_tool_stn_unload_initial_call_prompts_before_cutting(self) -> None:
         func, _ = _make_calibration_func()
@@ -2919,22 +2958,24 @@ class TestCmdAfcToolStnUnloadCalibration:
     def test_tool_stn_unload_rejects_disabled_cutter(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.tool_cut = False
+        gcmd = _make_gcmd(EXTRUDER="extruder", START=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
             "tool_stn_unload calibration requires tool cutting, but the cutter is disabled.",
-            pause=False)
+            pause=False, gcmd=gcmd)
         func.afc.gcode.run_script_from_command.assert_not_called()
 
     def test_tool_stn_unload_rejects_active_cutter_calibration(self) -> None:
         func, _ = _make_calibration_func()
         func.cutter_calibration_active = True
+        gcmd = _make_gcmd(EXTRUDER="extruder", START=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Cutter retract calibration is already active.", pause=False)
+            "Cutter retract calibration is already active.", pause=False, gcmd=gcmd)
         func.afc.gcode.run_script_from_command.assert_not_called()
 
     def test_tool_stn_unload_rejects_extruder_without_loaded_lane(self) -> None:
@@ -2946,47 +2987,51 @@ class TestCmdAfcToolStnUnloadCalibration:
         loaded_lane.name = "lane1"
         loaded_lane.extruder_obj = loaded_extruder
         func.afc.lanes["lane1"] = loaded_lane
+        gcmd = _make_gcmd(EXTRUDER="other_extruder", LANE="lane1", START=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(
-            _make_gcmd(EXTRUDER="other_extruder", LANE="lane1", START=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Lane 'lane1' does not belong to extruder 'other_extruder'.", pause=False)
+            "Lane 'lane1' does not belong to extruder 'other_extruder'.", pause=False, gcmd=gcmd)
         func.afc.gcode.run_script_from_command.assert_not_called()
 
     def test_active_tool_stn_unload_rejects_different_extruder(self) -> None:
         func, _ = _make_calibration_func()
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
         func.stn_unload_calibration_extruder = "other"
+        gcmd = _make_gcmd(EXTRUDER="extruder")
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active tool_stn_unload calibration first.", pause=False)
+            "Finish or cancel the active tool_stn_unload calibration first.", pause=False,
+            gcmd=gcmd)
 
     def test_active_tool_stn_unload_rejects_different_lane(self) -> None:
         func, _ = _make_calibration_func()
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(
             _make_gcmd(EXTRUDER="extruder", START=1))
         func.stn_unload_calibration_lane = "other"
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active tool_stn_unload calibration first.", pause=False)
+            "Finish or cancel the active tool_stn_unload calibration first.", pause=False,
+            gcmd=gcmd)
 
     def test_active_tool_stn_unload_rejects_when_loaded_lane_changes(self) -> None:
         func, _ = _make_calibration_func()
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(
             _make_gcmd(EXTRUDER="extruder", START=1))
         func.afc.current = "other"
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(
-            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Finish or cancel the active tool_stn_unload calibration first.", pause=False)
+            "Finish or cancel the active tool_stn_unload calibration first.", pause=False,
+            gcmd=gcmd)
 
     def test_tool_stn_unload_measures_restores_and_saves(self) -> None:
         func, extruder = _make_calibration_func()
@@ -3015,14 +3060,15 @@ class TestCmdAfcToolStnUnloadCalibration:
         func, extruder = _make_calibration_func()
         extruder.tool_start_state = False
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        gcmd = _make_gcmd(EXTRUDER="extruder", COMPLETE=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.move_e_pos.assert_not_called()
         extruder._update_tool_stn_unload.assert_not_called()
         func.ConfigRewrite.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Retract filament before saving tool_stn_unload.", pause=False)
+            "Retract filament before saving tool_stn_unload.", pause=False, gcmd=gcmd)
         assert func.stn_unload_calibration_active is True
 
     def test_tool_stn_unload_cancel_with_zero_movement_skips_restore_move(self) -> None:
@@ -3042,12 +3088,13 @@ class TestCmdAfcToolStnUnloadCalibration:
         calibration session -- intended behavior, confirmed by the user."""
         func, extruder = _make_calibration_func()
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        gcmd = _make_gcmd(EXTRUDER="extruder", COMPLETE=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
             "Cannot save tool_stn_unload while a toolhead sensor is still triggered.",
-            pause=False)
+            pause=False, gcmd=gcmd)
         extruder._update_tool_stn_unload.assert_not_called()
         func.ConfigRewrite.assert_not_called()
         assert func.stn_unload_calibration_active is False
@@ -3064,12 +3111,13 @@ class TestCmdAfcToolStnUnloadCalibration:
         extruder.tool_end = "PA2"
         extruder.tool_end_state = True
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        gcmd = _make_gcmd(EXTRUDER="extruder", COMPLETE=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
             "Cannot save tool_stn_unload while a toolhead sensor is still triggered.",
-            pause=False)
+            pause=False, gcmd=gcmd)
         extruder._update_tool_stn_unload.assert_not_called()
         assert func.stn_unload_calibration_active is False
         assert func.stn_unload_calibration_distance == 0.0
@@ -3104,21 +3152,23 @@ class TestCmdAfcToolStnUnloadCalibration:
     def test_tool_stn_unload_rejects_move_larger_than_limit(self) -> None:
         func, _ = _make_calibration_func()
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        gcmd = _make_gcmd(EXTRUDER="extruder", MOVE=-26)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", MOVE=-26))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Calibration MOVE must be between -25mm and 25mm.", pause=False)
+            "Calibration MOVE must be between -25mm and 25mm.", pause=False, gcmd=gcmd)
 
     def test_tool_stn_unload_rejects_total_retraction_larger_than_limit(self) -> None:
         func, _ = _make_calibration_func()
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
         func.stn_unload_calibration_distance = 190.0
+        gcmd = _make_gcmd(EXTRUDER="extruder", MOVE=-11)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", MOVE=-11))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         func.afc.error.AFC_error.assert_called_once_with(
-            "Calibration is limited to 200mm of retraction.", pause=False)
+            "Calibration is limited to 200mm of retraction.", pause=False, gcmd=gcmd)
 
     def test_tool_stn_unload_undo_at_start_does_not_move(self) -> None:
         func, _ = _make_calibration_func()
@@ -3159,13 +3209,14 @@ class TestCmdAfcToolStnUnloadCalibration:
         extruder.tool_start = "buffer"
         extruder.tool_start_state = True
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        gcmd = _make_gcmd(EXTRUDER="extruder", COMPLETE=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         extruder._update_tool_stn_unload.assert_not_called()
         func.ConfigRewrite.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Retract filament before saving tool_stn_unload.", pause=False)
+            "Retract filament before saving tool_stn_unload.", pause=False, gcmd=gcmd)
         assert func.stn_unload_calibration_active is True
 
     def test_tool_stn_unload_clear_tool_end_sensor_rejects_zero_save(self) -> None:
@@ -3174,13 +3225,14 @@ class TestCmdAfcToolStnUnloadCalibration:
         extruder.tool_end = "PA2"
         extruder.tool_end_state = False
         func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", START=1))
+        gcmd = _make_gcmd(EXTRUDER="extruder", COMPLETE=1)
 
-        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder", COMPLETE=1))
+        func.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION(gcmd)
 
         extruder._update_tool_stn_unload.assert_not_called()
         func.ConfigRewrite.assert_not_called()
         func.afc.error.AFC_error.assert_called_once_with(
-            "Retract filament before saving tool_stn_unload.", pause=False)
+            "Retract filament before saving tool_stn_unload.", pause=False, gcmd=gcmd)
         assert func.stn_unload_calibration_active is True
 
 
@@ -3879,13 +3931,14 @@ class TestLaneCalibration:
         lane.is_direct_hub.return_value = False
         lane.unit_obj.calibrate_lane = MagicMock(return_value=(False, "bad reading", 12))
         lane.hub_obj.state = True
+        gcmd = MagicMock()
 
-        result = func._lane_calibration(lane.name, None, 5, 25, MagicMock())
+        result = func._lane_calibration(lane.name, None, 5, 25, gcmd)
 
         assert result == (False, [], [])
-        func.afc.error.AFC_error.assert_called_once_with("bad reading", False)
+        func.afc.error.AFC_error.assert_called_once_with("bad reading", False, gcmd=gcmd)
         func._afc_cali_fail.assert_called_once_with(
-            cali=lane.name, dis=12, reset_lane=True, fail_message="bad reading")
+            cali=lane.name, dis=12, reset_lane=True, fail_message="bad reading", gcmd=gcmd)
 
     def test_lane_calibration_success_returns_checked_true_with_calibrated_lane(self):
         func, lane = self._make_func_and_lane()
@@ -3976,8 +4029,8 @@ class TestCalibrateAFC:
     def _assert_error_contains(self, func, substring):
         assert any(substring in m for m in self._get_messages(func, "error"))
 
-    def _assert_afc_error(self, func, message):
-        func.afc.error.AFC_error.assert_called_once_with(message, pause=False)
+    def _assert_afc_error(self, func, message, gcmd=ANY):
+        func.afc.error.AFC_error.assert_called_once_with(message, pause=False, gcmd=gcmd)
 
     # ------------------------------------------------------------------
     # _lane_calibration helpers
@@ -4027,10 +4080,12 @@ class TestCalibrateAFC:
         ]
         assert func.afc.gcode.run_script_from_command.call_args_list == expected
 
-    def _assert_afc_cali_comp_called(self, func, lanes, messages, title="AFC Calibration"):
+    def _assert_afc_cali_comp_called(self, func, lanes, messages, title="AFC Calibration",
+                                     gcmd=ANY):
         func._afc_cali_comp.assert_called_once_with(", ".join(lanes),
             title,
-            " ".join(messages)
+            " ".join(messages),
+            gcmd=gcmd
         )
 
     # ------------------------------------------------------------------
@@ -4063,7 +4118,7 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, f"'{lane_name}' is not a valid lane")
+        self._assert_afc_error(func, f"'{lane_name}' is not a valid lane", gcmd=gcmd)
         self._assert_no_calibration_attempted(func, lane)
 
     def test_calibration_lane_is_standalone(self):
@@ -4072,7 +4127,8 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, f"{lane.name} is a standalone lane, cannot calibrate")
+        self._assert_afc_error(func, f"{lane.name} is a standalone lane, cannot calibrate",
+                              gcmd=gcmd)
         self._assert_no_calibration_attempted(func, lane)
 
     def test_calibration_unit_not_valid(self):
@@ -4082,7 +4138,7 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, f"'{unit_name}' is not a valid unit")
+        self._assert_afc_error(func, f"'{unit_name}' is not a valid unit", gcmd=gcmd)
         self._assert_no_calibration_attempted(func, lane)
 
     def test_calibration_bowden_no_in_lanes(self):
@@ -4092,7 +4148,7 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, f"'{lane_name}' is not a valid lane to calibrate bowden length")
+        self._assert_afc_error(func, f"'{lane_name}' is not a valid lane to calibrate bowden length", gcmd=gcmd)
         self._assert_no_calibration_attempted(func, lane)
 
     def test_calibration_td1_not_present(self):
@@ -4101,7 +4157,7 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, "TD-1 is not present, will not be able to calibrate bowden length for TD-1")
+        self._assert_afc_error(func, "TD-1 is not present, will not be able to calibrate bowden length for TD-1", gcmd=gcmd)
         self._assert_no_calibration_attempted(func, lane)
     
     def test_calibration_td1_lane_not_valid(self):
@@ -4110,7 +4166,8 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, "'lane2' is not a valid lane to calibrate TD-1 bowden length")
+        self._assert_afc_error(
+            func, "'lane2' is not a valid lane to calibrate TD-1 bowden length", gcmd=gcmd)
         self._assert_no_calibration_attempted(func, lane)
 
     def test_calibration_lane_valid_success(self):
@@ -4123,7 +4180,8 @@ class TestCalibrateAFC:
         self._call_cmd_calibrate_afc(func, gcmd)
 
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
-        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], lane_calibration_call[2])
+        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], lane_calibration_call[2],
+                                  gcmd=gcmd)
         self._assert_bowden_calibration_not_attempted(lane)
 
     def test_calibration_lane_valid_success_no_additional_msg(self):
@@ -4136,7 +4194,7 @@ class TestCalibrateAFC:
         self._call_cmd_calibrate_afc(func, gcmd)
 
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
-        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], [])
+        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], [], gcmd=gcmd)
         self._assert_bowden_calibration_not_attempted(lane)
 
     def test_calibration_lane_valid_checked_false(self):
@@ -4203,7 +4261,7 @@ class TestCalibrateAFC:
 
         self._assert_calibrate_bowden_called(lane1, gcmd=gcmd)
         func._afc_cali_comp.assert_called_once_with(
-            "Bowden_length: lane1", "AFC Calibration", "")
+            "Bowden_length: lane1", "AFC Calibration", "", gcmd=gcmd)
 
     def test_calibration_all_lanes_valid_success(self):
         func, afc, lane = self._setup_calibration()
@@ -4215,7 +4273,8 @@ class TestCalibrateAFC:
         self._call_cmd_calibrate_afc(func, gcmd)
 
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
-        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], lane_calibration_call[2])
+        self._assert_afc_cali_comp_called(func, lane_calibration_call[1], lane_calibration_call[2],
+                                  gcmd=gcmd)
         self._assert_bowden_calibration_not_attempted(lane)
 
     def test_calibration_lanes_valid_bowden_fail_tool_start_and_tool_end_none(self):
@@ -4241,7 +4300,7 @@ class TestCalibrateAFC:
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
         func._afc_cali_comp.assert_not_called()
         self._assert_bowden_calibration_not_attempted(lane)
-        self._assert_afc_error(func, bowden_error)
+        self._assert_afc_error(func, bowden_error, gcmd=gcmd)
 
     def test_calibration_lanes_valid_bowden_success_tool_start_none_tool_end_buffer_set_lane(self):
         func, afc, lane = self._setup_calibration()
@@ -4262,7 +4321,8 @@ class TestCalibrateAFC:
         assert lane.extruder_obj.tool_start is None
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
         self._assert_calibrate_bowden_called(lane, gcmd=gcmd)
-        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2])
+        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2],
+                                  gcmd=gcmd)
         self._assert_info_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
 
     def test_calibration_lanes_valid_bowden_success_u1_sensor_needs_no_buffer(self):
@@ -4289,7 +4349,8 @@ class TestCalibrateAFC:
         assert lane.extruder_obj.tool_start is None
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
         self._assert_calibrate_bowden_called(lane, gcmd=gcmd)
-        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2])
+        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2],
+                                  gcmd=gcmd)
         self._assert_info_contains(func, "Starting AFC distance Calibrations")
         self._assert_info_contains(func, "Bowden length calibration Done!")
         self._assert_calibrate_td1_not_called(lane)
@@ -4309,7 +4370,8 @@ class TestCalibrateAFC:
 
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
         self._assert_calibrate_bowden_called(lane, gcmd=gcmd)
-        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2])
+        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2],
+                                  gcmd=gcmd)
         self._assert_info_not_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
         self._assert_info_contains(func, "Starting AFC distance Calibrations")
         self._assert_info_contains(func, "Bowden length calibration Done!")
@@ -4335,10 +4397,10 @@ class TestCalibrateAFC:
 
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
         self._assert_calibrate_bowden_called(lane, gcmd=gcmd)
-        self._assert_afc_error(func, fail_msg)
+        self._assert_afc_error(func, fail_msg, gcmd=gcmd)
         func._afc_cali_fail.assert_called_once_with(
             cali=lane.name, dis=None, reset_lane=True, title= "AFC Bowden Calibration Failed",
-            fail_message=fail_msg
+            fail_message=fail_msg, gcmd=gcmd
         )
         func._afc_cali_comp.assert_not_called()
         self._assert_info_not_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
@@ -4364,7 +4426,7 @@ class TestCalibrateAFC:
 
         func._afc_cali_fail.assert_called_once_with(
             cali=lane.name, dis=None, reset_lane=False, title= "AFC Bowden Calibration Failed",
-            fail_message=fail_msg
+            fail_message=fail_msg, gcmd=gcmd
         )
         func._afc_cali_comp.assert_not_called()
 
@@ -4387,7 +4449,7 @@ class TestCalibrateAFC:
 
         func._afc_cali_fail.assert_called_once_with(
             cali=lane.name, dis=1000, reset_lane=False, title= "AFC Bowden Calibration Failed",
-            fail_message=fail_msg
+            fail_message=fail_msg, gcmd=gcmd
         )
         func._afc_cali_comp.assert_not_called()
 
@@ -4409,7 +4471,7 @@ class TestCalibrateAFC:
 
         func._afc_cali_fail.assert_called_once_with(
             cali=lane.name, dis=1000, reset_lane=True, title= "AFC Bowden Calibration Failed",
-            fail_message=fail_msg
+            fail_message=fail_msg, gcmd=gcmd
         )
         func._afc_cali_comp.assert_not_called()
 
@@ -4432,7 +4494,8 @@ class TestCalibrateAFC:
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
         self._assert_calibrate_bowden_called(lane, gcmd=gcmd)
         func.check_homed.assert_not_called()
-        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2])
+        self._assert_afc_cali_comp_called(func, calibrated_msg, lane_calibration_call[2],
+                                  gcmd=gcmd)
         self._assert_info_not_contains(func, "Cannot run calibration using post extruder sensor, using buffer to calibrate bowden length")
         self._assert_info_contains(func, "Starting AFC distance Calibrations")
         self._assert_info_contains(func, "Bowden length calibration Done!")
@@ -4483,7 +4546,7 @@ class TestCalibrateAFC:
             gcmd=gcmd)
         self._assert_select_unselect_tool_called(func, lane)
         self._assert_info_not_contains(func, "Starting AFC distance Calibrations")
-        self._assert_afc_error(func, f"Failed to select tool '{lane.extruder_obj.name}' before Bowden calibration")
+        self._assert_afc_error(func, f"Failed to select tool '{lane.extruder_obj.name}' before Bowden calibration", gcmd=gcmd)
         self._assert_bowden_calibration_not_attempted(lane)
         func._afc_cali_comp.assert_not_called()
 
@@ -4509,7 +4572,7 @@ class TestCalibrateAFC:
             gcmd=gcmd)
         self._assert_select_unselect_tool_called(func, lane)
         self._assert_info_not_contains(func, "Starting AFC distance Calibrations")
-        self._assert_afc_error(func, f"Failed to select tool '{lane.extruder_obj.name}' before Bowden calibration")
+        self._assert_afc_error(func, f"Failed to select tool '{lane.extruder_obj.name}' before Bowden calibration", gcmd=gcmd)
         self._assert_bowden_calibration_not_attempted(lane)
         func._afc_cali_comp.assert_not_called()
 
@@ -4584,7 +4647,7 @@ class TestCalibrateAFC:
             func,
             f"{lane.name} loaded to toolhead, unload from toolhead before "
             "trying to calibrate td1_bowden_length."
-        )
+        , gcmd=gcmd)
         self._assert_lane_calibration_not_called(func)
         self._assert_calibrate_bowden_not_called(lane)
         func._afc_cali_comp.assert_not_called()
@@ -4608,7 +4671,7 @@ class TestCalibrateAFC:
             func,
             f"{lane.name} loaded to toolhead, unload from toolhead before "
             "trying to calibrate td1_bowden_length."
-        )
+        , gcmd=gcmd)
         self._assert_lane_calibration_called(func, lane_name, gcmd=gcmd)
         self._assert_calibrate_td1_not_called(lane)
         func._afc_cali_comp.assert_not_called()
@@ -4627,7 +4690,7 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, error_message)
+        self._assert_afc_error(func, error_message, gcmd=gcmd)
         func.afc.gcode.run_script_from_command.assert_called_once_with(
             f"AFC_CALI_FAIL TITLE='TD-1 Calibration Failed' FAIL={lane.name} DISTANCE=0 msg='{error_message}' RESET=0"
         )
@@ -4655,7 +4718,7 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, error_message)
+        self._assert_afc_error(func, error_message, gcmd=gcmd)
         func.afc.gcode.run_script_from_command.assert_called_once_with(
             f"AFC_CALI_FAIL TITLE='TD-1 Calibration Failed' FAIL={lane.name} DISTANCE=0 msg='{error_message}' RESET=0"
         )
@@ -4678,7 +4741,7 @@ class TestCalibrateAFC:
 
         self._call_cmd_calibrate_afc(func, gcmd)
 
-        self._assert_afc_error(func, error_message)
+        self._assert_afc_error(func, error_message, gcmd=gcmd)
         func.afc.gcode.run_script_from_command.assert_called_once_with(
             f"AFC_CALI_FAIL TITLE='TD-1 Calibration Failed' FAIL={lane.name} DISTANCE={cal_td1_return[2]} msg='{error_message}' RESET=1"
         )
@@ -4704,7 +4767,7 @@ class TestCalibrateAFC:
         self._assert_lane_calibration_not_called(func)
         self._assert_calibrate_bowden_not_called(lane)
         self._assert_afc_cali_comp_called(
-            func, [f"'TD1_Bowden_length: {lane.name}'"], [], title="TD-1 Calibration"
+            func, [f"'TD1_Bowden_length: {lane.name}'"], [], title="TD-1 Calibration", gcmd=gcmd
         )
 
 
@@ -4830,7 +4893,7 @@ class TestCmdAfcLaneResetToolheadLoadedGuard:
 
         func.afc.error.AFC_error.assert_called_once_with(
             "Toolhead is loaded with 'lane2', unload or check sensor before resetting lane",
-            pause=False,
+            pause=False, gcmd=gcmd,
         )
         mocked_afc_prompt.return_value.p_end.assert_called_once()
         lane.unit_obj.move_to_hub.assert_not_called()
@@ -4865,7 +4928,7 @@ class TestCmdAfcLaneResetToolheadLoadedGuard:
         func.afc.gcode.respond_info.assert_any_call("Resetting lane1 to hub")
 
 
-# ── handle_activate_extruder / _handle_activate_extruder ─────────────────────
+# ── handle_activate_extruder / handle_activate_extruder ─────────────────────
 
 class TestHandleActivateExtruder:
     def _make(self, cur_lane_loaded=None):
@@ -4886,18 +4949,14 @@ class TestHandleActivateExtruder:
         lane.unit_obj = MagicMock()
         return lane
 
-    def test_handle_activate_extruder_delegates_to_underscore_variant(self):
+    def test_handle_activate_extruder_cb_delegates_to_underscore_variant(self):
+        """handle_activate_extruder_cb is the extruder:activate_extruder event
+        handler, which Klipper always calls with no arguments, so it has no
+        real gcmd to pass through and uses the "callback" literal instead."""
         func = self._make()
-        func._handle_activate_extruder = MagicMock()
-        func.handle_activate_extruder()
-        func._handle_activate_extruder.assert_called_once_with(0, None)
-
-    def test_handle_activate_extruder_passes_gcmd_through(self):
-        func = self._make()
-        func._handle_activate_extruder = MagicMock()
-        gcmd = MagicMock()
-        func.handle_activate_extruder(gcmd)
-        func._handle_activate_extruder.assert_called_once_with(0, gcmd)
+        func.handle_activate_extruder = MagicMock()
+        func.handle_activate_extruder_cb()
+        func.handle_activate_extruder.assert_called_once_with(0, gcmd="sub_command")
 
     def test_not_ready_lane_calls_lane_not_ready(self):
         """Covers the `prep_state and load_state` guard's False branch --
@@ -4905,8 +4964,9 @@ class TestHandleActivateExtruder:
         func = self._make(cur_lane_loaded=None)
         lane = self._make_other_lane(prep_state=False, load_state=False)
         func.afc.lanes = {"lane2": lane}
-        func._handle_activate_extruder(0)
-        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        func.handle_activate_extruder(0, gcmd=gcmd)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
         lane.unit_obj.lane_loaded.assert_not_called()
         lane.unit_obj.lane_tool_loaded_idle.assert_not_called()
 
@@ -4915,31 +4975,35 @@ class TestHandleActivateExtruder:
         func = self._make(cur_lane_loaded=None)
         lane = self._make_other_lane(prep_state=True, load_state=False)
         func.afc.lanes = {"lane2": lane}
-        func._handle_activate_extruder(0)
-        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        func.handle_activate_extruder(0, gcmd=gcmd)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_ready_load_only_calls_lane_not_ready(self):
         """load_state alone must not satisfy the guard."""
         func = self._make(cur_lane_loaded=None)
         lane = self._make_other_lane(prep_state=False, load_state=True)
         func.afc.lanes = {"lane2": lane}
-        func._handle_activate_extruder(0)
-        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        func.handle_activate_extruder(0, gcmd=gcmd)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_ready_not_tool_loaded_calls_lane_loaded(self):
         func = self._make(cur_lane_loaded=None)
         lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=False)
         func.afc.lanes = {"lane2": lane}
-        func._handle_activate_extruder(0)
-        lane.unit_obj.lane_loaded.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        func.handle_activate_extruder(0, gcmd=gcmd)
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane, gcmd=gcmd)
         lane.unit_obj.lane_not_ready.assert_not_called()
 
     def test_ready_and_tool_loaded_calls_lane_tool_loaded_idle(self):
         func = self._make(cur_lane_loaded=None)
         lane = self._make_other_lane(prep_state=True, load_state=True, tool_loaded=True)
         func.afc.lanes = {"lane2": lane}
-        func._handle_activate_extruder(0)
-        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        func.handle_activate_extruder(0, gcmd=gcmd)
+        lane.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane, gcmd=gcmd)
         lane.unit_obj.lane_loaded.assert_not_called()
         lane.unit_obj.lane_not_ready.assert_not_called()
 
@@ -4952,7 +5016,7 @@ class TestHandleActivateExtruder:
         active_lane.spool_id = None
         func.get_current_lane_obj = MagicMock(return_value=active_lane)
         func.afc.lanes = {"lane1": active_lane}
-        func._handle_activate_extruder(0)
+        func.handle_activate_extruder(0, gcmd=MagicMock())
         # do_enable(True) is legitimately called later, outside the loop, to
         # enable the active lane -- do_enable(False) is what the (skipped)
         # loop body would have called, so that's the call that must be absent.

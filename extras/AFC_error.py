@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from klippy import Printer
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
     from extras.pause_resume import PauseResume
@@ -73,13 +74,14 @@ class afcError:
         self.afc.gcode.register_command('RESET_FAILURE', self.cmd_RESET_FAILURE, desc=self.cmd_RESET_FAILURE_help)
         self.afc.gcode.register_command('AFC_RESUME', self.cmd_AFC_RESUME, desc=self.cmd_AFC_RESUME_help)
 
-    def fix(self, problem: Optional[str], lane: Optional[str|AFCLane]) -> bool:
+    def fix(self, problem: Optional[str], lane: Optional[str|AFCLane], gcmd: AFCGcmd) -> bool:
         """
         Attempt to resolve a reported lane/toolhead problem automatically,
         falling back to pausing for user intervention when it can't be handled.
 
         :param problem: identifier for the problem to resolve, or None for an unknown error
         :param lane: lane object, or the name of a lane to look up, that the problem applies to
+        :param gcmd: command context the pause is run through, if any
         :return type: True if the problem was resolved automatically, False otherwise
         """
         self.pause= True
@@ -89,39 +91,40 @@ class afcError:
             lane = self.afc.lanes.get(lane, None)
             if lane is None:
                 self.PauseUserIntervention(
-                    f"Unknown lane '{lane_name}' reported for problem: {problem}"
+                    f"Unknown lane '{lane_name}' reported for problem: {problem}", gcmd=gcmd
                 )
                 return error_handled
 
         if problem is None:
-            self.PauseUserIntervention('Paused for unknown error')
+            self.PauseUserIntervention('Paused for unknown error', gcmd=gcmd)
         elif(problem=='toolhead'
             and lane is not None):
-            error_handled = self.ToolHeadFix(lane)
+            error_handled = self.ToolHeadFix(lane, gcmd=gcmd)
         else:
-            self.PauseUserIntervention(problem)
+            self.PauseUserIntervention(problem, gcmd=gcmd)
         if (not error_handled
             and lane is not None):
-            lane.unit_obj.lane_fault(lane)
+            lane.unit_obj.lane_fault(lane, gcmd=gcmd)
 
         return error_handled
 
-    def ToolHeadFix(self, cur_lane: AFCLane) -> bool:
+    def ToolHeadFix(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> bool:
         """
         Attempt to automatically resolve a toolhead-related lane fault by
         retracting or reloading filament to the lane's load sensor.
 
         :param cur_lane: lane object to attempt to fix
+        :param gcmd: command context the pause is run through, if any
         :return type: True if the lane was successfully reset, False otherwise
         """
         if cur_lane.get_toolhead_pre_sensor_state():   #toolhead has filament
             if cur_lane.extruder_obj.lane_loaded == cur_lane.name:   #var has right lane loaded
                 if not cur_lane.raw_load_state: #Lane has filament
-                    self.PauseUserIntervention('Filament not loaded in Lane')
+                    self.PauseUserIntervention('Filament not loaded in Lane', gcmd=gcmd)
                 else:
-                    self.PauseUserIntervention('no error detected')
+                    self.PauseUserIntervention('no error detected', gcmd=gcmd)
             else:
-                self.PauseUserIntervention('laneloaded does not match extruder')
+                self.PauseUserIntervention('laneloaded does not match extruder', gcmd=gcmd)
 
         else: #toolhead empty
             failed_to_retract_msg = f"Failed to retract {cur_lane.name} to load sensor"
@@ -137,63 +140,68 @@ class afcError:
                             total_move_dist += cur_lane.hub_obj.afc_bowden_length
                         cur_lane.unit_obj.move_to_load(cur_lane, total_move_dist,
                                                        MoveDirection.NEG, True,
-                                                       SpeedMode.SHORT)
+                                                       SpeedMode.SHORT, gcmd=gcmd)
                         num_tries += 1
                         if num_tries >= 5:
-                            self.PauseUserIntervention(failed_to_retract_msg)
+                            self.PauseUserIntervention(failed_to_retract_msg, gcmd=gcmd)
                             return False
                 else:
                     max_length = 5000
                     while cur_lane.raw_load_state:  # slowly back filament up to lane extruder
-                        cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+                        cur_lane.move(-5, self.afc.short_moves_speed, self.afc.short_moves_accel,
+                                      True, gcmd=gcmd)
                         if max_length > 0:
                             max_length -= 5
                         else:
-                            self.PauseUserIntervention(failed_to_retract_msg)
+                            self.PauseUserIntervention(failed_to_retract_msg, gcmd=gcmd)
                             return False
                     max_length = 1000
                     while not cur_lane.raw_load_state:  # reload lane extruder
-                        cur_lane.move(5, self.afc.short_moves_speed, self.afc.short_moves_accel, True)
+                        cur_lane.move(5, self.afc.short_moves_speed, self.afc.short_moves_accel,
+                                      True, gcmd=gcmd)
                         if max_length > 0:
                             max_length -= 5
                         else:
                             self.PauseUserIntervention(
-                                f"Failed to move back {cur_lane.name} to load sensor"
+                                f"Failed to move back {cur_lane.name} to load sensor", gcmd=gcmd
                             )
                             return False
 
-                cur_lane.set_tool_unloaded()
+                cur_lane.set_tool_unloaded(gcmd=gcmd)
                 cur_lane.loaded_to_hub = False
-                cur_lane.unit_obj.prep_load(cur_lane)
-                cur_lane.unit_obj.prep_post_load(cur_lane)
+                cur_lane.unit_obj.prep_load(cur_lane, gcmd=gcmd)
+                cur_lane.unit_obj.prep_post_load(cur_lane, gcmd=gcmd)
                 self.afc.save_vars()
                 self.pause = False
                 self.logger.info(f"Done resetting {cur_lane.name}")
                 return True
         return False
 
-    def PauseUserIntervention(self, message: str) -> None:
+    def PauseUserIntervention(self, message: str, gcmd: AFCGcmd) -> None:
         """
         Log an error message and pause the print for user intervention if the
         printer is homed, not already paused, and a pause has been requested.
 
         :param message: error message to log
+        :param gcmd: command context the pause is run through, if any
         """
         self.logger.error(message)
         if (self.afc.function.is_homed(for_move=True)
             and not self.afc.function.is_paused()):
             self.afc.save_pos()
             if self.pause:
-                self.pause_print()
+                self.pause_print(gcmd=gcmd)
 
-    def pause_print(self) -> None:
+    def pause_print(self, gcmd: AFCGcmd) -> None:
         """
         pause_print function verifies that the printer is homed and not currently paused before calling
         the base pause command
+
+        :param gcmd: command context the pause is run through, if any
         """
         self.set_error_state( True )
-        self.logger.info ('PAUSING')
-        self.afc.run_script('PAUSE')
+        self.logger.info('PAUSING')
+        self.afc.run_script('PAUSE', gcmd=gcmd)
         self.logger.debug("After User Pause")
         self.afc.function.log_toolhead_pos()
 
@@ -212,13 +220,15 @@ class afcError:
         self.afc.error_state = state
         self.afc.current_state = State.ERROR if state else State.IDLE
 
-    def AFC_error(self, msg: str, pause: bool=True, stack_name: Optional[str]=None) -> None:
+    def AFC_error(self, msg: str, pause: bool=True, stack_name: Optional[str]=None, *,
+                  gcmd: AFCGcmd) -> None:
         """
         Log an AFC error and optionally pause the print.
 
         :param msg: error message to log
         :param pause: True to pause the print after logging
         :param stack_name: name to attribute the error to, defaults to the caller's function name
+        :param gcmd: command context the pause is run through, if any
         """
         # Print to logger since respond_raw does not write to logger
         logging.warning(msg)
@@ -228,7 +238,7 @@ class afcError:
             stack_name = caller_frame.f_code.co_name if caller_frame else ""
         # Handle AFC errors
         self.logger.error(message=msg, stack_name=stack_name)
-        if pause: self.pause_print()
+        if pause: self.pause_print(gcmd=gcmd)
 
     cmd_RESET_FAILURE_help = "CLEAR STATUS ERROR"
     def cmd_RESET_FAILURE(self, gcmd: GCodeCommand) -> None:
@@ -297,7 +307,7 @@ class afcError:
         self.logger.debug("AFC_RESUME: Before User Restore")
         self.afc.function.log_toolhead_pos()
         resume_script = f"{self.AFC_RENAME_RESUME_NAME} {gcmd.get_raw_command_parameters()}"
-        self.afc.run_script(resume_script, gcmd)
+        self.afc.run_script(resume_script, gcmd=gcmd)
 
         # The only time our resume should restore position is if there was an error that caused the pause
         if (self.afc.error_state
@@ -353,10 +363,10 @@ class afcError:
                 self.logger.debug(f"AFC_PAUSE: not moving in z cur_pos:{self.afc.gcode_move.last_position} move_z_pos:{move_z_pos}")
             # Call users PAUSE
             renamed_pause_script = f"{self.AFC_RENAME_PAUSE_NAME} {gcmd.get_raw_command_parameters()}"
-            self.afc.run_script(renamed_pause_script, gcmd)
+            self.afc.run_script(renamed_pause_script, gcmd=gcmd)
 
             timeout_to_use = max(self.error_timeout, self.idle_timeout_val)
-            self.afc.run_script(f"SET_IDLE_TIMEOUT TIMEOUT={timeout_to_use}", gcmd)
+            self.afc.run_script(f"SET_IDLE_TIMEOUT TIMEOUT={timeout_to_use}", gcmd=gcmd)
 
         else:
             self.logger.debug("AFC_PAUSE: Not Pausing")
@@ -368,13 +378,15 @@ class afcError:
 
 
     handle_lane_failure_help = "Get load errors, stop stepper and respond error"
-    def handle_lane_failure(self, cur_lane: AFCLane, message: str, pause: bool=True) -> None:
+    def handle_lane_failure(self, cur_lane: AFCLane, message: str, pause: bool=True, *,
+                            gcmd: AFCGcmd) -> None:
         """
         Disable a lane's stepper, mark it as errored, and report the failure.
 
         :param cur_lane: lane object that failed
         :param message: description of the failure
         :param pause: True to pause the print after reporting the failure
+        :param gcmd: command context the pause is run through, if any
         """
         # Disable the stepper for this lane
         cur_lane.do_enable(False)
@@ -384,8 +396,8 @@ class afcError:
         caller_frame = frame.f_back if frame else None
         stack_name = caller_frame.f_code.co_name if caller_frame else ""
 
-        self.AFC_error(msg, pause, stack_name=stack_name)
-        cur_lane.unit_obj.lane_fault(cur_lane)
+        self.AFC_error(msg, pause, stack_name=stack_name, gcmd=gcmd)
+        cur_lane.unit_obj.lane_fault(cur_lane, gcmd=gcmd)
 
 def load_config(config: ConfigWrapper) -> afcError:
     """
