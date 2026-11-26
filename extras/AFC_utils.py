@@ -723,13 +723,16 @@ class AFC_moonraker:
                 self._log_async(self.logger.error, "Unexpected error in moonraker background writer")
                 self._log_async(self.logger.debug, traceback.format_exc())
 
-    def _get_results(self, url_string: Union[str, Request], print_error: bool=True) -> Optional[Any]:
+    def _get_results(self, url_string: Union[str, Request], print_error: bool=True,
+                     missing_ok: bool=False) -> Optional[Any]:
         """
         Helper function to get results, check for errors and return data if successful
 
         :param url_string: URL encoded string or Request to fetch/post data to moonraker
         :param print_error: Set to True for error to be displayed in console/mainsail panel, setting
                             to False will still write error to log via debug message
+        :param missing_ok: Set to True when a 404 is an expected "nothing there" answer, it is then
+                           logged as a debug message instead of an error
 
         :returns: Returns result dictionary if data is valid, returns None if and error occurred
         """
@@ -750,6 +753,12 @@ class AFC_moonraker:
                 else:
                     self._log_async(logger, self.ERROR_STRING)
                     self._log_async(logger, f"Response: {resp.status} Reason: {resp.reason}")
+        except HTTPError as e:
+            if (missing_ok
+                and e.code == 404):
+                self._log_async(self.logger.debug, f"Moonraker has no entry for {e.filename}")
+            else:
+                self._log_async(logger, self.ERROR_STRING, traceback=traceback.format_exc())
         except:
             self._log_async(logger, self.ERROR_STRING, traceback=traceback.format_exc())
             data = None
@@ -811,10 +820,14 @@ class AFC_moonraker:
         Does the actual GET for a print file's metadata. Called from the
         background writer thread; schedules callback on the reactor thread.
 
+        A file moonraker doesn't know (e.g. a firmware-generated virtual print such as Kalico's
+        `PRINT_PA_TOWER`) has no metadata, which is not an error.
+
         :param filename: Filename to query moonraker and pull metadata for
         :param callback: Called with the metadata dict (or None on failure)
         """
-        resp: Optional[dict[str, Any]] = self._get_results(urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}"))
+        url = urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}")
+        resp: Optional[dict[str, Any]] = self._get_results(url, missing_ok=True)
         self.reactor.register_async_callback(lambda et, resp=resp: callback(resp))
 
     def get_afc_stats(self) -> Optional[dict[str, Any]]:

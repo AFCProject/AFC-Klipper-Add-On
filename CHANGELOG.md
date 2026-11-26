@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [11-25-2026]
 ### Fixed
-- Fixed a switched buffer and toolhead detection resulting in a bad multiplier when jam detection is enabled; resulting in false clog state. (#928).
+- Fixed a switched buffer and toolhead detection resulting in a bad multiplier when jam detection is enabled; resulting in false clog state. (#928)
+- A print whose file Moonraker doesn't have, such as the virtual job Kalico's `PRINT_PA_TOWER`
+  runs, no longer reports "Error getting data from moonraker" to the console at print start. The
+  404 is logged as a debug message and the print continues with no toolchange count, as before.
+  Other Moonraker failures are still reported as errors.
 
 ## [11-21-2026]
 ### Added
