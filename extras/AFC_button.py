@@ -18,9 +18,21 @@ if TYPE_CHECKING:
     from extras.buttons import PrinterButtons
     from extras.query_adc import QueryADC
 
-# Raw ADC ratio (0-1) at/above which a reading is treated as maxed out/saturated
-# (e.g. an open circuit) rather than a real press resistance.
-ADC_SATURATION_RATIO = 0.99
+# Raw ADC ratio (0-1) at/above which a reading counts as maxed out/saturated. 0.98 rather than 1.0
+# since noise on a genuinely pressed, near-saturated button can bounce the ratio around without the
+# press being any less real. Overridable per button via the adc_saturation_ratio config option.
+ADC_SATURATION_RATIO = 0.98
+# Half-width (ohms) added/subtracted from a calibrated press reading to build analog_range's
+# min/max. Overridable via calibration_range, for a resistor ladder whose adjacent buttons sit
+# closer together than this default allows.
+BUTTON_CALIBRATION_RANGE = 250.0
+# Minimum distance (ohms) a reading must move from a button's released baseline to count as
+# "pressed", measured against its own idle reading so it works regardless of wiring. Overridable via
+# calibration_press_delta.
+BUTTON_CALIBRATION_PRESS_DELTA = 1000.0
+# Consecutive poll readings averaged together for every calibration measurement, instead of trusting
+# any single noisy ADC sample. Overridable via the calibration_sample_count config option.
+BUTTON_CALIBRATION_SAMPLE_COUNT = 5
 
 class AFCButton:
     """
@@ -53,9 +65,21 @@ class AFCButton:
         self.analog_min: float = 0.0
         self.analog_max: float = 0.0
         self.pullup: float = 4700.0
+        self.calibration_range: float = BUTTON_CALIBRATION_RANGE
+        self.calibration_press_delta: float = BUTTON_CALIBRATION_PRESS_DELTA
+        self.calibration_sample_count: int = BUTTON_CALIBRATION_SAMPLE_COUNT
+        self.adc_saturation_ratio: float = ADC_SATURATION_RATIO
         if self.is_adc_button:
             self.analog_min, self.analog_max = config.getfloatlist("analog_range", count=2)
             self.pullup = config.getfloat("analog_pullup_resistor", 4700.0, above=0.0)
+            self.calibration_range = config.getfloat("calibration_range",
+                                                      BUTTON_CALIBRATION_RANGE, above=0.0)
+            self.calibration_press_delta = config.getfloat(
+                "calibration_press_delta", BUTTON_CALIBRATION_PRESS_DELTA, above=0.0)
+            self.calibration_sample_count = config.getint(
+                "calibration_sample_count", BUTTON_CALIBRATION_SAMPLE_COUNT, minval=1)
+            self.adc_saturation_ratio = config.getfloat(
+                "adc_saturation_ratio", ADC_SATURATION_RATIO, above=0.0, below=1.0)
 
         buttons: PrinterButtons = self.printer.load_object(config, 'buttons')
         if self.is_adc_button:
@@ -71,8 +95,8 @@ class AFCButton:
             else:
                 buttons.register_buttons([self.pin], self.button_callback)
 
-        # Custom short_press_gcode/long_press_gcode take priority over the
-        # embedded load/unload/eject logic below when configured.
+        # Custom short_press_gcode/long_press_gcode take priority over the embedded
+        # load/unload/eject logic below when configured.
         gcode_macro = self.printer.load_object(config, 'gcode_macro')
         self.short_press_template: Any = gcode_macro.load_template(config, 'short_press_gcode', '')
         self.long_press_template: Any = gcode_macro.load_template(config, 'long_press_gcode', '')
@@ -98,20 +122,17 @@ class AFCButton:
         """
         self._lane_obj = self.afc.lanes.get(self.lane_id)
         if not self._lane_obj:
-            error_str = (
-                f"Lane {self.lane_id} is not defined/found in your configuration file. "
-                "Please define lane or verify lane name is correct."
-            )
+            error_str = (f"Lane {self.lane_id} is not defined/found in your configuration file. "
+                        "Please define lane or verify lane name is correct.")
             raise error(error_str)
 
     def _get_adc_ratio(self) -> Optional[float]:
         """
-        Read this button's current raw ADC ratio (0-1), the same sample
-        get_resistance() and is_adc_saturated() both derive their result
-        from.
+        Read this button's current raw ADC ratio (0-1), the same sample get_resistance() and
+        is_adc_saturated() both derive their result from.
 
-        :return Optional[float]: raw ADC ratio, or None if this isn't an
-            ADC button or no sample has been read yet
+        :return Optional[float]: raw ADC ratio, or None if this isn't an ADC button or no sample has
+            been read yet
         """
         if not self.is_adc_button:
             return None
@@ -119,18 +140,17 @@ class AFCButton:
         mcu_adc = query_adc.adc.get(f"adc_button:{self.pin.strip()}")
         if mcu_adc is None:
             return None
-        # get_last_value() returns (value, timestamp) on this project's Klipper
-        # forks, but (timestamp, value) on mainline. value is always a 0-1 ADC
-        # ratio and timestamp is always well above 1 once the printer has been
-        # running a moment, so pick whichever of the two is in range instead
-        # of assuming a fixed order.
+        # get_last_value() returns (value, timestamp) on this project's Klipper forks, but
+        # (timestamp, value) on mainline. value is always a 0-1 ADC ratio and timestamp is always
+        # well above 1 once the printer has been running a moment, so pick whichever of the two is
+        # in range instead of assuming a fixed order.
         first, second = mcu_adc.get_last_value()
         return first if 0.0 <= first <= 1.0 else second
 
     def resistance_at_ratio(self, ratio: float) -> float:
         """
-        Convert an ADC ratio (0-1) to the resistance get_resistance() would
-        report for that ratio, using this button's configured pullup.
+        Convert an ADC ratio (0-1) to the resistance get_resistance() would report for that ratio,
+        using this button's configured pullup.
 
         :param ratio: ADC ratio to convert
         :return float: corresponding resistance in ohms
@@ -148,12 +168,11 @@ class AFCButton:
 
     def get_resistance(self) -> Optional[float]:
         """
-        Read this button's current ADC resistance, calculated the same way
-        QUERY_ADC reports it. Used by button calibration to find press/release
-        thresholds.
+        Read this button's current ADC resistance, calculated the same way QUERY_ADC reports it.
+        Used by button calibration to find press/release thresholds.
 
-        :return Optional[float]: resistance in ohms, or None if this isn't an
-            ADC button or no sample has been read yet
+        :return Optional[float]: resistance in ohms, or None if this isn't an ADC button or no
+            sample has been read yet
         """
         value = self._get_adc_ratio()
         if value is None:
@@ -163,27 +182,25 @@ class AFCButton:
 
     def is_adc_saturated(self) -> bool:
         """
-        Check whether this button's current raw ADC ratio is at/near its
-        ceiling, indicating a maxed-out/saturated reading (e.g. an open
-        circuit) rather than a real press resistance. Used by button
-        calibration to detect an unusable measurement before it's trusted.
+        Check whether this button's current raw ADC ratio is at/near its ceiling, indicating a
+        maxed-out/saturated reading (e.g. an open circuit) rather than a real press resistance. Used
+        by button calibration to detect an unusable measurement before it's trusted.
 
-        :return bool: True when the raw ADC ratio is at/above
-            ADC_SATURATION_RATIO, else False (including when it can't be read)
+        :return bool: True when the raw ADC ratio is at/above adc_saturation_ratio, else False
         """
         value = self._get_adc_ratio()
         if value is None:
             return False
-        return value >= ADC_SATURATION_RATIO
+        return value >= self.adc_saturation_ratio
 
     def button_callback(self, eventtime: float, state: bool) -> None:
         """
         Callback function for button press events. Tracks press duration and
         executes short or long press actions based on the duration.
 
-        Suppressed entirely while ADC button calibration is running, since
-        BUTTON_CALIBRATION is reading presses off every button itself and a
-        lane load/unload firing mid-calibration would fight it.
+        Suppressed entirely while ADC button calibration is running, since BUTTON_CALIBRATION is
+        reading presses off every button itself and a lane load/unload firing mid-calibration would
+        fight it.
 
         :param eventtime: time of the event
         :param state: state of the button, True for press, False for release
@@ -222,7 +239,8 @@ class AFCButton:
                 if self.afc.TOOL_UNLOAD(self.lane_obj, gcmd="callback"):
                     self.afc.LANE_UNLOAD(self.lane_obj, gcmd="callback")
                 else:
-                    self.afc.afc_stats.increase_unload_error_count(self.afc)
+                    if self.afc.afc_stats:
+                        self.afc.afc_stats.increase_unload_error_count(self.afc)
             else:
                 # If another lane is active, just eject this one
                 self.afc.logger.info(f"Ejecting {self.lane_id}.")
@@ -236,31 +254,31 @@ class AFCButton:
                 and cur_lane.name == self.lane_id):
                 self.afc.logger.info(f"Unloading tool from {self.lane_id}.")
                 if not self.afc.TOOL_UNLOAD(cur_lane, gcmd="callback"):
-                    self.afc.afc_stats.increase_unload_error_count(self.afc)
+                    if self.afc.afc_stats:
+                        self.afc.afc_stats.increase_unload_error_count(self.afc)
             else:
                 self.afc.logger.info(f"Loading tool to {self.lane_id}.")
                 self.afc.CHANGE_TOOL(self.lane_obj, gcmd="callback")
 
     def _run_custom_press_gcode(self, template: Any) -> bool:
         """
-        Render and run a custom short_press_gcode/long_press_gcode override.
-        A failure is reported through AFC_error, naming the lane and the
-        failing macro, with the exception itself going only to the debug log.
+        Render and run a custom short_press_gcode/long_press_gcode override. A failure is reported
+        through AFC_error, naming the lane and the failing macro, with the exception itself going
+        only to the debug log.
 
         :param template: loaded short_press_template or long_press_template
-        :return bool: True when the override had non-empty gcode configured
-            (ran, or failed trying), so the embedded press logic should be
-            skipped; False when nothing was configured
+        :return bool: True when the override had non-empty gcode configured (ran, or failed trying),
+            so the embedded press logic should be skipped; False when nothing was configured
         """
         try:
             commands = template.render()
             if not commands.strip():
                 return False
-            self.afc.run_script(commands, gcmd="callback")
+            self.afc.run_script(commands, gcmd="force_acquire")
         except Exception:
             error_str = f"{self.lane_id}: error running {template.name}"
             self.afc.logger.debug(error_str, only_debug=True, traceback=traceback.format_exc())
-            self.afc.error.AFC_error(error_str, pause=False)
+            self.afc.error.AFC_error(error_str, pause=False, gcmd="callback")
         return True
 
 

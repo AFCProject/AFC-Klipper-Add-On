@@ -1013,26 +1013,29 @@ class afc:
         Run a gcode script, acquiring the gcode mutex only if not already held.
 
         :param script: gcode script to run
-        :param gcmd: command context the script is run through, or one of two
-            literals: `"callback"` for a true async context with no real
-            command (hardware/sensor callbacks, reactor timers, deferred
-            completion callbacks), or `"sub_command"` for an event handler
-            fired synchronously from inside another command's own gcode
-            context, which can't release the mutex until this call stack
-            returns to it
+        :param gcmd: command context the script is run through: a real gcmd, `"callback"` for a true
+            async context with no mutex held (hardware/sensor callbacks, reactor timers, deferred
+            completion callbacks), `"sub_command"` for an event handler fired synchronously from
+            inside another command's own gcode context (which can't release the mutex until this
+            call stack returns to it), or `"force_acquire"`, same as `"callback"` but always run
+            through `gcode.run_script()` regardless of Kalico's capabilities
         """
         if gcmd == "sub_command":
             # The caller guarantees the mutex is already held by its own
             # enclosing synchronous command context.
             self.gcode.run_script_from_command(script)
-        elif self._rsfc_accepts_gcmd:
-            # run_script_from_command() with no gcmd creates a legacy g-code
-            # context on new Kalico; a later recursive run_script call
-            # through that context hits the mutex error again.
-            if gcmd != "callback":
-                gcmd.run_script(script)
-            else:
+        elif (self._rsfc_accepts_gcmd
+              or gcmd == "force_acquire"):
+            # force_acquire always takes this branch, even on older Kalico/Klipper, since it must
+            # never fall back to run_script_from_command() below.
+            if (gcmd == "callback"
+                or gcmd == "force_acquire"):
+                # run_script_from_command() with no gcmd would create a legacy g-code context on new
+                # Kalico; a later recursive run_script call through that context hits the mutex
+                # error again.
                 self.gcode.run_script(script)
+            else:
+                gcmd.run_script(script)
         else:
             self.gcode.run_script_from_command(script)
 
