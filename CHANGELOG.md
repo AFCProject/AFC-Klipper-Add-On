@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   404 is logged as a debug message and the print continues with no toolchange count, as before.
   Other Moonraker failures are still reported as errors.
 
+## [11-21-2026]
+### Added
+- Filtering of message that get logged to AFC_ACE_serial.log, before it was very chatty and would constantly log to file. Logging that has been suppressed can be turned back on by adding `debug: True` into your unit config.
+
+### Fixed
+- Fixed buffer not getting enabled when `SET_LANE_LOADED` macro is used.
+
 ## [11-15-2026]
 ### Added
 - Added support for Creality CFS (Creality Filament System) units with `[AFC_CFS]`: up to four boxes on one
@@ -25,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `QUERY_BUFFER` now reports the raw, prescaled ADC value for PSF-type buffers.
+
+### Fixed
+- Fixed filament sensor debounce raising a `TypeError` for Snapmaker's and Kalico's `force`/`immediate` calling conventions.
+- Fixed a signature-probing fallback that could invoke a filament sensor callback a second time when it failed for an unrelated reason.
 
 ## [11-13-2026]
 ### Updated

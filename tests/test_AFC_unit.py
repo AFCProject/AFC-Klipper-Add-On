@@ -236,15 +236,15 @@ class TestSelectLane:
 
     def test_returns_true_and_zero_default_args(self):
         unit = _make_unit()
-        assert unit.select_lane("lane") == (True, 0.0)
+        assert unit.select_lane("lane", gcmd=MagicMock()) == (True, 0.0)
 
     def test_sel_dir_true_has_no_effect(self):
         unit = _make_unit()
-        assert unit.select_lane("lane", sel_dir=True) == (True, 0.0)
+        assert unit.select_lane("lane", sel_dir=True, gcmd=MagicMock()) == (True, 0.0)
 
     def test_disable_selector_true_has_no_effect(self):
         unit = _make_unit()
-        assert unit.select_lane("lane", disable_selector=True) == (True, 0.0)
+        assert unit.select_lane("lane", disable_selector=True, gcmd=MagicMock()) == (True, 0.0)
 
 
 # ── _selector_cal_dis_adjust ─────────────────────────────────────────────────
@@ -255,8 +255,8 @@ class TestSelectorCalDisAdjust:
         unit.selector_stepper_obj = MagicMock()
         lane = _make_lane("lane1")
         lane.selector_cal_dis = 2.5
-        unit._selector_cal_dis_adjust(lane)
-        unit.selector_stepper_obj.move.assert_called_once_with(2.5, 50, 50, False)
+        unit._selector_cal_dis_adjust(lane, gcmd="callback")
+        unit.selector_stepper_obj.move.assert_called_once_with(2.5, 50, 50, False, gcmd="callback")
 
     def test_skipped_when_no_selector_stepper_obj(self):
         """Proven independently of selector_cal_dis's own value: a valid,
@@ -266,7 +266,7 @@ class TestSelectorCalDisAdjust:
         unit.selector_stepper_obj = None
         lane = _make_lane("lane1")
         lane.selector_cal_dis = 2.5
-        unit._selector_cal_dis_adjust(lane)
+        unit._selector_cal_dis_adjust(lane, gcmd="callback")
         # No selector_stepper_obj to assert on; move never gets a chance to
         # be called since the object itself is None here.
 
@@ -275,7 +275,7 @@ class TestSelectorCalDisAdjust:
         unit.selector_stepper_obj = MagicMock()
         lane = _make_lane("lane1")
         lane.selector_cal_dis = None
-        unit._selector_cal_dis_adjust(lane)
+        unit._selector_cal_dis_adjust(lane, gcmd="callback")
         unit.selector_stepper_obj.move.assert_not_called()
 
     def test_skipped_when_selector_cal_dis_is_zero(self):
@@ -283,7 +283,7 @@ class TestSelectorCalDisAdjust:
         unit.selector_stepper_obj = MagicMock()
         lane = _make_lane("lane1")
         lane.selector_cal_dis = 0.0
-        unit._selector_cal_dis_adjust(lane)
+        unit._selector_cal_dis_adjust(lane, gcmd="callback")
         unit.selector_stepper_obj.move.assert_not_called()
 
 
@@ -292,7 +292,7 @@ class TestSelectorCalDisAdjust:
 class TestReturnToHome:
     def test_returns_none(self):
         unit = _make_unit()
-        result = unit.return_to_home()
+        result = unit.return_to_home(gcmd="callback")
         assert result is None
 
 
@@ -304,7 +304,7 @@ class TestOnFilamentInsert:
         unit.printer.send_event = MagicMock()
         lane = MagicMock()
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         unit.printer.send_event.assert_called_once_with("afc:lane_inserted", lane)
 
@@ -315,7 +315,7 @@ class TestOnFilamentRemove:
         unit.printer.send_event = MagicMock()
         lane = MagicMock()
 
-        result = unit.on_filament_remove(lane)
+        result = unit.on_filament_remove(lane, gcmd="callback")
 
         assert result is None
         unit.printer.send_event.assert_not_called()
@@ -338,7 +338,7 @@ class TestLaneStatusLeds:
     def test_lane_not_ready_calls_afc_led_with_not_ready_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit.lane_not_ready(lane)
+        unit.lane_not_ready(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_not_ready, lane.led_index)
 
     def test_lane_not_ready_turns_off_spool_led_when_spool_index_set(self):
@@ -346,7 +346,7 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.led_spool_index = "2"
-        unit.lane_not_ready(lane)
+        unit.lane_not_ready(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_any_call(unit.afc.led_off, "2")
 
     def test_lane_not_ready_skips_spool_led_when_spool_index_none(self):
@@ -354,14 +354,14 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.led_spool_index = None
-        unit.lane_not_ready(lane)
+        unit.lane_not_ready(lane, gcmd="callback")
         for c in unit.afc.function.afc_led.call_args_list:
             assert c[0][0] != unit.afc.led_off
 
     def test_lane_loaded_calls_afc_led_with_ready_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
 
     def test_lane_loaded_illuminates_spool_led_when_spool_index_set(self):
@@ -369,19 +369,19 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.led_spool_index = "2"
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_any_call(lane.led_spool_illum, "2")
 
     def test_lane_unloading_calls_afc_led_with_unloading_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit.lane_unloading(lane)
+        unit.lane_unloading(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_unloading, lane.led_index)
 
     def test_lane_unloaded_calls_afc_led_with_not_ready_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit.lane_unloaded(lane)
+        unit.lane_unloaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_not_ready, lane.led_index)
 
     def test_lane_unloaded_does_not_touch_spool_led(self):
@@ -390,14 +390,14 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.led_spool_index = "2"
-        unit.lane_unloaded(lane)
+        unit.lane_unloaded(lane, gcmd="callback")
         for c in unit.afc.function.afc_led.call_args_list:
             assert c[0][0] != unit.afc.led_off
 
     def test_lane_loading_calls_afc_led_with_loading_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit.lane_loading(lane)
+        unit.lane_loading(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_loading, lane.led_index)
 
     def test_lane_tool_loaded_gears_does_not_set_a_static_color(self):
@@ -406,7 +406,7 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
-        unit.lane_tool_loaded_gears(lane)
+        unit.lane_tool_loaded_gears(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_not_called()
         lane.extruder_obj.set_status_led.assert_not_called()
 
@@ -414,7 +414,7 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
-        unit.lane_tool_loaded(lane)
+        unit.lane_tool_loaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_tool_loaded, lane.led_index)
         lane.extruder_obj.set_status_led.assert_called_once_with(lane.led_tool_loaded)
 
@@ -422,7 +422,7 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
-        unit.lane_tool_unloaded(lane)
+        unit.lane_tool_unloaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
         lane.extruder_obj.set_status_led.assert_called_once_with(lane.led_tool_unloaded)
 
@@ -430,14 +430,14 @@ class TestLaneStatusLeds:
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
-        unit.lane_tool_loaded_idle(lane)
+        unit.lane_tool_loaded_idle(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_tool_loaded_idle, lane.led_index)
         lane.extruder_obj.set_status_led.assert_called_once_with(lane.led_tool_loaded_idle)
 
     def test_lane_fault_calls_afc_led_with_fault_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit.lane_fault(lane)
+        unit.lane_fault(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_fault, lane.led_index)
 
 
@@ -491,24 +491,24 @@ class TestLedStateDedup:
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_not_ready(lane)
-        unit.lane_not_ready(lane)
+        unit.lane_not_ready(lane, gcmd="callback")
+        unit.lane_not_ready(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_not_ready_runs_again_after_state_changes(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_loaded(lane)
-        unit.lane_not_ready(lane)
+        unit.lane_loaded(lane, gcmd="callback")
+        unit.lane_not_ready(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 2
 
     def test_lane_loaded_skips_when_already_loaded(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_loaded(lane)
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
+        unit.lane_loaded(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_loaded_force_true_reapplies_even_when_already_loaded(self):
@@ -517,8 +517,8 @@ class TestLedStateDedup:
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_loaded(lane)
-        unit.lane_loaded(lane, force=True)
+        unit.lane_loaded(lane, gcmd="callback")
+        unit.lane_loaded(lane, force=True, gcmd="callback")
         assert unit._trigger_led_state.call_count == 2
 
     def test_lane_loaded_force_false_default_still_skips_when_already_loaded(self):
@@ -526,32 +526,32 @@ class TestLedStateDedup:
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_loaded(lane)
-        unit.lane_loaded(lane, force=False)
+        unit.lane_loaded(lane, gcmd="callback")
+        unit.lane_loaded(lane, force=False, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_unloading_skips_when_already_unloading(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_unloading(lane)
-        unit.lane_unloading(lane)
+        unit.lane_unloading(lane, gcmd="callback")
+        unit.lane_unloading(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_unloaded_skips_when_already_unloaded(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_unloaded(lane)
-        unit.lane_unloaded(lane)
+        unit.lane_unloaded(lane, gcmd="callback")
+        unit.lane_unloaded(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_loading_skips_when_already_loading(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_loading(lane)
-        unit.lane_loading(lane)
+        unit.lane_loading(lane, gcmd="callback")
+        unit.lane_loading(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_tool_loaded_gears_skips_when_already_tool_loaded_gears(self):
@@ -559,8 +559,8 @@ class TestLedStateDedup:
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_loaded_gears(lane)
-        unit.lane_tool_loaded_gears(lane)
+        unit.lane_tool_loaded_gears(lane, gcmd="callback")
+        unit.lane_tool_loaded_gears(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_tool_loaded_skips_when_already_tool_loaded(self):
@@ -568,8 +568,8 @@ class TestLedStateDedup:
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_loaded(lane)
-        unit.lane_tool_loaded(lane)
+        unit.lane_tool_loaded(lane, gcmd="callback")
+        unit.lane_tool_loaded(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_tool_unloaded_skips_when_already_tool_unloaded(self):
@@ -577,8 +577,8 @@ class TestLedStateDedup:
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_unloaded(lane)
-        unit.lane_tool_unloaded(lane)
+        unit.lane_tool_unloaded(lane, gcmd="callback")
+        unit.lane_tool_unloaded(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_tool_loaded_idle_skips_when_already_tool_loaded_idle(self):
@@ -586,16 +586,16 @@ class TestLedStateDedup:
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_loaded_idle(lane)
-        unit.lane_tool_loaded_idle(lane)
+        unit.lane_tool_loaded_idle(lane, gcmd="callback")
+        unit.lane_tool_loaded_idle(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_lane_fault_skips_when_already_fault(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_fault(lane)
-        unit.lane_fault(lane)
+        unit.lane_fault(lane, gcmd="callback")
+        unit.lane_fault(lane, gcmd="callback")
         assert unit._trigger_led_state.call_count == 1
 
     def test_different_lanes_are_deduped_independently(self):
@@ -605,8 +605,8 @@ class TestLedStateDedup:
         lane1 = _make_lane("lane1")
         lane2 = _make_lane("lane2")
         unit._trigger_led_state = MagicMock()
-        unit.lane_loaded(lane1)
-        unit.lane_loaded(lane2)
+        unit.lane_loaded(lane1, gcmd="callback")
+        unit.lane_loaded(lane2, gcmd="callback")
         assert unit._trigger_led_state.call_count == 2
 
 
@@ -616,13 +616,13 @@ class TestStopLedEffects:
     def test_no_active_effects_does_not_call_gcode(self):
         unit = _make_unit()
         unit.afc.active_led_effects = []
-        unit._stop_led_effects()
+        unit._stop_led_effects(gcmd="callback")
         unit.gcode.run_script_from_command.assert_not_called()
 
     def test_stops_each_active_effect(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault"]
-        unit._stop_led_effects()
+        unit._stop_led_effects(gcmd="callback")
         unit.gcode.run_script_from_command.assert_has_calls([
             call("SET_LED_EFFECT EFFECT=lane1_loaded STOP=1"),
             call("SET_LED_EFFECT EFFECT=lane2_fault STOP=1"),
@@ -632,14 +632,14 @@ class TestStopLedEffects:
     def test_clears_active_led_effects_after_stopping(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault"]
-        unit._stop_led_effects()
+        unit._stop_led_effects(gcmd="callback")
         assert unit.afc.active_led_effects == []
 
     def test_exception_from_gcode_is_swallowed(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded"]
         unit.gcode.run_script_from_command.side_effect = Exception("boom")
-        unit._stop_led_effects()  # must not raise
+        unit._stop_led_effects(gcmd="callback")  # must not raise
 
     def test_exception_on_one_effect_does_not_skip_remaining_effects(self):
         """The try/except is now per-iteration, not around the whole loop:
@@ -648,7 +648,7 @@ class TestStopLedEffects:
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault"]
         unit.gcode.run_script_from_command.side_effect = [Exception("boom"), None]
-        unit._stop_led_effects()
+        unit._stop_led_effects(gcmd="callback")
         unit.gcode.run_script_from_command.assert_has_calls([
             call("SET_LED_EFFECT EFFECT=lane1_loaded STOP=1"),
             call("SET_LED_EFFECT EFFECT=lane2_fault STOP=1"),
@@ -659,7 +659,7 @@ class TestStopLedEffects:
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded"]
         unit.gcode.run_script_from_command.side_effect = Exception("boom")
-        unit._stop_led_effects()
+        unit._stop_led_effects(gcmd="callback")
         assert unit.afc.active_led_effects == []
 
     # ── targets ────────────────────────────────────────────────────────────────
@@ -667,26 +667,26 @@ class TestStopLedEffects:
     def test_targets_only_stops_matching_effects(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault"]
-        unit._stop_led_effects(["lane1"])
+        unit._stop_led_effects(["lane1"], gcmd="callback")
         unit.gcode.run_script_from_command.assert_called_once_with(
             "SET_LED_EFFECT EFFECT=lane1_loaded STOP=1")
 
     def test_targets_leaves_non_matching_effects_in_active_list(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault"]
-        unit._stop_led_effects(["lane1"])
+        unit._stop_led_effects(["lane1"], gcmd="callback")
         assert unit.afc.active_led_effects == ["lane2_fault"]
 
     def test_targets_matches_multiple_names(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded", "lane2_fault", "extruder1_tool_loaded"]
-        unit._stop_led_effects(["lane1", "extruder1"])
+        unit._stop_led_effects(["lane1", "extruder1"], gcmd="callback")
         assert unit.afc.active_led_effects == ["lane2_fault"]
 
     def test_targets_no_match_stops_nothing(self):
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane2_fault"]
-        unit._stop_led_effects(["lane1"])
+        unit._stop_led_effects(["lane1"], gcmd="callback")
         unit.gcode.run_script_from_command.assert_not_called()
         assert unit.afc.active_led_effects == ["lane2_fault"]
 
@@ -695,7 +695,7 @@ class TestStopLedEffects:
         matches any effect, so everything is preserved rather than cleared."""
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane1_loaded"]
-        unit._stop_led_effects([])
+        unit._stop_led_effects([], gcmd="callback")
         unit.gcode.run_script_from_command.assert_not_called()
         assert unit.afc.active_led_effects == ["lane1_loaded"]
 
@@ -704,7 +704,7 @@ class TestStopLedEffects:
         the full "<target>_" prefix, not just a substring."""
         unit = _make_unit()
         unit.afc.active_led_effects = ["lane10_loaded"]
-        unit._stop_led_effects(["lane1"])
+        unit._stop_led_effects(["lane1"], gcmd="callback")
         unit.gcode.run_script_from_command.assert_not_called()
         assert unit.afc.active_led_effects == ["lane10_loaded"]
 
@@ -716,16 +716,16 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         unit._stop_led_effects = MagicMock()
-        unit._trigger_led_state(lane, static_color=lane.led_ready)
-        unit._stop_led_effects.assert_called_once_with([lane.name])
+        unit._trigger_led_state(lane, static_color=lane.led_ready, gcmd="callback")
+        unit._stop_led_effects.assert_called_once_with([lane.name], gcmd="callback")
 
     def test_stops_only_extruder_effects_when_only_extruder_given(self):
         unit = _make_unit()
         extruder = MagicMock()
         extruder.name = "extruder1"
         unit._stop_led_effects = MagicMock()
-        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0")
-        unit._stop_led_effects.assert_called_once_with(["extruder1"])
+        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0", gcmd="callback")
+        unit._stop_led_effects.assert_called_once_with(["extruder1"], gcmd="callback")
 
     def test_stops_both_lane_and_extruder_effects_when_both_given(self):
         unit = _make_unit()
@@ -733,20 +733,21 @@ class TestTriggerLedState:
         extruder = MagicMock()
         extruder.name = "extruder1"
         unit._stop_led_effects = MagicMock()
-        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_ready)
-        unit._stop_led_effects.assert_called_once_with([lane.name, "extruder1"])
+        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_ready,
+                                gcmd="callback")
+        unit._stop_led_effects.assert_called_once_with([lane.name, "extruder1"], gcmd="callback")
 
     def test_applies_static_color(self):
         unit = _make_unit()
         lane = _make_lane()
-        unit._trigger_led_state(lane, static_color=lane.led_ready)
+        unit._trigger_led_state(lane, static_color=lane.led_ready, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
 
     def test_none_static_color_skips_afc_led(self):
         """Covers the `static_color is not None` guard's False branch."""
         unit = _make_unit()
         lane = _make_lane()
-        unit._trigger_led_state(lane, static_color=None)
+        unit._trigger_led_state(lane, static_color=None, gcmd="callback")
         unit.afc.function.afc_led.assert_not_called()
 
     def test_no_effect_suffix_does_not_call_call_led_effect(self):
@@ -754,7 +755,7 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         unit._call_led_effect = MagicMock()
-        unit._trigger_led_state(lane, static_color=lane.led_ready)
+        unit._trigger_led_state(lane, static_color=lane.led_ready, gcmd="callback")
         unit._call_led_effect.assert_not_called()
 
     def test_empty_string_effect_suffix_does_not_call_call_led_effect(self):
@@ -762,22 +763,24 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         unit._call_led_effect = MagicMock()
-        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="")
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="",
+                                gcmd="callback")
         unit._call_led_effect.assert_not_called()
 
     def test_effect_suffix_calls_call_led_effect_with_lane_name(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._call_led_effect = MagicMock()
-        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded")
-        unit._call_led_effect.assert_called_once_with(lane.name, "loaded")
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded",
+                                gcmd="callback")
+        unit._call_led_effect.assert_called_once_with(lane.name, "loaded", gcmd="callback")
 
     # ── lane is None / extruder is None combinations ──────────────────────────
 
     def test_lane_none_and_extruder_none_returns_early(self):
         """Covers the new `lane is None and extruder is None` guard."""
         unit = _make_unit()
-        unit._trigger_led_state(static_color="0,1,0,0", effect_suffix="loaded")
+        unit._trigger_led_state(static_color="0,1,0,0", effect_suffix="loaded", gcmd="callback")
         unit.afc.function.afc_led.assert_not_called()
         unit.gcode.run_script_from_command.assert_not_called()
 
@@ -787,13 +790,13 @@ class TestTriggerLedState:
         there's nothing to scope the stop to."""
         unit = _make_unit()
         unit._stop_led_effects = MagicMock()
-        unit._trigger_led_state()
+        unit._trigger_led_state(gcmd="callback")
         unit._stop_led_effects.assert_not_called()
 
     def test_extruder_only_sets_extruder_led_not_lane_led(self):
         unit = _make_unit()
         extruder = MagicMock()
-        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0")
+        unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0", gcmd="callback")
         unit.afc.function.afc_led.assert_not_called()
         extruder.set_status_led.assert_called_once_with("0,1,0,0")
 
@@ -801,7 +804,8 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         extruder = MagicMock()
-        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_ready)
+        unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_ready,
+                                gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
         extruder.set_status_led.assert_called_once_with(lane.led_ready)
 
@@ -810,7 +814,7 @@ class TestTriggerLedState:
         lane = _make_lane()
         extruder = MagicMock()
         unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_ready,
-                                extruder_static_color=lane.led_tool_unloaded)
+                                extruder_static_color=lane.led_tool_unloaded, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
         extruder.set_status_led.assert_called_once_with(lane.led_tool_unloaded)
 
@@ -819,7 +823,7 @@ class TestTriggerLedState:
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state(lane, static_color=lane.led_ready,
-                                extruder_static_color=lane.led_tool_unloaded)
+                                extruder_static_color=lane.led_tool_unloaded, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
 
     # ── extruder LED effect delegation ─────────────────────────────────────────
@@ -830,8 +834,8 @@ class TestTriggerLedState:
         extruder.name = "extruder1"
         unit._call_led_effect = MagicMock()
         unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0",
-                                effect_suffix="tool_loaded")
-        unit._call_led_effect.assert_called_once_with("extruder1", "tool_loaded")
+                                effect_suffix="tool_loaded", gcmd="callback")
+        unit._call_led_effect.assert_called_once_with("extruder1", "tool_loaded", gcmd="callback")
 
     def test_lane_none_only_calls_call_led_effect_for_extruder(self):
         unit = _make_unit()
@@ -839,15 +843,16 @@ class TestTriggerLedState:
         extruder.name = "extruder1"
         unit._call_led_effect = MagicMock()
         unit._trigger_led_state(extruder=extruder, static_color="0,1,0,0",
-                                effect_suffix="tool_loaded")
-        unit._call_led_effect.assert_called_once_with("extruder1", "tool_loaded")
+                                effect_suffix="tool_loaded", gcmd="callback")
+        unit._call_led_effect.assert_called_once_with("extruder1", "tool_loaded", gcmd="callback")
 
     def test_extruder_none_only_calls_call_led_effect_for_lane(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._call_led_effect = MagicMock()
-        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded")
-        unit._call_led_effect.assert_called_once_with(lane.name, "loaded")
+        unit._trigger_led_state(lane, static_color=lane.led_ready, effect_suffix="loaded",
+                                gcmd="callback")
+        unit._call_led_effect.assert_called_once_with(lane.name, "loaded", gcmd="callback")
 
     def test_lane_and_extruder_both_call_call_led_effect_independently(self):
         unit = _make_unit()
@@ -856,10 +861,10 @@ class TestTriggerLedState:
         extruder.name = "extruder1"
         unit._call_led_effect = MagicMock()
         unit._trigger_led_state(lane, extruder=extruder, static_color=lane.led_tool_loaded,
-                                effect_suffix="tool_loaded")
+                                effect_suffix="tool_loaded", gcmd="callback")
         assert unit._call_led_effect.call_args_list == [
-            call(lane.name, "tool_loaded"),
-            call("extruder1", "tool_loaded"),
+            call(lane.name, "tool_loaded", gcmd="callback"),
+            call("extruder1", "tool_loaded", gcmd="callback"),
         ]
 
 
@@ -869,46 +874,46 @@ class TestCallLedEffect:
     def test_effect_present_calls_set_led_effect_with_constructed_name(self):
         unit = _make_unit()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
-        unit._call_led_effect("lane1", "loaded")
+        unit._call_led_effect("lane1", "loaded", gcmd="callback")
         unit.gcode.run_script_from_command.assert_called_once_with(
             "SET_LED_EFFECT EFFECT=lane1_loaded")
 
     def test_effect_present_appends_constructed_name_to_active_led_effects(self):
         unit = _make_unit()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
-        unit._call_led_effect("lane1", "loaded")
+        unit._call_led_effect("lane1", "loaded", gcmd="callback")
         assert unit.afc.active_led_effects == ["lane1_loaded"]
 
     def test_effect_present_appends_to_existing_active_led_effects_without_clearing(self):
         unit = _make_unit()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
         unit.afc.active_led_effects = ["lane2_fault"]
-        unit._call_led_effect("lane1", "loaded")
+        unit._call_led_effect("lane1", "loaded", gcmd="callback")
         assert unit.afc.active_led_effects == ["lane2_fault", "lane1_loaded"]
 
     def test_effect_not_present_skips_set_led_effect(self):
         unit = _make_unit()
         # printer.objects has no "led_effect lane1_loaded" entry
-        unit._call_led_effect("lane1", "loaded")
+        unit._call_led_effect("lane1", "loaded", gcmd="callback")
         unit.gcode.run_script_from_command.assert_not_called()
 
     def test_effect_not_present_does_not_append_to_active_led_effects(self):
         unit = _make_unit()
         # printer.objects has no "led_effect lane1_loaded" entry
-        unit._call_led_effect("lane1", "loaded")
+        unit._call_led_effect("lane1", "loaded", gcmd="callback")
         assert unit.afc.active_led_effects == []
 
     def test_exception_does_not_raise(self):
         unit = _make_unit()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
         unit.gcode.run_script_from_command.side_effect = Exception("boom")
-        unit._call_led_effect("lane1", "loaded")  # must not raise
+        unit._call_led_effect("lane1", "loaded", gcmd="callback")  # must not raise
 
     def test_exception_prevents_append_to_active_led_effects(self):
         unit = _make_unit()
         unit.printer.objects["led_effect lane1_loaded"] = MagicMock()
         unit.gcode.run_script_from_command.side_effect = Exception("boom")
-        unit._call_led_effect("lane1", "loaded")
+        unit._call_led_effect("lane1", "loaded", gcmd="callback")
         assert unit.afc.active_led_effects == []
 
 
@@ -923,25 +928,25 @@ class TestLedEffectSuffixMapping:
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_not_ready(lane)
+        unit.lane_not_ready(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
-            lane, static_color=lane.led_not_ready, effect_suffix="not_ready")
+            lane, static_color=lane.led_not_ready, effect_suffix="not_ready", gcmd="callback")
 
     def test_lane_loaded_uses_loaded_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
-            lane, static_color=lane.led_ready, effect_suffix="loaded")
+            lane, static_color=lane.led_ready, effect_suffix="loaded", gcmd="callback")
 
     def test_lane_unloading_uses_unloading_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_unloading(lane)
+        unit.lane_unloading(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
-            lane, static_color=lane.led_unloading, effect_suffix="unloading")
+            lane, static_color=lane.led_unloading, effect_suffix="unloading", gcmd="callback")
 
     def test_lane_unloaded_uses_unloaded_suffix_not_not_ready(self):
         """lane_unloaded used to just call lane_not_ready() (suffix
@@ -950,64 +955,65 @@ class TestLedEffectSuffixMapping:
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_unloaded(lane)
+        unit.lane_unloaded(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
-            lane, static_color=lane.led_not_ready, effect_suffix="unloaded")
+            lane, static_color=lane.led_not_ready, effect_suffix="unloaded", gcmd="callback")
 
     def test_lane_loading_uses_loading_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_loading(lane)
+        unit.lane_loading(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
-            lane, static_color=lane.led_loading, effect_suffix="loading")
+            lane, static_color=lane.led_loading, effect_suffix="loading", gcmd="callback")
 
     def test_lane_tool_loaded_gears_uses_tool_loaded_gears_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_loaded_gears(lane)
+        unit.lane_tool_loaded_gears(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
-            lane, lane.extruder_obj, effect_suffix="tool_loaded_gears")
+            lane, lane.extruder_obj, effect_suffix="tool_loaded_gears", gcmd="callback")
 
     def test_lane_tool_loaded_uses_tool_loaded_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_loaded(lane)
+        unit.lane_tool_loaded(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
             lane, lane.extruder_obj, static_color=lane.led_tool_loaded,
-            effect_suffix="tool_loaded")
+            effect_suffix="tool_loaded", gcmd="callback")
 
     def test_lane_tool_unloaded_uses_tool_unloaded_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_unloaded(lane)
+        unit.lane_tool_unloaded(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
             lane, lane.extruder_obj, static_color=lane.led_ready,
-            extruder_static_color=lane.led_tool_unloaded, effect_suffix="tool_unloaded")
+            extruder_static_color=lane.led_tool_unloaded, effect_suffix="tool_unloaded",
+            gcmd="callback")
 
     def test_lane_tool_loaded_idle_uses_tool_loaded_idle_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         lane.extruder_obj = MagicMock()
         unit._trigger_led_state = MagicMock()
-        unit.lane_tool_loaded_idle(lane)
+        unit.lane_tool_loaded_idle(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
             lane, static_color=lane.led_tool_loaded_idle, extruder=lane.extruder_obj,
-            effect_suffix="tool_loaded_idle")
+            effect_suffix="tool_loaded_idle", gcmd="callback")
 
     def test_lane_fault_uses_fault_suffix(self):
         unit = _make_unit()
         lane = _make_lane()
         unit._trigger_led_state = MagicMock()
-        unit.lane_fault(lane)
+        unit.lane_fault(lane, gcmd="callback")
         unit._trigger_led_state.assert_called_once_with(
-            lane, static_color=lane.led_fault, effect_suffix="fault")
+            lane, static_color=lane.led_fault, effect_suffix="fault", gcmd="callback")
 
 
 # ── lane_illuminate_spool ────────────────────────────────────────────────────
@@ -1039,7 +1045,7 @@ class TestLedUseFilamentColor:
         lane.led_use_filament_color = True
         lane.color = "#FF0000"
         unit.afc.function.HexToLedString.return_value = "1,0,0,0"
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit.afc.function.HexToLedString.assert_called_once_with("FF0000")
         unit.afc.function.afc_led.assert_called_once_with("1,0,0,0", lane.led_index)
 
@@ -1049,7 +1055,7 @@ class TestLedUseFilamentColor:
         lane = _make_lane()
         lane.led_use_filament_color = True
         lane.color = ""
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
 
     def test_state_color_used_when_disabled(self):
@@ -1058,7 +1064,7 @@ class TestLedUseFilamentColor:
         lane = _make_lane()
         lane.led_use_filament_color = False
         lane.color = "#FF0000"
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
 
     def test_filament_color_with_hash_prefix(self):
@@ -1068,7 +1074,7 @@ class TestLedUseFilamentColor:
         lane.led_use_filament_color = True
         lane.color = "#00FF00"
         unit.afc.function.HexToLedString.return_value = "0,1,0,0"
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit.afc.function.HexToLedString.assert_called_once_with("00FF00")
 
     def test_filament_color_invalid_hex_falls_back(self):
@@ -1077,7 +1083,7 @@ class TestLedUseFilamentColor:
         lane = _make_lane()
         lane.led_use_filament_color = True
         lane.color = "not-a-color"
-        unit.lane_loaded(lane)
+        unit.lane_loaded(lane, gcmd="callback")
         unit.afc.function.afc_led.assert_called_once_with(lane.led_ready, lane.led_index)
 
 
@@ -1115,7 +1121,7 @@ class TestBufferToolheadLoadCheck:
         lane = _make_lane()
         unit.afc.homing_enabled = False
         lane.tool_loaded = False
-        result = unit._buffer_toolhead_load_check(lane)
+        result = unit._buffer_toolhead_load_check(lane, gcmd="callback")
         assert result is False
     
     def test_homing_not_enabled_loaded(self):
@@ -1123,7 +1129,7 @@ class TestBufferToolheadLoadCheck:
         lane = _make_lane()
         unit.afc.homing_enabled = False
         lane.tool_loaded = True
-        result = unit._buffer_toolhead_load_check(lane)
+        result = unit._buffer_toolhead_load_check(lane, gcmd="callback")
         assert result is True
 
     def test_homing_enabled_disable_buffer_tool_check_loaded(self):
@@ -1132,7 +1138,7 @@ class TestBufferToolheadLoadCheck:
         unit.afc.homing_enabled = True
         lane.tool_loaded = True
         unit.enable_buffer_tool_check = False
-        result = unit._buffer_toolhead_load_check(lane)
+        result = unit._buffer_toolhead_load_check(lane, gcmd="callback")
         assert result is True
 
     def test_homing_enabled_loaded_fail_extend(self):
@@ -1144,7 +1150,7 @@ class TestBufferToolheadLoadCheck:
         lane.buffer_obj.advance_state = False
         lane.move_to = MagicMock()
         lane.move_to.return_value = (False, 200, False)
-        result = unit._buffer_toolhead_load_check(lane)
+        result = unit._buffer_toolhead_load_check(lane, gcmd="callback")
         assert result is False
         error_msgs = [m for lvl, m in unit.logger.messages if lvl == "error"]
         assert any(f"Buffer toolhead loaded check failed for {lane.name}. Please verify" in m for m in error_msgs)
@@ -1161,7 +1167,7 @@ class TestBufferToolheadLoadCheck:
         lane.move_to = MagicMock()
         lane.move = MagicMock()
         lane.move_to.side_effect = [(True, SIDE_EFFECT_DIST, False)]
-        result = unit._buffer_toolhead_load_check(lane)
+        result = unit._buffer_toolhead_load_check(lane, gcmd="callback")
         call_args = lane.move.call_args[0]
         assert result is True
         assert call_args[0] == (SIDE_EFFECT_DIST * MoveDirection.NEG)
@@ -1201,11 +1207,11 @@ class TestGetTd1Data:
         unit._apply_td1_data = MagicMock(return_value=True)
         compare_time = datetime.now()
 
-        result = unit.get_td1_data(lane, compare_time, ignore_time=True)
+        result = unit.get_td1_data(lane, compare_time, ignore_time=True, gcmd="callback")
 
         unit.afc.moonraker.get_td1_data.assert_called_once_with()
         unit._apply_td1_data.assert_called_once_with(
-            lane, compare_time, {"SN1": _make_td1_device()}, True)
+            lane, compare_time, {"SN1": _make_td1_device()}, True, gcmd="callback")
         assert result is True
 
 
@@ -1214,14 +1220,14 @@ class TestApplyTd1Data:
         """Covers td1_data being None (a failed fetch) without crashing."""
         unit = _make_unit()
         lane = _make_td1_lane()
-        result = unit._apply_td1_data(lane, datetime.now(), None)
+        result = unit._apply_td1_data(lane, datetime.now(), None, gcmd="callback")
         assert result is False
         assert unit.logger.messages == []
 
     def test_empty_data_returns_false(self):
         unit = _make_unit()
         lane = _make_td1_lane()
-        result = unit._apply_td1_data(lane, datetime.now(), {})
+        result = unit._apply_td1_data(lane, datetime.now(), {}, gcmd="callback")
         assert result is False
         assert unit.logger.messages == []
 
@@ -1231,7 +1237,7 @@ class TestApplyTd1Data:
         compare_time = datetime.now()
         td1_data = {"OTHER": _make_td1_device()}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, gcmd="callback")
 
         assert result is False
         assert unit.logger.messages == [
@@ -1245,7 +1251,7 @@ class TestApplyTd1Data:
         compare_time = datetime.now()
         td1_data = {"SN1": _make_td1_device(scan_time=None)}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, gcmd="callback")
 
         assert result is False
         assert unit.logger.messages == [
@@ -1258,7 +1264,7 @@ class TestApplyTd1Data:
         compare_time = datetime.now()
         td1_data = {"SN1": _make_td1_device(scan_time="not-a-timestamp")}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, gcmd="callback")
 
         assert result is False
         assert unit.logger.messages == [
@@ -1278,7 +1284,7 @@ class TestApplyTd1Data:
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
         td1_data = {"SN1": device}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, gcmd="callback")
 
         assert result is True
         assert lane.td1_data == device
@@ -1296,7 +1302,7 @@ class TestApplyTd1Data:
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
         td1_data = {"SN1": device}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, gcmd="callback")
 
         assert result is True
         assert unit.logger.messages == [
@@ -1313,7 +1319,7 @@ class TestApplyTd1Data:
         device = _make_td1_device(scan_time="2024-01-01T12:00:00+00:00Z")
         td1_data = {"SN1": device}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, gcmd="callback")
 
         assert result is True
         assert unit.logger.messages == [
@@ -1328,7 +1334,7 @@ class TestApplyTd1Data:
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
         td1_data = {"SN1": device}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=False)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=False, gcmd="callback")
 
         assert result is False
         assert lane.td1_data is None
@@ -1343,7 +1349,7 @@ class TestApplyTd1Data:
         device = _make_td1_device(scan_time="2024-01-01T12:00:00Z")
         td1_data = {"SN1": device}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True, gcmd="callback")
 
         assert result is True
         assert lane.td1_data == device
@@ -1358,7 +1364,7 @@ class TestApplyTd1Data:
         compare_time = datetime.now()
         td1_data = {"SN1": _make_td1_device(td=None)}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True, gcmd="callback")
 
         assert result is False
         assert lane.td1_data is None
@@ -1372,7 +1378,7 @@ class TestApplyTd1Data:
         compare_time = datetime.now()
         td1_data = {"SN1": _make_td1_device(color=None)}
 
-        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True)
+        result = unit._apply_td1_data(lane, compare_time, td1_data, ignore_time=True, gcmd="callback")
 
         assert result is False
         assert lane.td1_data is None

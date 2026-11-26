@@ -23,8 +23,11 @@ except:
 try: from extras.AFC_lane import AFCLane, AFCHomingPoints, VALID_DIRECT_HUB
 except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.format_exc()))
 
+try: from extras.AFC_buffer import FPS_PSF_TYPES
+except: raise error(ERROR_STR.format(import_lib="AFC_buffer", trace=traceback.format_exc()))
+
 if TYPE_CHECKING:
-    from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from toolhead import ToolHead
     from stepper import PrinterStepper
     from mcu import MCU_endstop
@@ -162,7 +165,7 @@ class AFCExtruderStepper(AFCLane):
         super()._handle_ready()
 
         if (self.buffer_obj
-            and self.buffer_obj.type == "FPS_PSF"):
+            and self.buffer_obj.type in FPS_PSF_TYPES):
             if self.extruder_obj.tool_start == "buffer":
                 self._add_endstop('tool_start', None, f'{self.name}_tool_start',
                                   mcu_endstop=self.buffer_obj.fps_endstop)
@@ -244,7 +247,8 @@ class AFCExtruderStepper(AFCLane):
                 self.motion_queuing.wipe_trapq(self.trapq)
             if sync: toolhead.wait_moves()
 
-    def move(self, distance: float, speed: float, accel: float, assist_active=False):
+    def move(self, distance: float, speed: float, accel: float, assist_active=False, *,
+             gcmd: AFCGcmd):
         """
         Move the specified lane a given distance with specified speed and acceleration.
         This function calculates the movement parameters and commands the stepper motor
@@ -253,6 +257,8 @@ class AFCExtruderStepper(AFCLane):
         distance (float): The distance to move.
         speed (float): The speed of the movement.
         accel (float): The acceleration of the movement.
+
+        :param gcmd: command context, unused here but accepted for interface parity
         """
         direction = 1 if distance > 0 else -1
         move_total = abs(distance)
@@ -303,7 +309,7 @@ class AFCExtruderStepper(AFCLane):
             self.next_cmd_time = print_time
 
     def sync_to_extruder(self, update_current: bool=True, *, th_extruder_name: Optional[str]=None,
-                         gcmd: Optional[GCodeCommand]=None) -> None:
+                         gcmd: AFCGcmd) -> None:
         """
         Helper function to sync lane to extruder and set print current if specified.
 
@@ -319,10 +325,9 @@ class AFCExtruderStepper(AFCLane):
             self.extruder_stepper.sync_to_extruder(th_extruder_name)
             self._synced_to_extruder = th_extruder_name
 
-        if update_current: self.set_print_current(gcmd)
+        if update_current: self.set_print_current(gcmd=gcmd)
 
-    def unsync_to_extruder(self, update_current: bool=True,
-                           gcmd: Optional[GCodeCommand]=None) -> None:
+    def unsync_to_extruder(self, update_current: bool=True, *, gcmd: AFCGcmd) -> None:
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
@@ -332,9 +337,9 @@ class AFCExtruderStepper(AFCLane):
         if self._synced_to_extruder is not None:
             self.extruder_stepper.sync_to_extruder(None)
             self._synced_to_extruder = None
-        if update_current: self.set_load_current(gcmd)
+        if update_current: self.set_load_current(gcmd=gcmd)
 
-    def _set_current(self, current, gcmd: Optional[GCodeCommand]=None):
+    def _set_current(self, current, gcmd: AFCGcmd):
         """
         Helper function to update TMC current.
 
@@ -344,26 +349,26 @@ class AFCExtruderStepper(AFCLane):
         if self.tmc_print_current is not None and current is not None:
             command = "SET_TMC_CURRENT STEPPER='{}' CURRENT={}".format(self.name, current)
             self.logger.debug(f"Running macro: {command}")
-            self.afc.run_script(command, gcmd)
+            self.afc.run_script(command, gcmd=gcmd)
 
-    def set_load_current(self, gcmd: Optional[GCodeCommand]=None):
+    def set_load_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use run current value
 
         :param gcmd: command context to run the macro through, if any
         """
         if self._print_current_set:
-            self._set_current( self.tmc_load_current, gcmd )
+            self._set_current( self.tmc_load_current, gcmd=gcmd )
             self._print_current_set = False
 
-    def set_print_current(self, gcmd: Optional[GCodeCommand]=None):
+    def set_print_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use print current value
 
         :param gcmd: command context to run the macro through, if any
         """
         if not self._print_current_set:
-            self._set_current( self.tmc_print_current, gcmd )
+            self._set_current( self.tmc_print_current, gcmd=gcmd )
             self._print_current_set = True
 
     def update_rotation_distance(self, multiplier):
@@ -578,7 +583,7 @@ class AFCExtruderStepper(AFCLane):
         buffer_adv_pin   = self._get_section_value('AFC_buffer', buffer_name, 'advance_pin')
         buffer_trail_pin = self._get_section_value('AFC_buffer', buffer_name, 'trailing_pin')
         fps_psf_buffer   = self._get_section_value('AFC_buffer', buffer_name, 'type')
-        is_fps_psf_buffer = fps_psf_buffer is not None and fps_psf_buffer == "FPS_PSF"
+        is_fps_psf_buffer = fps_psf_buffer is not None and fps_psf_buffer in FPS_PSF_TYPES
 
         # Check to verify that hub is not a virtual sensor
         if (hub_pin
@@ -826,8 +831,9 @@ class AFCExtruderStepper(AFCLane):
             raise self.gcode.error(str(e))
 
     # ------------------ Convenience homing helpers ------------------
-    def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed: float, accel: float,
-                triggered=True, check_trigger=True, assist_active=True) -> tuple[bool, float, bool]:
+    def home_to(self, endstop_spec:AFCHomingPoints, distance:Optional[float], speed: float,
+                accel: float, triggered=True, check_trigger=True, assist_active=True, *,
+                gcmd: AFCGcmd) -> tuple[bool, float, bool]:
         """
         Home towards an endstop relative to current position by distance (mm).
         If 'distance' is None, callers should prefer the typed helpers which pick a
@@ -844,6 +850,7 @@ class AFCExtruderStepper(AFCLane):
         :param triggered: If True, movement stops when the endstop triggers. Defaults to True.
         :param check_trigger: If True, verify that the endstop is actually triggered at the
                               end of the move. Defaults to True.
+        :param gcmd: command context the pause is run through, if any
         :return :return tuple: 3-tuple consisting of:
                         bool: indicated if homing was successful or not.
                         float: indicated movement wheather homing was successful or not. When not
@@ -867,7 +874,7 @@ class AFCExtruderStepper(AFCLane):
         except Exception:
             error = True
             msg = f"Error occurred when trying to home to {endstop_spec}, PAUSING!"
-            self.afc.error.AFC_error(msg, self.afc.function.in_print())
+            self.afc.error.AFC_error(msg, self.afc.function.in_print(), gcmd=gcmd)
             self.logger.debug(f"{traceback.format_exc()}")
         self.sync_print_time()
         return homed, move_distance, error

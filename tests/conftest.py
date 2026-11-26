@@ -7,6 +7,7 @@ without a running Klipper instance.
 """
 
 import configparser
+import inspect
 import logging
 import logging.handlers
 import os
@@ -612,6 +613,9 @@ class MockAFC:
         self.enable_multiple_mapping = False
         self.manual_home_has_probe_pos_param = False
         self.manual_home_requires_gcmd = False
+
+        self._rsfc_accepts_gcmd = "gcmd" in inspect.signature(
+            self.gcode.run_script_from_command).parameters
 
     # Real afc.run_script only touches self.gcode, so it runs unmodified here
     # instead of being duplicated.

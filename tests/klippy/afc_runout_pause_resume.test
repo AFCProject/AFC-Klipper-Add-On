@@ -1,0 +1,41 @@
+# Real pause/resume-on-runout integration test.
+#
+# Drives AFCLane.handle_prep_runout via SIMULATE_CALLBACK to confirm
+# AFC_error genuinely engages pause_resume's pause, then AFC_RESUME clears
+# it. PREP runs first so AFC_RESUME's renamed-resume macro exists.
+#
+# DEFER+REACTOR_PAUSE avoid a Kalico mutex deadlock a plain inline
+# SIMULATE_CALLBACK would hit here (see tests/klippy_testing_plugin.py).
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_with_lane.cfg
+
+PREP
+
+AFC_CLEAR_MESSAGE
+
+G28
+
+# Fake lane1 being prepped, loaded, and actively the current lane mid-print.
+SET_ATTR OBJECT="AFC_stepper lane1" ATTR=_afc_prep_done VALUE=True
+SET_ATTR OBJECT="AFC_stepper lane1" ATTR=_load_state VALUE=True
+SET_ATTR OBJECT="AFC_stepper lane1" ATTR=prep_state VALUE=True
+SET_ATTR OBJECT="AFC_extruder extruder" ATTR=lane_loaded VALUE="'lane1'"
+SET_ATTR OBJECT=print_stats ATTR=state VALUE="'printing'"
+
+ASSERT TEST="{ not printer['pause_resume'].is_paused }"
+
+# Fake the prep sensor releasing (filament runout) mid-print.
+SIMULATE_CALLBACK OBJECT="AFC_stepper lane1" METHOD=handle_prep_runout STATE=0 DEFER=0.01
+REACTOR_PAUSE DELAY=0.05
+
+ASSERT TEST="{ printer['pause_resume'].is_paused }"
+
+AFC_RESUME
+
+ASSERT TEST="{ not printer['pause_resume'].is_paused }"
+ASSERT TEST="{ not printer['AFC'].error_state }"

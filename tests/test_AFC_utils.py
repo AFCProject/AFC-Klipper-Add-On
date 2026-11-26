@@ -348,6 +348,45 @@ class TestDebounceButton:
         btn.button_handler(True)
         btn._button_handler.assert_called_once()
 
+    def test_button_handler_accepts_force_and_immediate_kwargs(self):
+        """Older Kalico's reset() (is_filament_present, force) and
+        check_on_print_start (is_filament_present, force, immediate) calls
+        route here (3-param signature) and must not raise."""
+        cfg = self._make_config()
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn._button_handler = MagicMock()
+
+        btn.button_handler(True, force=True)
+        btn.button_handler(True, True, True)
+
+        assert btn._button_handler.call_count == 2
+
+    def test_button_handler_force_and_immediate_do_not_affect_dispatch(self):
+        cfg = self._make_config()
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn._button_handler = MagicMock()
+
+        btn.button_handler(True, force=True, immediate=True)
+
+        btn._button_handler.assert_called_once_with(btn.reactor.monotonic(), True)
+
+    def test_internal_button_handler_accepts_force_and_immediate(self):
+        """Current Kalico's reset() (eventtime, is_filament_present, force)
+        and check_on_print_start (eventtime, is_filament_present, force,
+        immediate) calls route to the exact-signature-matched
+        _button_handler and must not raise."""
+        cfg = self._make_config()
+        sensor = self._make_filament_sensor(
+            ["eventtime", "is_filament_present", "force", "immediate"])
+        btn = DebounceButton(cfg, sensor)
+
+        sensor.runout_helper.note_filament_present(100.0, True, True, True)
+
+        assert btn.physical_state is True
+        assert btn.latest_eventtime == 100.0
+
     def test_debounce_event_ignores_stale_event(self):
         """Covers line 163: stale event (more recent event exists) → returns early."""
         cfg = self._make_config(debounce_delay=1.0)
@@ -426,6 +465,75 @@ class TestDebounceButton:
         assert len(calls) == 1
         assert calls[0] == (101.0, True)
         pause_resume.cmd_PAUSE.assert_called_once()
+
+    def test_debounce_event_type_error_from_kwarg_callback_is_not_retried(self):
+        """A button_action that accepts is_filament_present but raises a
+        TypeError from inside its own body must not be mistaken for a
+        signature mismatch and retried positionally -- that would invoke
+        it twice."""
+        cfg = self._make_config(debounce_delay=0.0)
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn.logical_state = False
+        btn.physical_state = True
+        btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
+
+        calls = []
+        def raises_type_error(is_filament_present):
+            calls.append(is_filament_present)
+            raise TypeError("boom")
+
+        btn.button_action = raises_type_error
+        btn._debounce_event(101.0)
+        assert calls == [True]
+        pause_resume.cmd_PAUSE.assert_called_once()
+
+    def test_debounce_event_kalico_style_action_with_eventtime_is_called_positionally(self):
+        """Current Kalico's and mainline's note_filament_present(eventtime,
+        is_filament_present=None, ...) has an is_filament_present parameter,
+        but eventtime is still required with no default, so calling with
+        only is_filament_present=... raises a TypeError. Signature.bind()
+        (not a real call) must catch that and fall back to the positional
+        call instead of raising it for real."""
+        cfg = self._make_config(debounce_delay=0.0)
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn.logical_state = False
+        btn.physical_state = True
+        btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
+
+        calls = []
+        def kalico_style(eventtime, is_filament_present=None, force=False, immediate=False):
+            calls.append((eventtime, is_filament_present, force, immediate))
+
+        btn.button_action = kalico_style
+        btn._debounce_event(101.0)
+        assert calls == [(101.0, True, False, False)]
+        pause_resume.cmd_PAUSE.assert_not_called()
+
+    def test_debounce_event_old_kalico_style_action_is_called_by_kwarg(self):
+        """Old Kalico's note_filament_present(is_filament_present=None,
+        force=False, immediate=False) has no eventtime at all, so
+        Signature.bind(is_filament_present=...) succeeds and the
+        kwarg-only call is used."""
+        cfg = self._make_config(debounce_delay=0.0)
+        sensor = self._make_filament_sensor(["self", "eventtime", "state"])
+        btn = DebounceButton(cfg, sensor)
+        btn.logical_state = False
+        btn.physical_state = True
+        btn.latest_eventtime = 100.0
+        pause_resume = btn.printer.lookup_object("pause_resume")
+
+        calls = []
+        def old_kalico_style(is_filament_present=None, force=False, immediate=False):
+            calls.append((is_filament_present, force, immediate))
+
+        btn.button_action = old_kalico_style
+        btn._debounce_event(101.0)
+        assert calls == [(True, False, False)]
+        pause_resume.cmd_PAUSE.assert_not_called()
 
 
 # ── AFC_moonraker ─────────────────────────────────────────────────────────────
@@ -1431,6 +1539,44 @@ class TestVirtualRunoutHelper:
         helper, _ = self._make_helper(enable_runout=1)
         assert helper.sensor_enabled is True
 
+    def test_init_no_runout_cb_caches_keyword_only_as_false(self):
+        helper, _ = self._make_helper(runout_cb=None)
+        assert helper._runout_callback_is_keyword_only is False
+
+    def test_init_positional_runout_cb_caches_keyword_only_as_false(self):
+        def positional_cb(eventtime):
+            pass
+
+        helper, _ = self._make_helper(runout_cb=positional_cb)
+        assert helper._runout_callback_is_keyword_only is False
+
+    def test_init_keyword_only_runout_cb_caches_keyword_only_as_true(self):
+        def keyword_only_cb(*, eventtime):
+            pass
+
+        helper, _ = self._make_helper(runout_cb=keyword_only_cb)
+        assert helper._runout_callback_is_keyword_only is True
+
+    def test_init_kwargs_only_runout_cb_caches_keyword_only_as_true(self):
+        """A **kwargs-only callback's first param kind is VAR_KEYWORD, not
+        KEYWORD_ONLY, so a check on the first param's kind alone would
+        misclassify this as positional and fail to bind eventtime at all."""
+        def kwargs_cb(**kwargs):
+            pass
+
+        helper, _ = self._make_helper(runout_cb=kwargs_cb)
+        assert helper._runout_callback_is_keyword_only is True
+
+    def test_init_args_then_eventtime_runout_cb_caches_keyword_only_as_true(self):
+        """*args makes the trailing eventtime keyword-only, but the first
+        param's kind is VAR_POSITIONAL, not KEYWORD_ONLY, so a check on the
+        first param's kind alone would misclassify this as positional."""
+        def args_then_eventtime_cb(*args, eventtime):
+            pass
+
+        helper, _ = self._make_helper(runout_cb=args_then_eventtime_cb)
+        assert helper._runout_callback_is_keyword_only is True
+
     def test_note_filament_present_updates_state(self):
         helper, _ = self._make_helper()
         helper.note_filament_present(100.0, True)
@@ -1527,12 +1673,13 @@ class TestVirtualRunoutHelper:
         assert helper.filament_present is False
         pause_resume.cmd_PAUSE.assert_not_called()
 
-    def test_callback_exception_on_both(self):
+    def test_callback_raising_type_error_is_not_retried(self):
+        """A TypeError raised from inside the callback's own body (not from
+        a signature mismatch on the call itself) must not be mistaken for
+        one and retried with a different calling convention -- that would
+        invoke the callback twice."""
         failing_callback = MagicMock()
-        failing_callback.side_effect = [
-            TypeError("Raise Type Error 1"),
-            Exception("Raise Error 2")
-        ]
+        failing_callback.side_effect = TypeError("Raise Type Error 1")
         helper, _ = self._make_helper(
             runout_cb=failing_callback, enable_runout=True)
         idle_to = helper.printer.lookup_object("idle_timeout")
@@ -1543,14 +1690,10 @@ class TestVirtualRunoutHelper:
         helper.runout_callback.assert_not_called()
         helper.note_filament_present(101.0, False)
 
-        assert helper.runout_callback.call_count == 2
+        assert helper.runout_callback.call_count == 1
         first_call = helper.runout_callback.call_args_list[0]
-        second_call = helper.runout_callback.call_args_list[1]
-
         assert first_call.args == (101.0,)
         assert first_call.kwargs == {}
-        assert second_call.args == ()
-        assert second_call.kwargs == {"eventtime": 101.0}
         pause_resume.cmd_PAUSE.assert_called_once()
     
     def test_callback_does_not_try_second_time(self):
@@ -1741,12 +1884,12 @@ class TestVirtualFilamentSensor:
         gcmd = MockGCodeCommand(params={"ENABLE": 1})
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
         assert sensor.runout_helper.sensor_enabled is True
-        enable_cb.assert_called_once_with(True)
+        enable_cb.assert_called_once_with(True, gcmd=gcmd)
 
         gcmd = MockGCodeCommand(params={"ENABLE": 0})
         sensor.cmd_SET_FILAMENT_SENSOR(gcmd)
         assert sensor.runout_helper.sensor_enabled is False
-        enable_cb.assert_called_with(False)
+        enable_cb.assert_called_with(False, gcmd=gcmd)
 
     def test_cmd_set_filament_sensor_without_callback(self):
         """Buffers and other users pass no enable_cb -- toggling must still work."""

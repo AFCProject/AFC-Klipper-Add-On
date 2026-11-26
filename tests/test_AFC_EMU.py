@@ -143,6 +143,7 @@ class TestPrepPostLoadVirtualPin:
     def test_move_to_called_with_correct_args_while_load_state_true(self):
         """move_to receives NEG hub_clear_move_dis and SpeedMode.SHORT."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(raw_load_state=True)
         lane.hub_obj = _make_virtual_hub()
 
@@ -151,37 +152,41 @@ class TestPrepPostLoadVirtualPin:
             lane.raw_load_state = False
         lane.move_to.side_effect = _stop_after_first
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd=gcmd)
 
         lane.move_to.assert_called_once_with(
             lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
             SpeedMode.SHORT,
             use_homing=False,
+            gcmd=gcmd,
         )
 
     def test_move_to_not_called_when_raw_load_state_already_false(self):
         """When raw_load_state is False the while loop never executes."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd=gcmd)
 
         lane.move_to.assert_not_called()
 
     def test_move_to_capped_at_10_tries(self):
         """While loop executes at most 10 times regardless of raw_load_state."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(raw_load_state=True)  # stays True → always retry
         lane.hub_obj = _make_virtual_hub()
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd=gcmd)
 
         assert lane.move_to.call_count == 10
 
     def test_move_to_stops_when_raw_load_state_clears(self):
         """While loop stops early once raw_load_state becomes False."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(raw_load_state=True)
         lane.hub_obj = _make_virtual_hub()
 
@@ -192,38 +197,41 @@ class TestPrepPostLoadVirtualPin:
                 lane.raw_load_state = False
         lane.move_to.side_effect = _flip_after_3
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd=gcmd)
 
         assert lane.move_to.call_count == 3
 
     def test_sets_loaded_to_hub_true(self):
         """loaded_to_hub is set True after the retry loop."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(raw_load_state=True)
         lane.hub_obj = _make_virtual_hub()
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd=gcmd)
 
         assert lane.loaded_to_hub is True
 
     def test_sets_loaded_to_hub_true_when_no_moves_needed(self):
         """loaded_to_hub is still set True even when raw_load_state starts False."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd=gcmd)
 
         assert lane.loaded_to_hub is True
 
     def test_does_not_call_super_prep_post_load(self):
         """Virtual-pin path must NOT delegate to the parent implementation."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(raw_load_state=False)
         lane.hub_obj = _make_virtual_hub()
 
         with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
-            unit.prep_post_load(lane)
+            unit.prep_post_load(lane, gcmd=gcmd)
             mock_super.assert_not_called()
 
 
@@ -233,42 +241,46 @@ class TestPrepPostLoadNormalHub:
     def test_delegates_to_super_when_hub_lacks_is_virtual_pin(self):
         """When hub object has no is_virtual_pin attr, fallback path calls parent."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = object()  # no is_virtual_pin attribute
 
         with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
-            unit.prep_post_load(lane)
-            mock_super.assert_called_once_with(lane)
+            unit.prep_post_load(lane, gcmd=gcmd)
+            mock_super.assert_called_once_with(lane, gcmd=gcmd)
             lane.move_to.assert_not_called()
 
     def test_delegates_to_super_when_lane_hub_obj_is_none(self):
         """When lane.hub_obj is None the guard short-circuits; super() is called."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = None
 
         with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
-            unit.prep_post_load(lane)
-            mock_super.assert_called_once_with(lane)
+            unit.prep_post_load(lane, gcmd=gcmd)
+            mock_super.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_delegates_to_super_when_hub_not_virtual_pin(self):
         """When lane.hub_obj.is_virtual_pin() is False the parent is called."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
         with patch.object(afcBoxTurtle, "prep_post_load") as mock_super:
-            unit.prep_post_load(lane)
-            mock_super.assert_called_once_with(lane)
+            unit.prep_post_load(lane, gcmd=gcmd)
+            mock_super.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_does_not_call_move_to_on_normal_path(self):
         """Fallback path must not call lane.move_to."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
         with patch.object(afcBoxTurtle, "prep_post_load"):
-            unit.prep_post_load(lane)
+            unit.prep_post_load(lane, gcmd=gcmd)
             lane.move_to.assert_not_called()
 
 
@@ -278,10 +290,11 @@ class TestMoveToHubNormalHub:
     def test_uses_hub_endstop_name_when_lane_hub_obj_is_none(self):
         """lane.hub_obj=None → endstop is hub_endstop_name."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(hub_endstop_name="hub_es")
         lane.hub_obj = None
 
-        unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS)
+        unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("endstop") == "hub_es"
@@ -290,81 +303,89 @@ class TestMoveToHubNormalHub:
     def test_uses_hub_endstop_name_when_lane_hub_not_virtual(self):
         """lane.hub_obj.is_virtual_pin()=False → endstop is hub_endstop_name."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(hub_endstop_name="hub_es_normal")
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS)
+        unit.move_to_hub(lane, dist=100.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("endstop") == "hub_es_normal"
 
     def test_passes_dist_times_dir_as_first_arg(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(lane, dist=150.0, dir=MoveDirection.NEG)
+        unit.move_to_hub(lane, dist=150.0, dir=MoveDirection.NEG, gcmd=gcmd)
 
         args, _ = lane.move_to.call_args
         assert args[0] == pytest.approx(150.0 * MoveDirection.NEG)
 
     def test_passes_speed_mode_arg(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS, speed_mode=SpeedMode.LONG)
+        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS, speed_mode=SpeedMode.LONG, gcmd=gcmd)
 
         args, _ = lane.move_to.call_args
         assert args[1] == SpeedMode.LONG
 
     def test_default_speed_mode_is_hub(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS)
+        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         args, _ = lane.move_to.call_args
         assert args[1] == SpeedMode.HUB
 
     def test_passes_use_homing_kwarg(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS, use_homing=False)
+        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS, use_homing=False, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("use_homing") is False
 
     def test_default_use_homing_is_true(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS)
+        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("use_homing") is True
 
     def test_passes_assist_active_kwarg(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
         unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS,
-                         assist_active=AssistActive.YES)
+                         assist_active=AssistActive.YES, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("assist_active") == AssistActive.YES
 
     def test_default_assist_active_is_dynamic(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
 
-        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS)
+        unit.move_to_hub(lane, dist=50.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("assist_active") == AssistActive.DYNAMIC
@@ -376,10 +397,11 @@ class TestMoveToHubVirtualPin:
     def test_uses_load_es_when_hub_is_virtual(self):
         """All three guard conditions met → endstop is lane.load_es."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_virtual_hub()
 
-        unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS)
+        unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("endstop") == lane.load_es
@@ -387,10 +409,11 @@ class TestMoveToHubVirtualPin:
     def test_does_not_use_hub_endstop_name_for_virtual_pin(self):
         """Virtual-pin path must not fall back to hub_endstop_name."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(hub_endstop_name="must_not_be_used")
         lane.hub_obj = _make_virtual_hub()
 
-        unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS)
+        unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("endstop") != "must_not_be_used"
@@ -402,21 +425,24 @@ class TestMoveToHubReturnValue:
     def test_returns_tuple_from_lane_move_to(self):
         """move_to_hub passes through the (homed, distance, warn) tuple."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
         lane.move_to.return_value = (True, 75.5, AFCMoveWarning.WARN)
 
-        result = unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS)
+        result = unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         assert result == (True, 75.5, AFCMoveWarning.WARN)
 
     def test_returns_false_result_on_failure(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane()
         lane.hub_obj = _make_normal_hub()
         lane.move_to.return_value = (False, 0, AFCMoveWarning.ERROR)
 
-        homed, distance, warn = unit.move_to_hub(lane, dist=80.0, dir=MoveDirection.POS)
+        homed, distance, warn = unit.move_to_hub(
+            lane, dist=80.0, dir=MoveDirection.POS, gcmd=gcmd)
 
         assert homed is False
         assert warn == AFCMoveWarning.ERROR
@@ -428,10 +454,11 @@ class TestEjectLaneLoadedToHub:
     def test_move_to_called_when_loaded_to_hub(self):
         """When loaded_to_hub is True, move_to retracts past hub with correct args."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = True
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         lane.move_to.assert_called_once_with(
             lane.dist_hub * -1,
@@ -439,15 +466,17 @@ class TestEjectLaneLoadedToHub:
             endstop=lane.load_es,
             assist_active=AssistActive.DYNAMIC,
             use_homing=True,
+            gcmd=gcmd,
         )
 
     def test_move_to_use_homing_follows_afc_flag(self):
         """use_homing is taken from afc.homing_enabled."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = False
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         _, kwargs = lane.move_to.call_args
         assert kwargs.get("use_homing") is False
@@ -455,9 +484,10 @@ class TestEjectLaneLoadedToHub:
     def test_move_to_not_called_when_not_loaded_to_hub(self):
         """When loaded_to_hub is False, move_to must not be called."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=False)
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         lane.move_to.assert_not_called()
 
@@ -467,21 +497,24 @@ class TestEjectLaneLoadedToHub:
 class TestEjectLaneMoveAdvanced:
     def test_move_advanced_called_with_negative_extruder_clear_dis(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=False, extruder_clear_dis=30.0)
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         lane.move_advanced.assert_called_once_with(
             lane.extruder_clear_dis * -1,
             SpeedMode.SHORT,
+            gcmd=gcmd,
         )
 
     def test_move_advanced_called_even_when_loaded_to_hub(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = False
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         lane.move_advanced.assert_called_once()
 
@@ -491,24 +524,27 @@ class TestEjectLaneMoveAdvanced:
 class TestEjectLaneDoEnable:
     def test_do_enable_false_when_not_loaded_to_hub(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=False)
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         lane.do_enable.assert_called_once_with(False)
 
     def test_do_enable_false_when_loaded_to_hub(self):
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = False
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         lane.do_enable.assert_called_once_with(False)
 
     def test_eject_order_move_to_then_move_advanced_then_do_enable(self):
         """Operations must execute in the correct sequence."""
         unit = _make_emu()
+        gcmd = MagicMock()
         lane = _make_lane(loaded_to_hub=True)
         unit.afc.homing_enabled = False
         call_order = []
@@ -516,7 +552,7 @@ class TestEjectLaneDoEnable:
         lane.move_advanced.side_effect = lambda *a, **kw: call_order.append("move_advanced")
         lane.do_enable.side_effect = lambda *a, **kw: call_order.append("do_enable")
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=gcmd)
 
         assert call_order == ["move_to", "move_advanced", "do_enable"]
 
