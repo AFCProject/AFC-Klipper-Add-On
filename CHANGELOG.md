@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-26-2026]
+### Added
+- Added support for the QIDI Box (Plus4/Q2/Max4 filament unit with dryer) with `[AFC_QidiBox]`. Its
+  slot motors are normal `[AFC_stepper]` lanes, set up either through the box's own hub (one extruder)
+  or with each lane feeding its own extruder (`hub: direct`, e.g. toolchangers). Dryer control with
+  `AFC_QIDIBOX_DRY`/`AFC_QIDIBOX_DRY_STOP`, capped by `dryer_max_temp`, with timed cycles and optional
+  spool rotation. Works with a Klipper converted box or QIDI's stock box firmware (installer choice
+  `QIDI Box Firmware`). Templates `templates/AFC_QidiBox_1.cfg` and `config/mcu/QidiBox.cfg`,
+  installer entry and `docs/QIDI_Box.md`.
+- Units can set `load_only_without_prep` so a lane without a `prep` pin uses its load sensor as its only
+  filament sensor, like the load only unit types.
+
 ## [11-24-2026]
 ### Fixed
 - A print whose file Moonraker doesn't have, such as the virtual job Kalico's `PRINT_PA_TOWER`

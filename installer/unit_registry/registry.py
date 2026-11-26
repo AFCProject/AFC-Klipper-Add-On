@@ -20,6 +20,7 @@ from installer.unit_registry.units.emu import Emu
 from installer.unit_registry.units.htlf import Htlf
 from installer.unit_registry.units.nightowl import NightOwl
 from installer.unit_registry.units.openams import OpenAms
+from installer.unit_registry.units.qidibox import QidiBox
 from installer.unit_registry.units.quattrobox import QuattroBox
 from installer.unit_registry.units.vivid import Vivid
 
@@ -35,6 +36,7 @@ UNIT_TYPES: List[UnitType] = [
     Ace(),
     Vivid(),
     Emu(),
+    QidiBox(),
 ]
 
 _GENERIC_DEFAULT_BUFFER = "TurtleNeck"

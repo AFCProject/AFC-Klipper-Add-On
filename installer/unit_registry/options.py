@@ -21,6 +21,7 @@ QB_MOTOR_TYPES: Tuple[str, ...] = ("NEMA_17", "NEMA_14")
 EMU_LANE_OPTIONS: Tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8")
 EMU_BOARD_TYPES: Tuple[str, ...] = ("EBB", "SLB")
 ACE_UNIT_TYPES: Tuple[str, ...] = ("V1", "V2_Pro")
+QIDI_FIRMWARE_TYPES: Tuple[str, ...] = ("Klipper", "Stock")
 
 
 class UnitOption(ABC):

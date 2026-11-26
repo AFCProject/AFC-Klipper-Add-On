@@ -25,6 +25,7 @@ class UnitSelection:
     emu_num_lanes: int = 5
     emu_board_type: str = "EBB"
     ace_unit_type: str = "V1"
+    qidi_firmware: str = "Klipper"
     buffer_type: str = "Unknown"
     additional_buffer_type: str = "None"
     toolhead_sensor: str = "Ramming"

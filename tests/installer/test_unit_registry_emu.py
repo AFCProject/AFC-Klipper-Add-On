@@ -222,7 +222,7 @@ class TestEmuUnit:
 
 
 class TestTheCompleteRegistry:
-    def test_the_ten_types_are_in_menu_order(self) -> None:
+    def test_the_eleven_types_are_in_menu_order(self) -> None:
         assert [u.display_name for u in UNIT_TYPES] == [
             "BoxTurtle (4-Lane)",
             "BoxTurtle (8-Lane)",
@@ -234,12 +234,13 @@ class TestTheCompleteRegistry:
             "ACE",
             "ViViD",
             "EMU",
+            "QIDI Box",
         ]
 
     def test_keys_are_the_unit_keys(self) -> None:
         assert [u.key for u in UNIT_TYPES] == [
             "BoxTurtle_4Lane", "BoxTurtle_8Lane", "NightOwl", "HTLF", "Claymore",
-            "QuattroBox", "OpenAMS", "ACE", "ViViD", "EMU",
+            "QuattroBox", "OpenAMS", "ACE", "ViViD", "EMU", "QidiBox",
         ]
 
     def test_only_vivid_lacks_additional_unit_buffer_support(self) -> None:

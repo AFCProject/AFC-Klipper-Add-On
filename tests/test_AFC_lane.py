@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 import pytest
 
@@ -1214,6 +1215,15 @@ class TestHandleLoadRunout:
         lane = self._make()
         lane.handle_load_runout(100.0, True)
         lane.set_loaded.assert_called_once_with(gcmd="callback")
+
+    def test_prep_less_lane_on_load_only_unit_processes_load(self):
+        lane = self._make()
+        lane.prep = None
+        lane.unit_obj.type = "QIDI_Box"
+        lane.unit_obj.load_only_without_prep = True
+        lane.handle_load_runout(100.0, True)
+        lane.set_loaded.assert_called_once_with(gcmd="callback")
+        lane.unit_obj.on_filament_insert.assert_called_once_with(lane, gcmd="callback")
 
     # -- load_state True: staged spool id stashing --
 
@@ -2510,6 +2520,56 @@ class TestLoadCallback:
         lane.printer.state_message = "Printer is ready"
         lane.load_callback(100.0, True)
         assert lane.prep_state is False
+
+    def test_prep_less_lane_on_load_only_unit_sets_prep_state(self):
+        lane = _make_afc_lane()
+        lane._load_state = False
+        lane.prep_state = False
+        lane.prep = None
+        lane.unit_obj = SimpleNamespace(type="QIDI_Box", load_only_without_prep=True)
+        lane.printer = MagicMock()
+        lane.printer.state_message = "Printer is ready"
+        lane.load_callback(100.0, True)
+        assert lane.prep_state is True
+
+
+class TestIsLoadOnly:
+    def test_load_only_unit_type(self):
+        lane = _make_afc_lane()
+        lane.prep = "PA0"
+        lane.unit_obj = SimpleNamespace(type="HTLF")
+        assert lane._is_load_only() is True
+
+    def test_prep_less_lane_on_unit_with_flag(self):
+        lane = _make_afc_lane()
+        lane.prep = None
+        lane.unit_obj = SimpleNamespace(type="QIDI_Box", load_only_without_prep=True)
+        assert lane._is_load_only() is True
+
+    def test_lane_with_prep_on_unit_with_flag(self):
+        lane = _make_afc_lane()
+        lane.prep = "PA0"
+        lane.unit_obj = SimpleNamespace(type="QIDI_Box", load_only_without_prep=True)
+        assert lane._is_load_only() is False
+
+    def test_prep_less_lane_on_unit_without_flag(self):
+        lane = _make_afc_lane()
+        lane.prep = None
+        lane.unit_obj = SimpleNamespace(type="Box_Turtle")
+        assert lane._is_load_only() is False
+
+    def test_prep_less_lane_on_unit_with_flag_off(self):
+        lane = _make_afc_lane()
+        lane.prep = None
+        lane.unit_obj = SimpleNamespace(type="QIDI_Box", load_only_without_prep=False)
+        assert lane._is_load_only() is False
+
+    def test_truthy_non_bool_flag_is_ignored(self):
+        lane = _make_afc_lane()
+        lane.prep = None
+        lane.unit_obj = MagicMock()
+        lane.unit_obj.type = "Box_Turtle"
+        assert lane._is_load_only() is False
 
 # ── move_to ───────────────────────────────────────────────────────────────────
 

@@ -1007,6 +1007,18 @@ class AFCLane:
         return (self.is_direct_hub()
                 or (self.hub_obj and getattr(self.hub_obj, "use_dist_hub", False) ))
 
+    def _is_load_only(self) -> bool:
+        """
+        Whether the load switch is this lane's only filament sensor and also stands in for prep:
+        a load only unit type, or a prep-less lane on a unit that sets `load_only_without_prep`.
+
+        :return bool: True when the load switch is the lane's only filament sensor
+        """
+        # `is True` so units without the attribute (and mocks) keep the type based behavior
+        return (self.unit_obj.type in ONLY_LOAD_TYPES
+                or (getattr(self.unit_obj, "load_only_without_prep", False) is True
+                    and self.prep is None))
+
     def select_lane(self, *, gcmd: AFCGcmd):
         """
         Helper function to select lane, calls unit lane selection function.
@@ -1279,7 +1291,7 @@ class AFCLane:
     def load_callback(self, eventtime, state):
         self._load_state = state
         if (self.printer.state_message == 'Printer is ready'
-            and self.unit_obj.type in ONLY_LOAD_TYPES):
+            and self._is_load_only()):
             self.prep_state = state
 
     def handle_load_runout(self, eventtime, load_state):
@@ -1303,7 +1315,7 @@ class AFCLane:
                 self.load_debounce_button._old_note_filament_present(eventtime, load_state)
 
         if (self.printer.state_message == 'Printer is ready'
-            and self.unit_obj.type in ONLY_LOAD_TYPES
+            and self._is_load_only()
             and True == self._afc_prep_done):
             if load_state:
                 # Stash any externally-staged spool (scanner -> next_spool_id)
