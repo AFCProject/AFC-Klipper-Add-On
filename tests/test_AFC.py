@@ -452,13 +452,16 @@ class TestRunScript:
     """Covers afc.run_script's dispatch.
 
     On newer Kalico (`_rsfc_accepts_gcmd`), a real `gcmd` (anything other
-    than the literal `"callback"`) uses `gcmd.run_script` directly; the
-    literal `"callback"` uses `self.gcode.run_script` directly instead of
-    `run_script_from_command`, since the latter with no gcmd would create a
-    legacy g-code context on new Kalico that can't later re-acquire the
-    mutex. On everything else (`_rsfc_accepts_gcmd` is False), `gcmd` is
-    always run through `self.gcode.run_script_from_command`, regardless of
-    its value or of the gcode mutex's state.
+    than the literals `"callback"`/`"force_acquire"`) uses `gcmd.run_script`
+    directly; either of those two literals uses `self.gcode.run_script`
+    directly instead of `run_script_from_command`, since the latter with no
+    gcmd would create a legacy g-code context on new Kalico that can't later
+    re-acquire the mutex. On everything else (`_rsfc_accepts_gcmd` is
+    False), a real `gcmd` or the literal `"callback"` is always run through
+    `self.gcode.run_script_from_command`, regardless of the gcode mutex's
+    state; the literal `"force_acquire"` still goes through
+    `self.gcode.run_script` directly even here, since its whole point is to
+    never depend on Kalico's run_script_from_command capability.
     """
 
     def test_real_gcmd_and_new_kalico_uses_gcmd_run_script(self):
@@ -487,6 +490,25 @@ class TestRunScript:
         obj.gcode.get_mutex.return_value.test.return_value = True
 
         obj.run_script("PAUSE", "callback")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_force_acquire_and_new_kalico_uses_gcode_run_script_directly(self):
+        obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
+
+        obj.run_script("PAUSE", "force_acquire")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_force_acquire_and_new_kalico_ignores_mutex_state(self):
+        obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
+        obj.gcode.get_mutex.return_value.test.return_value = True
+
+        obj.run_script("PAUSE", "force_acquire")
 
         obj.gcode.run_script.assert_called_once_with("PAUSE")
         obj.gcode.run_script_from_command.assert_not_called()
@@ -520,6 +542,23 @@ class TestRunScript:
 
         obj.gcode.run_script_from_command.assert_called_once_with("PAUSE")
         obj.gcode.run_script.assert_not_called()
+
+    def test_force_acquire_without_new_kalico_uses_gcode_run_script_directly(self):
+        obj = _make_afc()
+
+        obj.run_script("PAUSE", "force_acquire")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_force_acquire_without_new_kalico_ignores_mutex_state(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = True
+
+        obj.run_script("PAUSE", "force_acquire")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
 
     def test_without_new_kalico_mutex_held_still_uses_run_script_from_command(self):
         obj = _make_afc()
