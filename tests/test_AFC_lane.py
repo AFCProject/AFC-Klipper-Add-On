@@ -2187,15 +2187,69 @@ def _get_cleared_payload(lane):
     return lane.afc.moonraker.send_lane_data.call_args[0][0]
 
 
+def _make_real_lane_for_colors():
+    """Build a lane through the real __init__, wired for lane_data and get_status."""
+    lane = _make_real_afc_lane()
+    lane.connect_done = True
+    lane.map = ["T0"]
+    lane._sent_lane_data_keys = []
+    lane.afc.tool_cmds = {}
+    lane.afc.moonraker = MagicMock()
+    lane.afc.function.get_filament_status = MagicMock(return_value="a:b")
+    lane.extruder_obj = MagicMock()
+    lane.extruder_obj.th_extruder_name = lane.extruder_obj.name = "extruder"
+    lane.espooler = MagicMock()
+    lane.espooler.espooler_values.full_weight = 1000
+    lane.unit_obj = MagicMock()
+    lane.buffer_status = lambda: "None"
+    return lane
+
+
+class TestRealLaneColorDefaults:
+    def test_new_lane_has_no_colors(self):
+        lane = _make_real_lane_for_colors()
+        assert lane.multi_color == []
+        assert lane.color_mode == ""
+
+
+class TestLaneDataColors:
+    def test_single_color_is_solid(self):
+        lane = _make_real_lane_for_colors()
+        lane.color = "#FF0000"
+        assert lane.lane_data_colors() == (["#FF0000"], "solid")
+
+    def test_multi_color_keeps_mode(self):
+        lane = _make_real_lane_for_colors()
+        lane.multi_color = ["#FFD700", "C0C0C0"]
+        lane.color_mode = "coaxial"
+        assert lane.lane_data_colors() == (["#FFD700", "#C0C0C0"], "coaxial")
+
+    def test_multi_color_without_mode_is_gradient(self):
+        lane = _make_real_lane_for_colors()
+        lane.multi_color = ["AABBCC", "001122"]
+        assert lane.lane_data_colors() == (["#AABBCC", "#001122"], "gradient")
+
+    def test_bare_hash_is_no_color(self):
+        lane = _make_real_lane_for_colors()
+        lane.color = "#"
+        assert lane.lane_data_colors() == ([], "")
+
+    def test_empty_color_is_no_color(self):
+        lane = _make_real_lane_for_colors()
+        lane.color = ""
+        assert lane.lane_data_colors() == ([], "")
+
+
 class TestSendLaneDataColors:
     def test_single_color_is_solid(self):
-        lane = _make_lane_for_moonraker()
+        lane = _make_real_lane_for_colors()
+        lane.color = "#FF0000"
         payload = _get_sent_payload(lane)
         assert payload["value"]["colors"] == ["#FF0000"]
         assert payload["value"]["color_mode"] == "solid"
 
     def test_multi_color_lists_every_color(self):
-        lane = _make_lane_for_moonraker()
+        lane = _make_real_lane_for_colors()
         lane.color = "#FFD700"
         lane.multi_color = ["FFD700", "C0C0C0"]
         lane.color_mode = "coaxial"
@@ -2205,13 +2259,13 @@ class TestSendLaneDataColors:
         assert payload["value"]["color_mode"] == "coaxial"
 
     def test_multi_color_without_mode_is_gradient(self):
-        lane = _make_lane_for_moonraker()
+        lane = _make_real_lane_for_colors()
         lane.multi_color = ["AABBCC", "001122"]
         payload = _get_sent_payload(lane)
         assert payload["value"]["color_mode"] == "gradient"
 
     def test_no_color_gives_empty_list(self):
-        lane = _make_lane_for_moonraker()
+        lane = _make_real_lane_for_colors()
         lane.color = "#"
         payload = _get_sent_payload(lane)
         assert payload["value"]["colors"] == []
@@ -2220,16 +2274,23 @@ class TestSendLaneDataColors:
 
 class TestClearLaneDataColors:
     def test_colors_are_cleared(self):
-        lane = _make_lane_for_moonraker()
+        lane = _make_real_lane_for_colors()
         lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "coaxial"
         payload = _get_cleared_payload(lane)
         assert payload["value"]["colors"] == []
         assert payload["value"]["color_mode"] == ""
 
 
 class TestGetStatusColors:
+    def test_new_lane_reports_no_colors(self):
+        lane = _make_real_lane_for_colors()
+        response = lane.get_status()
+        assert response["multi_color_hexes"] == []
+        assert response["color_mode"] == ""
+
     def test_color_mode_reported_live(self):
-        lane = _make_lane_for_get_status(["T0"])
+        lane = _make_real_lane_for_colors()
         lane.multi_color = ["AABBCC", "001122"]
         lane.color_mode = "coaxial"
         response = lane.get_status()
@@ -2237,10 +2298,9 @@ class TestGetStatusColors:
         assert response["color_mode"] == "coaxial"
 
     def test_colors_persisted_when_saving_to_file(self):
-        lane = _make_lane_for_get_status(["T0"])
+        lane = _make_real_lane_for_colors()
         lane.multi_color = ["AABBCC", "001122"]
         lane.color_mode = "gradient"
-        lane.td1_data = {"td": "", "color": "", "scan_time": ""}
         response = lane.get_status(save_to_file=True)
         assert response["multi_color_hexes"] == ["AABBCC", "001122"]
         assert response["color_mode"] == "gradient"

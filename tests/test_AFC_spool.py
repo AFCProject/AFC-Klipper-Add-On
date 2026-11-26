@@ -783,6 +783,12 @@ class TestSetColor:
         assert lane.multi_color == ["AABBCC", "001122"]
         assert lane.color_mode == "gradient"
 
+    def test_explicit_color_kept_with_colors(self):
+        lane = self._run(COLOR="112233", COLORS="AABBCC,001122")
+        assert lane.color == "#112233"
+        assert lane.multi_color == ["AABBCC", "001122"]
+        assert lane.color_mode == "gradient"
+
     def test_unknown_color_mode_falls_back_to_gradient(self):
         lane = self._run(COLORS="AABBCC,001122", COLOR_MODE="striped")
         assert lane.color_mode == "gradient"
@@ -1899,11 +1905,14 @@ class TestSetSpoolID:
         lane = _make_lane()
         lane.remember_spool = False
         lane.espooler = MagicMock()
+        lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "coaxial"
         result = _make_spool_result(color_hex=None)
         _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color == ""
         assert lane.multi_color == []
+        assert lane.color_mode == ""
 
     def test_multi_color_is_none(self):
         gcmd = _make_gcmd()

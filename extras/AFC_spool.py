@@ -480,7 +480,7 @@ class AFCSpool:
             if color_mode not in ('gradient', 'coaxial'):
                 self.logger.info(f"Unknown COLOR_MODE {color_mode}, using gradient")
                 color_mode = 'gradient'
-            cur_lane.color = f"#{colors[0]}"
+            cur_lane.color = f"#{color.replace('#', '')}"
             cur_lane.multi_color = colors
             cur_lane.color_mode = color_mode
         else:
