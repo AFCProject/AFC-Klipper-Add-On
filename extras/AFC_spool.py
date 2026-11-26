@@ -572,7 +572,7 @@ class AFCSpool:
         VENDOR - Filament vendor/brand name. eg. Polymaker, Elegoo
         NAME - Filament name. eg. PolyTerra PLA
         FILAMENT_ID - Slicer filament preset id, which OrcaSlicer matches to pick the exact
-                      filament preset for this lane. eg. OGFL99 (Generic PLA)
+                      filament preset for this lane. eg. OFDSrzZ8 (Generic PLA)
 
         Usage
         -----
@@ -581,7 +581,7 @@ class AFCSpool:
         Example
         -----
         ```
-        SET_FILAMENT_INFO LANE=lane1 VENDOR="Generic" NAME="Generic PLA" FILAMENT_ID=OGFL99
+        SET_FILAMENT_INFO LANE=lane1 VENDOR="Generic" NAME="Generic PLA" FILAMENT_ID=OFDSrzZ8
         ```
         """
         lane = gcmd.get('LANE')

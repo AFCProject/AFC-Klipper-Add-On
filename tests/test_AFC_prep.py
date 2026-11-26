@@ -267,15 +267,15 @@ class TestPrepRestoreFilamentInfo:
         assert lane.filament_name == "PLA"
 
     def test_restores_filament_id_without_spoolman(self, tmp_path):
-        lane, _ = self._run_prep({"filament_id": "OGFL99"}, tmp_path=tmp_path)
-        assert lane.filament_id == "OGFL99"
+        lane, _ = self._run_prep({"filament_id": "OFDSrzZ8"}, tmp_path=tmp_path)
+        assert lane.filament_id == "OFDSrzZ8"
 
     def test_restores_filament_id_with_a_spoolman_spool(self, tmp_path):
         """Spoolman carries no slicer filament id, so the saved one is kept."""
-        lane, afc = self._run_prep({"spool_id": 5, "filament_id": "OGFL99"},
+        lane, afc = self._run_prep({"spool_id": 5, "filament_id": "OFDSrzZ8"},
                                    spoolman=MagicMock(), tmp_path=tmp_path)
         afc.spool.set_spoolID.assert_called_once_with(lane, 5, save_vars=False)
-        assert lane.filament_id == "OGFL99"
+        assert lane.filament_id == "OFDSrzZ8"
 
     def test_missing_key_leaves_filament_id_unchanged(self, tmp_path):
         lane, _ = self._run_prep({"filament_name": "PLA"}, tmp_path=tmp_path)
