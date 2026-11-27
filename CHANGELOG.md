@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-26-2026]
+### Added
+- Added Creality CFS to the installer. Additional CFS units join the first box's chain: the installer
+  writes their config with the shared hub, the next free `box_addr` and lane numbers, and a `box_uid`
+  placeholder, and asks for the first box's uid if it has none.
+
 ## [11-25-2026]
 ## Fixed
 - Buffers getting enabled when a lane is loaded and toolhead is docked during PREP
