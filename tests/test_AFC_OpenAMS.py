@@ -5104,7 +5104,7 @@ class TestClearLaneInfo:
     def test_clears_filament_id(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", filament_id="OFDSrzZ8", spool_id=None)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         assert lane.filament_id == ""
 
     def test_removal_without_spool_id_still_clears_and_persists_filament_metadata(self):

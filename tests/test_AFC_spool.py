@@ -1809,7 +1809,7 @@ class TestSetSpoolID:
         result["extra"] = {"orca_filament_id": '"OFHmPYRy"'}
         result["filament"]["extra"] = {"orca_filament_id": '"OFDSrzZ8"'}
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=_make_gcmd())
         assert lane.filament_id == "OFDSrzZ8"
 
     def test_filament_extra_field_sets_filament_id(self):
@@ -1821,7 +1821,7 @@ class TestSetSpoolID:
         result = _make_spool_result()
         result["filament"]["extra"] = {"orca_filament_id": '"OFDSrzZ8"'}
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=_make_gcmd())
         assert lane.filament_id == "OFDSrzZ8"
 
     def test_spool_without_extra_field_keeps_filament_id(self):
@@ -1832,7 +1832,7 @@ class TestSetSpoolID:
         lane.espooler = MagicMock()
         lane.filament_id = "GFL03"
         _stub_get_spool(spool, _make_spool_result())
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=_make_gcmd())
         assert lane.filament_id == "GFL03"
 
     def _filament_id_lane(self, spool_id, filament_id="OFDSrzZ8"):
@@ -1850,7 +1850,7 @@ class TestSetSpoolID:
         result = _make_spool_result()
         result["filament"]["extra"] = {"orca_filament_id": "OFDSrzZ8"}
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=_make_gcmd())
         assert lane.filament_id == "OFDSrzZ8"
 
     def test_non_string_filament_extra_keeps_filament_id(self):
@@ -1858,13 +1858,13 @@ class TestSetSpoolID:
         result = _make_spool_result()
         result["filament"]["extra"] = {"orca_filament_id": "42"}
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=_make_gcmd())
         assert lane.filament_id == "GFL03"
 
     def test_different_spool_clears_filament_id(self):
         spool, lane = self._filament_id_lane(4)
         _stub_get_spool(spool, _make_spool_result())
-        spool.set_spoolID(lane, 5)
+        spool.set_spoolID(lane, 5, gcmd=_make_gcmd())
         assert lane.spool_id == 5
         assert lane.filament_id == ""
 
@@ -1873,26 +1873,26 @@ class TestSetSpoolID:
         result = _make_spool_result()
         result["filament"]["extra"] = {"orca_filament_id": '"OFHmPYRy"'}
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 5)
+        spool.set_spoolID(lane, 5, gcmd=_make_gcmd())
         assert lane.filament_id == "OFHmPYRy"
 
     def test_same_spool_of_another_type_keeps_filament_id(self):
         spool, lane = self._filament_id_lane(5)
         _stub_get_spool(spool, _make_spool_result())
-        spool.set_spoolID(lane, "5")
+        spool.set_spoolID(lane, "5", gcmd=_make_gcmd())
         assert lane.filament_id == "OFDSrzZ8"
 
     @pytest.mark.parametrize("empty_id", [None, ""])
     def test_first_spool_keeps_filament_id(self, empty_id):
         spool, lane = self._filament_id_lane(empty_id)
         _stub_get_spool(spool, _make_spool_result())
-        spool.set_spoolID(lane, 5)
+        spool.set_spoolID(lane, 5, gcmd=_make_gcmd())
         assert lane.filament_id == "OFDSrzZ8"
 
     def test_failed_lookup_keeps_spool_and_filament_id(self):
         spool, lane = self._filament_id_lane(4)
         _stub_get_spool(spool, None)
-        spool.set_spoolID(lane, 5)
+        spool.set_spoolID(lane, 5, gcmd=_make_gcmd())
         assert lane.spool_id == 4
         assert lane.filament_id == "OFDSrzZ8"
 
@@ -1902,7 +1902,7 @@ class TestSetSpoolID:
         lane.remember_spool = True
         spool.next_spool_id = 5
         _stub_get_spool(spool, _make_spool_result())
-        spool._set_values(lane)
+        spool._set_values(lane, gcmd=_make_gcmd())
         assert lane.spool_id == 5
         assert lane.filament_id == ""
 
@@ -1917,7 +1917,7 @@ class TestSetSpoolID:
         spool.afc.lanes = {"lane1": lane}
         spool.afc.save_vars = MagicMock()
         callbacks = self._pending_lookup(spool)
-        spool.set_spoolID(lane, 5)
+        spool.set_spoolID(lane, 5, gcmd=_make_gcmd())
         spool.cmd_SET_FILAMENT_INFO(_make_gcmd(LANE="lane1", FILAMENT_ID="custom-preset"))
         callbacks[0](_make_spool_result())
         assert lane.spool_id == 5
@@ -1928,7 +1928,7 @@ class TestSetSpoolID:
         spool.afc.lanes = {"lane1": lane}
         spool.afc.save_vars = MagicMock()
         callbacks = self._pending_lookup(spool)
-        spool.set_spoolID(lane, 5)
+        spool.set_spoolID(lane, 5, gcmd=_make_gcmd())
         spool.cmd_SET_FILAMENT_INFO(_make_gcmd(LANE="lane1", FILAMENT_ID="custom-preset"))
         result = _make_spool_result()
         result["filament"]["extra"] = {"orca_filament_id": '"OFDSrzZ8"'}
@@ -1941,7 +1941,7 @@ class TestSetSpoolID:
         spool.afc.save_vars = MagicMock()
         spool.cmd_SET_FILAMENT_INFO(_make_gcmd(LANE="lane1", FILAMENT_ID="custom-preset"))
         callbacks = self._pending_lookup(spool)
-        spool.set_spoolID(lane, 5)
+        spool.set_spoolID(lane, 5, gcmd=_make_gcmd())
         callbacks[0](_make_spool_result())
         assert lane.filament_id == ""
 

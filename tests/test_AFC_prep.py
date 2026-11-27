@@ -275,7 +275,8 @@ class TestPrepRestoreFilamentInfo:
         """A saved filament_id is kept, since a Spoolman filament may carry none."""
         lane, afc = self._run_prep({"spool_id": 5, "filament_id": "OFDSrzZ8"},
                                    spoolman=MagicMock(), tmp_path=tmp_path)
-        afc.spool.set_spoolID.assert_called_once_with(lane, 5, save_vars=False)
+        afc.spool.set_spoolID.assert_called_once_with(lane, 5, save_vars=False,
+                                                      gcmd=afc._test_gcmd)
         assert lane.filament_id == "OFDSrzZ8"
 
     def test_missing_key_leaves_filament_id_unchanged(self, tmp_path):
