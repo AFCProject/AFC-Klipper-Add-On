@@ -2240,6 +2240,18 @@ class TestLaneDataColors:
         lane.color = ""
         assert lane.lane_data_colors() == ([], "")
 
+    def test_single_rgba_color_drops_alpha(self):
+        lane = _make_real_lane_for_colors()
+        lane.color = "#FF000080"
+        assert lane.lane_data_colors() == (["#FF0000"], "solid")
+        assert lane.color == "#FF000080"
+
+    def test_multi_rgba_colors_drop_alpha(self):
+        lane = _make_real_lane_for_colors()
+        lane.multi_color = ["FF000080", "#00FF00FF"]
+        lane.color_mode = "coaxial"
+        assert lane.lane_data_colors() == (["#FF0000", "#00FF00"], "coaxial")
+
 
 class TestSendLaneDataColors:
     def test_single_color_is_solid(self):

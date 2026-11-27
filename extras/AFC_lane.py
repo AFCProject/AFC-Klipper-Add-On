@@ -2089,11 +2089,22 @@ class AFCLane:
                        `gradient`, `coaxial`, or `""` when the lane has no color.
         """
         if len(self.multi_color) > 1:
-            colors = [f"#{c.replace('#', '')}" for c in self.multi_color]
+            colors = [self._rgb_hex(c) for c in self.multi_color]
             return colors, self.color_mode or "gradient"
         if self.color and self.color != "#":
-            return [self.color], "solid"
+            return [self._rgb_hex(self.color)], "solid"
         return [], ""
+
+    @staticmethod
+    def _rgb_hex(color: str) -> str:
+        """
+        Returns a color as `#RRGGBB`: adds the leading `#` and drops the trailing alpha
+        of an eight-digit `RRGGBBAA` value, which Spoolman allows.
+        """
+        hex_value = color.replace('#', '')
+        if len(hex_value) == 8:
+            hex_value = hex_value[:6]
+        return f"#{hex_value}"
 
     def clear_lane_data(self):
         """

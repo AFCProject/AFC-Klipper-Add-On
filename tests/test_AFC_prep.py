@@ -243,6 +243,13 @@ class TestPrepRestoreFilamentInfo:
         assert lane.multi_color == ["FFD700", "C0C0C0"]
         assert lane.color_mode == "coaxial"
 
+    def test_null_multi_color_values_restore_as_empty(self, tmp_path):
+        lane, _ = self._run_prep({"color": "#FFD700",
+                                  "multi_color_hexes": None,
+                                  "color_mode": None}, tmp_path=tmp_path)
+        assert lane.multi_color == []
+        assert lane.color_mode == ""
+
     def test_missing_keys_leave_vendor_and_name_unchanged(self, tmp_path):
         lane, _ = self._run_prep({"material": "PLA"}, tmp_path=tmp_path)
         assert lane.spool_vendor == ""
