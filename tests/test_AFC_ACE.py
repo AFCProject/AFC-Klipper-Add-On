@@ -8363,6 +8363,104 @@ class TestAfcACECalibrateHubInner:
             ("error", "ACE hub calibrate: retract failed: unwind boom")]
 
 
+class TestAfcACECalibrateHubInnerClearMove:
+    @staticmethod
+    def _unit(margin: float, **kwargs: Any) -> afcACE:
+        """
+        :param margin: the hub's hub_clear_move_dis
+        :param kwargs: make_ace_unit keywords
+        :return afcACE: a unit whose lane1 (dist_hub 10) sits on a hub with a
+            real switch pin and that margin
+        """
+        printer = make_ace_printer()
+        printer.add_hub("hub1", switch_pin="PA1", hub_clear_move_dis=margin)
+        return ace_p2_unit(LaneSpec("lane1", values={"hub": "hub1", "dist_hub": 10}),
+                           printer=printer, **kwargs)
+
+    @staticmethod
+    def _trip_hub_on_move(unit: afcACE, moves: int) -> AceP2Wire:
+        """
+        :param unit: unit whose lane1 hub trips
+        :param moves: the feed count (already recorded when the hook runs) that reaches the hub
+        :return AceP2Wire: the wire recording the moves
+        """
+        lane = unit.lanes["lane1"]
+
+        def trip_hub(method: str, params: Dict[str, Any]) -> None:
+            """The given feed reaches the hub switch."""
+            if len(wire.moves()) == moves:
+                lane.hub_obj.state = True
+        wire = AceP2Wire(unit, on_move=trip_hub)
+        return wire
+
+    def test_margin_is_taken_off_the_stored_dist_hub(self):
+        unit = self._unit(40.0, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        # Hub trips after 2 x 60mm = 120mm; 120 - 40 = 80 is stored.
+        assert result == (True, "dist_hub calibration: 80.0mm, hub sensor at 120.0mm less "
+                                "40.0mm hub_clear_move_dis (was 10.0mm)", 80.0)
+        assert lane.dist_hub == 80.0
+        assert unit.printer.afc.function.ConfigRewrite.calls == [
+            (("AFC_lane lane1", "dist_hub", 80.0, "\n dist_hub: New: 80.0 Old: 10.0"), {})]
+        assert unit.printer.logger.messages == [
+            ("raw", "Calibrating dist_hub for lane1 (max 4000mm in 60.0mm steps)"),
+            ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
+            ("info", "ACE hub calibrate: trigger at 120.0mm")]
+
+    def test_margin_equal_to_the_measurement_is_refused(self):
+        unit = self._unit(120.0, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        wire = self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        assert result == (False, "Hub sensor triggered at 120.0mm, which is not past the hub's "
+                                 "hub_clear_move_dis of 120.0mm. dist_hub was not changed.", 120.0)
+        assert lane.dist_hub == 10.0
+        assert unit.printer.afc.function.ConfigRewrite.calls == []
+        # The lane is still backed off 50mm short of the trigger point.
+        assert wire.moves()[-1] == ("unwind_filament", {"index": 0, "length": 70.0,
+                                                        "speed": 100.0, "mode": "normal"})
+        assert unit.printer.logger.messages == [
+            ("raw", "Calibrating dist_hub for lane1 (max 4000mm in 60.0mm steps)"),
+            ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
+            ("info", "ACE hub calibrate: trigger at 120.0mm")]
+
+    def test_margin_just_under_the_measurement_is_stored(self):
+        unit = self._unit(119.5, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        assert result == (True, "dist_hub calibration: 0.5mm, hub sensor at 120.0mm less "
+                                "119.5mm hub_clear_move_dis (was 10.0mm)", 0.5)
+        assert lane.dist_hub == 0.5
+        assert unit.printer.afc.function.ConfigRewrite.calls == [
+            (("AFC_lane lane1", "dist_hub", 0.5, "\n dist_hub: New: 0.5 Old: 10.0"), {})]
+        assert unit.printer.logger.messages == [
+            ("raw", "Calibrating dist_hub for lane1 (max 4000mm in 60.0mm steps)"),
+            ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
+            ("info", "ACE hub calibrate: trigger at 120.0mm")]
+
+    def test_margin_that_rounds_to_zero_is_refused(self):
+        unit = self._unit(119.999, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        assert result == (False, "Hub sensor triggered at 120.0mm, which is not past the hub's "
+                                 "hub_clear_move_dis of 119.999mm. dist_hub was not changed.",
+                          120.0)
+        assert lane.dist_hub == 10.0
+        assert unit.printer.afc.function.ConfigRewrite.calls == []
+
+
 class TestAfcACESyncInventory:
     def test_v1_sync_inventory_reads_every_slot(self):
         unit = ace_p2_unit()

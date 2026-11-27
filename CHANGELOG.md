@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [11-24-2026]
+### Changed
+- `AFC_ACE_CALIBRATE_HUB` stores the measured lane to hub sensor distance less the hub's
+  `hub_clear_move_dis` as `dist_hub`, so a staged ACE lane parks short of a hub sensor that sits
+  past the point where the tubes merge. Recalibrate ACE lanes with a hub sensor after updating.
+
 ### Fixed
 - A print whose file Moonraker doesn't have, such as the virtual job Kalico's `PRINT_PA_TOWER`
   runs, no longer reports "Error getting data from moonraker" to the console at print start. The
