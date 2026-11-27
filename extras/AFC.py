@@ -704,7 +704,7 @@ class afc:
                                                         on_fetched=self._finish_print_start)
             else:
                 self._finish_print_start()
-            self.spool.resync_afc_mapping_from_extruder_map_table()
+            self.spool.resync_afc_mapping_from_extruder_map_table(gcmd="force_acquire")
 
         return self.reactor.NEVER
 

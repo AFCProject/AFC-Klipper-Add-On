@@ -447,16 +447,17 @@ class TestSyncToolheadFilament:
         spool.sync_toolhead_filament()
         spool.set_snapmaker_filament_params.assert_called_once_with(tc_lane)
 
-    def test_lane_not_found_and_not_standalone_passes_none(self):
+    def test_lane_not_found_and_not_standalone_skips_extruder(self):
         """Independent coverage of the `extruder.is_standalone()` operand's
-        falsy side: a non-standalone extruder with nothing resolved passes
-        None through rather than falling back to tc_lane."""
+        falsy side: a non-standalone extruder with nothing resolved must not
+        fall back to tc_lane, and with no lane resolved at all must not call
+        set_snapmaker_filament_params."""
         spool = _make_spool()
         spool.set_snapmaker_filament_params = MagicMock()
         extruder = self._make_extruder(lanes={}, lane_loaded="ghost", is_standalone=False)
         spool.afc.tools = {"extruder": extruder}
         spool.sync_toolhead_filament()
-        spool.set_snapmaker_filament_params.assert_called_once_with(None)
+        spool.set_snapmaker_filament_params.assert_not_called()
 
     def test_calls_once_per_extruder(self):
         spool = _make_spool()
@@ -570,33 +571,33 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool = self._make()
         spool.afc.snapmaker_printer = False
         spool.afc.tool_cmds = {"T0": "lane1"}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_print_task_config_obj_none_does_nothing(self):
         spool = self._make()
         spool.print_task_config_obj = None
         spool.afc.tool_cmds = {"T0": "lane1"}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_skips_non_integer_t_suffix(self):
         spool = self._make()
         spool.afc.tool_cmds = {"TX": "lane1"}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_skips_logical_index_out_of_bounds(self):
         spool = self._make()
         spool.afc.tool_cmds = {"T99": "lane1"}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_skips_lane_not_in_lanes(self):
         spool = self._make()
         spool.afc.lanes = {}
         spool.afc.tool_cmds = {"T0": "ghost"}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_skips_when_index_matches_and_no_tool_object_exists(self):
@@ -609,7 +610,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.lanes = {"lane1": lane1}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 0
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_not_called()
 
@@ -623,7 +624,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
 
@@ -641,7 +642,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_not_called()
 
@@ -661,7 +662,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder": target_extruder}
         spool.afc.tool_cmds = {"T2": "lane2"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][2] = 0
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_called_once_with(lane3, lane2, "T2")
 
     def _make_mismatch(self, spool):
@@ -684,7 +685,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         self._make_mismatch(spool)
         spool.print_task_config_obj.print_task_config_2 = {
             "filament_used_g": [0.0], "filament_used_mm": [0.0]}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_applies_slot_marked_used_via_filament_used_g_alone(self):
@@ -695,7 +696,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         self._make_mismatch(spool)
         spool.print_task_config_obj.print_task_config_2 = {
             "filament_used_g": [1.0], "filament_used_mm": [0.0]}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_called_once()
 
     def test_applies_slot_marked_used_via_filament_used_mm_alone(self):
@@ -706,7 +707,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         self._make_mismatch(spool)
         spool.print_task_config_obj.print_task_config_2 = {
             "filament_used_g": [0.0], "filament_used_mm": [1.0]}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_called_once()
 
     def test_index_out_of_range_for_filament_used_g_still_applies_via_mm(self):
@@ -718,7 +719,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         self._make_mismatch(spool)
         spool.print_task_config_obj.print_task_config_2 = {
             "filament_used_g": [], "filament_used_mm": [1.0]}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_called_once()
 
     def test_index_out_of_range_for_filament_used_mm_still_applies_via_g(self):
@@ -730,7 +731,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         self._make_mismatch(spool)
         spool.print_task_config_obj.print_task_config_2 = {
             "filament_used_g": [1.0], "filament_used_mm": []}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_called_once()
 
     def test_index_out_of_range_for_both_is_skipped(self):
@@ -738,7 +739,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         self._make_mismatch(spool)
         spool.print_task_config_obj.print_task_config_2 = {
             "filament_used_g": [], "filament_used_mm": []}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_missing_print_task_config_2_attribute_is_treated_as_unused(self):
@@ -751,7 +752,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
             print_task_config = spool.print_task_config_obj.print_task_config
 
         spool.print_task_config_obj = _NoConfig2()
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_target_extruder_not_found_cancels_print(self):
@@ -764,7 +765,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
         assert spool.logger.messages == [(
@@ -788,7 +789,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
 
@@ -802,7 +803,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
 
@@ -818,7 +819,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
 
@@ -838,7 +839,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
 
@@ -853,7 +854,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_not_called()
 
@@ -873,7 +874,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool.afc.run_script.assert_not_called()
         spool._set_map.assert_called_once_with(tc_lane, lane1, "T0")
 
@@ -892,7 +893,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool.afc.run_script.assert_not_called()
         spool._set_map.assert_called_once_with(tc_lane, lane1, "T0")
 
@@ -908,7 +909,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_not_called()
 
@@ -928,7 +929,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.print_task_config_obj.print_task_config["extruder_map_table"] = [2, 3, 0, 0]
         spool.print_task_config_obj.print_task_config_2 = {
             "filament_used_g": [1.0, 1.0], "filament_used_mm": [0.0, 0.0]}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         assert spool.logger.messages == [(
             "error",
@@ -951,7 +952,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.print_task_config_obj.print_task_config["extruder_map_table"].append(50)
         spool.print_task_config_obj.print_task_config_2["filament_used_g"].append(1.0)
         spool.print_task_config_obj.print_task_config_2["filament_used_mm"].append(0.0)
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         assert spool.logger.messages == [(
             "error",
             f"T{count} mapping was changed from the printer's screen or slicer to an extruder "
@@ -972,7 +973,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder1": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
 
     def test_calls_set_map_with_new_lane_when_extruder_0(self):
@@ -986,7 +987,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 0
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_called_once_with(lane_new, lane1, "T0")
 
     def test_calls_set_map_with_new_lane_when_extruder_nonzero(self):
@@ -1000,7 +1001,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder2": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 2
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_called_once_with(lane_new, lane1, "T0")
 
     def test_logs_warning_message_describing_the_change(self):
@@ -1014,7 +1015,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.tools = {"extruder2": target_extruder}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 2
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         assert spool.logger.messages == [(
             "warning",
             "The following mappings were changed from the printer's screen or slicer:\n"
@@ -1025,7 +1026,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
     def test_logs_one_warning_listing_all_changes_when_multiple_apply(self):
         spool = self._make()
         self._make_many_changes(spool, 2)
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         assert spool.logger.messages == [(
             "warning",
             "The following mappings were changed from the printer's screen or slicer:\n"
@@ -1037,7 +1038,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
     def test_no_warning_logged_when_there_are_no_changes_to_apply(self):
         spool = self._make()
         spool.afc.tool_cmds = {}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         assert spool.logger.messages == []
 
@@ -1046,7 +1047,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.lanes = MagicMock()
         spool.afc.lanes.get.side_effect = RuntimeError("boom")
         spool.afc.tool_cmds = {"T0": "lane1"}
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         assert spool.logger.messages[0] == (
             "error", "Error when trying to resync AFC mapping from snapmaker print_task_config")
         assert spool.logger.messages[1][0] == "debug"
@@ -1081,7 +1082,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool = self._make()
         count = MAX_UNATTENDED_MAPPING_CHANGES + 1
         self._make_many_changes(spool, count)
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
         spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
         assert spool.logger.messages == [(
@@ -1098,7 +1099,7 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool = self._make()
         count = MAX_UNATTENDED_MAPPING_CHANGES
         self._make_many_changes(spool, count)
-        spool.resync_afc_mapping_from_extruder_map_table()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool.afc.run_script.assert_not_called()
         assert spool._set_map.call_count == count
         for i in range(count):

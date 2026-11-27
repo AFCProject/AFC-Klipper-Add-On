@@ -216,7 +216,8 @@ class AFCSpool:
             if (lane is None
                 and extruder.is_standalone()):
                 lane = extruder.tc_lane
-            self.set_snapmaker_filament_params(lane)
+            if lane is not None:
+                self.set_snapmaker_filament_params(lane)
 
     def sync_extruder_map_table(self) -> None:
         """
@@ -259,13 +260,15 @@ class AFCSpool:
                 "Error when trying to update extruder_map_table for snapmaker print_task_config")
             self.logger.debug(traceback.format_exc())
 
-    def resync_afc_mapping_from_extruder_map_table(self) -> None:
+    def resync_afc_mapping_from_extruder_map_table(self, gcmd: AFCGcmd) -> None:
         """
         Snapmaker-only: at print start, adopts any T(n) remap made from the screen by comparing
         extruder_map_table against AFC's mapping. An index match alone isn't trusted for a
         shared extruder: resolves via whichever lane is currently loaded instead. Cancels the print
         rather than guessing on an unresolvable or oversized (`MAX_UNATTENDED_MAPPING_CHANGES`)
         change set.
+
+        :param gcmd: `AFCGcmd` context this was called from, passed through to `run_script`
         """
         warning_msg = ""
         if (not self.afc.snapmaker_printer
@@ -347,7 +350,7 @@ class AFCSpool:
                     "into that extruder, then restart the print from the printer's UI."
                 )
                 self.logger.error(warn_str)
-                self.afc.run_script("CANCEL_PRINT", gcmd="callback")
+                self.afc.run_script("CANCEL_PRINT", gcmd=gcmd)
                 return
 
             if len(changes) > MAX_UNATTENDED_MAPPING_CHANGES:
@@ -358,7 +361,7 @@ class AFCSpool:
                     "printer's UI so the new mapping is picked up correctly."
                 )
                 self.logger.error(warn_str)
-                self.afc.run_script("CANCEL_PRINT", gcmd="callback")
+                self.afc.run_script("CANCEL_PRINT", gcmd=gcmd)
                 return
 
             for map_cmd, cur_lane, new_lane, screen_extruder_index in changes:

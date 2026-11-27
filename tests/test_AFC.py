@@ -3707,7 +3707,8 @@ class TestInPrintReactorTimer:
         obj.function.in_print.return_value = (True, "test.gcode")
         obj.function.get_current_lane_obj.return_value = None
         obj.in_print_reactor_timer(0.0)
-        obj.spool.resync_afc_mapping_from_extruder_map_table.assert_called_once()
+        obj.spool.resync_afc_mapping_from_extruder_map_table.assert_called_once_with(
+            gcmd="force_acquire")
 
     def test_does_not_resync_extruder_map_table_when_not_in_print(self):
         obj = self._make()
