@@ -1,0 +1,50 @@
+# AFC buffer fault-detection integration test.
+#
+# Arms fault detection, fires a real buffer pin transition via
+# SIMULATE_CALLBACK around a real lane move, then invokes the fault
+# timer's own callback to confirm AFC_error's pause path engages.
+#
+# extruder_pos_update_event's SIMULATE_CALLBACK uses DEFER+REACTOR_PAUSE
+# to avoid a Kalico mutex deadlock (see tests/klippy_testing_plugin.py).
+# trailing_callback doesn't touch gcmd/run_script, so it stays inline.
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_with_buffer.cfg
+
+PREP
+
+AFC_CLEAR_MESSAGE
+
+G28
+
+ENABLE_BUFFER BUFFER=buf1 LANE=lane1
+
+# Arms fault detection (starts the fault timer, sets filament_error_pos).
+AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=5.0
+
+# A real lane move (must happen before print_stats below, since LANE_MOVE
+# refuses to run mid-print), then a real trailing-pin transition (buffer
+# compressing, mimicking a clog). last_state is intentionally cross-wired
+# in AFC_buffer.py (pre-existing, unrelated to this test).
+LANE_MOVE LANE=lane1 DISTANCE=50
+SIMULATE_CALLBACK OBJECT="AFC_buffer buf1" METHOD=trailing_callback STATE=1
+ASSERT TEST="{ printer['AFC_buffer buf1'].state == 'Advancing' }"
+
+# Printing (with movement) is required for extruder_pos_update_event's own
+# fault check and for AFC_error's pause gate to engage.
+SET_ATTR OBJECT=print_stats ATTR=state VALUE="'printing'"
+
+# Force the extruder-position-vs-threshold comparison to read as an overrun
+# (this harness never moves a real toolhead extruder on its own).
+SET_ATTR OBJECT="AFC_buffer buf1" ATTR=filament_error_pos VALUE=-1000.0
+SET_ATTR OBJECT="AFC_buffer buf1" ATTR=past_extruder_position VALUE=0.0
+# pause_on_error ignores pauses for 2s after klippy:ready; clear that gate.
+SET_ATTR OBJECT="AFC_buffer buf1" ATTR=min_event_systime VALUE=0.0
+
+SIMULATE_CALLBACK OBJECT="AFC_buffer buf1" METHOD=extruder_pos_update_event DEFER=0.01
+REACTOR_PAUSE DELAY=0.05
+ASSERT TEST="{ printer['pause_resume'].is_paused }"

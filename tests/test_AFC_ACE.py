@@ -1838,7 +1838,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=True)
 
         unit._sync_slot_states({"status": "ready", "slots": [
-            {"status": "ready"}, {"status": "empty"}, "garbage"]})
+            {"status": "ready"}, {"status": "empty"}, "garbage"]}, gcmd="callback")
 
         assert unit._slot_inventory[0] == {"status": "ready"}
         assert unit._slot_inventory[1] == {"status": "empty"}
@@ -1849,7 +1849,7 @@ class TestAfcACESyncSlotStates:
     def test_lane_beyond_reported_slots_skipped(self):
         unit, lane, runout = self._unit(prev_ready=True)
 
-        unit._sync_slot_states({"status": "ready", "slots": []})
+        unit._sync_slot_states({"status": "ready", "slots": []}, gcmd="callback")
 
         assert lane.prep_state is True
         assert unit._prev_slot_states == {"lane0": True}
@@ -1859,7 +1859,7 @@ class TestAfcACESyncSlotStates:
     def test_malformed_slot_entry_skipped(self):
         unit, lane, runout = self._unit(prev_ready=True)
 
-        unit._sync_slot_states({"status": "ready", "slots": ["garbage"]})
+        unit._sync_slot_states({"status": "ready", "slots": ["garbage"]}, gcmd="callback")
 
         assert lane.prep_state is True
         assert unit._prev_slot_states == {"lane0": True}
@@ -1870,7 +1870,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=True, tool_loaded=True, current="lane0")
         lane._load_state = False
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane._load_state is True
         assert runout.calls == []
@@ -1881,7 +1881,7 @@ class TestAfcACESyncSlotStates:
         lane.hub_obj = unit.printer.add_hub("real_hub", switch_pin="PA1")
         lane._load_state = False
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane._load_state is False
         assert unit.logger.messages == []
@@ -1890,7 +1890,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=True)
 
         for status in ("shifting", "feeding", "unwinding"):
-            unit._sync_slot_states(self._hw(status))
+            unit._sync_slot_states(self._hw(status), gcmd="callback")
             assert lane.prep_state is True
             assert lane.loaded_to_hub is True
             assert unit._prev_slot_states == {"lane0": True}
@@ -1904,7 +1904,7 @@ class TestAfcACESyncSlotStates:
         unit._hub_load_suppressed = {"lane0"}
         unit.printer.reactor.now = 150.0
 
-        unit._sync_slot_states(self._hw("empty"))
+        unit._sync_slot_states(self._hw("empty"), gcmd="callback")
 
         assert lane.prep_state is False
         assert lane.loaded_to_hub is False
@@ -1918,7 +1918,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=True)
         unit._hub_load_suppressed = {"lane0"}
 
-        unit._sync_slot_states(self._hw("empty", unit_status="busy"))
+        unit._sync_slot_states(self._hw("empty", unit_status="busy"), gcmd="callback")
 
         assert runout.calls == []
         assert lane.loaded_to_hub is True
@@ -1930,7 +1930,7 @@ class TestAfcACESyncSlotStates:
     def test_stale_prev_states_resync_without_events(self):
         unit, lane, runout = self._unit(prev_ready=True, stale=True)
 
-        unit._sync_slot_states(self._hw("empty"))
+        unit._sync_slot_states(self._hw("empty"), gcmd="callback")
 
         assert runout.calls == []
         assert unit._prev_slot_states == {"lane0": False}
@@ -1942,7 +1942,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=False)
         unit._hub_load_suppressed = {"lane0"}
 
-        unit._sync_slot_states(self._hw("empty"))
+        unit._sync_slot_states(self._hw("empty"), gcmd="callback")
 
         assert runout.calls == []
         assert unit._hub_load_suppressed == set()
@@ -1952,7 +1952,7 @@ class TestAfcACESyncSlotStates:
     def test_fresh_insert_v1_preloads_to_hub(self):
         unit, lane, runout = self._unit(prev_ready=False, status=AFCLaneState.LOADED)
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane.prep_state is True
         assert lane.loaded_to_hub is True
@@ -1965,7 +1965,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=False, status=AFCLaneState.LOADED)
         lane.load_to_hub = False
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane.prep_state is True
         assert lane.loaded_to_hub is False
@@ -1976,7 +1976,7 @@ class TestAfcACESyncSlotStates:
         # The ACE 2 stages through prep_post_load instead of its own preload.
         unit._preloads_to_hub_on_insert = False
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane.prep_state is True
         assert lane.loaded_to_hub is False
@@ -1986,7 +1986,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=False, status=AFCLaneState.LOADED,
                                         stale=True)
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane.prep_state is True
         assert lane.loaded_to_hub is False
@@ -1996,7 +1996,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=False, tool_loaded=True, current="lane0")
         lane.loaded_to_hub = False
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane.loaded_to_hub is False
         assert lane.prep_state is True
@@ -2006,7 +2006,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=True, status=AFCLaneState.NONE)
         unit.printer.reactor.now = 150.0
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert runout.calls == [((150.0, True), {})]
         assert lane._load_suppressed is False
@@ -2017,7 +2017,7 @@ class TestAfcACESyncSlotStates:
         unit._hub_load_suppressed = {"lane0"}
         unit.printer.reactor.now = 150.0
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane._load_suppressed is True
         assert runout.calls == [((150.0, True), {})]
@@ -2027,7 +2027,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=True, status=AFCLaneState.NONE)
         lane._afc_prep_done = False
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert runout.calls == []
         assert unit.logger.messages == []
@@ -2040,9 +2040,9 @@ class TestAfcACESyncSlotStates:
         lane.sync_to_extruder = Hook(lane.sync_to_extruder)
         lane.enable_buffer = Hook(lane.enable_buffer)
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
-        assert lane.sync_to_extruder.calls == [((), {})]
+        assert lane.sync_to_extruder.calls == [((), {"gcmd": "callback"})]
         assert lane.enable_buffer.calls == [((), {})]
         assert lane.loaded_to_hub is True
         assert lane.status == AFCLaneState.TOOLED
@@ -2062,9 +2062,9 @@ class TestAfcACESyncSlotStates:
         lane.sync_to_extruder = Hook(lane.sync_to_extruder)
         lane.enable_buffer = Hook(lane.enable_buffer)
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
-        assert lane.sync_to_extruder.calls == [((), {})]
+        assert lane.sync_to_extruder.calls == [((), {"gcmd": "callback"})]
         assert lane.enable_buffer.calls == [((), {})]
         assert lane.current_led_state == "tool_loaded_idle"
         assert unit.afc.spool.set_active_spool.calls == []
@@ -2078,7 +2078,7 @@ class TestAfcACESyncSlotStates:
         unit, lane, runout = self._unit(prev_ready=True, tool_loaded=True, current="lane0")
         lane.loaded_to_hub = False
 
-        unit._sync_slot_states(self._hw("ready"))
+        unit._sync_slot_states(self._hw("ready"), gcmd="callback")
 
         assert lane.loaded_to_hub is False
         assert lane.current_led_state == ""
@@ -2115,7 +2115,7 @@ class TestAfcACEDispatchLoadRunout:
     def test_insert_reaches_the_lane_handler(self):
         unit, lane = self._unit()
 
-        unit._dispatch_load_runout(lane, 12.0, True)
+        unit._dispatch_load_runout(lane, 12.0, True, gcmd="callback")
 
         assert lane.handle_load_runout.calls == [((12.0, True), {})]
         assert unit.afc.error.AFC_error.calls == []
@@ -2124,7 +2124,7 @@ class TestAfcACEDispatchLoadRunout:
     def test_runout_reaches_the_lane_handler(self):
         unit, lane = self._unit()
 
-        unit._dispatch_load_runout(lane, 12.0, False)
+        unit._dispatch_load_runout(lane, 12.0, False, gcmd="callback")
 
         assert lane.handle_load_runout.calls == [((12.0, False), {})]
         assert unit.afc.error.AFC_error.calls == []
@@ -2134,7 +2134,7 @@ class TestAfcACEDispatchLoadRunout:
         unit, lane = self._unit(raises=RuntimeError("Must home X axis first"))
         unit.afc.function.in_print_flag = True
 
-        unit._dispatch_load_runout(lane, 12.0, False)
+        unit._dispatch_load_runout(lane, 12.0, False, gcmd="callback")
 
         assert self._error_call(unit) == (
             "error", "lane0: runout handling failed: Must home X axis first",
@@ -2142,25 +2142,25 @@ class TestAfcACEDispatchLoadRunout:
         assert unit.afc.error.AFC_error.calls == [(
             ("Lane lane0 runout handling failed: Must home X axis first\n"
              "Filament may still be loaded in the toolhead, check the toolhead "
-             "before resuming.",), {"pause": True})]
+             "before resuming.",), {"pause": True, "gcmd": "callback"})]
 
     def test_insert_failure_is_reported_as_a_load_not_a_runout(self):
         unit, lane = self._unit(raises=RuntimeError("boom"))
 
-        unit._dispatch_load_runout(lane, 12.0, True)
+        unit._dispatch_load_runout(lane, 12.0, True, gcmd="callback")
 
         assert self._error_call(unit) == (
             "error", "lane0: load handling failed: boom", {"stack_name": ""})
         assert unit.afc.error.AFC_error.calls == [(
             ("Lane lane0 load handling failed: boom\n"
              "Filament may still be loaded in the toolhead, check the toolhead "
-             "before resuming.",), {"pause": False})]
+             "before resuming.",), {"pause": False, "gcmd": "callback"})]
 
     def test_handler_exception_does_not_escape_to_the_transport(self):
         unit, lane = self._unit(raises=RuntimeError("boom"))
         unit.afc.error.AFC_error = Recorder(raises=RuntimeError("no error obj"))
 
-        unit._dispatch_load_runout(lane, 12.0, False)
+        unit._dispatch_load_runout(lane, 12.0, False, gcmd="callback")
 
         assert unit.logger.messages == [
             ("error", "lane0: runout handling failed: boom"),
@@ -2363,7 +2363,7 @@ class TestAfcACEPrepLoad:
     def test_is_noop(self):
         unit = ace_p1_unit("lane0")
 
-        assert unit.prep_load(unit.lanes["lane0"]) is None
+        assert unit.prep_load(unit.lanes["lane0"], gcmd="callback") is None
         assert unit._ace.commands == []
         assert unit.printer.timeline == []
         assert unit.logger.messages == []
@@ -2397,10 +2397,10 @@ class TestAfcACEOnFilamentInsert:
         unit.afc.spool.clear_values = Hook(lambda cleared: setattr(cleared, "spool_id", None))
         wire = AceP1Wire(unit)
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         assert unit.afc.spool.clear_values.calls == [((lane,), {})]
-        assert unit.afc.spool.set_spoolID.calls == [((lane, 5), {})]
+        assert unit.afc.spool.set_spoolID.calls == [((lane, 5), {"gcmd": "callback"})]
         # The restore branch fired, so the no-identity default-values branch must not.
         assert unit.afc.spool._set_values.calls == []
         assert unit._slot_inventory[0]["raw"] == {}
@@ -2426,10 +2426,10 @@ class TestAfcACEOnFilamentInsert:
         # _set_values only fires for V1 alongside applying RFID tag defaults.
         monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", Recorder())
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         assert unit.afc.spool.set_spoolID.calls == []
-        assert unit.afc.spool._set_values.calls == [((lane,), {})]
+        assert unit.afc.spool._set_values.calls == [((lane,), {"gcmd": "callback"})]
         assert lane._afc_staged_spool_id is None
         assert unit.logger.messages == [("debug", "ACE Ace_1: slot 0 get_filament_info -> {}")]
 
@@ -2441,9 +2441,9 @@ class TestAfcACEOnFilamentInsert:
         lane._afc_staged_spool_id = 5
         unit.afc.spool.clear_values = Hook(lambda cleared: setattr(cleared, "spool_id", None))
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
-        assert unit.afc.spool.set_spoolID.calls == [((lane, 5), {})]
+        assert unit.afc.spool.set_spoolID.calls == [((lane, 5), {"gcmd": "callback"})]
         # The restore branch fired, so the no-identity default-values branch must not.
         assert unit.afc.spool._set_values.calls == []
         assert lane._afc_staged_spool_id is None
@@ -2458,10 +2458,10 @@ class TestAfcACEOnFilamentInsert:
         # _set_values only fires for V1 alongside applying RFID tag defaults.
         monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", Recorder())
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         assert unit.afc.spool.set_spoolID.calls == []
-        assert unit.afc.spool._set_values.calls == [((lane,), {})]
+        assert unit.afc.spool._set_values.calls == [((lane,), {"gcmd": "callback"})]
         assert lane._afc_staged_spool_id is None
         assert unit.logger.messages == [("debug", "ACE Ace_1: slot 0 get_filament_info -> {}")]
 
@@ -2474,12 +2474,12 @@ class TestAfcACEOnFilamentInsert:
         # _set_values only fires for V1 alongside applying RFID tag defaults.
         monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", Recorder())
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         # The default clear_values leaves spool_id set.
         assert unit.afc.spool.clear_values.calls == [((lane,), {})]
         assert unit.afc.spool.set_spoolID.calls == []
-        assert unit.afc.spool._set_values.calls == [((lane,), {})]
+        assert unit.afc.spool._set_values.calls == [((lane,), {"gcmd": "callback"})]
         assert lane.spool_id == 5
         assert unit.logger.messages == [("debug", "ACE Ace_1: slot 0 get_filament_info -> {}")]
 
@@ -2490,7 +2490,7 @@ class TestAfcACEOnFilamentInsert:
         lane = unit.lanes["lane0"]
         unit._ace.set_reply("get_filament_info", {"type": "PETG", "rfid": 2})
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         # The tag is still cached; only applying it to the lane needs AFC_RFID.
         assert unit._slot_inventory[0]["material"] == "PETG"
@@ -2506,7 +2506,7 @@ class TestAfcACEOnFilamentInsert:
         unit._ace = AceP1BrokenLink("stage boom")
         lane = unit.lanes["lane0"]
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         assert unit._slot_inventory[0] == {}
         assert unit.printer.events == [("afc_ace:post_insert", (lane,)),
@@ -2520,7 +2520,7 @@ class TestAfcACEOnFilamentInsert:
         unit.printer.register_event_handler(
             "afc_ace:post_insert", Recorder(raises=RuntimeError("reader down")))
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         assert unit.printer.events == [("afc_ace:post_insert", (lane,)),
                                        ("afc:lane_inserted", (lane,))]
@@ -2534,7 +2534,7 @@ class TestAfcACEOnFilamentInsert:
         # Force an out-of-range slot (a correctly configured unit never does this).
         unit._slot_map["lane0"] = 99
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         assert unit.afc.spool.clear_values.calls == []
         assert unit.printer.events == []
@@ -2548,7 +2548,7 @@ class TestAfcACEOnFilamentInsert:
         apply_defaults = Recorder()
         monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", apply_defaults)
 
-        unit.on_filament_insert(lane)
+        unit.on_filament_insert(lane, gcmd="callback")
 
         assert apply_defaults.calls == [((lane, unit._slot_inventory[0]), {
             "color_converter": None,
@@ -2564,7 +2564,7 @@ class TestAfcACEOnFilamentRemove:
         lane._load_state = True
         unit._hub_load_suppressed = {"lane0"}
 
-        unit.on_filament_remove(lane)
+        unit.on_filament_remove(lane, gcmd="callback")
 
         assert unit._slot_inventory[1] == {"material": "", "color": [0, 0, 0]}
         assert lane.loaded_to_hub is False
@@ -2579,7 +2579,7 @@ class TestAfcACEOnFilamentRemove:
         # Force an out-of-range slot (a correctly configured unit never does this).
         unit._slot_map["lane0"] = 99
 
-        unit.on_filament_remove(lane)
+        unit.on_filament_remove(lane, gcmd="callback")
 
         assert unit._slot_inventory[1] == {"material": "PLA"}
         assert lane.loaded_to_hub is False
@@ -2593,7 +2593,7 @@ class TestAfcACECalibrateTd1:
         unit.afc.function.check_for_td1_id = Hook(
             lambda device: (seen.append(unit._operation_active), (False, "bad td1"))[1])
 
-        result = unit.calibrate_td1(unit.lanes["lane0"], 50.0, 1.0)
+        result = unit.calibrate_td1(unit.lanes["lane0"], 50.0, 1.0, gcmd=make_gcmd())
 
         assert result == (False, "bad td1", 0)
         assert seen == [True]
@@ -2618,17 +2618,17 @@ class TestAfcACEPrepCaptureTd1:
     def test_returns_handled_when_when_loaded_and_staged(self):
         unit, lane = self._lane(True, True)
 
-        assert unit.prep_capture_td1(lane) == (True, "TD-1 capture handled by prep_post_load")
+        assert unit.prep_capture_td1(lane, gcmd="callback") == (True, "TD-1 capture handled by prep_post_load")
 
     def test_returns_none_when_not_staged(self):
         unit, lane = self._lane(True, False)
 
-        assert unit.prep_capture_td1(lane) is None
+        assert unit.prep_capture_td1(lane, gcmd="callback") is None
 
     def test_returns_none_when_not_when_loaded(self):
         unit, lane = self._lane(False, True)
 
-        assert unit.prep_capture_td1(lane) is None
+        assert unit.prep_capture_td1(lane, gcmd="callback") is None
 
 
 class TestAfcACECaptureTd1Data:
@@ -2645,7 +2645,7 @@ class TestAfcACECaptureTd1Data:
         unit, lane = self._unit(td1_device_id="td1", td1_bowden_length=300)
         unit._ace.connected = False
 
-        assert unit.capture_td1_data(lane) == (False, "ACE not connected")
+        assert unit.capture_td1_data(lane, gcmd="callback") == (False, "ACE not connected")
         assert unit.afc.function.check_for_td1_id.calls == []
         assert unit.logger.messages == []
 
@@ -2653,14 +2653,14 @@ class TestAfcACECaptureTd1Data:
         unit, lane = self._unit()
         lane.td1_device_id = None
 
-        assert unit.capture_td1_data(lane) == (False, "td1_device_id not set for lane")
+        assert unit.capture_td1_data(lane, gcmd="callback") == (False, "td1_device_id not set for lane")
         assert unit.logger.messages == []
 
     def test_missing_bowden_length(self):
         unit, lane = self._unit(td1_device_id="td1")
         lane.td1_bowden_length = None
 
-        assert unit.capture_td1_data(lane) == (
+        assert unit.capture_td1_data(lane, gcmd="callback") == (
             False, "td1_bowden_length not set, run TD-1 calibration first")
         assert unit.logger.messages == []
 
@@ -2668,7 +2668,7 @@ class TestAfcACECaptureTd1Data:
         unit, lane = self._unit(td1_device_id="td1", td1_bowden_length=300)
         unit.afc.function.check_for_td1_id = Recorder(result=(False, "bad td1"))
 
-        assert unit.capture_td1_data(lane) == (False, "bad td1")
+        assert unit.capture_td1_data(lane, gcmd="callback") == (False, "bad td1")
         assert unit.afc.function.check_for_td1_id.calls == [(("td1",), {})]
         assert unit._ace.commands == []
         assert unit._operation_active is False
@@ -2678,13 +2678,13 @@ class TestAfcACECaptureTd1Data:
         unit, lane = self._unit(td1_device_id="td1", td1_bowden_length=300)
         seen: List[bool] = []
         unit._capture_td1_data_inner = Hook(
-            lambda cur_lane, slot: (seen.append(unit._operation_active),
+            lambda cur_lane, slot, gcmd=None: (seen.append(unit._operation_active),
                                     (True, "captured"))[1])
 
-        result = unit.capture_td1_data(lane)
+        result = unit.capture_td1_data(lane, gcmd="callback")
 
         assert result == (True, "captured")
-        assert unit._capture_td1_data_inner.calls == [((lane, 0), {})]
+        assert unit._capture_td1_data_inner.calls == [((lane, 0), {"gcmd": "callback"})]
         assert seen == [True]
         assert unit._operation_active is False
         assert unit.logger.messages == []
@@ -2697,7 +2697,8 @@ class TestAfcACECaptureTd1DataInner:
         lane = unit.lanes["lane0"]
         unit._ace = None
 
-        ok, msg = unit._capture_td1_data_inner(lane, 0)
+        gcmd = make_gcmd()
+        ok, msg = unit._capture_td1_data_inner(lane, 0, gcmd=gcmd)
 
         assert (ok, msg) == (False, "ACE not connected")
         assert unit.logger.messages == []
@@ -2708,7 +2709,8 @@ class TestAfcACECaptureTd1DataInner:
         lane.td1_bowden_length = None
         wire = AceP1Wire(unit)
 
-        ok, msg = unit._capture_td1_data_inner(lane, 0)
+        gcmd = make_gcmd()
+        ok, msg = unit._capture_td1_data_inner(lane, 0, gcmd=gcmd)
 
         assert (ok, msg) == (False, "td1_bowden_length not set for lane0")
         assert wire.moves() == []
@@ -2719,7 +2721,8 @@ class TestAfcACECaptureTd1DataInner:
                                             td1_bowden_length=300)
         wire = AceP1Wire(unit)
 
-        ok, msg = unit._capture_td1_data_inner(lane, 0)
+        gcmd = make_gcmd()
+        ok, msg = unit._capture_td1_data_inner(lane, 0, gcmd=gcmd)
 
         assert (ok, msg) == (True, "TD-1 data captured for lane0")
         assert fetch.call_count == 1
@@ -2741,7 +2744,8 @@ class TestAfcACECaptureTd1DataInner:
                                             td1_bowden_length=300)
         wire = AceP1Wire(unit)
 
-        ok, msg = unit._capture_td1_data_inner(lane, 0)
+        gcmd = make_gcmd()
+        ok, msg = unit._capture_td1_data_inner(lane, 0, gcmd=gcmd)
 
         assert (ok, msg) == (True, "TD-1 data captured for lane0")
         assert wire.moves() == [
@@ -2765,15 +2769,16 @@ class TestAfcACECaptureTd1DataInner:
         attempts: List[int] = []
         real_apply = unit._apply_td1_data
 
-        def flaky_apply(cur_lane, compare_time, td1_data, ignore_time=False):
+        def flaky_apply(cur_lane, compare_time, td1_data, ignore_time=False, *, gcmd=None):
             """First call reports no detection yet; later calls behave normally."""
             attempts.append(1)
             if len(attempts) == 1:
                 return False
-            return real_apply(cur_lane, compare_time, td1_data, ignore_time)
+            return real_apply(cur_lane, compare_time, td1_data, ignore_time, gcmd=gcmd)
         unit._apply_td1_data = flaky_apply
 
-        ok, msg = unit._capture_td1_data_inner(lane, 0)
+        gcmd = make_gcmd()
+        ok, msg = unit._capture_td1_data_inner(lane, 0, gcmd=gcmd)
 
         assert (ok, msg) == (True, "TD-1 data captured for lane0")
         assert fetch.call_count == 2
@@ -2785,7 +2790,8 @@ class TestAfcACECaptureTd1DataInner:
         AceP1Wire(unit)
         unit._ace.unwind_filament = Recorder(raises=RuntimeError("unwind boom"))
 
-        ok, msg = unit._capture_td1_data_inner(lane, 0)
+        gcmd = make_gcmd()
+        ok, msg = unit._capture_td1_data_inner(lane, 0, gcmd=gcmd)
 
         assert (ok, msg) == (True, "TD-1 data captured for lane0")
         assert unit.logger.messages == [
@@ -2802,7 +2808,8 @@ class TestAfcACECaptureTd1DataInner:
         AceP1Wire(unit)
         unit._apply_td1_data = Recorder(result=False)
 
-        ok, msg = unit._capture_td1_data_inner(lane, 0)
+        gcmd = make_gcmd()
+        ok, msg = unit._capture_td1_data_inner(lane, 0, gcmd=gcmd)
 
         assert (ok, msg) == (False, "TD-1 data not captured (unload completed)")
         assert unit.logger.messages == [
@@ -2817,7 +2824,8 @@ class TestAfcACECalibrateTd1Inner:
         lane.td1_bowden_length = None
         AceP1Wire(unit)
 
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert (ok, dist) == (True, 0.0)
         assert msg == ("ACE TD-1 calibration: filament detected at 0.0mm.\n"
@@ -2833,7 +2841,8 @@ class TestAfcACECalibrateTd1Inner:
         lane = unit.lanes["lane0"]
         unit._ace.connected = False
 
-        result = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        result = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert result == (False, "ACE not connected", 0)
         assert unit.logger.messages == []
@@ -2843,7 +2852,8 @@ class TestAfcACECalibrateTd1Inner:
         lane = unit.lanes["lane0"]
         lane.td1_device_id = None
 
-        result = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        result = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert result == (False,
             "Cannot calibrate TD-1 for lane0, td1_device_id is a required "
@@ -2854,7 +2864,8 @@ class TestAfcACECalibrateTd1Inner:
         unit, lane, fetch = ace_p1_td1_unit(monkeypatch, loaded_to_hub=False)
         wire = AceP1Wire(unit)
 
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert (ok, dist) == (True, 0.0)
         # Not staged at hub: retract_dist = bow_pos (0.0) + dist_hub (60).
@@ -2876,7 +2887,8 @@ class TestAfcACECalibrateTd1Inner:
                                             dist_hub=0)
         wire = AceP1Wire(unit)
 
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert (ok, dist) == (True, 0.0)
         assert wire.moves() == [
@@ -2890,7 +2902,8 @@ class TestAfcACECalibrateTd1Inner:
         hub.state = True
         wire = AceP1Wire(unit)
 
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert (ok, dist) == (True, 0.0)
         # Real hub, filament not yet staged: feed dist_hub + 200 then detect at hub.
@@ -2912,7 +2925,8 @@ class TestAfcACECalibrateTd1Inner:
         hub.state = False
         AceP1Wire(unit)
 
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert (ok, dist) == (False, 0)
         assert msg == "Hub sensor did not trigger for lane0"
@@ -2924,15 +2938,16 @@ class TestAfcACECalibrateTd1Inner:
         attempts: List[int] = []
         real_apply = unit._apply_td1_data
 
-        def flaky_apply(cur_lane, compare_time, td1_data, ignore_time=False):
+        def flaky_apply(cur_lane, compare_time, td1_data, ignore_time=False, *, gcmd=None):
             """First call reports no detection yet; the retry behaves normally."""
             attempts.append(1)
             if len(attempts) == 1:
                 return False
-            return real_apply(cur_lane, compare_time, td1_data, ignore_time)
+            return real_apply(cur_lane, compare_time, td1_data, ignore_time, gcmd=gcmd)
         unit._apply_td1_data = flaky_apply
 
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert ok is True
         assert dist == 50.0
@@ -2945,7 +2960,8 @@ class TestAfcACECalibrateTd1Inner:
         unit._apply_td1_data = Recorder(result=False)
 
         # One 7000mm step clears the 6000mm cap, so the very next pass aborts.
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 7000.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 7000.0, 1.0, gcmd=gcmd)
 
         assert ok is False
         assert dist == 7000.0
@@ -2957,7 +2973,8 @@ class TestAfcACECalibrateTd1Inner:
         AceP1Wire(unit)
         unit._ace.unwind_filament = Recorder(raises=RuntimeError("unwind boom"))
 
-        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0)
+        gcmd = make_gcmd()
+        ok, msg, dist = unit._calibrate_td1_inner(lane, 50.0, 1.0, gcmd=gcmd)
 
         assert ok is True
         assert unit.logger.messages == [
@@ -3146,7 +3163,7 @@ class TestAfcACEPrepPostLoad:
             "afc_ace:stage_probe_begin", lambda staged, ctx: ctx.update(initial=100.0))
         wire = AceP1Wire(unit)
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd="callback")
 
         # The listener's initial load ran although dist_hub is 0.
         assert wire.moves() == [("feed_filament", {"index": 3, "length": 100.0,
@@ -3164,7 +3181,7 @@ class TestAfcACEPrepPostLoad:
         lane.load_to_hub = False  # a per-lane False is overridden by the unit setting.
         AceP1Wire(unit)
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd="callback")
 
         assert lane.loaded_to_hub is True
 
@@ -3172,7 +3189,7 @@ class TestAfcACEPrepPostLoad:
         unit = ace_p1_unit(LaneSpec("lane0"))
         lane = unit.lanes["lane0"]
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd="callback")
 
         assert lane.loaded_to_hub is False
         assert unit._ace.commands == []
@@ -3183,7 +3200,7 @@ class TestAfcACEPrepPostLoad:
         lane = unit.lanes["lane0"]
         unit._ace.connected = False
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd="callback")
 
         assert lane.loaded_to_hub is False
         assert unit.logger.messages == []
@@ -3193,7 +3210,7 @@ class TestAfcACEPrepPostLoad:
         lane = unit.lanes["lane0"]
         unit._feed_to_hub_probing = Recorder(result=False)
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd="callback")
 
         assert lane.loaded_to_hub is False
         # prep_state started True (LaneSpec prep=True); the abort path clears it.
@@ -3209,9 +3226,9 @@ class TestAfcACEPrepPostLoad:
         unit.capture_td1_data = Recorder(result=(True, "captured"))
         AceP1Wire(unit)
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd="callback")
 
-        assert unit.capture_td1_data.calls == [((lane,), {})]
+        assert unit.capture_td1_data.calls == [((lane,), {"gcmd": "callback"})]
         assert lane.loaded_to_hub is True
         assert unit.logger.messages == [
             ("info", "ACE prep_post_load: lane0 staged at hub (dist_hub=60mm)"),
@@ -3222,7 +3239,7 @@ class TestAfcACEPrepPostLoad:
         lane = unit.lanes["lane0"]
         unit._feed_to_hub_probing = Recorder(raises=RuntimeError("stage boom"))
 
-        unit.prep_post_load(lane)
+        unit.prep_post_load(lane, gcmd="callback")
 
         assert lane.loaded_to_hub is False
         assert unit.logger.messages == [
@@ -3258,7 +3275,7 @@ class TestAfcACEEjectLane:
         unit, lane, wire = self._unit()
         unit._ace.connected = False
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert lane.loaded_to_hub is True
         assert unit._ace.commands == []
@@ -3267,7 +3284,7 @@ class TestAfcACEEjectLane:
     def test_success_clears_staging_and_suppresses(self):
         unit, lane, wire = self._unit()
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert wire.moves() == [self.UNWIND]
         assert lane.loaded_to_hub is False
@@ -3278,7 +3295,7 @@ class TestAfcACEEjectLane:
         unit, lane, wire = self._unit()
         wire.fail("unwind_filament", RuntimeError("bad"))
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert lane.loaded_to_hub is True
         assert unit._hub_load_suppressed == set()
@@ -3288,7 +3305,7 @@ class TestAfcACEEjectLane:
     def test_eject_suppresses_auto_reload(self):
         unit, lane, wire = self._unit()
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert unit._hub_load_suppressed == {"lane3"}
         assert unit.logger.messages == [self.UNWIND_LOG]
@@ -3297,7 +3314,7 @@ class TestAfcACEEjectLane:
         unit, lane, wire = self._unit()
         lane._load_state = True
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert lane.loaded_to_hub is False
         assert lane._load_state is False
@@ -3306,7 +3323,7 @@ class TestAfcACEEjectLane:
     def test_eject_retracts_hub_stage_distance(self):
         unit, lane, wire = self._unit()
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert wire.moves() == [self.UNWIND]
         assert unit.logger.messages == [self.UNWIND_LOG]
@@ -3314,7 +3331,7 @@ class TestAfcACEEjectLane:
     def test_eject_stops_the_lanes_assist_first(self):
         unit, lane, wire = self._unit(feed_assist_active=[3])
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         # Each get_status is a ready check: the stop's, the eject's, then the
         # polls until the unwind is done.
@@ -3328,7 +3345,7 @@ class TestAfcACEEjectLane:
         unit, lane, wire = self._unit()
         unit._ace.connected = False
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert unit._hub_load_suppressed == set()
         assert wire.moves() == []
@@ -3339,7 +3356,7 @@ class TestAfcACEEjectLane:
         unit, lane, wire = self._unit(operation_active=True)
         unit._prev_states_stale = False
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert unit._operation_active is False
         assert unit._prev_states_stale is True
@@ -3349,7 +3366,7 @@ class TestAfcACEEjectLane:
         unit, lane, wire = self._unit(operation_active=True)
         unit._ace.connected = False
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert unit._operation_active is False
         assert unit.logger.messages == []
@@ -3358,7 +3375,7 @@ class TestAfcACEEjectLane:
         unit, lane, wire = self._unit(operation_active=True)
         wire.fail("unwind_filament", RuntimeError("unwind refused"))
 
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert unit._operation_active is False
         assert unit.logger.messages == [
@@ -3369,7 +3386,7 @@ class TestAfcACEEjectLane:
 
         unit.prepare_unload(lane, None, None)
         assert unit._operation_active is True
-        unit.eject_lane(lane)
+        unit.eject_lane(lane, gcmd=make_gcmd())
 
         assert unit._operation_active is False
         assert unit._prev_states_stale is True
@@ -3528,7 +3545,8 @@ class TestAfcACESystemTest:
         unit._ace.connected = False
         lane = unit.lanes["lane0"]
 
-        ok = unit.system_Test(lane, 0.0, True, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, True, False, gcmd=gcmd)
 
         assert ok is False
         assert lane.current_led_state == ""
@@ -3542,7 +3560,8 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         unit._ace.set_reply("get_status", ace_status("empty"))
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.prep_state is False
@@ -3558,7 +3577,8 @@ class TestAfcACESystemTest:
         unit = ace_p1_unit(LaneSpec("lane0", prep=True))
         lane = unit.lanes["lane0"]
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.prep_state is True
@@ -3576,7 +3596,8 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         lane.load_to_hub = False
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.status == AFCLaneState.LOADED
@@ -3591,7 +3612,8 @@ class TestAfcACESystemTest:
                            current="lane0", values={"use_feed_assist": False})
         lane = unit.lanes["lane0"]
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.status == AFCLaneState.TOOLED
@@ -3611,10 +3633,11 @@ class TestAfcACESystemTest:
         lane.sync_to_extruder = Hook(lane.sync_to_extruder)
         lane.enable_buffer = Hook(lane.enable_buffer)
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
-        assert lane.sync_to_extruder.calls == [((), {})]
+        assert lane.sync_to_extruder.calls == [((), {"gcmd": gcmd})]
         assert lane.enable_buffer.calls == [((), {})]
         assert lane.status == AFCLaneState.TOOLED
         assert unit.afc.spool.set_active_spool.calls == [((7,), {})]
@@ -3638,8 +3661,10 @@ class TestAfcACESystemTest:
         assert lane0.extruder_obj is lane1.extruder_obj
         lane0.extruder_obj.tool_start_state = True
 
-        assert unit.system_Test(lane0, 0.0, False, False) is True
-        assert unit.system_Test(lane1, 0.0, False, False) is True
+        gcmd = make_gcmd()
+        assert unit.system_Test(lane0, 0.0, False, False, gcmd=gcmd) is True
+        gcmd = make_gcmd()
+        assert unit.system_Test(lane1, 0.0, False, False, gcmd=gcmd) is True
 
         # Said on the extruder's first lane only.
         assert unit.logger.messages == [
@@ -3651,12 +3676,14 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         lane.extruder_obj.tool_start_state = True
         lane.extruder_obj.lane_loaded = "lane5"
-        assert unit.system_Test(lane, 0.0, False, False) is True
+        gcmd = make_gcmd()
+        assert unit.system_Test(lane, 0.0, False, False, gcmd=gcmd) is True
 
         lane.extruder_obj.lane_loaded = None
         lane.extruder_obj.tool_start = "buffer"
         lane.buffer_obj = types.SimpleNamespace(advance_state=True)
-        assert unit.system_Test(lane, 0.0, False, False) is True
+        gcmd = make_gcmd()
+        assert unit.system_Test(lane, 0.0, False, False, gcmd=gcmd) is True
 
         assert unit.logger.messages == [
             ("info", f"lane0 tool cmd: T0  {self.LOADED_LINE}")] * 2
@@ -3666,7 +3693,8 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         unit._ace.set_reply("get_status", "oops")
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.prep_state is True
@@ -3677,7 +3705,8 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         unit._ace.set_reply("get_status", {"status": "ready", "slots": []})
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.prep_state is True
@@ -3687,7 +3716,8 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         unit._ace.set_reply("get_status", {"status": "ready", "slots": ["garbage"]})
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.prep_state is True
@@ -3697,7 +3727,8 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         unit._ace.set_reply("get_status", RuntimeError("status boom"))
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert lane.prep_state is True
@@ -3711,7 +3742,8 @@ class TestAfcACESystemTest:
         lane = unit.lanes["lane0"]
         unit._ace.set_reply("get_status", ace_status("empty"))
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is False
         assert lane.prep_state is False
@@ -3726,7 +3758,8 @@ class TestAfcACESystemTest:
         apply_defaults = Recorder()
         monkeypatch.setattr(afc_ace_module, "apply_filament_defaults", apply_defaults)
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         assert apply_defaults.calls == [((lane, unit._slot_inventory[0]), {
@@ -3737,8 +3770,10 @@ class TestAfcACESystemTest:
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True, tool_loaded=True),
                            current="other")
         lane = unit.lanes["lane0"]
+        lane.enable_buffer = Hook(lane.enable_buffer)
 
-        ok = unit.system_Test(lane, 0.0, False, False)
+        gcmd = make_gcmd()
+        ok = unit.system_Test(lane, 0.0, False, False, gcmd=gcmd)
 
         assert ok is True
         # afc.current != "lane0", so the TOOLED status assignment is skipped.
@@ -3746,6 +3781,9 @@ class TestAfcACESystemTest:
         assert lane.current_led_state == "tool_loaded_idle"
         assert unit.afc.spool.set_active_spool.calls == []
         assert unit.printer.events == []
+        # An idle (not actively tooled) lane must not enable its buffer: only
+        # the lane actually active on the shuttle should run buffer correction.
+        assert lane.enable_buffer.calls == []
 
 
 class TestAfcACEFeedUntilSensor:
@@ -4178,12 +4216,13 @@ class TestAfcACEUnitLoadLane:
         status = lane.status
         unit._ace.connected = False
 
-        assert unit.unit_load_lane(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert lane.status == status
         assert unit.afc.save_vars.calls == []
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False})]
+            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == []
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4193,7 +4232,8 @@ class TestAfcACEUnitLoadLane:
         AceP1Wire(unit, on_move=lambda method, params: setattr(
             lane.extruder_obj, "tool_start_state", True))
 
-        assert unit.unit_load_lane(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert lane.status == AFCLaneState.TOOL_LOADED
         assert unit.afc.save_vars.call_count == 1
@@ -4203,6 +4243,21 @@ class TestAfcACEUnitLoadLane:
             ("info", "ACE load: advancing tool_stn 72mm to nozzle for lane0")]
         assert unit.afc.afcDeltaTime.messages == [
             ("debug", "ACE load: tool_stn to nozzle"), ("debug", "ACE load transport complete")]
+
+
+    def test_load_to_gears_is_passed_through_and_skips_tool_stn(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
+        lane = unit.lanes["lane0"]
+        AceP1Wire(unit, on_move=lambda method, params: setattr(
+            lane.extruder_obj, "tool_start_state", True))
+
+        gcmd = make_gcmd()
+        assert unit.unit_load_lane(lane, lane.extruder_obj, load_to_gears=True, gcmd=gcmd) is True
+
+        assert lane.status == AFCLaneState.TOOL_LOADED
+        assert unit.afc.move_e_pos.calls == []
+        assert unit.logger.messages == [
+            ("debug", "ACE Ace_1: feed on slot 0 stopped at the toolhead sensor")]
 
 
 class TestAfcACEUnitUnloadLane:
@@ -4236,10 +4291,11 @@ class TestAfcACEUnitUnloadLane:
         extruder = lane.extruder_obj
         assert lane._load_state is True
 
-        assert unit.unit_unload_lane(lane, extruder) is True
+        gcmd = make_gcmd()
+        assert unit.unit_unload_lane(lane, extruder, gcmd=gcmd) is True
 
         assert unit.afc.move_e_pos.calls == self.MOVES
-        assert unit.afc.do_tool_cut_tip_form.calls == [((lane, extruder, None), {})]
+        assert unit.afc.do_tool_cut_tip_form.calls == [((lane, extruder), {"gcmd": gcmd})]
         assert wire.moves() == [self.UNWIND]
         assert lane.status == AFCLaneState.NONE
         assert lane.tool_loaded is False
@@ -4262,7 +4318,8 @@ class TestAfcACEUnitUnloadLane:
         unit, lane, wire = self._unit()
         unit.afc.post_unload_macro = "POST_UNLOAD"
 
-        assert unit.unit_unload_lane(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit.unit_unload_lane(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert unit.afc.gcode.run_script_from_command.calls == [(("POST_UNLOAD",), {})]
         assert unit.afc.afcDeltaTime.messages == self.RETRACT_DELTAS + [self.UNWOUND_DELTA]
@@ -4273,13 +4330,14 @@ class TestAfcACEUnitUnloadLane:
         unit, lane, wire = self._unit()
         wire.fail("unwind_filament", RuntimeError("jam"))
 
-        assert unit.unit_unload_lane(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit.unit_unload_lane(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert lane.status == AFCLaneState.TOOL_UNLOADING
         assert lane.tool_loaded is True
         assert unit.afc.spool.set_active_spool.calls == []
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE unwind failed for lane0: jam"), {"pause": False})]
+            ((lane, "ACE unwind failed for lane0: jam"), {"pause": False, "gcmd": gcmd})]
         # Only the lane's disable_buffer saved.
         assert unit.afc.save_vars.call_count == 1
         assert unit._operation_active is False
@@ -4293,7 +4351,8 @@ class TestAfcACEUnitUnloadLane:
         unit.afc.do_tool_cut_tip_form = Recorder(raises=RuntimeError("cut boom"))
 
         with pytest.raises(RuntimeError, match="cut boom"):
-            unit.unit_unload_lane(lane, lane.extruder_obj)
+            gcmd = make_gcmd()
+            unit.unit_unload_lane(lane, lane.extruder_obj, gcmd=gcmd)
 
         assert unit.afc.move_e_pos.calls == self.MOVES[:1]
         assert wire.moves() == []
@@ -4323,7 +4382,8 @@ class TestAfcACEAceLoadSequence:
             lane.extruder_obj.tool_start_state = True
         AceP1Wire(unit, on_move=on_move)
 
-        assert unit._ace_load_sequence(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_sequence(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         # The load feed and the gear push.
         assert seen == [True, True]
@@ -4336,18 +4396,32 @@ class TestAfcACEAceLoadSequence:
             ("debug", "ACE load: tool_stn to nozzle"), ("debug", "ACE load transport complete")]
         assert unit.afc.error.handle_lane_failure.calls == []
 
+    def test_load_to_gears_is_passed_through_and_skips_tool_stn(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True))
+        lane = unit.lanes["lane0"]
+        AceP1Wire(unit, on_move=lambda method, params: setattr(
+            lane.extruder_obj, "tool_start_state", True))
+
+        gcmd = make_gcmd()
+        assert unit._ace_load_sequence(
+            lane, lane.extruder_obj, load_to_gears=True, gcmd=gcmd) is True
+
+        assert unit.afc.move_e_pos.calls == []
+        assert unit.afc.afcDeltaTime.messages == [("debug", "ACE load transport complete")]
+
     def test_a_failed_load_still_clears_flag(self):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True, load=True), operation_active=True)
         lane = unit.lanes["lane0"]
         unit._prev_states_stale = False
         unit._ace.connected = False
 
-        assert unit._ace_load_sequence(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_sequence(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._operation_active is False
         assert unit._prev_states_stale is True
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False})]
+            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == []
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4428,12 +4502,13 @@ class TestAfcACEAceLoadInner:
         # Bail at the pre-feed check, right after the stop.
         lane.extruder_obj.tool_start_state = True
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._ace.commands == [("get_status", {}), ("stop_feed_assist", {"index": 2})]
         assert unit._feed_assist_active == set()
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, self.PRE_FEED), {"pause": False})]
+            ((lane, self.PRE_FEED), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == []
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4442,12 +4517,13 @@ class TestAfcACEAceLoadInner:
         lane = unit.lanes["lane0"]
         lane.extruder_obj.tool_start_state = True
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._ace.commands == []
         assert unit._feed_assist_active == {0}
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, self.PRE_FEED), {"pause": False})]
+            ((lane, self.PRE_FEED), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == []
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4455,11 +4531,12 @@ class TestAfcACEAceLoadInner:
         unit, lane = self._staged()
         unit._ace.connected = False
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._ace.commands == []
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False})]
+            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == []
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4469,14 +4546,15 @@ class TestAfcACEAceLoadInner:
         unit._hub_load_suppressed.add("lane0")
         lane.extruder_obj.tool_start_state = True
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._ace.commands == []
         # The load already lifted the auto-reload hold before the check.
         assert unit._hub_load_suppressed == set()
         assert unit.afc.error.handle_lane_failure.calls == [
             ((lane, f"{self.PRE_FEED}\nOnce cleared, click resume to continue printing"),
-             {"pause": True})]
+             {"pause": True, "gcmd": gcmd})]
         assert unit.logger.messages == []
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4486,11 +4564,12 @@ class TestAfcACEAceLoadInner:
         lane.buffer_obj = types.SimpleNamespace(enable_advance_latch=Recorder())
         lane.extruder_obj.tool_start_state = True
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert lane.buffer_obj.enable_advance_latch.calls == [((), {})]
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, self.PRE_FEED), {"pause": False})]
+            ((lane, self.PRE_FEED), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == []
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4499,7 +4578,8 @@ class TestAfcACEAceLoadInner:
         lane = unit.lanes["lane0"]
         self._wire(unit, lane, sensor_on=1)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         # Unstaged: dist_hub 60 + bowden 900, less the 30mm slow approach,
         # which the sensor makes unnecessary; the feed stops at the sensor.
@@ -4525,7 +4605,8 @@ class TestAfcACEAceLoadInner:
         lane.extruder_obj.tool_stn = 0
         self._wire(unit, lane, sensor_on=1)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         # No start_feed_assist (nor its ready check) after the feed stopped at the sensor.
         assert unit._ace.commands == [
@@ -4539,17 +4620,34 @@ class TestAfcACEAceLoadInner:
             ("debug", "ACE Ace_1: feed on slot 0 stopped at the toolhead sensor")]
         assert unit.afc.error.handle_lane_failure.calls == []
 
+    def test_load_to_gears_skips_tool_stn_even_when_positive(self):
+        unit = ace_p1_unit(LaneSpec("lane0", prep=True))
+        lane = unit.lanes["lane0"]
+        self._wire(unit, lane, sensor_on=1)
+
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(
+            lane, lane.extruder_obj, load_to_gears=True, gcmd=gcmd) is True
+
+        assert unit.afc.move_e_pos.calls == []
+        assert unit.afc.afcDeltaTime.messages == [("debug", "ACE load transport complete")]
+        # No tool_stn advance line, even though tool_stn is positive.
+        assert unit.logger.messages == [
+            ("debug", "ACE Ace_1: feed on slot 0 stopped at the toolhead sensor")]
+        assert unit.afc.error.handle_lane_failure.calls == []
+
     def test_refused_feed_is_reported(self):
         unit = ace_p1_unit(LaneSpec("lane0", prep=True))
         lane = unit.lanes["lane0"]
         wire = AceP1Wire(unit)
         wire.fail("feed_filament", RuntimeError("FORBIDDEN"))
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert lane.loaded_to_hub is False
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE load feed error: FORBIDDEN"), {"pause": False})]
+            ((lane, "ACE load feed error: FORBIDDEN"), {"pause": False, "gcmd": gcmd})]
         assert unit.afc.afcDeltaTime.messages == []
         assert unit.logger.messages == []
 
@@ -4563,14 +4661,15 @@ class TestAfcACEAceLoadInner:
         lane = unit.lanes["lane0"]
         no_start = self.NO_START
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         feeds = [(m, p) for m, p in unit._ace.commands if m == "feed_filament"]
         # dist_hub 60 + bowden 900, sent once and resent three times.
         assert feeds == [self._feed(960.0, 100.0, slot=0)] * 4
         assert lane.loaded_to_hub is False
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE feed failed for lane0"), {"pause": False})]
+            ((lane, "ACE feed failed for lane0"), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == [
             no_start,
             ("info", "Feed retry 1/3 for lane0 (960mm)"), no_start,
@@ -4585,12 +4684,13 @@ class TestAfcACEAceLoadInner:
         lane = unit.lanes["lane0"]
         no_start = self.NO_START
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         feeds = [(m, p) for m, p in unit._ace.commands if m == "feed_filament"]
         assert feeds == [self._feed(930.0, 100.0, slot=0)] + [self._feed(960.0, 100.0, slot=0)] * 3
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE feed failed for lane0"), {"pause": False})]
+            ((lane, "ACE feed failed for lane0"), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == [
             no_start,
             ("info", "Feed retry 1/3 for lane0 (960mm)"), no_start,
@@ -4603,12 +4703,13 @@ class TestAfcACEAceLoadInner:
         wire = self._wire(unit, lane, sensor_on=None)
         wire.stall(*[True] * 4)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         # The full 3900mm and its two resends, then the 100mm retry pulse.
         assert wire.moves() == [self._feed(3900.0, 80.0)] * 3 + [self._feed(100.0, 50.0)]
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, self.NO_SENSOR + self.STALL_HINT), {"pause": False})]
+            ((lane, self.NO_SENSOR + self.STALL_HINT), {"pause": False, "gcmd": gcmd})]
         resend = ("info", "ACE load: lane3 hit a feed error, feeding the remaining 3900mm again")
         assert unit.logger.messages == [
             self.STALL_LOG, resend, self.STALL_LOG, resend, self.STALL_LOG,
@@ -4619,11 +4720,12 @@ class TestAfcACEAceLoadInner:
         unit, lane = self._staged(load_approach_length=0)
         wire = self._wire(unit, lane, sensor_on=None)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert wire.moves() == [self._feed(3900.0, 80.0), self._feed(100.0, 50.0)]
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, self.NO_SENSOR + self.BOWDEN_HINT), {"pause": False})]
+            ((lane, self.NO_SENSOR + self.BOWDEN_HINT), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == [self.PULSE_LOG]
         assert unit.afc.afcDeltaTime.messages == []
 
@@ -4631,7 +4733,8 @@ class TestAfcACEAceLoadInner:
         unit, lane = self._staged(load_approach_length=150, load_approach_speed=25)
         wire = self._wire(unit, lane, sensor_on=2)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert wire.moves() == [self._feed(3750.0, 80.0), self._feed(150.0, 25.0), self.PUSH]
         assert unit.logger.messages == [self.AT_SENSOR, self.TO_NOZZLE]
@@ -4642,7 +4745,8 @@ class TestAfcACEAceLoadInner:
         unit, lane = self._staged(load_approach_length=150, load_approach_speed=25)
         wire = self._wire(unit, lane, sensor_on=1)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert wire.moves() == [self._feed(3750.0, 80.0), self.PUSH]
         assert unit.logger.messages == [self.AT_SENSOR, self.TO_NOZZLE]
@@ -4655,7 +4759,8 @@ class TestAfcACEAceLoadInner:
         wire.stall(True, False)
         unit._ace.set_reply("get_feed_info", {"feed_info": [{}, {}, {}, {"length": 300.0}]})
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert wire.moves() == [self._feed(3750.0, 80.0), self._feed(3450.0, 80.0),
                                 self._feed(150.0, 25.0), self.PUSH]
@@ -4672,7 +4777,8 @@ class TestAfcACEAceLoadInner:
         wire = self._wire(unit, lane, sensor_on=2)
         wire.stall(True, False)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert wire.moves() == [self._feed(3750.0, 80.0)] * 2 + [self.PUSH]
         assert unit.logger.messages == [
@@ -4688,14 +4794,15 @@ class TestAfcACEAceLoadInner:
         wire.stall(*[True] * 5)
         unit._ace.set_reply("get_feed_info", {"feed_info": [{}, {}, {}, {"length": 100.0}]})
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         # Two resends, each 100mm shorter, then the approach and one retry pulse.
         assert wire.moves() == [self._feed(3750.0, 80.0), self._feed(3650.0, 80.0),
                                 self._feed(3550.0, 80.0), self._feed(150.0, 25.0),
                                 self._feed(100.0, 25.0)]
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, self.NO_SENSOR + self.STALL_HINT), {"pause": False})]
+            ((lane, self.NO_SENSOR + self.STALL_HINT), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == [
             self.STALL_LOG,
             ("info", "ACE load: lane3 hit a feed error after 100mm, feeding the remaining "
@@ -4714,7 +4821,8 @@ class TestAfcACEAceLoadInner:
         wire.stall(True)
         unit._ace.set_reply("get_feed_info", {"feed_info": [{"length": 959.6}]})
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         feeds = [(m, p) for m, p in unit._ace.commands if m == "feed_filament"]
         # dist_hub 60 + bowden 900 = 960mm; the near-complete fed length (959.6mm)
@@ -4728,7 +4836,8 @@ class TestAfcACEAceLoadInner:
         unit, lane = self._staged(load_approach_length=0, load_retry_timeout=5.0)
         wire = self._wire(unit, lane, sensor_on=2)
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert wire.moves() == [self._feed(3900.0, 80.0), self._feed(100.0, 50.0), self.PUSH]
         assert unit.logger.messages == [
@@ -4750,7 +4859,8 @@ class TestAfcACEAceLoadInner:
             return False
         unit._wait_for_feed_complete = fake_wait
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         # The stubbed wait never sees the unit go idle, so the gear push reports it too.
         busy = ("debug", "ACE: waiting for ready (status=busy, 0.0s/30s)")
@@ -4773,7 +4883,8 @@ class TestAfcACEAceLoadInner:
             return True
         unit._smart_load_retry = fake_retry
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert unit.afc.error.handle_lane_failure.calls == []
 
@@ -4791,7 +4902,8 @@ class TestAfcACEAceLoadInner:
             return original_feed(*args, **kwargs)
         unit._ace.feed_filament = wrapped
 
-        assert unit._ace_load_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_load_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         # The main feed, the failed pulse, the pulse that reaches the sensor, the gear push.
         assert len(calls) == 4
@@ -4923,7 +5035,8 @@ class TestAfcACELaneUnloading:
                            feed_assist_active=[0])
         lane = unit.lanes["lane0"]
 
-        unit.lane_unloading(lane)
+        gcmd = make_gcmd()
+        unit.lane_unloading(lane, gcmd=gcmd)
 
         assert lane.current_led_state == "unloading"
         assert unit.afc.function.afc_led.calls == [((lane.led_unloading, lane.led_index), {})]
@@ -4938,7 +5051,8 @@ class TestAfcACELaneUnloading:
         lane = unit.lanes["lane0"]
         unit._ace = AceP1BrokenLink("boom")
 
-        unit.lane_unloading(lane)
+        gcmd = make_gcmd()
+        unit.lane_unloading(lane, gcmd=gcmd)
 
         assert lane.current_led_state == "unloading"
         assert unit._operation_active is True
@@ -4981,7 +5095,8 @@ class TestAfcACEAceUnloadSequence:
         seen: List[bool] = []
         AceP1Wire(unit, on_move=lambda method, params: seen.append(unit._operation_active))
 
-        assert unit._ace_unload_sequence(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_unload_sequence(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert seen == [True]
         assert unit._operation_active is False
@@ -4998,13 +5113,14 @@ class TestAfcACEAceUnloadSequence:
         unit._prev_states_stale = False
         AceP1Wire(unit).fail("unwind_filament", RuntimeError("jam"))
 
-        assert unit._ace_unload_sequence(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_unload_sequence(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._operation_active is False
         assert unit._prev_states_stale is True
         assert unit.afc.afcDeltaTime.messages == self.RETRACT_DELTAS
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE unwind failed for lane0: jam"), {"pause": False})]
+            ((lane, "ACE unwind failed for lane0: jam"), {"pause": False, "gcmd": gcmd})]
         assert unit.logger.messages == []
 
 
@@ -5027,12 +5143,13 @@ class TestAfcACEAceUnloadInner:
         unit, lane, wire = self._unit()
         unit._ace.connected = False
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._ace.commands == []
         assert unit.afc.move_e_pos.calls == []
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False})]
+            ((lane, "ACE not connected (/dev/ttyACM0)"), {"pause": False, "gcmd": gcmd})]
         assert unit.afc.afcDeltaTime.messages == []
         assert unit.logger.messages == []
 
@@ -5041,7 +5158,8 @@ class TestAfcACEAceUnloadInner:
         # Cleared so the restaging is visible.
         lane.loaded_to_hub = False
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert wire.moves() == [self.UNWIND]
         assert lane.loaded_to_hub is True
@@ -5061,14 +5179,15 @@ class TestAfcACEAceUnloadInner:
         lane.loaded_to_hub = False
         wire.fail("unwind_filament", RuntimeError("wind boom"))
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert lane.loaded_to_hub is False
         assert unit._hub_load_suppressed == set()
         assert unit.afc.move_e_pos.calls == []
         assert unit.afc.function.log_toolhead_pos.calls == []
         assert unit.afc.error.handle_lane_failure.calls == [
-            ((lane, "ACE unwind failed for lane3: wind boom"), {"pause": False})]
+            ((lane, "ACE unwind failed for lane3: wind boom"), {"pause": False, "gcmd": gcmd})]
         # No retract to time, and the unwind never completed.
         assert unit.afc.afcDeltaTime.messages == []
         assert unit.logger.messages == []
@@ -5077,7 +5196,8 @@ class TestAfcACEAceUnloadInner:
         unit, lane, wire = self._unit(feed_assist_active=[3])
         lane.extruder_obj.tool_stn_unload = 60.0
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         # Exactly two retracts: half of tool_stn_unload blocking, then all of it async.
         assert unit.afc.move_e_pos.calls == [
@@ -5119,7 +5239,8 @@ class TestAfcACEAceUnloadInner:
                 lane.extruder_obj.tool_start_state = False
         unit.afc.move_e_pos.func = retract
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert unit.afc.move_e_pos.calls == [
             ((-30.0, 25.0, "ACE STN unload"), {"wait_tool": True}),
@@ -5141,7 +5262,8 @@ class TestAfcACEAceUnloadInner:
         lane.extruder_obj.tool_start_state = True
         lane.loaded_to_hub = False
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         # The two unload retracts and the unwind, then a retract and an unwind per
         # attempt (tool_max_unload_attempts 4).
@@ -5154,7 +5276,7 @@ class TestAfcACEAceUnloadInner:
         assert unit.afc.error.handle_lane_failure.calls == [
             ((lane, "lane3 is still at extruder's toolhead sensor after the ACE unwind, so it "
                     "never left the toolhead.\nRun TOOL_UNLOAD LANE=lane3 again, or clear the "
-                    "toolhead by hand."), {"pause": False})]
+                    "toolhead by hand."), {"pause": False, "gcmd": gcmd})]
         assert ("debug", "ACE unwind complete") not in unit.afc.afcDeltaTime.messages
 
     def test_sensor_that_never_clears_pauses_during_a_print(self):
@@ -5163,7 +5285,8 @@ class TestAfcACEAceUnloadInner:
         lane.extruder_obj.tool_start_state = True
         lane.loaded_to_hub = False
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert lane.loaded_to_hub is False
         assert unit._hub_load_suppressed == set()
@@ -5171,7 +5294,7 @@ class TestAfcACEAceUnloadInner:
             ((lane, "lane3 is still at extruder's toolhead sensor after the ACE unwind, so it "
                     "never left the toolhead.\nRun TOOL_UNLOAD LANE=lane3 again, or clear the "
                     "toolhead by hand.\nOnce cleared, click resume to continue printing"),
-             {"pause": True})]
+             {"pause": True, "gcmd": gcmd})]
 
     def test_sensor_retry_without_tool_stn_unload_unwinds_again(self):
         unit, lane, wire = self._unit()
@@ -5184,7 +5307,8 @@ class TestAfcACEAceUnloadInner:
                 lane.extruder_obj.tool_start_state = False
         unit.printer.reactor.on_pause = clear
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert unit.afc.move_e_pos.calls == []
         assert wire.moves() == [self.UNWIND, self.UNWIND]
@@ -5202,7 +5326,8 @@ class TestAfcACEAceUnloadInner:
                 lane.buffer_obj.trailing_state = True
         unit.printer.reactor.on_pause = collapse
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         # One short step, then the full unwind; the buffer is never read as a
         # filament sensor after it.
@@ -5220,7 +5345,8 @@ class TestAfcACEAceUnloadInner:
         lane.extruder_obj.tool_stn_unload = 0
         lane.buffer_obj = types.SimpleNamespace(trailing_state=False, advance_state=False)
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert wire.moves() == [(
             "unwind_filament", {"index": 3, "length": 10.0, "speed": 100.0,
@@ -5230,7 +5356,7 @@ class TestAfcACEAceUnloadInner:
             ((lane, "Buffer did not collapse to trailing after 4 short ACE unwinds, so lane3 "
                     "may not be held by the extruder.\nCheck the toolhead, then run "
                     "TOOL_UNLOAD LANE=lane3 again. Raising tool_max_unload_attempts may "
-                    "help."), {"pause": False})]
+                    "help."), {"pause": False, "gcmd": gcmd})]
 
     def test_buffer_that_never_collapses_pauses_during_a_print(self):
         unit, lane, wire = self._unit(in_print=True)
@@ -5238,20 +5364,22 @@ class TestAfcACEAceUnloadInner:
         lane.extruder_obj.tool_stn_unload = 0
         lane.buffer_obj = types.SimpleNamespace(trailing_state=False, advance_state=False)
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is False
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is False
 
         assert unit._hub_load_suppressed == set()
         assert unit.afc.error.handle_lane_failure.calls == [
             ((lane, "Buffer did not collapse to trailing after 4 short ACE unwinds, so lane3 "
                     "may not be held by the extruder.\nCheck the toolhead, then run "
                     "TOOL_UNLOAD LANE=lane3 again. Raising tool_max_unload_attempts may "
-                    "help.\nOnce cleared, click resume to continue printing"), {"pause": True})]
+                    "help.\nOnce cleared, click resume to continue printing"), {"pause": True, "gcmd": gcmd})]
 
     def test_no_retract_move_when_tool_stn_unload_zero_but_still_unwinds(self):
         unit, lane, wire = self._unit()
         lane.extruder_obj.tool_stn_unload = 0
 
-        assert unit._ace_unload_inner(lane, lane.extruder_obj) is True
+        gcmd = make_gcmd()
+        assert unit._ace_unload_inner(lane, lane.extruder_obj, gcmd=gcmd) is True
 
         assert unit.afc.move_e_pos.calls == []
         assert wire.moves() == [self.UNWIND]
@@ -7520,7 +7648,7 @@ class TestAfcACECheckStuck:
             ("ACE stuck spool detected on Ace_1: feed assist ran continuously for 5.0s "
              "(>= 4.0s threshold). The spool is likely tangled or jammed at the unit. "
              "Clear the snag, then resume. Run AFC_ACE_STUCK_SPOOL_DETECTION ENABLE=0 to "
-             "disable this check.",), {"pause": True})]
+             "disable this check.",), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.logger.messages == []
 
     def test_already_tripped_does_not_re_defer(self):
@@ -7548,7 +7676,7 @@ class TestAfcACEHandleStuck:
             ("ACE stuck spool detected on Ace_1 lane lane1: feed assist ran continuously "
              "for 7.5s (>= 4.0s threshold). The spool is likely tangled or jammed at the "
              "unit. Clear the snag, then resume. Run AFC_ACE_STUCK_SPOOL_DETECTION ENABLE=0 "
-             "to disable this check.",), {"pause": True})]
+             "to disable this check.",), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.gcode.run_script_from_command.calls == []
         assert unit.printer.logger.messages == []
 
@@ -7564,8 +7692,10 @@ class TestAfcACEHandleStuck:
                    "ENABLE=0 to disable this check.")
         assert unit._ace.commands == []
         # The AFC pause was tried first; when it raised, the console pause took over.
-        assert unit.printer.afc.error.AFC_error.calls == [((message,), {"pause": True})]
+        assert unit.printer.afc.error.AFC_error.calls == [
+            ((message,), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.gcode.run_script_from_command.calls == [(("PAUSE",), {})]
+        assert unit.printer.gcode.run_script.calls == []
         assert unit.printer.logger.messages == [("error", message)]
 
     def test_unmapped_active_lane_is_named_but_not_stopped(self):
@@ -7581,7 +7711,7 @@ class TestAfcACEHandleStuck:
             ("ACE stuck spool detected on Ace_1 lane lane1: feed assist ran continuously "
              "for 5.0s (>= 4.0s threshold). The spool is likely tangled or jammed at the "
              "unit. Clear the snag, then resume. Run AFC_ACE_STUCK_SPOOL_DETECTION ENABLE=0 "
-             "to disable this check.",), {"pause": True})]
+             "to disable this check.",), {"pause": True, "gcmd": "callback"})]
         assert unit.printer.gcode.run_script_from_command.calls == []
         assert unit.printer.logger.messages == []
 
@@ -7597,7 +7727,7 @@ class TestAfcACEHandleStuck:
             ("ACE stuck spool detected on Ace_1 lane lane1: feed assist ran continuously "
              "for 7.5s (>= 4.0s threshold). The spool is likely tangled or jammed at the "
              "unit. Clear the snag, then resume. Run AFC_ACE_STUCK_SPOOL_DETECTION ENABLE=0 "
-             "to disable this check.",), {"pause": True})]
+             "to disable this check.",), {"pause": True, "gcmd": "callback"})]
 
 
 class TestAfcACECmdAFCACEStuckSpoolDetection:
@@ -8413,6 +8543,104 @@ class TestAfcACECalibrateHubInner:
             ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
             ("info", "ACE hub calibrate: trigger at 120.0mm"),
             ("error", "ACE hub calibrate: retract failed: unwind boom")]
+
+
+class TestAfcACECalibrateHubInnerClearMove:
+    @staticmethod
+    def _unit(margin: float, **kwargs: Any) -> afcACE:
+        """
+        :param margin: the hub's hub_clear_move_dis
+        :param kwargs: make_ace_unit keywords
+        :return afcACE: a unit whose lane1 (dist_hub 10) sits on a hub with a
+            real switch pin and that margin
+        """
+        printer = make_ace_printer()
+        printer.add_hub("hub1", switch_pin="PA1", hub_clear_move_dis=margin)
+        return ace_p2_unit(LaneSpec("lane1", values={"hub": "hub1", "dist_hub": 10}),
+                           printer=printer, **kwargs)
+
+    @staticmethod
+    def _trip_hub_on_move(unit: afcACE, moves: int) -> AceP2Wire:
+        """
+        :param unit: unit whose lane1 hub trips
+        :param moves: the feed count (already recorded when the hook runs) that reaches the hub
+        :return AceP2Wire: the wire recording the moves
+        """
+        lane = unit.lanes["lane1"]
+
+        def trip_hub(method: str, params: Dict[str, Any]) -> None:
+            """The given feed reaches the hub switch."""
+            if len(wire.moves()) == moves:
+                lane.hub_obj.state = True
+        wire = AceP2Wire(unit, on_move=trip_hub)
+        return wire
+
+    def test_margin_is_taken_off_the_stored_dist_hub(self):
+        unit = self._unit(40.0, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        # Hub trips after 2 x 60mm = 120mm; 120 - 40 = 80 is stored.
+        assert result == (True, "dist_hub calibration: 80.0mm, hub sensor at 120.0mm less "
+                                "40.0mm hub_clear_move_dis (was 10.0mm)", 80.0)
+        assert lane.dist_hub == 80.0
+        assert unit.printer.afc.function.ConfigRewrite.calls == [
+            (("AFC_lane lane1", "dist_hub", 80.0, "\n dist_hub: New: 80.0 Old: 10.0"), {})]
+        assert unit.printer.logger.messages == [
+            ("raw", "Calibrating dist_hub for lane1 (max 4000mm in 60.0mm steps)"),
+            ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
+            ("info", "ACE hub calibrate: trigger at 120.0mm")]
+
+    def test_margin_equal_to_the_measurement_is_refused(self):
+        unit = self._unit(120.0, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        wire = self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        assert result == (False, "Hub sensor triggered at 120.0mm, which is not past the hub's "
+                                 "hub_clear_move_dis of 120.0mm. dist_hub was not changed.", 120.0)
+        assert lane.dist_hub == 10.0
+        assert unit.printer.afc.function.ConfigRewrite.calls == []
+        # The lane is still backed off 50mm short of the trigger point.
+        assert wire.moves()[-1] == ("unwind_filament", {"index": 0, "length": 70.0,
+                                                        "speed": 100.0, "mode": "normal"})
+        assert unit.printer.logger.messages == [
+            ("raw", "Calibrating dist_hub for lane1 (max 4000mm in 60.0mm steps)"),
+            ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
+            ("info", "ACE hub calibrate: trigger at 120.0mm")]
+
+    def test_margin_just_under_the_measurement_is_stored(self):
+        unit = self._unit(119.5, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        assert result == (True, "dist_hub calibration: 0.5mm, hub sensor at 120.0mm less "
+                                "119.5mm hub_clear_move_dis (was 10.0mm)", 0.5)
+        assert lane.dist_hub == 0.5
+        assert unit.printer.afc.function.ConfigRewrite.calls == [
+            (("AFC_lane lane1", "dist_hub", 0.5, "\n dist_hub: New: 0.5 Old: 10.0"), {})]
+        assert unit.printer.logger.messages == [
+            ("raw", "Calibrating dist_hub for lane1 (max 4000mm in 60.0mm steps)"),
+            ("info", "ACE hub calibrate: coarse trigger at 120.0mm"),
+            ("info", "ACE hub calibrate: trigger at 120.0mm")]
+
+    def test_margin_that_rounds_to_zero_is_refused(self):
+        unit = self._unit(119.999, values={"calibration_step": 60.0})
+        lane = unit.lanes["lane1"]
+        self._trip_hub_on_move(unit, 2)
+
+        result = unit._calibrate_hub_inner(lane)
+
+        assert result == (False, "Hub sensor triggered at 120.0mm, which is not past the hub's "
+                                 "hub_clear_move_dis of 119.999mm. dist_hub was not changed.",
+                          120.0)
+        assert lane.dist_hub == 10.0
+        assert unit.printer.afc.function.ConfigRewrite.calls == []
 
 
 class TestAfcACESyncInventory:
@@ -9558,6 +9786,9 @@ class TestACEConnectionDisconnect:
         conn._pending[5] = pending
         conn._pending_cmd[5] = 1
         conn._async_ids.append(6)
+        conn._quiet_async_ids.add(6)
+        conn._quiet_request_methods[6] = "get_status"
+        conn._quiet_last_payload["get_status"] = {"result": 1}
         conn._read_buffer = b"\xff\xaa"
         conn._fd_handle = ("fd", 3)
         conn._resolved_port = "/dev/ttyACM0"
@@ -9577,6 +9808,8 @@ class TestACEConnectionDisconnect:
         # A waiting request wakes with no reply.
         assert (pending.done, pending.result) == (True, None)
         assert (conn._pending, conn._pending_cmd, list(conn._async_ids)) == ({}, {}, [])
+        assert (conn._quiet_async_ids, conn._quiet_request_methods,
+               conn._quiet_last_payload) == (set(), {}, {})
         assert conn._read_buffer == b""
         assert afc_ace_module._ACE_CLAIMED_PORTS == set()
         assert conn._logger.messages == [("info", "ACE serial disconnected")]
@@ -10034,6 +10267,68 @@ class TestACEConnectionSendCommandAsync:
             ("info", "ACE serial disconnected"),
             ("info", "ACE scheduling reconnect in 5s (next backoff: 8s)")]
 
+    def test_quiet_true_skips_tx_log(self):
+        """Covers quiet's True branch: the TX debug line must not fire."""
+        conn = ace_p2_connection()
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert list(conn._async_ids) == [0]
+        assert conn._logger.messages == []
+
+    def test_quiet_true_records_quiet_async_id(self):
+        conn = ace_p2_connection()
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert conn._quiet_async_ids == {0}
+
+    def test_quiet_false_does_not_record_quiet_async_id(self):
+        """Covers quiet's False branch, independent of the True case above."""
+        conn = ace_p2_connection()
+
+        conn.send_command_async("get_status", quiet=False)
+
+        assert conn._quiet_async_ids == set()
+
+    def test_debug_true_logs_tx_even_when_quiet(self):
+        """debug=True must override quiet's TX suppression too."""
+        conn = ace_p2_connection()
+        conn._debug = True
+
+        conn.send_command_async("get_status", quiet=True)
+
+        assert conn._logger.messages == [
+            ("debug", "ACE TX (async): {'id': 0, 'method': 'get_status'}")]
+
+    def test_evicts_quiet_metadata_for_id_dropped_by_full_deque(self):
+        """When _async_ids is full, the id it drops must leave the quiet maps too."""
+        conn = ace_p2_connection()
+        for request_id in range(conn._async_ids.maxlen):
+            conn._async_ids.append(request_id)
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = conn._async_ids.maxlen
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert 0 not in conn._quiet_async_ids
+        assert 0 not in conn._quiet_request_methods
+        assert conn._quiet_async_ids == {conn._async_ids.maxlen}
+        assert conn._quiet_request_methods == {conn._async_ids.maxlen: "get_temp"}
+
+    def test_does_not_evict_quiet_metadata_when_deque_not_full(self):
+        """No eviction should happen before _async_ids reaches its maxlen."""
+        conn = ace_p2_connection()
+        conn._quiet_async_ids.add(0)
+        conn._quiet_request_methods[0] = "get_status"
+        conn._next_request_id = 1
+
+        conn.send_command_async("get_temp", quiet=True)
+
+        assert conn._quiet_async_ids == {0, 1}
+        assert conn._quiet_request_methods == {0: "get_status", 1: "get_temp"}
+
 
 class TestACEConnectionStartHeartbeat:
     def test_start_registers_once(self):
@@ -10083,6 +10378,9 @@ class TestACEConnectionStopHeartbeat:
 
 class TestACEConnectionHeartbeatTick:
     def test_tick_sends_and_reschedules(self):
+        """The routine heartbeat get_status poll is sent quiet=True, so it
+        must not spam a TX debug line every HEARTBEAT_INTERVAL (GH report:
+        ACE continuously logs to AFC.log)."""
         conn = ace_p2_connection()
         conn._last_rx_time = 95.0
 
@@ -10090,8 +10388,8 @@ class TestACEConnectionHeartbeatTick:
         assert [f[4:-3] for f in conn._serial.frames] == [b'{"id":0,"method":"get_status"}']
         # The health check ran too.
         assert conn._last_supervision_check == 100.0
-        assert conn._logger.messages == [
-            ("debug", "ACE TX (async): {'id': 0, 'method': 'get_status'}")]
+        assert conn._logger.messages == []
+        assert conn._quiet_async_ids == {0}
 
     def test_tick_reconnects_on_silence(self):
         conn = ace_p2_connection(reconnect_enabled=True)
@@ -10423,6 +10721,141 @@ class TestACEConnectionParseFrames:
             ("warning", "ACE frame: JSON parse error: Expecting value: line 1 column 1 "
                         "(char 0)")]
 
+    def test_quiet_async_id_first_reply_logs_and_caches(self):
+        """The first reply to a quiet=True request has nothing to compare
+        against yet, so it must log (and cache its payload for next time)."""
+        conn = ace_p2_connection()
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 1}")]
+        assert conn._quiet_last_payload == {"get_status": {"result": 1}}
+
+    def test_quiet_async_id_unchanged_payload_skips_rx_log(self):
+        """A reply whose payload matches the last one logged for that method
+        must be skipped (GH report: ACE continuously logs to AFC.log)."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": 1}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+
+    def test_quiet_async_id_changed_payload_logs_and_updates_cache(self):
+        """A reply whose payload differs from the last one logged for that
+        method must log, and the cache must advance to the new value."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": 1}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":2}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 2}")]
+        assert conn._quiet_last_payload == {"get_status": {"result": 2}}
+
+    def test_get_temp_reply_never_logs_even_when_changed(self):
+        """get_temp's reading drifts continuously, so even a changed payload
+        must stay suppressed (it's in _NEVER_LOG_QUIET_METHODS)."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_temp"] = {"result": 99}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_temp"
+        conn._read_buffer = self._frame(b'{"id":1,"result":2}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+        # The cache is left untouched since the reply was never evaluated against it.
+        assert conn._quiet_last_payload == {"get_temp": {"result": 99}}
+
+    def test_debug_true_logs_get_temp_reply(self):
+        """debug=True must override every quiet suppression, including
+        _NEVER_LOG_QUIET_METHODS."""
+        conn = ace_p2_connection()
+        conn._debug = True
+        conn._quiet_last_payload["get_temp"] = {"result": 99}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_temp"
+        conn._read_buffer = self._frame(b'{"id":1,"result":2}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 2}")]
+
+    def test_get_status_reply_with_only_noisy_fields_changed_skips_rx_log(self):
+        """get_status embeds temp/humidity, which drift on their own; a reply
+        that only differs in those fields must still be skipped."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": {"status": "ready"}}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(
+            b'{"id":1,"result":{"status":"ready","temp":27,"humidity":33}}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+
+    def test_get_status_reply_with_real_change_logs_despite_noisy_fields(self):
+        """A genuine status change must still log (and update the cache)
+        even though temp/humidity also changed in the same reply."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": {"status": "ready"}}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(
+            b'{"id":1,"result":{"status":"busy","temp":27,"humidity":33}}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [(
+            "debug",
+            "ACE RX: {'id': 1, 'result': {'status': 'busy', 'temp': 27, 'humidity': 33}}")]
+        # Cached with the noisy fields already stripped, same as the compared value.
+        assert conn._quiet_last_payload == {"get_status": {"result": {"status": "busy"}}}
+
+    def test_quiet_reply_with_non_dict_result_is_compared_as_is(self):
+        """Covers the isinstance(result, dict) check's False branch: a quiet
+        method whose result isn't a dict (nothing to strip) is still
+        compared and cached normally."""
+        conn = ace_p2_connection()
+        conn._quiet_last_payload["get_status"] = {"result": 1}
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(1)
+        conn._quiet_request_methods[1] = "get_status"
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == []
+
+    def test_non_quiet_id_still_logs_rx(self):
+        """Covers the quiet-id check's False branch independently: a reply
+        whose id isn't in _quiet_async_ids still logs normally."""
+        conn = ace_p2_connection()
+        conn._async_ids.append(1)
+        conn._quiet_async_ids.add(99)
+        conn._read_buffer = self._frame(b'{"id":1,"result":1}')
+
+        conn._parse_frames()
+
+        assert conn._logger.messages == [("debug", "ACE RX: {'id': 1, 'result': 1}")]
+
 
 class TestACEConnectionResponseMatchesPending:
     def test_base_always_true(self):
@@ -10472,6 +10905,29 @@ class TestACEConnectionHandleResponse:
         assert conn._unsolicited_timestamps == []
         assert list(conn._async_ids) == [8]
         assert conn._logger.messages == []
+
+    def test_matched_async_id_discards_quiet_id(self):
+        """A matched async reply must clear its id from _quiet_async_ids too,
+        or a lost reply's id would linger there forever."""
+        conn = ace_p2_connection()
+        conn._async_ids.extend([9])
+        conn._quiet_async_ids.add(9)
+
+        conn._handle_response({"id": 9, "result": 2})
+
+        assert conn._quiet_async_ids == set()
+
+    def test_matched_async_id_discards_quiet_method(self):
+        """A matched async reply must also clear its id from
+        _quiet_request_methods, or a lost reply's id would linger forever."""
+        conn = ace_p2_connection()
+        conn._async_ids.extend([9])
+        conn._quiet_async_ids.add(9)
+        conn._quiet_request_methods[9] = "get_status"
+
+        conn._handle_response({"id": 9, "result": 2})
+
+        assert conn._quiet_request_methods == {}
 
     def test_unknown_id_counted_and_logged(self):
         conn = ace_p2_connection()

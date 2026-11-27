@@ -367,6 +367,19 @@ class TestInstallKey:
         assert rec.calls == []
         assert state.message == BASE.format(name="Vivid_1") + RESTART
 
+    def test_a_unit_message_replaces_the_generic_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rec = Recorder()
+        rec.install(monkeypatch)
+        menu, state, deps, _, _ = build(tmp_path, ["i"], itype="Creality CFS", buffer="None",
+                                        unit_name="CFS_2", turtle_renamed=True)
+        # FakeActions copies nothing, so the CFS unit reports the box as not added
+        assert menu.step() == "main"
+        assert calls(deps) == ["install_additional"]
+        assert state.message == (
+            "CFS_2 was not added: a CFS chain takes at most 4 boxes." + RESTART)
+
     def test_a_name_in_use_is_rejected_before_anything_runs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -701,6 +701,84 @@ class TestBufferToggle:
         buf.enable_buffer(lane)
         buf.start_fault_detection.assert_called_once_with(0, multiplier)
 
+    def test_enable_buffer_compressed_overrides_trailing_last_state(self):
+        # Buffer already on its compressed switch with a stale trailing state: feed faster
+        buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.set_multiplier = MagicMock()
+        buf.last_state = TRAILING_STATE_NAME
+        buf.trailing_state = True
+        buf.enable_buffer(lane)
+        buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
+        assert buf.enable is True
+        assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
+
+    def test_enable_buffer_compressed_overrides_trailing_last_state_fault_enabled(self):
+        buf = _make_buffer(error_sensitivity=5)
+        lane = _make_lane(buf)
+        buf.start_fault_detection = MagicMock()
+        buf.last_state = TRAILING_STATE_NAME
+        buf.trailing_state = True
+        buf.enable_buffer(lane)
+        buf.start_fault_detection.assert_called_once_with(0, pytest.approx(1.65))
+        assert buf.enable is True
+        assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
+
+    def test_enable_buffer_expanded_overrides_advancing_last_state(self):
+        # Buffer already on its expanded switch with a stale advancing state: feed slower
+        buf = _make_buffer()
+        lane = _make_lane(buf)
+        buf.set_multiplier = MagicMock()
+        buf.last_state = ADVANCING_STATE_NAME
+        buf.advance_state = True
+        buf.enable_buffer(lane)
+        buf.set_multiplier.assert_called_once_with(buf.multiplier_low)
+        assert buf.enable is True
+        assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
+
+    def test_enable_buffer_expanded_overrides_advancing_last_state_fault_enabled(self):
+        buf = _make_buffer(error_sensitivity=5)
+        lane = _make_lane(buf)
+        buf.start_fault_detection = MagicMock()
+        buf.last_state = ADVANCING_STATE_NAME
+        buf.advance_state = True
+        buf.enable_buffer(lane)
+        buf.start_fault_detection.assert_called_once_with(0, pytest.approx(0.36))
+        assert buf.enable is True
+        assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
+
+    def test_enable_buffer_toolchange_onto_compressed_buffer(self):
+        # Previous lane last slowed (trailing state). The new lane's load leaves the buffer on its
+        # compressed switch; load_sequence enables without fault detection, then
+        # enable_fault_detection enables again with it. Both must feed faster.
+        buf = _make_buffer(error_sensitivity=5)
+        lane = _make_lane(buf)
+        buf.last_state = TRAILING_STATE_NAME
+        buf.trailing_state = True
+        buf.set_multiplier = MagicMock()
+        buf.start_fault_detection = MagicMock()
+
+        buf.disable_fault_sensitivity()
+        assert buf.fault_sensitivity == 0
+        buf.enable_buffer(lane)
+        buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
+        assert buf.enable is True
+        assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
+
+        buf.restore_fault_sensitivity()
+        assert buf.fault_sensitivity == 60
+        buf.enable_buffer(lane)
+        buf.start_fault_detection.assert_called_once_with(0, pytest.approx(1.65))
+        assert buf.enable is True
+        assert buf.current_lane is lane
+        assert buf.logger.messages == [("debug", "TN buffer enabled for lane1"),
+                                       ("debug", "TN buffer enabled for lane1")]
+
 class TestSetMultiplier:
     def test_set_multi_not_enabled(self):
         buf = _make_buffer()
@@ -1486,7 +1564,7 @@ class TestPauseOnError:
         buf = _make_buffer()
         buf.enable = False
         buf.afc.error = MagicMock()
-        buf.pause_on_error("fault", pause=True)
+        buf.pause_on_error("fault", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_does_not_pause_before_min_event_systime(self):
@@ -1495,7 +1573,7 @@ class TestPauseOnError:
         buf.min_event_systime = 9_999_999.0  # far in the future
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
-        buf.pause_on_error("fault", pause=True)
+        buf.pause_on_error("fault", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_does_not_pause_when_already_paused(self):
@@ -1504,7 +1582,7 @@ class TestPauseOnError:
         buf.min_event_systime = 0.0
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = True
-        buf.pause_on_error("fault", pause=True)
+        buf.pause_on_error("fault", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_pauses_when_all_conditions_met(self):
@@ -1514,7 +1592,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = TRAILING_STATE_NAME
-        buf.pause_on_error("Something went wrong", pause=True)
+        buf.pause_on_error("Something went wrong", pause=True, gcmd="callback")
         buf.afc.error.AFC_error.assert_called_once()
     
     def test_pauses_when_all_conditions_met_pause_false(self):
@@ -1524,7 +1602,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = TRAILING_STATE_NAME
-        buf.pause_on_error("Something went wrong", pause=False)
+        buf.pause_on_error("Something went wrong", pause=False, gcmd="callback")
         buf.afc.error.AFC_error.assert_not_called()
 
     def test_clog_message_appended_when_trailing(self):
@@ -1534,7 +1612,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = TRAILING_STATE_NAME
-        buf.pause_on_error("Base message", pause=True)
+        buf.pause_on_error("Base message", pause=True, gcmd="callback")
         call_msg = buf.afc.error.AFC_error.call_args[0][0]
         assert "CLOG DETECTED" in call_msg
 
@@ -1545,7 +1623,7 @@ class TestPauseOnError:
         buf.afc.error = MagicMock()
         buf.afc.function.is_paused.return_value = False
         buf.last_state = ADVANCING_STATE_NAME
-        buf.pause_on_error("Base message", pause=True)
+        buf.pause_on_error("Base message", pause=True, gcmd="callback")
         call_msg = buf.afc.error.AFC_error.call_args[0][0]
         assert "AFC NOT FEEDING" in call_msg
 
@@ -1703,7 +1781,8 @@ class TestExtruderPosUpdateEvent:
         buf.get_extruder_pos = MagicMock(return_value=55.0)  # > 50.0
         buf.update_filament_error_pos = MagicMock()
         buf.extruder_pos_update_event(100.0)
-        buf.afc.error.AFC_error.assert_called_once_with("AFC filament fault detected! Take necessary action.", True)
+        buf.afc.error.AFC_error.assert_called_once_with(
+            "AFC filament fault detected! Take necessary action.", True, gcmd="callback")
         buf.update_filament_error_pos.assert_called_once()
     
     def test_triggers_pause_when_extruder_pos_exceeds_threshold_not_stepperless_lane(self):
@@ -1720,7 +1799,8 @@ class TestExtruderPosUpdateEvent:
         buf.update_filament_error_pos = MagicMock()
         lane.unit_obj.stepperless_drive = None
         buf.extruder_pos_update_event(100.0)
-        buf.afc.error.AFC_error.assert_called_once_with("AFC filament fault detected! Take necessary action.", True)
+        buf.afc.error.AFC_error.assert_called_once_with(
+            "AFC filament fault detected! Take necessary action.", True, gcmd="callback")
         buf.update_filament_error_pos.assert_called_once()
     
     def test_triggers_pause_when_extruder_pos_exceeds_threshold_stepperless_lane(self):
@@ -3934,7 +4014,7 @@ class TestFPSExtruderPosUpdateEvent:
         buf.get_extruder_pos = MagicMock(return_value=150.0)  # > filament_error_pos (100)
         buf.extruder_pos_update_event(100.0)
         buf.pause_on_error.assert_called_once_with(
-            "AFC FPS buffer filament fault detected! Take necessary action.", True)
+            "AFC FPS buffer filament fault detected! Take necessary action.", True, gcmd="callback")
         buf.update_filament_error_pos.assert_called_once()
 
     def test_fps_stuck_extreme_but_pos_not_past_trip_is_noop(self):
@@ -4180,6 +4260,20 @@ class TestLoadConfigPrefix:
         printer.lookup_object("pins").setup_pin = MagicMock(return_value=_FakeADC())
         config = MockConfig(name="AFC_FPS FPS1", printer=printer,
                             values={"type": "FPS_PSF", "adc_pin": "PA5"})
+        result = load_config_prefix(config)
+        assert isinstance(result, AFCFPSBuffer)
+
+    def test_comp_type_builds_afcfpsbuffer(self):
+        """type=COMP shares AFCFPSBuffer with FPS_PSF (see the
+        AFC_stepper.py FPS_PSF-endstop tests for the one place their
+        behavior actually diverges)."""
+        from extras.AFC_buffer import load_config_prefix
+        from tests.conftest import MockConfig, MockPrinter, MockAFC
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        printer.lookup_object("pins").setup_pin = MagicMock(return_value=_FakeADC())
+        config = MockConfig(name="AFC_FPS FPS1", printer=printer,
+                            values={"type": "COMP", "adc_pin": "PA5"})
         result = load_config_prefix(config)
         assert isinstance(result, AFCFPSBuffer)
 

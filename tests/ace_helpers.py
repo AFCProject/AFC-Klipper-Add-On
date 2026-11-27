@@ -20,6 +20,7 @@ from __future__ import annotations
 import atexit
 import configparser
 import contextlib
+import inspect
 import json
 import logging
 import logging.handlers
@@ -1132,19 +1133,23 @@ class AceError:
         self.handle_lane_failure = Hook(self._handle_lane_failure)
 
     def _afc_error(self, msg: str, pause: bool = True,
-                   stack_name: Optional[str] = None) -> None:
+                   stack_name: Optional[str] = None,
+                   gcmd: Optional[Any] = None) -> None:
         """
         :param msg: error text
         :param pause: AFC's pause flag, kept in .calls
         :param stack_name: AFC's stack label, kept in .calls
+        :param gcmd: AFC's command context, kept in .calls
         """
         self.timeline.append(("AFC_error", msg))
 
-    def _handle_lane_failure(self, cur_lane: Any, message: str, pause: bool = True) -> None:
+    def _handle_lane_failure(self, cur_lane: Any, message: str, pause: bool = True,
+                             gcmd: Optional[Any] = None) -> None:
         """
         :param cur_lane: the failed lane
         :param message: failure text
         :param pause: AFC's pause flag, kept in .calls
+        :param gcmd: AFC's command context, kept in .calls
         """
         self.timeline.append(("handle_lane_failure",
                               (getattr(cur_lane, "name", cur_lane), message)))
@@ -1230,6 +1235,8 @@ class AceAFC:
         self.reactor = reactor
         self.logger = logger
         self.gcode = gcode
+        self._rsfc_accepts_gcmd = "gcmd" in inspect.signature(
+            self.gcode.run_script_from_command).parameters
         self.toolhead = toolhead if toolhead is not None else AceToolhead()
         self.function = AceFunction()
         self.error = AceError(self.timeline)
@@ -1311,15 +1318,17 @@ class AceHub:
     """AFC_hub stand-in; switch_pin "virtual" is the pinless hub ACE units use."""
 
     def __init__(self, name: str, switch_pin: Optional[str] = "virtual",
-                 afc_bowden_length: float = 900.0) -> None:
+                 afc_bowden_length: float = 900.0, hub_clear_move_dis: float = 0.0) -> None:
         """
         :param name: hub name
         :param switch_pin: "virtual", a pin name, or None
         :param afc_bowden_length: hub to toolhead sensor, mm
+        :param hub_clear_move_dis: mm hub calibration takes off the measured dist_hub
         """
         self.name = name
         self.switch_pin = switch_pin
         self.afc_bowden_length = afc_bowden_length
+        self.hub_clear_move_dis = hub_clear_move_dis
         self.td1_bowden_length = afc_bowden_length - 50
         self.afc_unload_bowden_length = afc_bowden_length
         self.lanes: Dict[str, Any] = {}
@@ -1447,23 +1456,24 @@ class AceExtruder:
             buffer_obj.clear_advance_latch()
         self.reactor.pause(self.reactor.monotonic() + 0.5)
 
-    def prep_on_shuttle_check(self, lane: Any) -> str:
+    def prep_on_shuttle_check(self, lane: Any, gcmd: Any = None) -> str:
         """
         AFC_extruder.prep_on_shuttle_check stand-in: same real logic, ported
         here so ACE tests exercise the production method. tool_obj isn't
         modeled by this stand-in, so it's read defensively.
 
         :param lane: AFCLane for current extruder to easily set leds though its unit object
+        :param gcmd: command context, threaded through to the LED-state calls below
         :return str: Message string if lane is loaded to toolhead or in toolhead and on shuttle
         """
         msg = ""
         on_shuttle = ""
         if (getattr(self, "tool_obj", None)
             and getattr(self, "tc_unit_name", None)):
-            lane.unit_obj.lane_tool_loaded_idle(lane)
+            lane.unit_obj.lane_tool_loaded_idle(lane, gcmd=gcmd)
             if self.on_shuttle():
                 on_shuttle = " and toolhead on shuttle"
-                lane.unit_obj.lane_tool_loaded(lane)
+                lane.unit_obj.lane_tool_loaded(lane, gcmd=gcmd)
         msg += f"<span class=primary--text> in ToolHead{on_shuttle}</span>"
         return msg
 
@@ -1928,7 +1938,7 @@ class AcePrinter:
         Register [AFC_hub <name>].
 
         :param name: hub name
-        :param options: AceHub keywords (switch_pin, afc_bowden_length)
+        :param options: AceHub keywords (switch_pin, afc_bowden_length, hub_clear_move_dis)
         :return AceHub: the hub
         """
         hub = AceHub(name, **options)
@@ -2189,7 +2199,7 @@ class ScriptedTransport:
                  baud_rate: int = 115200, ace_index: int = 1,
                  ace_uid: Optional[Tuple[int, ...]] = None, *, connected: bool = True,
                  status: Optional[Dict[str, Any]] = None, info: Any = DEFAULT,
-                 timeline: Optional[Timeline] = None) -> None:
+                 timeline: Optional[Timeline] = None, debug: bool = False) -> None:
         """
         :param reactor: reactor the real connection keeps
         :param serial_port: port name
@@ -2202,10 +2212,11 @@ class ScriptedTransport:
         :param info: get_info reply and device_info; DEFAULT is
             default_device_info(), None is {}
         :param timeline: shared ordered record, a new list when None
+        :param debug: forwarded to the real connection's debug flag
         """
         super().__init__(reactor=reactor, serial_port=serial_port,  # type: ignore[call-arg]
                          logger=logger, baud_rate=baud_rate, ace_index=ace_index,
-                         ace_uid=ace_uid)
+                         ace_uid=ace_uid, debug=debug)
         self._connected = connected
         self.commands: List[Tuple[str, Dict[str, Any]]] = []
         self.async_commands: List[Tuple[str, Dict[str, Any]]] = []
@@ -2526,7 +2537,7 @@ def make_fake_ace_connection(*, ace2: bool = False, printer: Optional[AcePrinter
                              status: Optional[Dict[str, Any]] = None, info: Any = DEFAULT,
                              serial_port: str = "/dev/ttyACM0", ace_index: int = 1,
                              ace_uid: Optional[Tuple[int, ...]] = None,
-                             cls: Optional[type] = None) -> ScriptedTransport:
+                             cls: Optional[type] = None, debug: bool = False) -> ScriptedTransport:
     """
     Build a scripted connection through the real ACEConnection.__init__.
 
@@ -2541,6 +2552,7 @@ def make_fake_ace_connection(*, ace2: bool = False, printer: Optional[AcePrinter
     :param ace_uid: ACE2 UID pin
     :param cls: connection class to script instead of the ace2 choice, e.g. a
         module copy's ACE2Connection (see scripted_connection_class)
+    :param debug: forwarded to the real connection's debug flag
     :return ScriptedTransport: a FakeAceConnection (FakeAce2Connection for ace2)
     """
     printer = printer if printer is not None else AcePrinter()
@@ -2549,7 +2561,8 @@ def make_fake_ace_connection(*, ace2: bool = False, printer: Optional[AcePrinter
     return scripted(printer.reactor, serial_port,
                     logger if logger is not None else printer.logger,
                     230400 if scripted._v2 else 115200, ace_index, ace_uid,
-                    connected=connected, status=status, info=info, timeline=printer.timeline)
+                    connected=connected, status=status, info=info, timeline=printer.timeline,
+                    debug=debug)
 
 
 def make_ace_connection(*, ace2: bool = False, printer: Optional[AcePrinter] = None,
@@ -2558,7 +2571,7 @@ def make_ace_connection(*, ace2: bool = False, printer: Optional[AcePrinter] = N
                         serial_port: str = "/dev/ttyACM0", ace_index: int = 1,
                         ace_uid: Optional[Tuple[int, ...]] = None,
                         reconnect_enabled: bool = False,
-                        cls: Optional[type] = None) -> ACEConnection:
+                        cls: Optional[type] = None, debug: bool = False) -> ACEConnection:
     """
     Build a real ACEConnection/ACE2Connection through its __init__. When
     connected, a FakeSerial is attached and the link marked up, the state
@@ -2577,6 +2590,7 @@ def make_ace_connection(*, ace2: bool = False, printer: Optional[AcePrinter] = N
     :param ace_uid: ACE2 UID pin
     :param reconnect_enabled: let reconnect() disconnect and schedule its timer
     :param cls: connection class instead of the ace2 choice, e.g. a module copy's
+    :param debug: forwarded to the real connection's debug flag
     :return ACEConnection: the connection
     """
     printer = printer if printer is not None else AcePrinter()
@@ -2585,7 +2599,8 @@ def make_ace_connection(*, ace2: bool = False, printer: Optional[AcePrinter] = N
     v2 = any(klass.__name__ == "ACE2Connection" for klass in cls.__mro__)
     conn = cls(reactor=printer.reactor, serial_port=serial_port,
                logger=logger if logger is not None else printer.logger,
-               baud_rate=230400 if v2 else 115200, ace_index=ace_index, ace_uid=ace_uid)
+               baud_rate=230400 if v2 else 115200, ace_index=ace_index, ace_uid=ace_uid,
+               debug=debug)
     conn._next_request_id = next_id
     conn._reconnect_enabled = reconnect_enabled
     if connected:
@@ -2693,14 +2708,15 @@ class AceConnectionRouter:
 
         def build(reactor: Any, serial_port: str, logger: Optional[Any] = None,
                   baud_rate: int = 115200, ace_index: int = 1,
-                  ace_uid: Optional[Tuple[int, ...]] = None) -> ScriptedTransport:
+                  ace_uid: Optional[Tuple[int, ...]] = None,
+                  debug: bool = False) -> ScriptedTransport:
             """
             Construct a routed scripted connection with the real signature.
 
             :return ScriptedTransport: the new, unconnected link
             """
             conn = scripted(reactor, serial_port, logger, baud_rate, ace_index, ace_uid,
-                            connected=False, timeline=self._printer.timeline)
+                            connected=False, timeline=self._printer.timeline, debug=debug)
             self._adopt(conn)
             return conn
 

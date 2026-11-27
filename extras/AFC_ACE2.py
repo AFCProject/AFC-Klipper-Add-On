@@ -991,8 +991,8 @@ class ACE2Connection(ACEConnection):
         the replies are routed to the unit's caches by _on_hw_status_callback.
         ACE2 only (the V1 firmware has neither command).
         """
-        self.send_command_async("get_temp")
-        self.send_command_async("get_sensor_state")
+        self.send_command_async("get_temp", quiet=True)
+        self.send_command_async("get_sensor_state", quiet=True)
 
     def send_command(self, method: str, params: Optional[Dict[str, Any]] = None,
                      timeout: float = REQUEST_TIMEOUT) -> Any:
@@ -1065,7 +1065,8 @@ class ACE2Connection(ACEConnection):
             return result.get("result", result)
         return result
 
-    def send_command_async(self, method: str, params: Optional[Dict[str, Any]] = None) -> None:
+    def send_command_async(self, method: str, params: Optional[Dict[str, Any]] = None,
+                           quiet: bool = False) -> None:
         """
         Send a V2 request without waiting for a response (fire-and-forget).
 
@@ -1074,6 +1075,7 @@ class ACE2Connection(ACEConnection):
 
         :param method: V1 method name to send.
         :param params: Optional dict of method parameters.
+        :param quiet: True for a routine heartbeat poll, see `_maybe_log_rx`.
         """
         if (not self._connected
             or self._serial is None):
@@ -1083,7 +1085,14 @@ class ACE2Connection(ACEConnection):
         # an "unknown request".
         request_id = self._next_request_id & 0xFFFF
         self._next_request_id += 1
+        if len(self._async_ids) == self._async_ids.maxlen:
+            evicted_id = self._async_ids[0]
+            self._quiet_async_ids.discard(evicted_id)
+            self._quiet_request_methods.pop(evicted_id, None)
         self._async_ids.append(request_id)
+        if quiet:
+            self._quiet_async_ids.add(request_id)
+            self._quiet_request_methods[request_id] = method
         try:
             frame = encode_request(request_id, method, params or {})
         except Exception as e:
@@ -1096,7 +1105,9 @@ class ACE2Connection(ACEConnection):
             self._logger.debug(f"ACE2 async write failed: {e}")
             self.reconnect()      # disconnect signal, reconnect immediately
             return
-        self._logger.debug(f"ACE2 TX (async): id={request_id} {method}")
+        if (not quiet
+            or self._debug):
+            self._logger.debug(f"ACE2 TX (async): id={request_id} {method}")
 
     def _response_matches_pending(self, response_id: int, response: Any) -> bool:
         """
@@ -1125,7 +1136,7 @@ class ACE2Connection(ACEConnection):
         responses = decode_frames(buf, self._logger)
         self._read_buffer = bytes(buf)
         for response in responses:
-            self._logger.debug(f"ACE2 RX: {response}")
+            self._maybe_log_rx(response, "ACE2")
             self._handle_response(response)
 
     def start_rollback_assist(self, slot_index: int, timeout: float = 2.0) -> Any:
@@ -1352,10 +1363,10 @@ class afcACE2(afcACE):
                "the unit. Clear the snag, then resume. Run AFC_ACE_STUCK_SPOOL_DETECTION "
                "ENABLE=0 to disable this check.")
         try:
-            self.afc.error.AFC_error(msg, pause=True)
+            self.afc.error.AFC_error(msg, pause=True, gcmd="callback")
         except Exception:
             self.logger.error(msg)
-            self.afc.run_script("PAUSE")
+            self.afc.run_script("PAUSE", gcmd="callback")
 
     def _start_unload_assist(self, slot: int) -> None:
         """
@@ -1412,7 +1423,8 @@ class afcACE2(afcACE):
         :return ACE2Connection: A configured :class:`ACE2Connection` instance.
         """
         return ACE2Connection(reactor=reactor, serial_port=serial_port, logger=logger,
-                              baud_rate=baud_rate, ace_index=self.ace_index, ace_uid=self.ace_uid)
+                              baud_rate=baud_rate, ace_index=self.ace_index, ace_uid=self.ace_uid,
+                              debug=self.debug)
 
     def _reader_sibling_slot(self, slot: int) -> Optional[int]:
         """

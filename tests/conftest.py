@@ -7,6 +7,7 @@ without a running Klipper instance.
 """
 
 import configparser
+import inspect
 import logging
 import logging.handlers
 import os
@@ -613,6 +614,9 @@ class MockAFC:
         self.manual_home_has_probe_pos_param = False
         self.manual_home_requires_gcmd = False
 
+        self._rsfc_accepts_gcmd = "gcmd" in inspect.signature(
+            self.gcode.run_script_from_command).parameters
+
     # Real afc.run_script only touches self.gcode, so it runs unmodified here
     # instead of being duplicated.
     run_script = _AFC.run_script
@@ -662,6 +666,20 @@ class MockPrinter:
         if val is not default:
             self._objects[name] = val
         return val
+
+    def lookup_objects(self, module=None):
+        """Mirrors real Klipper's Printer.lookup_objects: with no module,
+        every registered object; with one, every "<module> <name>" section
+        plus a bare "<module>" section if one was registered under that
+        exact name."""
+        if module is None:
+            return list(self._objects.items())
+        prefix = module + ' '
+        objs = [(name, self._objects[name]) for name in self._objects
+                if name.startswith(prefix)]
+        if module in self._objects:
+            return [(module, self._objects[module])] + objs
+        return objs
 
     _NO_DEFAULT = object()
 
@@ -765,6 +783,21 @@ class MockConfig:
     def getlists(self, option, default=_MOCK_CONFIG_SENTINEL, **kwargs):
         val = self._require(option, default)
         return val if val is not None else ()
+
+    def getfloatlist(self, option, default=_MOCK_CONFIG_SENTINEL, sep=',', count=None, **kwargs):
+        try:
+            val = self.fileconfig.get(self.section, option)
+        except Exception:
+            val = self._require(option, default)
+        if val is None:
+            return None
+        parts = val.split(sep) if isinstance(val, str) else list(val)
+        result = tuple(float(p.strip()) for p in parts)
+        if count is not None and len(result) != count:
+            from configfile import error as KlipperError
+            error_str = f"Option '{option}' in section '{self.section}' must have {count} elements"
+            raise KlipperError(error_str)
+        return result
 
     def error(self, msg):
         from configfile import error as KlipperError

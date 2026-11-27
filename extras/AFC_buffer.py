@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane
     from extras.AFC_stepper import AFCExtruderStepper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from configfile import ConfigWrapper
     from mcu import MCU_adc
 
@@ -36,6 +37,8 @@ ADVANCING_STATE_NAME = "Advancing"
 NEUTRAL_STATE_NAME = "Neutral"
 CHECK_RUNOUT_TIMEOUT = 0.5
 FPS_ENDSTOP_POLL_TIME = 0.01  # 10ms poll interval for software endstop
+
+FPS_PSF_TYPES = ["FPS_PSF", "COMP"]
 
 class AFCBuffer:
     def __init__(self, config):
@@ -282,18 +285,19 @@ class AFCBuffer:
             and self.filament_error_pos is not None):
             if extruder_pos > self.filament_error_pos:
                 msg = "AFC filament fault detected! Take necessary action."
-                self.pause_on_error(msg, True)
+                self.pause_on_error(msg, True, gcmd="callback")
                 # Update error position after triggering to prevent repeated triggers
                 self.update_filament_error_pos()
 
         return eventtime + CHECK_RUNOUT_TIMEOUT
 
-    def pause_on_error(self, msg, pause=False):
+    def pause_on_error(self, msg: str, pause: bool=False, *, gcmd: AFCGcmd) -> None:
         """
         Pause the print with an error message if fault is detected, prevents duplicate triggers.
 
         :param msg: Error message to display
         :param pause: Boolean, if True triggers pause with error message
+        :param gcmd: command context the pause is run through
         """
         eventtime = self.reactor.monotonic()
         if (eventtime < self.min_event_systime
@@ -305,18 +309,30 @@ class AFCBuffer:
                 msg += '\nCLOG DETECTED'
             if self.last_state == ADVANCING_STATE_NAME:
                 msg += '\nAFC NOT FEEDING'
-            self.afc.error.AFC_error( msg, True )
+            self.afc.error.AFC_error( msg, True, gcmd=gcmd)
 
-    def enable_buffer(self, lane: AFCLane):
+    def enable_buffer(self, lane: AFCLane) -> None:
         """
-        Enable the buffer and set appropriate multiplier based on current state.
+        Enable the buffer and set the multiplier from the switch states.
+
+        A pressed switch decides the direction, since no callback will fire for a switch that
+        is already pressed. Only with neither pressed is the last applied direction kept: the
+        buffer is then free to reach a switch, and that callback corrects it.
+
+        :param lane: Lane to enable the buffer for
         """
         self.current_lane = lane
         if self.led:
             self.afc.function.afc_led(self.led_buffer_disabled, self.led_index)
         self.enable = True
         multiplier = 1.0
-        if self.last_state == TRAILING_STATE_NAME:
+        if self.advance_state:
+            slow_down = True
+        elif self.trailing_state:
+            slow_down = False
+        else:
+            slow_down = self.last_state == TRAILING_STATE_NAME
+        if slow_down:
             multiplier = self.multiplier_low
             if self.fault_detection_enabled():
                 multiplier = (multiplier * 2) / 5
@@ -1429,7 +1445,7 @@ class AFCFPSBuffer(AFCBuffer):
                 return eventtime + CHECK_RUNOUT_TIMEOUT
             if extruder_pos > self.filament_error_pos:
                 msg = "AFC FPS buffer filament fault detected! Take necessary action."
-                self.pause_on_error(msg, True)
+                self.pause_on_error(msg, True, gcmd="callback")
                 self.update_filament_error_pos()
 
         return eventtime + CHECK_RUNOUT_TIMEOUT
@@ -1538,8 +1554,8 @@ def load_config_prefix(config):
     if buffer_type == "switched":
         return AFCBuffer(config)
 
-    if buffer_type == "FPS_PSF":
+    if (buffer_type in FPS_PSF_TYPES):
         return AFCFPSBuffer(config)
 
-    msg = f"{buffer_type} not valid, only switched(turtleneck style) or FPS_PSF are valid options"
+    msg = f"{buffer_type} not valid, only switched(turtleneck style), FPS_PSF or COMP are valid options"
     raise error(msg)

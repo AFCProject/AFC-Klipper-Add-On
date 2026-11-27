@@ -247,15 +247,16 @@ class TestPauseUserIntervention:
         err.pause_print = MagicMock()
         afc.function.is_homed.return_value = True
         afc.function.is_paused.return_value = False
-        err.PauseUserIntervention("Some message")
-        err.pause_print.assert_called_once()
+        gcmd = MagicMock()
+        err.PauseUserIntervention("Some message", gcmd=gcmd)
+        err.pause_print.assert_called_once_with(gcmd=gcmd)
 
     def test_no_pause_when_not_homed(self):
         err, afc = _make_afc_error()
         err.pause = True
         err.pause_print = MagicMock()
         afc.function.is_homed.return_value = False
-        err.PauseUserIntervention("Some message")
+        err.PauseUserIntervention("Some message", gcmd=MagicMock())
         err.pause_print.assert_not_called()
 
     def test_no_pause_when_already_paused(self):
@@ -264,7 +265,7 @@ class TestPauseUserIntervention:
         err.pause_print = MagicMock()
         afc.function.is_homed.return_value = True
         afc.function.is_paused.return_value = True
-        err.PauseUserIntervention("Some message")
+        err.PauseUserIntervention("Some message", gcmd=MagicMock())
         err.pause_print.assert_not_called()
 
     def test_error_is_logged(self):
@@ -272,7 +273,7 @@ class TestPauseUserIntervention:
         err.pause_print = MagicMock()
         afc.function.is_homed.return_value = True
         afc.function.is_paused.return_value = False
-        err.PauseUserIntervention("Bad thing happened")
+        err.PauseUserIntervention("Bad thing happened", gcmd=MagicMock())
         assert err.logger.messages == [("error", "Bad thing happened")]
 
 
@@ -284,7 +285,7 @@ class TestPausePrint:
         err.set_error_state = MagicMock()
         afc.function.log_toolhead_pos = MagicMock()
         afc.gcode.run_script_from_command = MagicMock()
-        err.pause_print()
+        err.pause_print(gcmd=MagicMock())
         afc.gcode.run_script_from_command.assert_called()
         script_arg = afc.gcode.run_script_from_command.call_args[0][0]
         assert "PAUSE" in script_arg
@@ -294,7 +295,7 @@ class TestPausePrint:
         err.set_error_state = MagicMock()
         afc.function.log_toolhead_pos = MagicMock()
         afc.gcode.run_script_from_command = MagicMock()
-        err.pause_print()
+        err.pause_print(gcmd=MagicMock())
         err.set_error_state.assert_called_once_with(True)
 
     def test_pause_print_logs_pausing_and_after_pause(self):
@@ -302,7 +303,7 @@ class TestPausePrint:
         err.set_error_state = MagicMock()
         afc.function.log_toolhead_pos = MagicMock()
         afc.gcode.run_script_from_command = MagicMock()
-        err.pause_print()
+        err.pause_print(gcmd=MagicMock())
         assert err.logger.messages == [
             ("info", "PAUSING"),
             ("debug", "After User Pause"),
@@ -320,7 +321,7 @@ class TestHandleLaneFailure:
         cur_lane.name = "lane1"
         cur_lane.do_enable = MagicMock()
         cur_lane.led_index = "1"
-        err.handle_lane_failure(cur_lane, "jammed", pause=False)
+        err.handle_lane_failure(cur_lane, "jammed", pause=False, gcmd=MagicMock())
         cur_lane.do_enable.assert_called_once_with(False)
 
     def test_sets_lane_status_to_error(self):
@@ -329,7 +330,7 @@ class TestHandleLaneFailure:
         err.AFC_error = MagicMock()
         cur_lane = MagicMock()
         cur_lane.name = "lane1"
-        err.handle_lane_failure(cur_lane, "jammed", pause=False)
+        err.handle_lane_failure(cur_lane, "jammed", pause=False, gcmd=MagicMock())
         assert cur_lane.status == AFCLaneState.ERROR
 
     def test_calls_lane_fault(self):
@@ -337,8 +338,9 @@ class TestHandleLaneFailure:
         err.AFC_error = MagicMock()
         cur_lane = MagicMock()
         cur_lane.name = "lane1"
-        err.handle_lane_failure(cur_lane, "jammed", pause=False)
-        cur_lane.unit_obj.lane_fault.assert_called_once_with(cur_lane)
+        gcmd = MagicMock()
+        err.handle_lane_failure(cur_lane, "jammed", pause=False, gcmd=gcmd)
+        cur_lane.unit_obj.lane_fault.assert_called_once_with(cur_lane, gcmd=gcmd)
 
     def test_calls_afc_error_with_lane_name_in_message(self):
         err, afc = _make_afc_error()
@@ -346,7 +348,7 @@ class TestHandleLaneFailure:
         cur_lane = MagicMock()
         cur_lane.name = "lane2"
         cur_lane.led_index = "2"
-        err.handle_lane_failure(cur_lane, "overheated", pause=False)
+        err.handle_lane_failure(cur_lane, "overheated", pause=False, gcmd=MagicMock())
         called_msg = err.AFC_error.call_args[0][0]
         assert "lane2" in called_msg
         assert "overheated" in called_msg
@@ -359,7 +361,7 @@ class TestHandleLaneFailure:
         cur_lane = MagicMock()
         cur_lane.name = "lane2"
         cur_lane.led_index = "2"
-        err.handle_lane_failure(cur_lane, "overheated", pause=False)
+        err.handle_lane_failure(cur_lane, "overheated", pause=False, gcmd=MagicMock())
         assert err.AFC_error.call_args.kwargs["stack_name"] == \
             "test_calls_afc_error_with_real_caller_function_name"
 
@@ -373,7 +375,7 @@ class TestHandleLaneFailure:
         cur_lane.name = "lane2"
         cur_lane.led_index = "2"
         with patch("extras.AFC_error.inspect.currentframe", return_value=None):
-            err.handle_lane_failure(cur_lane, "overheated", pause=False)
+            err.handle_lane_failure(cur_lane, "overheated", pause=False, gcmd=MagicMock())
         assert err.AFC_error.call_args.kwargs["stack_name"] == ""
 
     def test_stack_name_falls_back_to_empty_when_no_caller_frame(self):
@@ -387,7 +389,7 @@ class TestHandleLaneFailure:
         fake_frame = MagicMock()
         fake_frame.f_back = None
         with patch("extras.AFC_error.inspect.currentframe", return_value=fake_frame):
-            err.handle_lane_failure(cur_lane, "overheated", pause=False)
+            err.handle_lane_failure(cur_lane, "overheated", pause=False, gcmd=MagicMock())
         assert err.AFC_error.call_args.kwargs["stack_name"] == ""
 
 
@@ -397,7 +399,7 @@ class TestAFCErrorMethod:
     def test_logs_error_message(self):
         err, afc = _make_afc_error()
         err.pause_print = MagicMock()
-        err.AFC_error("Catastrophic failure", pause=False)
+        err.AFC_error("Catastrophic failure", pause=False, gcmd=MagicMock())
         assert err.logger.messages == [("error", "Catastrophic failure")]
 
     def test_explicit_stack_name_skips_frame_inspection(self):
@@ -406,7 +408,7 @@ class TestAFCErrorMethod:
         err, afc = _make_afc_error()
         err.pause_print = MagicMock()
         err.logger = MagicMock()
-        err.AFC_error("Uh oh", pause=False, stack_name="custom_caller")
+        err.AFC_error("Uh oh", pause=False, stack_name="custom_caller", gcmd=MagicMock())
         err.logger.error.assert_called_once_with(message="Uh oh", stack_name="custom_caller")
 
     def test_no_stack_name_uses_real_caller_function_name(self):
@@ -415,7 +417,7 @@ class TestAFCErrorMethod:
         err, afc = _make_afc_error()
         err.pause_print = MagicMock()
         err.logger = MagicMock()
-        err.AFC_error("Uh oh", pause=False)
+        err.AFC_error("Uh oh", pause=False, gcmd=MagicMock())
         err.logger.error.assert_called_once_with(
             message="Uh oh",
             stack_name="test_no_stack_name_uses_real_caller_function_name",
@@ -429,7 +431,7 @@ class TestAFCErrorMethod:
         err.pause_print = MagicMock()
         err.logger = MagicMock()
         with patch("extras.AFC_error.inspect.currentframe", return_value=None):
-            err.AFC_error("Uh oh", pause=False)
+            err.AFC_error("Uh oh", pause=False, gcmd=MagicMock())
         err.logger.error.assert_called_once_with(message="Uh oh", stack_name="")
 
     def test_no_stack_name_falls_back_to_empty_when_no_caller_frame(self):
@@ -441,19 +443,19 @@ class TestAFCErrorMethod:
         fake_frame = MagicMock()
         fake_frame.f_back = None
         with patch("extras.AFC_error.inspect.currentframe", return_value=fake_frame):
-            err.AFC_error("Uh oh", pause=False)
+            err.AFC_error("Uh oh", pause=False, gcmd=MagicMock())
         err.logger.error.assert_called_once_with(message="Uh oh", stack_name="")
 
     def test_pause_true_calls_pause_print(self):
         err, afc = _make_afc_error()
         err.pause_print = MagicMock()
-        err.AFC_error("Uh oh", pause=True)
+        err.AFC_error("Uh oh", pause=True, gcmd=MagicMock())
         err.pause_print.assert_called_once()
 
     def test_pause_false_skips_pause_print(self):
         err, afc = _make_afc_error()
         err.pause_print = MagicMock()
-        err.AFC_error("Uh oh", pause=False)
+        err.AFC_error("Uh oh", pause=False, gcmd=MagicMock())
         err.pause_print.assert_not_called()
 
 
@@ -482,7 +484,7 @@ class TestFix:
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=False)
         lane = MagicMock()
-        err.fix("toolhead", lane)
+        err.fix("toolhead", lane, gcmd=MagicMock())
         assert err.pause is True
 
     def test_fix_toolhead_calls_toolhead_fix(self):
@@ -490,15 +492,16 @@ class TestFix:
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=True)
         lane = MagicMock()
-        err.fix("toolhead", lane)
-        err.ToolHeadFix.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        err.fix("toolhead", lane, gcmd=gcmd)
+        err.ToolHeadFix.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_fix_toolhead_success_skips_led_fault(self):
         err, afc = _make_afc_error()
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=True)
         lane = MagicMock()
-        err.fix("toolhead", lane)
+        err.fix("toolhead", lane, gcmd=MagicMock())
         afc.function.afc_led.assert_not_called()
 
     def test_fix_toolhead_failure_calls_led_fault(self):
@@ -508,7 +511,7 @@ class TestFix:
         lane = MagicMock()
         lane.led_index = "1"
         lane.unit_obj = _make_real_unit_obj(afc)
-        result = err.fix("toolhead", lane)
+        result = err.fix("toolhead", lane, gcmd=MagicMock())
         assert result is False
         afc.function.afc_led.assert_called_with(lane.led_fault, lane.led_index)
 
@@ -520,8 +523,9 @@ class TestFix:
         err.ToolHeadFix = MagicMock()
         lane = MagicMock()
         lane.led_index = "2"
-        err.fix("jam", lane)
-        err.PauseUserIntervention.assert_called_with("jam")
+        gcmd = MagicMock()
+        err.fix("jam", lane, gcmd=gcmd)
+        err.PauseUserIntervention.assert_called_with("jam", gcmd=gcmd)
         err.ToolHeadFix.assert_not_called()
 
     def test_fix_none_problem_calls_pause_user_intervention_with_unknown_message(self):
@@ -532,9 +536,10 @@ class TestFix:
         err.PauseUserIntervention = MagicMock()
         lane = MagicMock()
         lane.led_index = "1"
-        err.fix(None, lane)
+        gcmd = MagicMock()
+        err.fix(None, lane, gcmd=gcmd)
         assert err.PauseUserIntervention.call_args_list == [
-            call('Paused for unknown error'),
+            call('Paused for unknown error', gcmd=gcmd),
         ]
 
     def test_fix_returns_error_handled_from_toolhead_fix(self):
@@ -542,7 +547,7 @@ class TestFix:
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=True)
         lane = MagicMock()
-        result = err.fix("toolhead", lane)
+        result = err.fix("toolhead", lane, gcmd=MagicMock())
         assert result is True
 
     def test_fix_returns_false_for_non_toolhead_problem(self):
@@ -550,7 +555,7 @@ class TestFix:
         err.PauseUserIntervention = MagicMock()
         lane = MagicMock()
         lane.led_index = "1"
-        result = err.fix("jam", lane)
+        result = err.fix("jam", lane, gcmd=MagicMock())
         assert result is False
 
     def test_fix_resolves_lane_name_string_via_afc_lanes(self):
@@ -562,8 +567,9 @@ class TestFix:
         lane.led_index = "1"
         lane.unit_obj = _make_real_unit_obj(afc)
         afc.lanes = {"lane1": lane}
-        err.fix("toolhead", "lane1")
-        err.ToolHeadFix.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        err.fix("toolhead", "lane1", gcmd=gcmd)
+        err.ToolHeadFix.assert_called_once_with(lane, gcmd=gcmd)
         afc.function.afc_led.assert_called_with(lane.led_fault, lane.led_index)
 
     def test_fix_unmatched_lane_name_string_does_not_crash(self):
@@ -576,11 +582,12 @@ class TestFix:
         err.PauseUserIntervention = MagicMock()
         err.ToolHeadFix = MagicMock(return_value=False)
         afc.lanes = {}  # "missing_lane" is not a registered lane
-        result = err.fix("toolhead", "missing_lane")
+        gcmd = MagicMock()
+        result = err.fix("toolhead", "missing_lane", gcmd=gcmd)
         assert result is False
         err.ToolHeadFix.assert_not_called()
         err.PauseUserIntervention.assert_called_once_with(
-            "Unknown lane 'missing_lane' reported for problem: toolhead"
+            "Unknown lane 'missing_lane' reported for problem: toolhead", gcmd=gcmd
         )
         afc.function.afc_led.assert_not_called()
 
@@ -596,8 +603,9 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = True
         lane.extruder_obj.lane_loaded = "lane1"
         lane.raw_load_state = False  # load sensor not active
-        err.ToolHeadFix(lane)
-        err.PauseUserIntervention.assert_called_with("Filament not loaded in Lane")
+        gcmd = MagicMock()
+        err.ToolHeadFix(lane, gcmd=gcmd)
+        err.PauseUserIntervention.assert_called_with("Filament not loaded in Lane", gcmd=gcmd)
 
     def test_toolhead_has_filament_matching_lane_and_loaded_pauses_no_error(self):
         err, afc = _make_afc_error()
@@ -607,8 +615,9 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = True
         lane.extruder_obj.lane_loaded = "lane1"
         lane.raw_load_state = True
-        err.ToolHeadFix(lane)
-        err.PauseUserIntervention.assert_called_with("no error detected")
+        gcmd = MagicMock()
+        err.ToolHeadFix(lane, gcmd=gcmd)
+        err.PauseUserIntervention.assert_called_with("no error detected", gcmd=gcmd)
 
     def test_toolhead_has_filament_wrong_lane_pauses(self):
         err, afc = _make_afc_error()
@@ -617,8 +626,9 @@ class TestToolHeadFix:
         lane.name = "lane1"
         lane.get_toolhead_pre_sensor_state.return_value = True
         lane.extruder_obj.lane_loaded = "lane2"  # Mismatch
-        err.ToolHeadFix(lane)
-        err.PauseUserIntervention.assert_called_with("laneloaded does not match extruder")
+        gcmd = MagicMock()
+        err.ToolHeadFix(lane, gcmd=gcmd)
+        err.PauseUserIntervention.assert_called_with("laneloaded does not match extruder", gcmd=gcmd)
 
     def test_toolhead_empty_with_lane_filament_returns_true_no_homing(self):
         """Filament is retracted to lane and reloaded; returns True."""
@@ -633,7 +643,8 @@ class TestToolHeadFix:
         #           while-not check(False→enter), while-not check(True→exit)
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect = [True, True, False, False, True]
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is True
         assert err.pause is False
         afc.save_vars.assert_called_once()
@@ -652,7 +663,8 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = False
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[True, True, False, False, True]
-            err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            err.ToolHeadFix(lane, gcmd=gcmd)
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
         assert lane.extruder_obj.lane_loaded == None
@@ -676,7 +688,8 @@ class TestToolHeadFix:
         #           while-not check(False→enter), while-not check(True→exit)
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[True, True, False]
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is True
         assert err.pause is False
         afc.save_vars.assert_called_once()
@@ -697,7 +710,8 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = False
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[True, True, False]
-            err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            err.ToolHeadFix(lane, gcmd=gcmd)
         assert lane.tool_loaded is False
         assert lane.loaded_to_hub is False
         assert lane.extruder_obj.lane_loaded == None
@@ -721,7 +735,8 @@ class TestToolHeadFix:
         # Sequence: outer if check(True→enter), while check(True→loop), while check(False→exit)
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect = [True, True, False]
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is True
         lane.unit_obj.move_to_load.assert_called_once()
         total_move_dist = lane.unit_obj.move_to_load.call_args[0][1]
@@ -742,7 +757,8 @@ class TestToolHeadFix:
         # Sequence: outer if check(True→enter), while check(True→loop), while check(False→exit)
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect = [True, True, False]
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is True
         lane.unit_obj.move_to_load.assert_called_once()
         total_move_dist = lane.unit_obj.move_to_load.call_args[0][1]
@@ -764,10 +780,11 @@ class TestToolHeadFix:
         #           while-not check(False→enter), while-not check(True→exit)
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[True, True, True, True, True, True]
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is False
         assert err.pause is False
-        err.PauseUserIntervention.assert_called_with("Failed to retract lane1 to load sensor")
+        err.PauseUserIntervention.assert_called_with("Failed to retract lane1 to load sensor", gcmd=gcmd)
         assert err.logger.messages == [("info", "Retracting lane1 back to load switch")]
 
     def test_toolhead_empty_retract_loop_times_out_no_homing(self):
@@ -783,9 +800,10 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.return_value = True  # never clears -> loop runs until max_length exhausted
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is False
-        err.PauseUserIntervention.assert_called_with("Failed to retract lane1 to load sensor")
+        err.PauseUserIntervention.assert_called_with("Failed to retract lane1 to load sensor", gcmd=gcmd)
         assert err.logger.messages == [("info", "Retracting lane1 back to load switch")]
 
     def test_toolhead_empty_reload_loop_times_out_no_homing(self):
@@ -806,9 +824,11 @@ class TestToolHeadFix:
             # second loop ("while not raw_load_state") then never sees it go
             # True, exhausting max_length.
             mock_prop.side_effect = itertools.chain([True, False], itertools.repeat(False))
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is False
-        err.PauseUserIntervention.assert_called_with("Failed to move back lane1 to load sensor")
+        err.PauseUserIntervention.assert_called_with(
+            "Failed to move back lane1 to load sensor", gcmd=gcmd)
         assert err.logger.messages == [("info", "Retracting lane1 back to load switch")]
 
     def test_toolhead_empty_already_at_lane_extruder_takes_no_action(self):
@@ -824,7 +844,8 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.return_value = False
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is False
         err.PauseUserIntervention.assert_not_called()
         lane.move.assert_not_called()
@@ -844,7 +865,8 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.return_value = True
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is False
         err.PauseUserIntervention.assert_not_called()
         lane.move.assert_not_called()
@@ -865,7 +887,8 @@ class TestToolHeadFix:
         lane.get_toolhead_pre_sensor_state.return_value = False  # toolhead empty
         with patch.object(type(lane), "raw_load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.return_value = True
-            result = err.ToolHeadFix(lane)
+            gcmd = MagicMock()
+            result = err.ToolHeadFix(lane, gcmd=gcmd)
         assert result is False
         err.PauseUserIntervention.assert_not_called()
         lane.move.assert_not_called()

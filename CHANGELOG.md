@@ -5,12 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-26-2026]
+### Added
+- Added Creality CFS to the installer. Additional CFS units join the first box's chain: the installer
+  writes their config with the shared hub, the next free `box_addr` and lane numbers, and a `box_uid`
+  placeholder, and asks for the first box's uid if it has none.
+
+## [11-25-2026]
+## Fixed
+- Buffers getting enabled when a lane is loaded and toolhead is docked during PREP
+
+## Added
+- Resetting steppers rotation distance when performing calibration to make sure correct rotation distance is being used while calibrating.
+
 ## [11-24-2026]
+### Changed
+- `AFC_ACE_CALIBRATE_HUB` stores the measured lane to hub sensor distance less the hub's
+  `hub_clear_move_dis` as `dist_hub`, so a staged ACE lane parks short of a hub sensor that sits
+  past the point where the tubes merge. Recalibrate ACE lanes with a hub sensor after updating.
+
 ### Fixed
+- Fixed a switched buffer and toolhead detection resulting in a bad multiplier when jam detection is enabled; resulting in false clog state. (#928)
+- A print whose file Moonraker doesn't have, such as the virtual job Kalico's `PRINT_PA_TOWER`
+  runs, no longer reports "Error getting data from moonraker" to the console at print start. The
+  404 is logged as a debug message and the print continues with no toolchange count, as before.
+  Other Moonraker failures are still reported as errors.
 - Fixed ACE loads leaving the filament tip short of the extruder gears when the toolhead sensor
   sits above them: the unit now keeps feeding `load_gear_push` mm (default 20) past the sensor,
   at `tool_load_speed` alongside the extruder's `tool_stn` advance, and starts feed assist
   after that push.
+
+## [11-22-2026]
+### Updated
+- Updated Park.cfg, Poop.cfg and Brush.cfg macros to support interacting with the Creality K1 CFS Upgrade Kit Poop Chute
+
+### Added
+- Added support for loading only to gear when doing tool_stn calibration for units that use the `unit_load_lane` path, fixes issue #876.
+
+### Fixes
+- When running tool_stn calibration, now only showing lanes that are loaded instead of all possible lanes for the selected extruder.
+
+## [11-21-2026]
+### Added
+- Filtering of message that get logged to AFC_ACE_serial.log, before it was very chatty and would constantly log to file. Logging that has been suppressed can be turned back on by adding `debug: True` into your unit config.
+
+### Fixed
+- Fixed buffer not getting enabled when `SET_LANE_LOADED` macro is used.
 
 ## [11-15-2026]
 ### Added
@@ -22,9 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [11-14-2026]
 ### Added
 - Added a Compensator buffer, with support in the installer and an `adc_min_val`/`adc_max_val` pair so PSF-type buffers whose ADC values don't span the full 0.0-1.0 range are scaled to the correct FPS value.
+- Added the ability to use ADC pins as buttons(multiple buttons on a single ADC pin) for AFC_button configs.
+- Added the ability to run button calibration when AFC_button is setup to use ADC buttons.
 
 ### Changed
 - `QUERY_BUFFER` now reports the raw, prescaled ADC value for PSF-type buffers.
+
+### Fixed
+- Fixed filament sensor debounce raising a `TypeError` for Snapmaker's and Kalico's `force`/`immediate` calling conventions.
+- Fixed a signature-probing fallback that could invoke a filament sensor callback a second time when it failed for an unrelated reason.
 
 ## [11-13-2026]
 ### Updated
