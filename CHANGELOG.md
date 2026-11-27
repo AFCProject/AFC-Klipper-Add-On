@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-24-2026]
+### Changed
+- `AFC_ACE_CALIBRATE_HUB` stores the measured lane to hub sensor distance less the hub's
+  `hub_clear_move_dis` as `dist_hub`, so a staged ACE lane parks short of a hub sensor that sits
+  past the point where the tubes merge. Recalibrate ACE lanes with a hub sensor after updating.
+
+### Fixed
+- A print whose file Moonraker doesn't have, such as the virtual job Kalico's `PRINT_PA_TOWER`
+  runs, no longer reports "Error getting data from moonraker" to the console at print start. The
+  404 is logged as a debug message and the print continues with no toolchange count, as before.
+  Other Moonraker failures are still reported as errors.
+
 ## [11-22-2026]
+### Updated
+- Updated Park.cfg, Poop.cfg and Brush.cfg macros to support interacting with the Creality K1 CFS Upgrade Kit Poop Chute
+
 ### Added
 - Added support for loading only to gear when doing tool_stn calibration for units that use the `unit_load_lane` path, fixes issue #876.
 
@@ -29,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [11-14-2026]
 ### Added
 - Added a Compensator buffer, with support in the installer and an `adc_min_val`/`adc_max_val` pair so PSF-type buffers whose ADC values don't span the full 0.0-1.0 range are scaled to the correct FPS value.
+- Added the ability to use ADC pins as buttons(multiple buttons on a single ADC pin) for AFC_button configs.
+- Added the ability to run button calibration when AFC_button is setup to use ADC buttons.
 
 ### Changed
 - `QUERY_BUFFER` now reports the raw, prescaled ADC value for PSF-type buffers.

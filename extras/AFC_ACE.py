@@ -4290,13 +4290,24 @@ class afcACE(afcUnit):
             except Exception as e:
                 self.logger.error(f"ACE hub calibrate: retract failed: {e}")
 
+        margin = hub.hub_clear_move_dis
+        new_dist = round(distance - margin, 2)
+        if new_dist <= 0:
+            msg = (f"Hub sensor triggered at {distance:.1f}mm, which is not past the hub's "
+                   f"hub_clear_move_dis of {margin}mm. dist_hub was not changed.")
+            return False, msg, distance
+
         old_dist = cur_lane.dist_hub
-        new_dist = round(distance, 2)
         cal_msg = f'\n dist_hub: New: {new_dist} Old: {old_dist}'
         cur_lane.dist_hub = new_dist
         self.afc.function.ConfigRewrite(cur_lane.fullname, "dist_hub", new_dist, cal_msg)
 
-        return True, f"dist_hub calibration: {new_dist}mm (was {old_dist}mm)", new_dist
+        if margin:
+            msg = (f"dist_hub calibration: {new_dist}mm, hub sensor at {distance:.1f}mm less "
+                   f"{margin}mm hub_clear_move_dis (was {old_dist}mm)")
+        else:
+            msg = f"dist_hub calibration: {new_dist}mm (was {old_dist}mm)"
+        return True, msg, new_dist
 
     # RFID / Spoolman helpers
     def _sync_inventory(self) -> None:
