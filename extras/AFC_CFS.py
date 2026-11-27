@@ -2464,7 +2464,8 @@ class afcCFS(afcUnit):
         """
         self._tool_load(lane, gcmd=gcmd)
 
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any, *, gcmd: AFCGcmd) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any, load_to_gears: bool=False, *,
+                       gcmd: AFCGcmd) -> bool:
         """
         AFC's load hook (AFC.load_sequence), used like the ACE's: returns False on a
         failed load so AFC stops without recording the lane as loaded. With a
@@ -2473,22 +2474,24 @@ class afcCFS(afcUnit):
 
         :param cur_lane: lane to load
         :param cur_extruder: unused, the lane knows its extruder
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context for the macros, if any
         :return bool: True if the lane is loaded to the nozzle
         """
-        if not self._tool_load(cur_lane, gcmd=gcmd):
+        if not self._tool_load(cur_lane, load_to_gears, gcmd=gcmd):
             return False
         cur_lane.status = AFCLaneState.TOOL_LOADED
         self.afc.save_vars()
         return True
 
-    def _tool_load(self, lane: AFCLane, *, gcmd: AFCGcmd) -> bool:
+    def _tool_load(self, lane: AFCLane, load_to_gears: bool=False, *, gcmd: AFCGcmd) -> bool:
         """
-        Load a lane to the nozzle: checks, park, then load attempts (see _load_attempt)
-        and the push to tool_stn.
+        Load a lane to the toolhead sensor: checks, park, then load attempts the push to tool_stn,
+        unless load_to_gears is set.
 
         :param lane: lane to load
         :param gcmd: command context for the macros, if any
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :return bool: True if the lane is loaded to the nozzle
         """
         self.wait_for_tag_reads()   # a tag read keeps the box busy; finish it first
@@ -2557,13 +2560,16 @@ class afcCFS(afcUnit):
 
         # The handoff already pushed prime1 + prime2 past the sensor.
         remaining = lane.extruder_obj.tool_stn - (self.prime1_length + self.prime2_length)
-        if remaining > 0:
+        tool_stn_push = 0.0
+        if (remaining > 0
+            and not load_to_gears):
             self.afc.move_e_pos(remaining, lane.extruder_obj.tool_load_speed,
                                 "CFS tool_stn", wait_tool=True)
+            tool_stn_push = remaining
         lane._load_state = True          # our filament now occupies the shared path
         self._mark_tool_state(lane, loaded=True, gcmd=gcmd)
         self._lane_trace(lane, "load_end", ok=True, detail=detail, attempts=attempts_used,
-                         tool_stn_push=round(max(remaining, 0), 2),
+                         tool_stn_push=round(tool_stn_push, 2),
                          seconds=round(self.reactor.monotonic() - started, 2))
         return True
 

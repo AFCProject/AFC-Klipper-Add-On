@@ -1318,15 +1318,17 @@ class AceHub:
     """AFC_hub stand-in; switch_pin "virtual" is the pinless hub ACE units use."""
 
     def __init__(self, name: str, switch_pin: Optional[str] = "virtual",
-                 afc_bowden_length: float = 900.0) -> None:
+                 afc_bowden_length: float = 900.0, hub_clear_move_dis: float = 0.0) -> None:
         """
         :param name: hub name
         :param switch_pin: "virtual", a pin name, or None
         :param afc_bowden_length: hub to toolhead sensor, mm
+        :param hub_clear_move_dis: mm hub calibration takes off the measured dist_hub
         """
         self.name = name
         self.switch_pin = switch_pin
         self.afc_bowden_length = afc_bowden_length
+        self.hub_clear_move_dis = hub_clear_move_dis
         self.td1_bowden_length = afc_bowden_length - 50
         self.afc_unload_bowden_length = afc_bowden_length
         self.lanes: Dict[str, Any] = {}
@@ -1936,7 +1938,7 @@ class AcePrinter:
         Register [AFC_hub <name>].
 
         :param name: hub name
-        :param options: AceHub keywords (switch_pin, afc_bowden_length)
+        :param options: AceHub keywords (switch_pin, afc_bowden_length, hub_clear_move_dis)
         :return AceHub: the hub
         """
         hub = AceHub(name, **options)

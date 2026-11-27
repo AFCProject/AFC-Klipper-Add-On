@@ -1013,26 +1013,29 @@ class afc:
         Run a gcode script, acquiring the gcode mutex only if not already held.
 
         :param script: gcode script to run
-        :param gcmd: command context the script is run through, or one of two
-            literals: `"callback"` for a true async context with no real
-            command (hardware/sensor callbacks, reactor timers, deferred
-            completion callbacks), or `"sub_command"` for an event handler
-            fired synchronously from inside another command's own gcode
-            context, which can't release the mutex until this call stack
-            returns to it
+        :param gcmd: command context the script is run through: a real gcmd, `"callback"` for a true
+            async context with no mutex held (hardware/sensor callbacks, reactor timers, deferred
+            completion callbacks), `"sub_command"` for an event handler fired synchronously from
+            inside another command's own gcode context (which can't release the mutex until this
+            call stack returns to it), or `"force_acquire"`, same as `"callback"` but always run
+            through `gcode.run_script()` regardless of Kalico's capabilities
         """
         if gcmd == "sub_command":
             # The caller guarantees the mutex is already held by its own
             # enclosing synchronous command context.
             self.gcode.run_script_from_command(script)
-        elif self._rsfc_accepts_gcmd:
-            # run_script_from_command() with no gcmd creates a legacy g-code
-            # context on new Kalico; a later recursive run_script call
-            # through that context hits the mutex error again.
-            if gcmd != "callback":
-                gcmd.run_script(script)
-            else:
+        elif (self._rsfc_accepts_gcmd
+              or gcmd == "force_acquire"):
+            # force_acquire always takes this branch, even on older Kalico/Klipper, since it must
+            # never fall back to run_script_from_command() below.
+            if (gcmd == "callback"
+                or gcmd == "force_acquire"):
+                # run_script_from_command() with no gcmd would create a legacy g-code context on new
+                # Kalico; a later recursive run_script call through that context hits the mutex
+                # error again.
                 self.gcode.run_script(script)
+            else:
+                gcmd.run_script(script)
         else:
             self.gcode.run_script_from_command(script)
 
@@ -1737,6 +1740,15 @@ class afc:
             # Exit early if no lane is provided.
             return False
 
+        # custom_load_cmd is opaque user gcode, so gear-only loading can't be honored. Reject
+        # it here, before any tool swap or unload of another lane moves filament.
+        if (load_to_gears
+            and cur_lane.custom_load_cmd):
+            error_str = (f"Lane {cur_lane.name}: custom load command does not support "
+                        "gear-only loading.")
+            self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
+            return False
+
         # Check if the bypass filament sensor is triggered; abort loading if filament is already present.
         if self._check_bypass(gcmd=gcmd): return False
 
@@ -1900,6 +1912,14 @@ class afc:
         :param gcmd: command context to run load macros through, if any
         :return bool: True when loading succeeds, otherwise False
         """
+        # Reject before the pre-load macro/temperature prep run
+        if (cur_lane.custom_load_cmd
+            and load_to_gears):
+            error_str = (f"Lane {cur_lane.name}: custom load command does not support "
+                         "gear-only loading.")
+            self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
+            return False
+
         if (self.park_pre_load
             and self.park_pre_load_cmd):
             self.run_script(self.park_pre_load_cmd, gcmd=gcmd)
@@ -1926,7 +1946,8 @@ class afc:
                 self.error.handle_lane_failure(cur_lane, message, gcmd=gcmd)
                 return False
         elif hasattr(cur_lane.unit_obj, "unit_load_lane"):
-            if not cur_lane.unit_obj.unit_load_lane(cur_lane, cur_extruder, gcmd=gcmd):
+            if not cur_lane.unit_obj.unit_load_lane(cur_lane, cur_extruder,
+                                                    load_to_gears=load_to_gears, gcmd=gcmd):
                 return False
         else:
             use_direct_dist = False
