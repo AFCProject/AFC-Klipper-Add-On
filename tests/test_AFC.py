@@ -452,13 +452,16 @@ class TestRunScript:
     """Covers afc.run_script's dispatch.
 
     On newer Kalico (`_rsfc_accepts_gcmd`), a real `gcmd` (anything other
-    than the literal `"callback"`) uses `gcmd.run_script` directly; the
-    literal `"callback"` uses `self.gcode.run_script` directly instead of
-    `run_script_from_command`, since the latter with no gcmd would create a
-    legacy g-code context on new Kalico that can't later re-acquire the
-    mutex. On everything else (`_rsfc_accepts_gcmd` is False), `gcmd` is
-    always run through `self.gcode.run_script_from_command`, regardless of
-    its value or of the gcode mutex's state.
+    than the literals `"callback"`/`"force_acquire"`) uses `gcmd.run_script`
+    directly; either of those two literals uses `self.gcode.run_script`
+    directly instead of `run_script_from_command`, since the latter with no
+    gcmd would create a legacy g-code context on new Kalico that can't later
+    re-acquire the mutex. On everything else (`_rsfc_accepts_gcmd` is
+    False), a real `gcmd` or the literal `"callback"` is always run through
+    `self.gcode.run_script_from_command`, regardless of the gcode mutex's
+    state; the literal `"force_acquire"` still goes through
+    `self.gcode.run_script` directly even here, since its whole point is to
+    never depend on Kalico's run_script_from_command capability.
     """
 
     def test_real_gcmd_and_new_kalico_uses_gcmd_run_script(self):
@@ -487,6 +490,25 @@ class TestRunScript:
         obj.gcode.get_mutex.return_value.test.return_value = True
 
         obj.run_script("PAUSE", "callback")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_force_acquire_and_new_kalico_uses_gcode_run_script_directly(self):
+        obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
+
+        obj.run_script("PAUSE", "force_acquire")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_force_acquire_and_new_kalico_ignores_mutex_state(self):
+        obj = _make_afc()
+        obj._rsfc_accepts_gcmd = True
+        obj.gcode.get_mutex.return_value.test.return_value = True
+
+        obj.run_script("PAUSE", "force_acquire")
 
         obj.gcode.run_script.assert_called_once_with("PAUSE")
         obj.gcode.run_script_from_command.assert_not_called()
@@ -520,6 +542,23 @@ class TestRunScript:
 
         obj.gcode.run_script_from_command.assert_called_once_with("PAUSE")
         obj.gcode.run_script.assert_not_called()
+
+    def test_force_acquire_without_new_kalico_uses_gcode_run_script_directly(self):
+        obj = _make_afc()
+
+        obj.run_script("PAUSE", "force_acquire")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
+
+    def test_force_acquire_without_new_kalico_ignores_mutex_state(self):
+        obj = _make_afc()
+        obj.gcode.get_mutex.return_value.test.return_value = True
+
+        obj.run_script("PAUSE", "force_acquire")
+
+        obj.gcode.run_script.assert_called_once_with("PAUSE")
+        obj.gcode.run_script_from_command.assert_not_called()
 
     def test_without_new_kalico_mutex_held_still_uses_run_script_from_command(self):
         obj = _make_afc()
@@ -2299,6 +2338,56 @@ class TestToolLoad_DestExtruderAlreadyLoaded:
             f"tool_swap must precede TOOL_UNLOAD; order was {call_order}"
         )
         obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
+
+
+# ── TOOL_LOAD: custom_load_cmd rejects gear-only loading before any movement ────
+# Unlike load_sequence's own copy of this check, this one must run before
+# tool_swap/TOOL_UNLOAD of another lane, since custom_load_cmd can never honor
+# load_to_gears and there is no reason to move filament first.
+
+class TestToolLoadCustomCmdGearOnlyRejectedBeforeUnload:
+    def test_rejected_before_unloading_the_other_lane(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        gcmd = MagicMock()
+
+        result = obj.TOOL_LOAD(target_lane, load_to_gears=True, gcmd=gcmd)
+
+        assert result is False
+        obj.TOOL_UNLOAD.assert_not_called()
+        obj.error.AFC_error.assert_called_once_with(
+            f"Lane {target_lane.name}: custom load command does not support gear-only loading.",
+            pause=False, gcmd=gcmd)
+
+    def test_pause_follows_in_print(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        obj.function.in_print.return_value = True
+        gcmd = MagicMock()
+
+        obj.TOOL_LOAD(target_lane, load_to_gears=True, gcmd=gcmd)
+
+        assert obj.error.AFC_error.call_args.kwargs["pause"] is True
+
+    def test_load_to_gears_false_does_not_reject_and_unloads_normally(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        gcmd = MagicMock()
+
+        obj.TOOL_LOAD(target_lane, load_to_gears=False, gcmd=gcmd)
+
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
+        obj.error.AFC_error.assert_not_called()
+
+    def test_no_custom_load_cmd_does_not_reject_and_unloads_normally(self):
+        obj, target_lane, loaded_lane, dest_extruder = _make_afc_for_dest_extruder_loaded()
+        target_lane.custom_load_cmd = None
+        gcmd = MagicMock()
+
+        obj.TOOL_LOAD(target_lane, load_to_gears=True, gcmd=gcmd)
+
+        obj.TOOL_UNLOAD.assert_called_once_with(loaded_lane, set_start_time=False, gcmd=gcmd)
+        obj.error.AFC_error.assert_not_called()
 
 
 # ── td1_present property ─────────────────────────────────────────────────────
@@ -4413,7 +4502,8 @@ class TestLoadSequenceUnitLoadLane:
         result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is True
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(
+            lane, extruder, load_to_gears=False, gcmd=gcmd)
         lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
         afc.save_vars.assert_called_once_with()
@@ -4426,9 +4516,20 @@ class TestLoadSequenceUnitLoadLane:
         result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
 
         assert result is False
-        lane.unit_obj.unit_load_lane.assert_called_once_with(lane, extruder, gcmd=gcmd)
+        lane.unit_obj.unit_load_lane.assert_called_once_with(
+            lane, extruder, load_to_gears=False, gcmd=gcmd)
         lane.set_tool_loaded.assert_not_called()
         afc.save_vars.assert_not_called()
+
+    def test_load_to_gears_true_passed_through_to_unit_load_lane(self):
+        gcmd = MagicMock()
+        afc, lane, hub, extruder = self._make()
+        lane.unit_obj.unit_load_lane.return_value = True
+
+        afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        lane.unit_obj.unit_load_lane.assert_called_once_with(
+            lane, extruder, load_to_gears=True, gcmd=gcmd)
 
     def test_no_unit_load_lane_hook_falls_through_to_default_path(self):
         # Without the unit_load_lane hook, load_sequence must take the
@@ -4495,6 +4596,76 @@ class TestLoadSequenceUnitLoadLane:
         afc.move_e_pos.assert_not_called()
         lane.set_tool_loaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
         lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert afc.save_vars.call_count == 2
+
+
+# ── load_sequence: custom_load_cmd rejects gear-only loading ───────────────────
+# New branch: custom_load_cmd is opaque user gcode, so load_sequence cannot
+# honor load_to_gears there and rejects it up front without running anything.
+
+class TestLoadSequenceCustomLoadCmdGearOnlyRejection:
+    def _make(self):
+        afc = _make_afc()
+        afc._check_extruder_temp = MagicMock(return_value=False)
+        afc.save_vars = MagicMock()
+        afc.run_script = MagicMock()
+        afc.park_pre_load = True
+        afc.park_pre_load_cmd = "PARK_PRE_LOAD_CMD"
+        lane = _make_afc_lane()
+        lane.custom_load_cmd = "MY_CUSTOM_LOAD"
+        lane.unit_obj = MagicMock(spec=[])
+        hub = MagicMock()
+        extruder = MagicMock()
+        return afc, lane, hub, extruder
+
+    def test_load_to_gears_true_returns_false_without_running_custom_cmd(self):
+        afc, lane, hub, extruder = self._make()
+        gcmd = MagicMock()
+
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        assert result is False
+        # The rejection must happen before the pre-load macro and temperature
+        # prep run, since park_pre_load_cmd can itself extrude filament.
+        afc.run_script.assert_not_called()
+        afc._check_extruder_temp.assert_not_called()
+        afc.save_vars.assert_not_called()
+
+    def test_load_to_gears_true_reports_gear_only_error(self):
+        afc, lane, hub, extruder = self._make()
+        afc.function.in_print.return_value = True
+        gcmd = MagicMock()
+
+        afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        afc.error.AFC_error.assert_called_once_with(
+            f"Lane {lane.name}: custom load command does not support gear-only loading.",
+            pause=True, gcmd=gcmd)
+
+    def test_load_to_gears_true_pause_follows_in_print_false(self):
+        afc, lane, hub, extruder = self._make()
+        afc.function.in_print.return_value = False
+        gcmd = MagicMock()
+
+        afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        assert afc.error.AFC_error.call_args.kwargs["pause"] is False
+
+    def test_load_to_gears_false_runs_custom_cmd_normally(self):
+        afc, lane, hub, extruder = self._make()
+        lane.get_toolhead_pre_sensor_state.return_value = True
+        lane.set_tool_loaded = MagicMock()
+        lane.enable_buffer = MagicMock()
+        gcmd = MagicMock()
+
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=False, gcmd=gcmd)
+
+        assert result is not False
+        afc.run_script.assert_any_call("MY_CUSTOM_LOAD", gcmd=gcmd)
+        afc.run_script.assert_any_call("PARK_PRE_LOAD_CMD", gcmd=gcmd)
+        assert afc.run_script.call_count == 2
+        afc.error.AFC_error.assert_not_called()
+        assert lane.status == AFCLaneState.TOOL_LOADED
         assert afc.save_vars.call_count == 2
 
 

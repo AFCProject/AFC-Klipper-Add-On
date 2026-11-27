@@ -234,6 +234,7 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane._afc_prep_done = False
     lane.multi_color = []
     lane.color_mode = ""
+    lane.custom_load_cmd = None
     return lane
 
 

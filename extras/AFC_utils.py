@@ -47,11 +47,12 @@ if TYPE_CHECKING:
 
     # Command context a gcode script is run through: a real gcmd, "callback"
     # for a true async context with no held mutex (hardware/sensor
-    # callbacks, reactor timers, deferred completion callbacks), or
-    # "sub_command" for an event handler fired synchronously from inside
-    # another command's own gcode context, which can't release the mutex
-    # until this call stack returns to it.
-    AFCGcmd = Union[GCodeCommand, Literal["callback", "sub_command"]]
+    # callbacks, reactor timers, deferred completion callbacks), "sub_command" for an event handler
+    # fired synchronously from inside another command's own gcode context, which can't release the
+    # mutex until this call stack returns to it, or "force_acquire" for a true async context (same
+    # as "callback") whose script must always go through gcode.run_script() itself rather than any
+    # gcmd-aware path, regardless of Kalico's run_script_from_command capability.
+    AFCGcmd = Union[GCodeCommand, Literal["callback", "sub_command", "force_acquire"]]
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 

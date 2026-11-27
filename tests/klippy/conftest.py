@@ -59,6 +59,7 @@ class KlippyTest(pytest.File):
         gcode: list[str] = []
         config_file = None
         dictionaries: list[str] = []
+        expect_log: list[str] = []
 
         with self.path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -81,6 +82,12 @@ class KlippyTest(pytest.File):
                 elif parts[0] == "CONFIG":
                     config_file = self._resolve(parts[1])
 
+                elif parts[0] == "EXPECT_LOG":
+                    # Asserts a substring appears in AFC.log (or klippy.log as a fallback)
+                    # after the run, for a handler whose only observable effect is a prompt
+                    # it logs, with no get_status() an ASSERT could check instead.
+                    expect_log.append(line.strip()[len("EXPECT_LOG"):].strip())
+
                 else:
                     gcode.append(line.strip())
 
@@ -95,6 +102,7 @@ class KlippyTest(pytest.File):
             should_fail=should_fail,
             klipper_path=KLIPPER_PATH,
             keepfiles=keepfiles,
+            expect_log=expect_log,
         )
 
 
@@ -108,6 +116,7 @@ class KlippyTestItem(pytest.Item):
         should_fail=False,
         klipper_path,
         keepfiles=False,
+        expect_log=(),
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -116,6 +125,7 @@ class KlippyTestItem(pytest.Item):
         self.gcode = gcode
         self.klipper_path = klipper_path
         self.keepfiles = keepfiles
+        self.expect_log = list(expect_log)
         if should_fail:
             self.add_marker(pytest.mark.xfail)
 
@@ -176,6 +186,18 @@ class KlippyTestItem(pytest.Item):
 
         if result.returncode != 0:
             raise KlippyTestError(result.returncode, args, result.stdout)
+
+        if self.expect_log:
+            log_text = ""
+            if self.afc_log_path.exists():
+                log_text += self.afc_log_path.read_text(errors="replace")
+            if log_file.exists():
+                log_text += log_file.read_text(errors="replace")
+            missing = [substring for substring in self.expect_log if substring not in log_text]
+            if missing:
+                error_str = (f"EXPECT_LOG substring(s) not found in AFC.log/klippy.log: "
+                             f"{missing!r}")
+                raise KlippyTestError(result.returncode, args, result.stdout + "\n" + error_str)
 
     def repr_failure(self, excinfo, style=None):
         if isinstance(excinfo.value, KlippyTestError):
