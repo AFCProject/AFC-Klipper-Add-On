@@ -64,7 +64,7 @@ class TestBuildBufferConfig:
 
     def test_compensator_embeds_the_adc_pin_and_its_calibrated_adc_range(self) -> None:
         text = build_buffer_config("Compensator", "Buf", adc_pin="U:PSF")
-        assert text.startswith("[AFC_buffer Buf]\ntype: FPS_PSF\nadc_pin: U:PSF\n")
+        assert text.startswith("[AFC_buffer Buf]\ntype: COMP\nadc_pin: U:PSF\n")
         assert "reversed: true  #Test slide by hand" in text
         assert text.endswith("adc_min_val: 0.0\nadc_max_val: 1.0")
 

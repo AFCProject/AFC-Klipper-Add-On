@@ -24,6 +24,7 @@ except: raise error(ERROR_STR.format(import_lib="AFC_NightOwl", trace=traceback.
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from extras.AFC_lane import AFCLane
+    from extras.AFC_utils import AFCGcmd
 
 class afcQuattroBox(afcNightOwl):
     def __init__(self, config: ConfigWrapper) -> None:
@@ -48,34 +49,37 @@ class afcQuattroBox(afcNightOwl):
         self.logo_error = '<span class=error--text>Quattro Box Not Ready</span>\n'
         self.set_logo_color(self.led_logo_color)
 
-    def lane_loading(self, lane: AFCLane) -> None:
+    def lane_loading(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Sets QuattroBox lanes led when lane is loading, and sets logo led's to
         `led_logo_loading` color
 
         :param lane: Lane object to set led
+        :param gcmd: command context the led macro is run through, if any
         """
-        super().lane_loading(lane)
+        super().lane_loading(lane, gcmd=gcmd)
         self.set_logo_color( self.led_logo_loading )
 
-    def lane_tool_loaded(self, lane: AFCLane) -> None:
+    def lane_tool_loaded(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Sets QuattroBox lanes led when lane is tool loaded, and sets logo to
         lanes color
 
         :param lane: Lane object to set led
+        :param gcmd: command context the led macro is run through, if any
         """
-        super().lane_tool_loaded(lane)
+        super().lane_tool_loaded(lane, gcmd=gcmd)
         self.set_logo_color(lane.color)
 
-    def lane_tool_unloaded(self, lane: AFCLane) -> None:
+    def lane_tool_unloaded(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Sets QuattroBox lanes led when lane is tool unloaded, and sets logo
         color back to `led_logo_color` color
 
         :param lane: Lane object to set led
+        :param gcmd: command context the led macro is run through, if any
         """
-        super().lane_tool_unloaded(lane)
+        super().lane_tool_unloaded(lane, gcmd=gcmd)
         self.set_logo_color(self.led_logo_color)
 
 def load_config_prefix(config: ConfigWrapper) -> afcQuattroBox:

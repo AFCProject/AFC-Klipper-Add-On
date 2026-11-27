@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from extras.AFC_lane import AFCLane, MoveDirection
+    from extras.AFC_utils import AFCGcmd
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error(
@@ -42,7 +43,7 @@ class AFC_EMU(afcBoxTurtle):
         self.logo = '<span class=success--text>EMU Ready\n</span>'
         self.logo_error = '<span class=error--text>EMU Not Ready</span>\n'
 
-    def prep_post_load(self, lane: AFCLane):
+    def prep_post_load(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Helper method to run after prep_load has been successful.
 
@@ -50,6 +51,7 @@ class AFC_EMU(afcBoxTurtle):
         sets loaded_to_hub as True. If normal hub, calls parents prep_post_load method.
 
         :param lane: AFCLane object for which to perform prep_post_load action on
+        :param gcmd: command context the moves are run through, if any
         """
         if (lane.hub_obj is not None
             and hasattr(lane.hub_obj, 'is_virtual_pin')
@@ -57,16 +59,17 @@ class AFC_EMU(afcBoxTurtle):
             num_tries = 0
             while( lane.raw_load_state and num_tries < 10 ):
                 lane.move_to(lane.hub_obj.hub_clear_move_dis * MoveDirection.NEG,
-                            SpeedMode.SHORT, use_homing=False)
+                             SpeedMode.SHORT, use_homing=False, gcmd=gcmd)
                 num_tries += 1
             lane.loaded_to_hub = True
         else:
-            super().prep_post_load(lane)
+            super().prep_post_load(lane, gcmd=gcmd)
 
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
-                    assist_active: AssistActive=AssistActive.DYNAMIC
+                    assist_active: AssistActive=AssistActive.DYNAMIC, *,
+                    gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
@@ -78,6 +81,7 @@ class AFC_EMU(afcBoxTurtle):
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
         :param speed_mode: SpeedMode type to use when moving stepper
         :param assist_active: EMU does not have spoolers, setting this parameter does nothing.
+        :param gcmd: command context the pause is run through, if homing fails
 
         :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
 
@@ -94,10 +98,10 @@ class AFC_EMU(afcBoxTurtle):
             and lane.hub_obj.is_virtual_pin()):
             endstop = lane.load_es
         homed, distance, warn = lane.move_to(dist * dir, speed_mode, assist_active=assist_active,
-                                             endstop=endstop, use_homing=use_homing)
+                                             endstop=endstop, use_homing=use_homing, gcmd=gcmd)
         return homed, distance, warn
 
-    def eject_lane(self, lane: AFCLane):
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd):
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
         will stop once prep sensor is no longer triggered if movement has not already stopped.
@@ -106,12 +110,13 @@ class AFC_EMU(afcBoxTurtle):
         be easily removed.
 
         :param lane: Lane to eject spool
+        :param gcmd: command context the eject is run through, if any
         """
         if lane.loaded_to_hub:
             lane.move_to(lane.dist_hub * -1, SpeedMode.DIST_HUB,
                             endstop=lane.load_es, assist_active=AssistActive.DYNAMIC,
-                            use_homing=self.afc.homing_enabled)
-        lane.move_advanced(lane.extruder_clear_dis * -1, SpeedMode.SHORT)
+                            use_homing=self.afc.homing_enabled, gcmd=gcmd)
+        lane.move_advanced(lane.extruder_clear_dis * -1, SpeedMode.SHORT, gcmd=gcmd)
         lane.do_enable(False)
 
 def load_config_prefix(config):

@@ -130,7 +130,7 @@ class TestTd1Prep:
         prep.afc.td1_present = False
         prep.afc.function.get_current_lane_obj.return_value = None
         # Should not raise or try to iterate lanes
-        prep._td1_prep(overrall_status=True)
+        prep._td1_prep(overrall_status=True, gcmd=MagicMock())
 
     def test_td1_present_no_current_lane_no_error_captures_data(self):
         prep = _make_prep({"get_td1_data": True})
@@ -142,7 +142,7 @@ class TestTd1Prep:
         lane.prep_state = True
         lane.get_td1_data.return_value = (True, "data")
         prep.afc.lanes = {"lane1": lane}
-        prep._td1_prep(overrall_status=True)
+        prep._td1_prep(overrall_status=True, gcmd=MagicMock())
         lane.get_td1_data.assert_called()
 
     def test_td1_present_with_current_lane_skips_capture(self):
@@ -155,7 +155,7 @@ class TestTd1Prep:
         lane = MagicMock()
         lane.get_td1_data = MagicMock()
         prep.afc.lanes = {"lane1": lane}
-        prep._td1_prep(overrall_status=True)
+        prep._td1_prep(overrall_status=True, gcmd=MagicMock())
         lane.get_td1_data.assert_not_called()
 
     def test_overall_status_false_skips_capture(self):
@@ -166,7 +166,7 @@ class TestTd1Prep:
         lane = MagicMock()
         lane.get_td1_data = MagicMock()
         prep.afc.lanes = {"lane1": lane}
-        prep._td1_prep(overrall_status=False)
+        prep._td1_prep(overrall_status=False, gcmd=MagicMock())
         lane.get_td1_data.assert_not_called()
 
 
@@ -224,7 +224,9 @@ class TestPrepRestoreFilamentInfo:
         afc.function.get_current_lane_obj.return_value = (
             lane if current_lane_obj is True else current_lane_obj)
 
-        prep.PREP(MagicMock())
+        gcmd = MagicMock()
+        afc._test_gcmd = gcmd
+        prep.PREP(gcmd)
         return lane, afc
 
     def test_restores_vendor_and_name_without_spoolman(self, tmp_path):
@@ -252,7 +254,7 @@ class TestPrepRestoreFilamentInfo:
         lane, afc = self._run_prep({"spool_id": 5, "spool_vendor": "Stale",
                                     "filament_name": "Stale"},
                                    spoolman=MagicMock(), tmp_path=tmp_path)
-        afc.spool.set_spoolID.assert_called_once_with(lane, 5, save_vars=False)
+        afc.spool.set_spoolID.assert_called_once_with(lane, 5, save_vars=False, gcmd=afc._test_gcmd)
         assert lane.spool_vendor == ""
         assert lane.filament_name == ""
 
@@ -270,9 +272,9 @@ class TestPrepSelectCurrentLane(TestPrepRestoreFilamentInfo):
     happening as part of loading a lane", which is not what PREP is doing."""
 
     def test_select_lane_called_with_no_direction_flag(self, tmp_path):
-        lane, _ = self._run_prep({}, tmp_path=tmp_path, current_lane_obj=True)
+        lane, afc = self._run_prep({}, tmp_path=tmp_path, current_lane_obj=True)
 
-        lane.unit_obj.select_lane.assert_called_once_with(lane)
+        lane.unit_obj.select_lane.assert_called_once_with(lane, gcmd=afc._test_gcmd)
 
     def test_select_lane_not_called_when_no_current_lane(self, tmp_path):
         lane, _ = self._run_prep({}, tmp_path=tmp_path, current_lane_obj=None)
