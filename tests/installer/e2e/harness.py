@@ -35,7 +35,7 @@ case "$args" in
   *" rev-parse --abbrev-ref HEAD "*)
     if [ -f "$AFC_STUB_STATE/branch" ]; then cat "$AFC_STUB_STATE/branch"
     else echo "${AFC_STUB_BRANCH:-main}"; fi ;;
-  *" pull "*) touch "$AFC_STUB_STATE/pulled" ;;&
+  *" pull "*) touch "$AFC_STUB_STATE/pulled" ;;
   *" status --porcelain --branch "*)
     if [ -f "$AFC_STUB_STATE/pulled" ]; then echo "## main...origin/main"
     else echo "## main...origin/main${AFC_STUB_BEHIND:-}"; fi ;;
