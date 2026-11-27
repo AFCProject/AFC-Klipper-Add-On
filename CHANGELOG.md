@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   404 is logged as a debug message and the print continues with no toolchange count, as before.
   Other Moonraker failures are still reported as errors.
 
+## [11-22-2026]
+### Updated
+- Updated Park.cfg, Poop.cfg and Brush.cfg macros to support interacting with the Creality K1 CFS Upgrade Kit Poop Chute
+
 ## [11-21-2026]
 ### Added
 - Filtering of message that get logged to AFC_ACE_serial.log, before it was very chatty and would constantly log to file. Logging that has been suppressed can be turned back on by adding `debug: True` into your unit config.
