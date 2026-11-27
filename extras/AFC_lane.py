@@ -1630,6 +1630,28 @@ class AFCLane:
         if self.drive_stepper is not None:
             self.drive_stepper.update_rotation_distance( multiplier )
 
+    def reset_drive_stepper(self) -> Optional[float]:
+        """
+        Resets drive_stepper to its base rotation distance.
+
+        :return type: Rotation distance it had before the reset, or None if there's no drive_stepper
+        """
+        if self.drive_stepper is None:
+            return None
+        previous_rotation_distance = self.drive_stepper.get_current_rotation_distance()
+        self.drive_stepper.update_rotation_distance(1)
+        return previous_rotation_distance
+
+    def restore_drive_stepper(self, previous_rotation_distance: Optional[float]) -> None:
+        """
+        Restores drive_stepper to the rotation distance `reset_drive_stepper` saved.
+
+        :param previous_rotation_distance: Value `reset_drive_stepper` returned, or None
+        """
+        if (self.drive_stepper is not None
+            and previous_rotation_distance is not None):
+            self.drive_stepper.set_current_rotation_distance(previous_rotation_distance)
+
     def calculate_effective_diameter(self, weight_g, spool_width_mm=60):
 
         # Calculate the cross-sectional area of the filament

@@ -180,6 +180,8 @@ class AfcToolchanger(afcUnit):
         else:
             self.afc.run_script("UNSELECT_TOOL", gcmd=gcmd)
 
+        # Need to wait for moves to finish before calling activate again to prevent race condition
+        self.afc.toolhead.wait_moves()
         self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
 
         lane_obj = self.afc.function.get_current_lane_obj()

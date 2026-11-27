@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_hub import afc_hub
+    from extras.AFC_button import AFCButton
     from gcode import GCodeCommand
     from extras.gcode_move import GCodeMove
     from extras.AFC_utils import AFCGcmd
@@ -46,6 +47,36 @@ except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.form
 
 try: from extras.AFC_unit import CALI_WARN
 except: raise error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
+
+# BUTTON_CALIBRATION_PRESS_DELTA, BUTTON_CALIBRATION_RANGE, BUTTON_CALIBRATION_SAMPLE_COUNT, and
+# ADC_SATURATION_RATIO live on AFCButton itself as per-button config options, since the right value
+# for each depends on a given button's wiring/resistor ladder.
+
+# Poll interval for the background ADC watch during button calibration.
+BUTTON_CALIBRATION_POLL_TIME = 0.1
+# Minimum time between logged resistance readings while polling, so the log isn't flooded at the
+# full poll rate.
+BUTTON_CALIBRATION_LOG_INTERVAL = 0.5
+# Ratio ceiling AFCButton.get_resistance() clamps to; matches its clamp so a saturated button's
+# fallback max always covers every value it can report. (There's no literal 1.0:
+# resistance_at_ratio(1.0) divides by zero.)
+BUTTON_CALIBRATION_SATURATION_MAX_RATIO = 0.99999
+# Ratio-space fallback tolerance for release detection, used when the ohm delta exceeds the button's
+# calibration_press_delta; resistance blows up for a near-identical ratio close to saturation, where
+# ohms alone can't tell.
+BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE = 0.001
+# Maximum time (seconds) a single stage may wait on the user before the session cancels, so a
+# stalled ADC reading or an abandoned prompt can't leave button_calibration_active stuck True,
+# refusing every AFC button press.
+BUTTON_CALIBRATION_STAGE_TIMEOUT = 60.0
+# How long a stage may go without an ADC sample before a one-time warning names the stalled pin,
+# well short of BUTTON_CALIBRATION_STAGE_TIMEOUT so the user gets an earlier, specific signal
+# instead of a silent retry loop.
+BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT = 5.0
+# Ratio-space agreement tolerance for two saturated press readings, used instead of a button's own
+# ohms tolerance: resistance is hypersensitive to ratio right at the ADC ceiling, so a tiny
+# raw-ratio difference there can look like a huge ohms disagreement and falsely reject a press.
+BUTTON_CALIBRATION_SATURATION_AGREEMENT_RATIO_TOLERANCE = BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE
 
 
 def round_floats(value: Any, digits: int = 6) -> Any:
@@ -143,30 +174,55 @@ class afcFunction:
         self.stn_calibration_original: float = 0.0
         self.stn_calibration_extruder: Optional[str] = None
         self.stn_calibration_lane: Optional[str] = None
+        self.button_calibration_active: bool = False
+        self.button_calibration_queue: List[AFCButton] = []
+        self.button_calibration_stage: str = ""
+        self.button_calibration_baseline: Optional[float] = None
+        self.button_calibration_samples: List[float] = []
+        self.button_calibration_first_value: Optional[float] = None
+        self.button_calibration_gcmd: Optional[GCodeCommand] = None
+        self.button_calibration_timer: Any = None
+        self.button_calibration_last_log_time: float = 0.0
+        # The just-finished button whose release we're waiting to see, and the baseline it was
+        # calibrated against, while stage=="await_release".
+        self.button_calibration_await_button: Optional[AFCButton] = None
+        self.button_calibration_await_baseline: Optional[float] = None
+        # Only set once the completion prompt's Restart Klipper button is shown, so
+        # BUTTON_CALIBRATION_RESTART can't be used to force a restart outside of that specific
+        # prompt.
+        self.button_calibration_restart_pending: bool = False
+        # Per-stage timeout
+        self.button_calibration_stage_deadline: Optional[float] = None
+        self.button_calibration_stage_started: Optional[float] = None
+        self.button_calibration_no_sample_warned: bool = False
+        # Names of buttons actually saved/skipped so far this session, reported separately once
+        # the queue finishes.
+        self.button_calibration_saved: List[str] = []
+        self.button_calibration_skipped: List[str] = []
         self.register_commands(self.show_macros, 'AFC_CALIBRATION', self.cmd_AFC_CALIBRATION,
                                self.cmd_AFC_CALIBRATION_help)
-        self.register_commands(False, 'AFC_TOOLHEAD_CALIBRATION',
-                               self.cmd_AFC_TOOLHEAD_CALIBRATION,
+        self.register_commands(False, 'AFC_BUTTON_CALIBRATION',self.cmd_AFC_BUTTON_CALIBRATION,
+                               self.cmd_AFC_BUTTON_CALIBRATION_help)
+        self.register_commands(False, 'AFC_TOOLHEAD_CALIBRATION', self.cmd_AFC_TOOLHEAD_CALIBRATION,
                                self.cmd_AFC_TOOLHEAD_CALIBRATION_help,
                                self.cmd_AFC_TOOLHEAD_CALIBRATION_options)
-        self.register_commands(False, 'AFC_TOOL_STN_CALIBRATION',
-                               self.cmd_AFC_TOOL_STN_CALIBRATION,
+        self.register_commands(False, 'AFC_TOOL_STN_CALIBRATION', self.cmd_AFC_TOOL_STN_CALIBRATION,
                                self.cmd_AFC_TOOL_STN_CALIBRATION_help,
                                self.cmd_AFC_TOOL_STN_CALIBRATION_options)
         self.register_commands(False, 'AFC_TOOL_STN_UNLOAD_CALIBRATION',
                                self.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION,
                                self.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION_help,
                                self.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION_options)
-        self.register_commands(False, 'AFC_CUTTER_CALIBRATION',
-                               self.cmd_AFC_CUTTER_CALIBRATION,
+        self.register_commands(False, 'AFC_CUTTER_CALIBRATION', self.cmd_AFC_CUTTER_CALIBRATION,
                                self.cmd_AFC_CUTTER_CALIBRATION_help,
                                self.cmd_AFC_CUTTER_CALIBRATION_options)
-        self.register_commands(self.show_macros, 'AFC_RESET',       self.cmd_AFC_RESET,         self.cmd_AFC_RESET_help,
-                               self.cmd_AFC_RESET_options)
+        self.register_commands(self.show_macros, 'AFC_RESET', self.cmd_AFC_RESET,
+                               self.cmd_AFC_RESET_help, self.cmd_AFC_RESET_options)
         self.register_commands(self.show_macros, 'AFC_TEST_LANES', self.cmd_AFC_TEST_LANES,
                                self.cmd_AFC_TEST_LANES_help)
         # Always adding this so it will show up as a button in guis
-        self.register_commands(self.show_macros, 'AFC_GET_TD_ONE_DATA', self.cmd_AFC_GET_TD_ONE_DATA,   self.cmd_AFC_GET_TD_ONE_DATA_help)
+        self.register_commands(self.show_macros, 'AFC_GET_TD_ONE_DATA',
+                               self.cmd_AFC_GET_TD_ONE_DATA, self.cmd_AFC_GET_TD_ONE_DATA_help)
 
     def register_lane_macros(self, lane_obj):
         """
@@ -209,6 +265,13 @@ class afcFunction:
         self.auto_var_file = Path(self.afc.VarFile).parent.joinpath("AFC_auto_vars.cfg")
         self.afc.gcode.register_command('CALIBRATE_AFC',   self.cmd_CALIBRATE_AFC,   desc=self.cmd_CALIBRATE_AFC_help)
         self.afc.gcode.register_command('ALL_CALIBRATION', self.cmd_ALL_CALIBRATION, desc=self.cmd_ALL_CALIBRATION_help)
+        self.afc.gcode.register_command('BUTTON_CALIBRATION', self.cmd_BUTTON_CALIBRATION,
+                                        desc=self.cmd_BUTTON_CALIBRATION_help)
+        self.afc.gcode.register_command('BUTTON_CALIBRATION_RESTART',
+                                        self.cmd_BUTTON_CALIBRATION_RESTART,
+                                        desc=self.cmd_BUTTON_CALIBRATION_RESTART_help)
+        self.button_calibration_timer = self.afc.reactor.register_timer(
+            self._button_calibration_poll)
         self.afc.gcode.register_command('AFC_CALI_FAIL',   self.cmd_AFC_CALI_FAIL,   desc=self.cmd_AFC_CALI_FAIL_help)
         self.afc.gcode.register_command('AFC_HAPPY_P',     self.cmd_AFC_HAPPY_P,     desc=self.cmd_AFC_HAPPY_P_help)
         self.afc.gcode.register_command('TEST_LANE', self.cmd_TEST_LANE, desc=self.cmd_TEST_LANE_help)
@@ -1073,11 +1136,15 @@ class afcFunction:
             if not lane.load_state or not lane.prep_state:
                 self.logger.info(f"{lane.name} not loaded skipping to next loaded lane")
                 continue
-            # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
-            if lane.is_direct_hub():
-                checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol, gcmd=gcmd)
-            else:
-                checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol, gcmd=gcmd)
+            previous_rotation_distance = lane.reset_drive_stepper()
+            try:
+                # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
+                if lane.is_direct_hub():
+                    checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol, gcmd=gcmd)
+                else:
+                    checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol, gcmd=gcmd)
+            finally:
+                lane.restore_drive_stepper(previous_rotation_distance)
             if(not checked):
                 self.afc.error.AFC_error(msg, False, gcmd=gcmd)
 
@@ -1536,8 +1603,10 @@ class afcFunction:
         text = ('The following prompts will lead you through the calibration of your AFC '
                 'unit(s). First, select a unit to calibrate. *All values will be '
                 'automatically updated in the appropriate config sections.')
-        button_style = "primary"
-        for index, (key, item) in enumerate(self.afc.units.items()):
+        # Counts only the buttons actually shown, not units skipped below, so the primary/secondary
+        # alternation stays correct regardless of how many units end up filtered out.
+        visible_count = 0
+        for key, item in self.afc.units.items():
             # Only showing calibrations for units that have lanes
             if len(self.afc.units.get(key).lanes) == 0:
                 continue
@@ -1550,15 +1619,637 @@ class afcFunction:
             # Create a button for each unit
             button_label = f"{key}"
             button_command = f'UNIT_CALIBRATION UNIT={key}'
-            button_style = "primary" if index % 2 == 0 else "secondary"
+            button_style = "primary" if visible_count % 2 == 0 else "secondary"
             buttons.append((button_label, button_command, button_style))
+            visible_count += 1
 
-        button_style = "secondary" if button_style == "primary" else button_style
-        buttons.append(("Toolhead Calibration", "AFC_TOOLHEAD_CALIBRATION", "info"))
+        buttons.append(("Toolhead Calibration", "AFC_TOOLHEAD_CALIBRATION",
+                       "primary" if visible_count % 2 == 0 else "secondary"))
+        visible_count += 1
+        if self._get_adc_buttons():
+            buttons.append(("Button Calibration", "AFC_BUTTON_CALIBRATION",
+                           "primary" if visible_count % 2 == 0 else "secondary"))
 
         bow_footer = [("All Lanes in all units", "ALL_CALIBRATION", "secondary")]
-        prompt.create_custom_p(title, text, buttons,
-                               True, None, bow_footer)
+        prompt.create_custom_p(title, text, buttons, True, None, bow_footer)
+
+    def _get_adc_buttons(self) -> List[AFCButton]:
+        """
+        List every configured ADC based AFC_button, in config order.
+
+        :return List[AFCButton]: ADC buttons found, empty when none are configured
+        """
+        return [button for _, button in self.printer.lookup_objects(module="AFC_button")
+                if getattr(button, "is_adc_button", False)]
+
+    cmd_AFC_BUTTON_CALIBRATION_help = 'Open prompt to select which ADC button(s) to calibrate'
+    def cmd_AFC_BUTTON_CALIBRATION(self, gcmd: GCodeCommand) -> None:
+        """
+        Open a prompt to start ADC button calibration by selecting a button.
+
+        Creates a button for each configured ADC button and allows calibrating all of them in one
+        pass.
+
+        Usage
+        -------
+        `AFC_BUTTON_CALIBRATION`
+
+        Example
+        -------
+        ```
+        AFC_BUTTON_CALIBRATION
+        ```
+        """
+        prompt = AFCprompt(gcmd, self.logger)
+        title = 'Button Calibration'
+        text = ('The following prompts will lead you through calibrating the press '
+                'threshold for your ADC based buttons. First, select a button to '
+                'calibrate.')
+        buttons = []
+        for index, button in enumerate(self._get_adc_buttons()):
+            button_style = "primary" if index % 2 == 0 else "secondary"
+            buttons.append((button.name, f'BUTTON_CALIBRATION BUTTON={button.name}',
+                           button_style))
+
+        footer = [("All Buttons", "BUTTON_CALIBRATION ALL=1", "secondary")]
+        prompt.create_custom_p(title, text, buttons, True, None, footer)
+
+    def _reset_button_calibration_values(self) -> None:
+        """
+        Stop the button calibration poll timer and clear session state, so a new BUTTON_CALIBRATION
+        call starts fresh.
+        """
+        self.afc.reactor.update_timer(self.button_calibration_timer, self.afc.reactor.NEVER)
+        self.button_calibration_active = False
+        self.button_calibration_queue = []
+        self.button_calibration_stage = ""
+        self.button_calibration_baseline = None
+        self.button_calibration_samples = []
+        self.button_calibration_first_value = None
+        self.button_calibration_gcmd = None
+        self.button_calibration_last_log_time = 0.0
+        self.button_calibration_await_button = None
+        self.button_calibration_await_baseline = None
+        self.button_calibration_restart_pending = False
+        self.button_calibration_stage_deadline = None
+        self.button_calibration_stage_started = None
+        self.button_calibration_no_sample_warned = False
+        self.button_calibration_saved = []
+        self.button_calibration_skipped = []
+
+    def _start_button_calibration_stage_clock(self) -> None:
+        """
+        (Re)start the per-stage timeout window and no-ADC-sample tracking. Call whenever a new stage
+        begins waiting on the user or on the ADC (the initial press_1, each later press_1 from
+        `_start_next_button_calibration`, the "release"/"press_2" transitions, and "await_release"),
+        so every stage gets its own fresh BUTTON_CALIBRATION_STAGE_TIMEOUT window rather than
+        inheriting whatever time was left on the previous one.
+        """
+        now = self.afc.reactor.monotonic()
+        self.button_calibration_stage_deadline = now + BUTTON_CALIBRATION_STAGE_TIMEOUT
+        self.button_calibration_stage_started = now
+        self.button_calibration_no_sample_warned = False
+
+    def _timeout_button_calibration(self, button: AFCButton, gcmd: AFCGcmd) -> None:
+        """
+        Cancel the active button calibration session because its current stage exceeded
+        BUTTON_CALIBRATION_STAGE_TIMEOUT, so a stalled ADC reading or a user who walked away
+        mid-prompt can't permanently disable every AFC button.
+
+        :param button: button whose stage timed out, named in the error
+        :param gcmd: command context this timeout was detected under
+        """
+        stage = self.button_calibration_stage
+        stored_gcmd = self.button_calibration_gcmd
+        self._reset_button_calibration_values()
+        error_str = (f"Button calibration timed out waiting on {button.name} during the "
+                    f"'{stage}' stage; calibration was cancelled.")
+        self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+        if stored_gcmd is not None:
+            prompt = AFCprompt(stored_gcmd, self.logger)
+            text = (f"Button calibration timed out waiting on {button.name}. "
+                    "Calibration was cancelled.")
+            prompt.create_custom_p("Button Calibration Timed Out", text, None, True, None, None)
+
+    def _cancel_button_calibration_for_print(self, gcmd: AFCGcmd) -> None:
+        """
+        Cancel the active button calibration session because a print started while it was running,
+        so a sample or save can't land mid-print.
+
+        :param gcmd: command context this cancellation was detected under
+        """
+        stored_gcmd = self.button_calibration_gcmd
+        self._reset_button_calibration_values()
+        error_str = "Button calibration cancelled because a print started."
+        self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+        if stored_gcmd is not None:
+            prompt = AFCprompt(stored_gcmd, self.logger)
+            text = "Button calibration cancelled because a print started."
+            prompt.create_custom_p("Button Calibration Cancelled", text, None, True, None, None)
+
+    def _warn_if_adc_stalled(self, button: AFCButton, eventtime: float, gcmd: AFCGcmd) -> None:
+        """
+        Log a one-time error naming the pin if no ADC sample has arrived for `button` within
+        BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT seconds of the current stage starting, since a
+        silently stalled poll would otherwise just retry at BUTTON_CALIBRATION_POLL_TIME with no
+        visible sign anything is wrong until BUTTON_CALIBRATION_STAGE_TIMEOUT eventually cancels
+        the whole session.
+
+        :param button: button whose ADC reading is currently unavailable
+        :param eventtime: reactor event time of this poll
+        :param gcmd: command context this stall was detected under
+        """
+        if self.button_calibration_no_sample_warned:
+            return
+        started = self.button_calibration_stage_started
+        if (started is not None
+            and eventtime - started >= BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT):
+            self.button_calibration_no_sample_warned = True
+            error_str = (f"Button calibration: no ADC reading received for {button.name} "
+                        f"(pin {button.pin}) after "
+                        f"{BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT:.0f}s; still waiting.")
+            self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+
+    def _show_button_calibration_prompt(self, text: str) -> None:
+        """
+        Show a status prompt during an active button calibration session, with a Cancel button that
+        stops the poll timer and resets state.
+
+        :param text: Prompt body text
+        """
+        prompt = AFCprompt(self.button_calibration_gcmd, self.logger)
+        cancel_footer = [("Cancel", "BUTTON_CALIBRATION CANCEL=1", "warning")]
+        prompt.create_custom_p("Button Calibration", text, None, False, None, cancel_footer)
+
+    cmd_BUTTON_CALIBRATION_help = 'Interactively calibrate analog_range for one or all ADC buttons'
+    def cmd_BUTTON_CALIBRATION(self, gcmd: GCodeCommand) -> None:
+        """
+        Start, or cancel, ADC button press threshold calibration for one or all configured ADC
+        buttons.
+
+        Each selected button is calibrated in turn: the user presses it twice (once released and
+        pressed again on prompt) while the ADC pin is watched in the background, and the two
+        measured resistances are averaged to derive analog_range.
+
+        Usage
+        -------
+        `BUTTON_CALIBRATION BUTTON=<name> | ALL=1`
+
+        Example
+        -------
+        ```
+        BUTTON_CALIBRATION ALL=1
+        ```
+        """
+        prompt = AFCprompt(gcmd, self.logger)
+        if bool(gcmd.get_int("CANCEL", 0, minval=0, maxval=1)):
+            self._reset_button_calibration_values()
+            text = "Button calibration cancelled."
+            prompt.create_custom_p("Button Calibration Cancelled", text, None, True, None, None)
+            return
+
+        if self.button_calibration_active:
+            self.afc.error.AFC_error("Button calibration is already running.", pause=False,
+                                     gcmd=gcmd)
+            return
+
+        if self.in_print():
+            prompt.p_end()
+            self.afc.error.AFC_error("Button calibration cannot run during a print.", pause=False,
+                                     gcmd=gcmd)
+            return
+
+        adc_buttons = self._get_adc_buttons()
+        queue: List[AFCButton]
+        if bool(gcmd.get_int("ALL", 0, minval=0, maxval=1)):
+            queue = list(adc_buttons)
+        else:
+            button_name = gcmd.get("BUTTON", "")
+            # An exact name match always wins, even if some button happens to be literally named
+            # "all"
+            match = next((button for button in adc_buttons if button.name == button_name), None)
+            if match is not None:
+                queue = [match]
+            elif button_name.lower() == "all":
+                queue = list(adc_buttons)
+            else:
+                prompt.p_end()
+                self.afc.error.AFC_error(f"'{button_name}' is not a valid ADC button", pause=False,
+                                         gcmd=gcmd)
+                return
+
+        if not queue:
+            prompt.p_end()
+            self.afc.error.AFC_error("No ADC buttons are configured to calibrate.", pause=False,
+                                     gcmd=gcmd)
+            return
+
+        self.button_calibration_active = True
+        self.button_calibration_queue = queue
+        self.button_calibration_stage = "press_1"
+        self.button_calibration_baseline = None
+        self.button_calibration_samples = []
+        self.button_calibration_first_value = None
+        self.button_calibration_gcmd = gcmd
+        self.button_calibration_await_button = None
+        self.button_calibration_await_baseline = None
+        self.button_calibration_restart_pending = False
+        self.button_calibration_saved = []
+        self.button_calibration_skipped = []
+        self._start_button_calibration_stage_clock()
+
+        text = ("You will press each button twice. Only release a button once you are "
+                f"told to.\n\nPress and hold the {queue[0].name} button now.")
+        prompt.create_custom_p("Button Calibration", text, None, False, None,
+                               [("Cancel", "BUTTON_CALIBRATION CANCEL=1", "warning")])
+
+        self.afc.reactor.update_timer(self.button_calibration_timer, self.afc.reactor.NOW)
+
+    cmd_BUTTON_CALIBRATION_RESTART_help = 'Close the calibration prompt and restart Klipper'
+    def cmd_BUTTON_CALIBRATION_RESTART(self, gcmd: GCodeCommand) -> None:
+        """
+        Close the button calibration completion prompt, then restart Klipper so the newly calibrated
+        analog_range values take effect. A plain RESTART never sends the prompt_end action by
+        itself, so the dialog would otherwise stay open in the UI after the restart.
+
+        Only does anything right after a button calibration session actually completes, so this
+        can't be used to force a restart outside of that specific completion prompt. Also refused
+        while a print is active, in case one started after calibration completed but before the
+        user clicked Restart; `restart_pending` stays set so the restart can still be run once
+        printing finishes.
+
+        Usage
+        -------
+        `BUTTON_CALIBRATION_RESTART`
+
+        Example
+        -------
+        ```
+        BUTTON_CALIBRATION_RESTART
+        ```
+        """
+        if not self.button_calibration_restart_pending:
+            self.afc.error.AFC_error("No completed button calibration is pending a restart.",
+                                     pause=False, gcmd=gcmd)
+            return
+
+        if self.in_print():
+            self.afc.error.AFC_error("Cannot restart Klipper during a print; restart manually "
+                                     "after it finishes.", pause=False, gcmd=gcmd)
+            return
+
+        self.button_calibration_restart_pending = False
+        self.afc.gcode.respond_raw("// action:prompt_end")
+        self.afc.run_script("RESTART", gcmd)
+
+    def _collect_button_sample(self, button: AFCButton, resistance: float) -> Optional[float]:
+        """
+        Append one resistance reading to the in-progress sample buffer.
+
+        :param button: button being sampled, for its calibration_sample_count
+        :param resistance: resistance just read, in ohms
+        :return Optional[float]: the average once button.calibration_sample_count readings have been
+            collected (also clears the buffer for the next measurement), else None while still
+            collecting
+        """
+        samples = self.button_calibration_samples
+        samples.append(resistance)
+        if len(samples) < button.calibration_sample_count:
+            return None
+        average = sum(samples) / len(samples)
+        self.button_calibration_samples = []
+        return average
+
+    def _is_released(self, button: AFCButton, resistance: float, baseline: float) -> bool:
+        """
+        Check whether `resistance` is close enough to `baseline` to count as released, falling back
+        to a ratio-space comparison near saturation. Also used, inverted, to detect a press: the
+        same ratio-space fallback keeps near-saturation ADC drift from being mistaken for a press.
+
+        :param button: button whose pullup converts resistance to ratio
+        :param resistance: resistance just measured, in ohms
+        :param baseline: released baseline resistance to compare against, in ohms
+        :return bool: True when the two readings are the same (released) reading
+        """
+        if abs(resistance - baseline) <= button.calibration_press_delta:
+            return True
+        ratio_delta = abs(button.ratio_at_resistance(resistance)
+                          - button.ratio_at_resistance(baseline))
+        return ratio_delta <= BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE
+
+    def _start_next_button_calibration(self) -> None:
+        """
+        Prompt the user to press the button now at the head of the queue. Its baseline is sampled
+        fresh in the poll loop below rather than read here. Only called once the previously
+        calibrated button's own release has been confirmed, so that sampling starts with hands
+        already clear of every button.
+        """
+        next_button = self.button_calibration_queue[0]
+        self.button_calibration_stage = "press_1"
+        self.button_calibration_baseline = None
+        self.button_calibration_samples = []
+        self._start_button_calibration_stage_clock()
+        self._show_button_calibration_prompt(f"Press and hold the {next_button.name} button now.")
+
+    def _poll_await_release(self, eventtime: float, gcmd: AFCGcmd) -> float:
+        """
+        Reactor timer callback (stage=="await_release"): watches the just finished button's own
+        resistance until it returns near the baseline it was calibrated against, confirming the user
+        actually released it, then starts the next button in the queue.
+
+        :param eventtime: Reactor event time of this poll
+        :param gcmd: command context this poll is running under
+        :return float: next poll time, or reactor.NEVER once the session ends
+        """
+        button = self.button_calibration_await_button
+        baseline = self.button_calibration_await_baseline
+        if (button is None
+            or baseline is None):
+            # Shouldn't happen: await_release is only entered with both set.
+            self._start_next_button_calibration()
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        if (self.button_calibration_stage_deadline is not None
+            and eventtime >= self.button_calibration_stage_deadline):
+            self._timeout_button_calibration(button, gcmd=gcmd)
+            return self.afc.reactor.NEVER
+
+        resistance = button.get_resistance()
+        if resistance is None:
+            self._warn_if_adc_stalled(button, eventtime, gcmd=gcmd)
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        if (eventtime - self.button_calibration_last_log_time >= BUTTON_CALIBRATION_LOG_INTERVAL):
+            self.button_calibration_last_log_time = eventtime
+            raw_ratio = button._get_adc_ratio()
+            self.logger.debug(f"Button calibration: waiting for {button.name} to release, "
+                              f"resistance={resistance:.1f} ohms (baseline={baseline:.1f}, "
+                              f"raw_ratio={raw_ratio})")
+
+        if self._is_released(button, resistance, baseline):
+            if self._collect_button_sample(button, resistance) is not None:
+                self.button_calibration_await_button = None
+                self.button_calibration_await_baseline = None
+                self._start_next_button_calibration()
+        else:
+            self.button_calibration_samples = []
+
+        if not self.button_calibration_active:
+            return self.afc.reactor.NEVER
+        return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+    def _button_calibration_poll(self, eventtime: float) -> float:
+        """
+        Reactor timer callback: watches the active button's ADC resistance and advances the
+        calibration state machine as it moves away from (a press) and back to (a release) that
+        button's released baseline.
+
+        :param eventtime: Reactor event time of this poll
+        :return float: next poll time, or reactor.NEVER once the session ends
+        """
+        gcmd: AFCGcmd = "callback"
+        if (not self.button_calibration_active
+            or not self.button_calibration_queue):
+            return self.afc.reactor.NEVER
+
+        if self.in_print():
+            self._cancel_button_calibration_for_print(gcmd=gcmd)
+            return self.afc.reactor.NEVER
+
+        if self.button_calibration_stage == "await_release":
+            return self._poll_await_release(eventtime, gcmd=gcmd)
+
+        button = self.button_calibration_queue[0]
+
+        if (self.button_calibration_stage_deadline is not None
+            and eventtime >= self.button_calibration_stage_deadline):
+            self._timeout_button_calibration(button, gcmd=gcmd)
+            return self.afc.reactor.NEVER
+
+        resistance = button.get_resistance()
+        if resistance is None:
+            self._warn_if_adc_stalled(button, eventtime, gcmd=gcmd)
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        if (eventtime - self.button_calibration_last_log_time >= BUTTON_CALIBRATION_LOG_INTERVAL):
+            self.button_calibration_last_log_time = eventtime
+            raw_ratio = button._get_adc_ratio()
+            self.logger.debug(f"Button calibration: {button.name} resistance={resistance:.1f} ohms "
+                              f"(baseline={self.button_calibration_baseline}, stage="
+                              f"{self.button_calibration_stage}, raw_ratio={raw_ratio})")
+
+        baseline = self.button_calibration_baseline
+        if baseline is None:
+            sampled = self._collect_button_sample(button, resistance)
+            if sampled is not None:
+                self.button_calibration_baseline = sampled
+                self.logger.info(f"Button calibration: baseline resistance for {button.name} is "
+                                 f"{sampled:.1f} ohms")
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        is_pressed = not self._is_released(button, resistance, baseline)
+        if self.button_calibration_stage == "press_1":
+            if is_pressed:
+                sampled = self._collect_button_sample(button, resistance)
+                if sampled is not None:
+                    self.button_calibration_first_value = sampled
+                    self.button_calibration_stage = "release"
+                    self._start_button_calibration_stage_clock()
+                    self._show_button_calibration_prompt(
+                        f"Release the {button.name} button, then press it again.")
+            else:
+                self.button_calibration_samples = []
+        elif self.button_calibration_stage == "release":
+            if self._is_released(button, resistance, baseline):
+                if self._collect_button_sample(button, resistance) is not None:
+                    self.button_calibration_stage = "press_2"
+                    self._start_button_calibration_stage_clock()
+            else:
+                self.button_calibration_samples = []
+        elif self.button_calibration_stage == "press_2":
+            if is_pressed:
+                sampled = self._collect_button_sample(button, resistance)
+                if sampled is not None:
+                    self._finish_button_measurement(button, sampled, gcmd=gcmd)
+            else:
+                self.button_calibration_samples = []
+
+        if not self.button_calibration_active:
+            return self.afc.reactor.NEVER
+        return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+    def _range_overlaps_other_button(self, button: AFCButton, min_value: float,
+                                     max_value: float) -> Optional[AFCButton]:
+        """
+        Check whether `[min_value, max_value]` overlaps another configured ADC button's current
+        analog_range on the same ADC pin, whether that candidate range came from a saturated reading
+        or a normal averaged one. Buttons on different pins are registered separately with Klipper
+        and can never actually conflict, no matter how their ranges compare.
+
+        :param button: button the range is being derived for, excluded from the check
+        :param min_value: candidate analog_range minimum, in ohms
+        :param max_value: candidate analog_range maximum, in ohms
+        :return Optional[AFCButton]: the first other button whose range overlaps, or `None` when
+            there's no conflict
+        """
+        pin = button.pin.strip()
+        for other in self._get_adc_buttons():
+            if (other is button
+                or other.pin.strip() != pin):
+                continue
+            if (min_value <= other.analog_max
+                and max_value >= other.analog_min):
+                return other
+        return None
+
+    def _advance_button_calibration_queue(self, button: AFCButton) -> None:
+        """
+        Pop `button` off the calibration queue and either wait for it to be released before starting
+        the next button, or finish the session if it was the last one.
+
+        :param button: button that was just processed (calibrated or skipped)
+        """
+        finished_baseline = self.button_calibration_baseline
+        self.button_calibration_queue.pop(0)
+        self.button_calibration_first_value = None
+
+        if self.button_calibration_queue:
+            # Wait for button's own resistance to return to its baseline (confirming it was actually
+            # released) before reading the next button's baseline, rather than reading it
+            # immediately while the user may still be lifting off this one.
+            self.button_calibration_stage = "await_release"
+            self.button_calibration_await_button = button
+            self.button_calibration_await_baseline = finished_baseline
+            self.button_calibration_baseline = None
+            self._start_button_calibration_stage_clock()
+            self._show_button_calibration_prompt(f"Release the {button.name} button.")
+        else:
+            self.button_calibration_active = False
+            self.button_calibration_stage = ""
+            self.button_calibration_baseline = None
+            saved = self.button_calibration_saved
+            skipped = self.button_calibration_skipped
+            self.button_calibration_restart_pending = bool(saved)
+            prompt = AFCprompt(self.button_calibration_gcmd, self.logger)
+            if saved:
+                text = f"Calibrated: {', '.join(saved)}."
+            else:
+                text = "No buttons were calibrated."
+            if skipped:
+                text += f"\n\nSkipped (not changed): {', '.join(skipped)}."
+            if saved:
+                text += ("\n\nThe new analog_range values only take effect after a Klipper "
+                         "restart. Click Restart button to restart now or Done and restart "
+                         "later.")
+                footer = ([("Restart Klipper", "BUTTON_CALIBRATION_RESTART", "primary")]
+                          + prompt.DONE_BTN)
+            else:
+                footer = prompt.DONE_BTN
+            prompt.create_custom_p("Button Calibration Complete", text, None, False, None, footer)
+
+    def _finish_button_measurement(self, button: AFCButton, second_value: float,
+                                   gcmd: AFCGcmd) -> None:
+        """
+        Average the two captured press resistances for `button` and derive/save its analog_range,
+        then advance the calibration queue. A saturated reading derives the range from fixed ADC
+        ratios instead of the average; either way, the save is skipped if the two readings disagree,
+        aren't far enough from baseline, or conflict with another button's analog_range.
+
+        Saturation is decided once from the two readings actually captured, not a fresh
+        `is_adc_saturated()` call, so it can't disagree with the check above about what was
+        measured.
+
+        :param button: button whose second press resistance was just captured
+        :param second_value: resistance captured on the second press, in ohms
+        :param gcmd: command context this measurement completed under
+        """
+        first_value = self.button_calibration_first_value
+        if first_value is None:
+            first_value = second_value
+        average = (first_value + second_value) / 2.0
+
+        first_ratio = button.ratio_at_resistance(first_value)
+        second_ratio = button.ratio_at_resistance(second_value)
+        both_saturated = (first_ratio >= button.adc_saturation_ratio
+                          and second_ratio >= button.adc_saturation_ratio)
+
+        finished_baseline = self.button_calibration_baseline
+        baseline_text = f"{finished_baseline:.1f}" if finished_baseline is not None else "unknown"
+        raw_ratio = button._get_adc_ratio()
+        self.logger.debug(f"Button calibration: {button.name} baseline={baseline_text} ohms, "
+                          f"press1={first_value:.1f} ohms, press2={second_value:.1f} ohms, "
+                          f"average={average:.1f} ohms, raw_ratio={raw_ratio}")
+
+        if finished_baseline is not None:
+            if both_saturated:
+                # Resistance is hypersensitive to ratio right at the ADC ceiling, so compare the two
+                # presses in ratio space instead of ohms here; see
+                # BUTTON_CALIBRATION_SATURATION_AGREEMENT_RATIO_TOLERANCE.
+                disagrees = (abs(first_ratio - second_ratio)
+                            > BUTTON_CALIBRATION_SATURATION_AGREEMENT_RATIO_TOLERANCE)
+            else:
+                disagrees = (abs(first_value - second_value)
+                            > 2.0 * button.calibration_range)
+            average_delta = abs(average - finished_baseline)
+            if (disagrees
+                or average_delta <= button.calibration_press_delta):
+                error_str = (
+                    f"Button calibration: {button.name}'s two press readings "
+                    f"({first_value:.1f}, {second_value:.1f} ohms) don't agree closely enough, "
+                    f"or aren't far enough from the released baseline ({finished_baseline:.1f} "
+                    f"ohms), to trust. Recalibrate {button.name}; its analog_range was not "
+                    "changed."
+                )
+                self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+                self.button_calibration_skipped.append(button.name)
+                self._advance_button_calibration_queue(button)
+                return
+
+        if both_saturated:
+            min_value = button.resistance_at_ratio(button.adc_saturation_ratio)
+            max_value = (button.resistance_at_ratio(BUTTON_CALIBRATION_SATURATION_MAX_RATIO)
+                        + button.calibration_range)
+            self.logger.debug(f"Button calibration: {button.name} press reading is maxed out "
+                             f"(average={average:.1f} ohms); using a range derived from the "
+                             "ADC ratio instead.")
+        else:
+            min_value = average - button.calibration_range
+            max_value = average + button.calibration_range
+
+        if (finished_baseline is not None
+            and min_value <= finished_baseline <= max_value):
+            error_str = (
+                f"Button calibration: {button.name}'s derived range "
+                f"({min_value:.1f},{max_value:.1f}) also contains its own released baseline "
+                f"({finished_baseline:.1f} ohms), so Klipper would read it as pressed while idle. "
+                f"Recalibrate {button.name}; its analog_range was not changed."
+            )
+            self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+            self.button_calibration_skipped.append(button.name)
+            self._advance_button_calibration_queue(button)
+            return
+
+        conflict = self._range_overlaps_other_button(button, min_value, max_value)
+        if conflict is not None:
+            error_str = (
+                f"Button calibration: {button.name}'s derived range "
+                f"({min_value:.1f},{max_value:.1f}) overlaps {conflict.name}'s "
+                f"analog_range ({conflict.analog_min:.1f},{conflict.analog_max:.1f}). "
+                f"Check {button.name}'s wiring and recalibrate it; its analog_range "
+                "was not changed."
+            )
+            self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+            self.button_calibration_skipped.append(button.name)
+            self._advance_button_calibration_queue(button)
+            return
+
+        msg = f"\n<span class=info--text>Calibrated {button.name}: average={average:.1f}</span>"
+        self.ConfigRewrite(button.fullname, "analog_range", f"{min_value:.1f},{max_value:.1f}", msg)
+        button.analog_min = min_value
+        button.analog_max = max_value
+
+        self.button_calibration_saved.append(button.name)
+        self._advance_button_calibration_queue(button)
 
     cmd_AFC_TOOLHEAD_CALIBRATION_help = 'Open the toolhead variable calibration menu'
     cmd_AFC_TOOLHEAD_CALIBRATION_options = {
@@ -1607,11 +2298,16 @@ class afcFunction:
             return
 
         extruder = self.afc.tools[extruder_name]
-        lanes = [lane for lane in self.afc.lanes.values() if lane.extruder_obj is extruder]
+        lanes = []
+        for lane in self.afc.lanes.values():
+            if (lane.extruder_obj is extruder
+                and lane.load_state):
+                lanes.append(lane)
         if lane_name:
             lane = self.afc.lanes.get(lane_name)
             if (lane is None
-                or lane.extruder_obj is not extruder):
+                or lane.extruder_obj is not extruder
+                or not lane.load_state):
                 prompt.p_end()
                 self.afc.error.AFC_error(
                     f"'{lane_name}' is not a valid lane for extruder '{extruder_name}'",
@@ -1619,12 +2315,15 @@ class afcFunction:
                 return
         else:
             current_lane = self.afc.lanes.get(self.afc.current)
+            toolchanger_lane = self.afc.lanes.get(extruder.lane_loaded)
             if (current_lane is not None
-                and current_lane.extruder_obj is extruder):
+                and current_lane.extruder_obj is extruder
+                and current_lane.load_state):
                 lane_name = current_lane.name
             # Check for toolchangers
-            elif (extruder.lane_loaded is not None):
-                lane_name = extruder.lane_loaded
+            elif (toolchanger_lane is not None
+                  and toolchanger_lane.load_state):
+                lane_name = toolchanger_lane.name
             elif len(lanes) == 1:
                 lane_name = lanes[0].name
             else:
@@ -1637,7 +2336,7 @@ class afcFunction:
                 text = ("Select a representative lane for toolhead calibration. This only "
                         "needs to be done once per toolhead/extruder, not for every lane.")
                 if not buttons:
-                    text = f"No lanes are configured for extruder '{extruder_name}'."
+                    text = f"No loaded lanes are available for extruder '{extruder_name}'."
                 prompt.create_custom_p("Toolhead Calibration", text, buttons, True, None, None)
                 return
 
@@ -1646,9 +2345,8 @@ class afcFunction:
         buttons = []
         if not extruder.lane_loaded:
             buttons.append(("tool_stn", f"AFC_TOOL_STN_CALIBRATION {lane_param}", "primary"))
-        buttons += [
-            ("Cutter Retract", f"AFC_CUTTER_CALIBRATION {lane_param}", "info"),
-            ("tool_stn_unload", stn_unload_command, "secondary"),
+        buttons += [("Cutter Retract", f"AFC_CUTTER_CALIBRATION {lane_param}", "info"),
+                    ("tool_stn_unload", stn_unload_command, "secondary"),
         ]
         text = (f"Calibrate {extruder_name} with {lane_name}.\n"
                 "tool_stn controls loading to the nozzle(Note: Button only shows up when toolhead is unloaded)\n"
@@ -2354,6 +3052,7 @@ class afcFunction:
                 # caught on the inside lip of the toolhead if its docked. By moving the toolhead to Y 120
                 # it has been found to make loading filament into the toolhead more reliable.
                 snapmaker_tool_selected = False
+                previous_rotation_distance: Optional[float] = None
                 try:
                     if (self.afc.snapmaker_printer
                         and self.afc.park_pre_load):
@@ -2379,6 +3078,7 @@ class afcFunction:
 
                     self.logger.info('Starting AFC distance Calibrations')
 
+                    previous_rotation_distance = cur_lane.reset_drive_stepper()
                     checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(
                         cur_lane, dis, tol, gcmd=gcmd)
                     if not checked:
@@ -2396,6 +3096,7 @@ class afcFunction:
                     self.logger.info("Bowden length calibration Done!")
 
                 finally:
+                    cur_lane.restore_drive_stepper(previous_rotation_distance)
                     if set_tool_start_back_to_none:
                         cur_lane.extruder_obj.tool_start = None
                     if snapmaker_tool_selected:
@@ -2423,7 +3124,12 @@ class afcFunction:
                     checked = False
                     return
 
-                checked, msg, pos = td1_lane.unit_obj.calibrate_td1( td1_lane, dis, tol, gcmd=gcmd)
+                previous_rotation_distance = td1_lane.reset_drive_stepper()
+                try:
+                    checked, msg, pos = td1_lane.unit_obj.calibrate_td1(td1_lane, dis, tol,
+                                                                        gcmd=gcmd)
+                finally:
+                    td1_lane.restore_drive_stepper(previous_rotation_distance)
                 if not checked:
                     fail_string = f"{td1} failed to calibrate TD-1 bowden length, {msg}"
                     self.afc.error.AFC_error(fail_string, pause=False, gcmd=gcmd)

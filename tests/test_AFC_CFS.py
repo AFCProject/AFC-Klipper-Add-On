@@ -3700,6 +3700,23 @@ class TestAfcCFSCmdToolLoad:
         assert not unit.afc.move_e_pos.called
         assert unit.trace.events[-1][1]["tool_stn_push"] == 0
 
+    def test_load_to_gears_skips_push_even_with_remaining_positive(self):
+        # tool_stn 60 minus the 15mm primes leaves 45mm remaining, but
+        # load_to_gears must stop the push regardless.
+        unit, lane = self._unit()
+        cmd = gcmd()
+        unit._tool_load(lane, load_to_gears=True, gcmd=cmd)
+        assert not unit.afc.move_e_pos.called
+        assert unit.trace.events[-1][1]["tool_stn_push"] == 0
+        assert lane._load_state is True
+        assert unit._mark_tool_state.calls == [((lane,), {"loaded": True, "gcmd": cmd})]
+
+    def test_load_to_gears_false_still_pushes_remaining(self):
+        unit, lane = self._unit()
+        unit._tool_load(lane, load_to_gears=False, gcmd=gcmd())
+        assert unit.afc.move_e_pos.calls == [((45.0, 10.0, "CFS tool_stn"), {"wait_tool": True})]
+        assert unit.trace.events[-1][1]["tool_stn_push"] == 45.0
+
     def test_parks_first(self):
         unit, lane = self._unit()
         unit.afc.park = True
@@ -3833,6 +3850,17 @@ class TestAfcCFSCmdToolLoad:
         cmd = gcmd()
         assert unit.unit_load_lane(lane, lane.extruder_obj, gcmd=cmd) is True
         assert unit._mark_tool_state.calls == [((lane,), {"loaded": True, "gcmd": cmd})]
+        assert lane.status == AFCLaneState.TOOL_LOADED
+        unit.afc.save_vars.assert_called_once_with()
+
+    def test_unit_load_lane_load_to_gears_skips_push(self):
+        unit, lane = self._unit()
+        unit.afc.save_vars.reset_mock()
+
+        result = unit.unit_load_lane(lane, lane.extruder_obj, load_to_gears=True, gcmd=gcmd())
+
+        assert result is True
+        assert not unit.afc.move_e_pos.called
         assert lane.status == AFCLaneState.TOOL_LOADED
         unit.afc.save_vars.assert_called_once_with()
 
