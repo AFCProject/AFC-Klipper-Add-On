@@ -40,6 +40,9 @@ class AFCSpool:
 
         # Temporary status variables
         self.next_spool_id: Optional[int] = None
+        # Per lane count of SET_FILAMENT_INFO FILAMENT_ID= edits, so a pending Spoolman
+        # lookup can tell the id was set after it was sent
+        self._filament_id_edits: dict[str, int] = {}
 
     def register_commands(self, afc: afc) -> None:
         """
@@ -571,8 +574,8 @@ class AFCSpool:
         ----
         VENDOR - Filament vendor/brand name. eg. Polymaker, Elegoo
         NAME - Filament name. eg. PolyTerra PLA
-        FILAMENT_ID - Slicer filament preset id, which OrcaSlicer matches to pick the exact
-                      filament preset for this lane. eg. OFDSrzZ8 (Generic PLA)
+        FILAMENT_ID - Slicer filament preset id, which OrcaSlicer matches to a compatible
+                      root filament preset for this lane. eg. OFDSrzZ8 (Generic PLA)
 
         Usage
         -----
@@ -592,6 +595,9 @@ class AFCSpool:
         cur_lane.spool_vendor = gcmd.get('VENDOR', cur_lane.spool_vendor)
         cur_lane.filament_name = gcmd.get('NAME', cur_lane.filament_name)
         cur_lane.filament_id = gcmd.get('FILAMENT_ID', cur_lane.filament_id)
+        if gcmd.get('FILAMENT_ID', None) is not None:
+            edits = self._filament_id_edits.get(cur_lane.name, 0)
+            self._filament_id_edits[cur_lane.name] = edits + 1
 
         cur_lane.send_lane_data()
         self.afc.save_vars()
@@ -661,13 +667,6 @@ class AFCSpool:
                     and any(SpoolID == lane.spool_id for lane in self.afc.lanes.values())):
                     self.logger.error(f"SpoolId {SpoolID} already assigned to a lane, cannot assign to {lane}.")
                     return
-
-            # The slicer filament id names the filament on the old spool, and Spoolman has
-            # none to replace it with
-            if (SpoolID != ''
-                and cur_lane.spool_id not in (None, '')
-                and cur_lane.spool_id != SpoolID):
-                cur_lane.filament_id = ""
 
             # Updating the active spool in Spoolman needs to wait for set_spoolID's
             # async fetch to actually apply the new spool_id to the lane first
@@ -795,9 +794,11 @@ class AFCSpool:
                         f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}",
                         False, gcmd=gcmd)
                 else:
+                    edits = self._filament_id_edits.get(cur_lane.name, 0)
                     self.afc.moonraker.get_spool(
                         spool_id_int,
-                        lambda result: self._apply_spool_data(cur_lane, spool_id_value, result, save_vars, on_done))
+                        lambda result: self._apply_spool_data(cur_lane, spool_id_value, result,
+                                                              save_vars, on_done, edits))
                     return
             elif not cur_lane.remember_spool:
                 self.clear_values(cur_lane)
@@ -815,11 +816,16 @@ class AFCSpool:
 
     def _apply_spool_data(self, cur_lane: AFCLane, SpoolID: Union[int, str],
                           result: Optional[dict], save_vars: bool,
-                          on_done: Optional[Callable[[], None]] = None) -> None:
+                          on_done: Optional[Callable[[], None]] = None,
+                          filament_id_edits: int = 0) -> None:
         """
         Applies a Spoolman spool lookup result to a lane: material, color,
         weight, temperatures, etc. Runs as the completion callback for
         set_spoolID()'s async fetch, once moonraker's response arrives.
+
+        A different spool clears the lane's slicer filament id, which named the old
+        spool's filament, unless `SET_FILAMENT_INFO FILAMENT_ID=` set one after the lookup
+        was sent.
 
         :param cur_lane:  AFC lane to assign the spool to
         :param SpoolID:   Spoolman spool ID that was queried
@@ -827,11 +833,18 @@ class AFCSpool:
         :param save_vars: Whether to save AFC vars after assigning
         :param on_done:   Called once this attempt to apply spool data is finished,
                           on every exit path (success, invalid weight, or error)
+        :param filament_id_edits: The lane's filament id edit count when the lookup was sent
         """
         try:
             try:
                 if result is None:
                     raise ValueError(f"No spool data returned for SpoolID {SpoolID}")
+
+                id_edited = self._filament_id_edits.get(cur_lane.name, 0) != filament_id_edits
+                if (not id_edited
+                    and cur_lane.spool_id not in (None, '')
+                    and str(cur_lane.spool_id) != str(SpoolID)):
+                    cur_lane.filament_id = ""
 
                 cur_lane.spool_id = SpoolID
                 cur_lane.auto_switch_triggered = False
@@ -856,7 +869,8 @@ class AFCSpool:
                 # The slicer filament id, when Spoolman stores one on the filament:
                 # it names a product, so it lives on the filament, not the spool
                 filament_id = self._get_spoolman_extra(result["filament"], "orca_filament_id")
-                if filament_id:
+                if (filament_id
+                    and not id_edited):
                     cur_lane.filament_id = filament_id
 
                 weight_check = self.disable_weight_check
