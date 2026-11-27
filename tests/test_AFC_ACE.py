@@ -4908,6 +4908,12 @@ class TestAfcACEAceLoadInner:
         # The main feed, the failed pulse, the pulse that reaches the sensor, the gear push.
         assert len(calls) == 4
         assert wire.moves() == [self._feed(3900.0, 80.0), self._feed(100.0, 50.0), self.PUSH]
+        assert unit.logger.messages == [
+            self.PULSE_LOG,
+            ("info", "Sensor not triggered after feed for lane3, retry pulse 2 (100mm)"),
+            self.AT_SENSOR,
+            ("info", "Sensor triggered on retry pulse 2 for lane3"),
+            self.TO_NOZZLE]
         assert unit.afc.error.handle_lane_failure.calls == []
 
 
@@ -4956,6 +4962,7 @@ class TestAfcACEAdvanceToolStn:
         unit._advance_tool_stn(lane, lane.extruder_obj, 3, 72.0)
 
         assert record.calls == [((72.0, 25.0, "tool stn"), {})]
+        assert unit.logger.messages == []
 
     def test_push_is_capped_at_tool_stn(self):
         unit, lane, wire, _sent = self._unit(load_gear_push=40)
@@ -4963,6 +4970,7 @@ class TestAfcACEAdvanceToolStn:
         unit._advance_tool_stn(lane, lane.extruder_obj, 3, 15.0)
 
         assert wire.moves() == [("feed_filament", {"index": 3, "length": 15.0, "speed": 25.0})]
+        assert unit.logger.messages == []
 
     def test_configured_push_length_is_fed(self):
         unit, lane, wire, _sent = self._unit(load_gear_push=35)
@@ -4970,6 +4978,7 @@ class TestAfcACEAdvanceToolStn:
         unit._advance_tool_stn(lane, lane.extruder_obj, 3, 72.0)
 
         assert wire.moves() == [("feed_filament", {"index": 3, "length": 35.0, "speed": 25.0})]
+        assert unit.logger.messages == []
 
     def test_push_speed_is_capped_at_max_feed_speed(self):
         unit, lane, wire, _sent = self._unit(max_feed_speed=60)
@@ -4978,6 +4987,7 @@ class TestAfcACEAdvanceToolStn:
         unit._advance_tool_stn(lane, lane.extruder_obj, 3, 72.0)
 
         assert wire.moves() == [("feed_filament", {"index": 3, "length": 20.0, "speed": 60.0})]
+        assert unit.logger.messages == []
 
     def test_zero_push_leaves_tool_stn_to_the_extruder(self):
         unit, lane, _wire, sent_at_move = self._unit(load_gear_push=0)
