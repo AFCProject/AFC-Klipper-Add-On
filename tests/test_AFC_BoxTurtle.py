@@ -85,13 +85,15 @@ class TestSystemTestEmptyLane:
         """prep=False, load=False → lane's own unit_obj.lane_not_ready is called."""
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=False, load_state=False)
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
-        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_empty_lane_does_not_set_fault_led(self):
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=False, load_state=False)
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
         for c in unit.afc.function.afc_led.call_args_list:
             assert c[0][0] != lane.led_fault
 
@@ -103,14 +105,16 @@ class TestSystemTestFaultLane:
         """prep=False, load=True → LED set to led_fault."""
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=False, load_state=True)
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
         unit.afc.function.afc_led.assert_any_call(lane.led_fault, lane.led_index)
 
     def test_fault_state_calls_do_enable_false(self):
         """Faulted lane should disable stepper."""
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=False, load_state=True)
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
         lane.do_enable.assert_called_with(False)
 
 
@@ -121,14 +125,16 @@ class TestSystemTestLoadedLane:
         """prep=True, load=True → LED set to led_ready."""
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=True, load_state=True)
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
         unit.afc.function.afc_led.assert_any_call(lane.led_ready, lane.led_index)
 
     def test_loaded_sets_status_to_loaded(self):
         from extras.AFC_lane import AFCLaneState
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=True, load_state=True)
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
         assert lane.status == AFCLaneState.LOADED
 
 
@@ -139,7 +145,8 @@ class TestSystemTestLockedNotLoaded:
         """prep=True, load=False → LED set to led_not_ready."""
         unit = _make_box_turtle()
         lane = _make_lane(prep_state=True, load_state=False)
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
         unit.afc.function.afc_led.assert_any_call(lane.led_not_ready, lane.led_index)
 
 
@@ -151,7 +158,8 @@ class TestSystemTestReactorPause:
         lane = _make_lane()
         pause_mock = MagicMock()
         unit.afc.reactor.pause = pause_mock
-        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False)
+        gcmd = MagicMock()
+        unit.system_Test(lane, delay=0.0, assignTcmd=True, enable_movement=False, gcmd=gcmd)
         pause_mock.assert_called()
 
 # ── _move_lane ──────────────────────────────────────────────────
@@ -163,7 +171,7 @@ class Test_MoveLane:
         with patch.object(type(lane), "load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[True]
 
-            result = unit._move_lane(lane, delay=1, enable_movement=False)
+            result = unit._move_lane(lane, delay=1, enable_movement=False, gcmd=MagicMock())
         assert result is True
     
     def test_returns_not_enable_movement_not_loaded(self):
@@ -173,7 +181,7 @@ class Test_MoveLane:
         with patch.object(type(lane), "load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False]
 
-            result = unit._move_lane(lane, delay=1, enable_movement=False)
+            result = unit._move_lane(lane, delay=1, enable_movement=False, gcmd=MagicMock())
         assert result is False
     
     def test_returns_enable_movement_not_loaded(self):
@@ -185,7 +193,7 @@ class Test_MoveLane:
         with patch.object(type(lane), "load_state", new_callable=PropertyMock) as mock_prop:
             mock_prop.side_effect=[False]
 
-            result = unit._move_lane(lane, delay=1, enable_movement=True)
+            result = unit._move_lane(lane, delay=1, enable_movement=True, gcmd=MagicMock())
         assert result is False
         pause_mock.assert_called()
 
@@ -208,10 +216,11 @@ class TestPrepLoad:
         unit = _make_box_turtle()
         unit.afc.homing_enabled = False
         lane = self._make_lane_that_never_triggers()
+        gcmd = MagicMock()
 
-        unit.prep_load(lane)
+        unit.prep_load(lane, gcmd=gcmd)
 
-        lane.unit_obj.lane_fault.assert_called_once_with(lane)
+        lane.unit_obj.lane_fault.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_exceeding_max_num_moves_resets_status_to_none(self):
         from extras.AFC_lane import AFCLaneState
@@ -219,7 +228,7 @@ class TestPrepLoad:
         unit.afc.homing_enabled = False
         lane = self._make_lane_that_never_triggers()
 
-        unit.prep_load(lane)
+        unit.prep_load(lane, gcmd=MagicMock())
 
         assert lane.status == AFCLaneState.NONE
 
@@ -228,7 +237,7 @@ class TestPrepLoad:
         unit.afc.homing_enabled = False
         lane = self._make_lane_that_never_triggers()
 
-        unit.prep_load(lane)
+        unit.prep_load(lane, gcmd=MagicMock())
 
         msg = unit.afc.error.AFC_error.call_args[0][0]
         assert "FAILED TO LOAD" in msg
@@ -249,7 +258,7 @@ class TestPrepLoad:
 
         lane.move = MagicMock(side_effect=_trigger_after_one_move)
 
-        unit.prep_load(lane)
+        unit.prep_load(lane, gcmd=MagicMock())
 
         lane.unit_obj.lane_fault.assert_not_called()
         unit.afc.error.AFC_error.assert_not_called()
@@ -537,7 +546,7 @@ class TestCalibrateTd1:
         lane = self._make_lane_for_td1(is_direct_dist=False)
         lane.unit_obj.move_to_hub.return_value = (False, 0, None)
 
-        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1, gcmd=MagicMock())
 
         assert success is False
         assert message == "Failed to home filament back to hub"
@@ -550,7 +559,7 @@ class TestCalibrateTd1:
         lane = self._make_lane_for_td1(is_direct_dist=True)
         lane.unit_obj.move_to_load.return_value = (False, 0, None)
 
-        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1, gcmd=MagicMock())
 
         assert success is False
         assert message == "Failed to home filament back to hub"
@@ -568,7 +577,7 @@ class TestCalibrateTd1:
         unit.move_until_state = MagicMock(return_value=(0, "Moving to hub", True))
         lane.unit_obj.move_to_hub.return_value = (True, 0, None)
 
-        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1, gcmd=MagicMock())
 
         assert success is True
         assert message == "td1_bowden_length calibration successful"
@@ -582,7 +591,7 @@ class TestCalibrateTd1:
         lane = self._make_lane_for_td1(is_direct_dist=True)
         lane.unit_obj.move_to_load.return_value = (True, 0, None)
 
-        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1)
+        success, message, pos = unit.calibrate_td1(lane, dis=1, tol=1, gcmd=MagicMock())
 
         assert success is True
         assert message == "td1_bowden_length calibration successful"

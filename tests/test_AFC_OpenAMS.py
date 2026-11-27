@@ -2238,7 +2238,7 @@ class TestVerifyEngagement:
         lane = _make_lane("lane1")
         ams._oams_extrude = MagicMock()
 
-        ams._verify_engagement(lane)
+        ams._verify_engagement(lane, gcmd="callback")
 
         monitor.notify_engagement_start.assert_called_once()
         monitor.notify_engagement_end.assert_called_once()
@@ -2251,7 +2251,7 @@ class TestVerifyEngagement:
         ams._monitor = None
         lane = _make_lane("lane1")
         ams._oams_extrude = MagicMock()
-        ams._verify_engagement(lane)  # must not raise
+        ams._verify_engagement(lane, gcmd="callback")  # must not raise
 
     def test_enables_follower_forward_when_present(self):
         oams = MagicMock()
@@ -2262,7 +2262,7 @@ class TestVerifyEngagement:
         ams._oams_extrude = MagicMock()
         lane = _make_lane("lane1")
 
-        ams._verify_engagement(lane)
+        ams._verify_engagement(lane, gcmd="callback")
 
         follower.enable_follower.assert_called_once()
         args = follower.enable_follower.call_args[0]
@@ -2276,7 +2276,7 @@ class TestVerifyEngagement:
         ams._follower = None
         ams._oams_extrude = MagicMock()
         lane = _make_lane("lane1")
-        ams._verify_engagement(lane)  # must not raise
+        ams._verify_engagement(lane, gcmd="callback")  # must not raise
 
     def test_encoder_moved_enough_on_first_check_returns_true(self):
         class _FakeOams:
@@ -2293,7 +2293,7 @@ class TestVerifyEngagement:
             side_effect=lambda *a, **k: setattr(oams, "encoder_clicks", 12))
         lane = _make_lane("lane1")
 
-        result = ams._verify_engagement(lane)
+        result = ams._verify_engagement(lane, gcmd="callback")
 
         assert result is True
         assert any(
@@ -2318,7 +2318,7 @@ class TestVerifyEngagement:
         reactor.pause = pause
         lane = _make_lane("lane1")
 
-        result = ams._verify_engagement(lane)
+        result = ams._verify_engagement(lane, gcmd="callback")
 
         assert result is True
         assert pauses == [101.5, 101.0]
@@ -2341,7 +2341,7 @@ class TestVerifyEngagement:
         reactor.pause = pause
         lane = _make_lane("lane1")
 
-        assert ams._verify_engagement(lane) is False
+        assert ams._verify_engagement(lane, gcmd="callback") is False
 
     def _fps_case(self, fps_before, fps_after, min_drop=0.03):
         # A load ends with the buffer compressed: the gears pull the engagement move out
@@ -2356,10 +2356,10 @@ class TestVerifyEngagement:
         ams._engagement_min_clicks = 10
         ams._engagement_min_fps_drop = min_drop
 
-        def extrude(length, speed, label=""):
+        def extrude(length, speed, label="", gcmd=None):
             oams.fps_value = fps_after
         ams._oams_extrude = extrude
-        return ams._verify_engagement(_make_lane("lane1")), ams
+        return ams._verify_engagement(_make_lane("lane1"), gcmd="callback"), ams
 
     def test_an_fps_drop_proves_engagement_without_encoder_clicks(self):
         ok, ams = self._fps_case(0.996, 0.622)
@@ -2397,7 +2397,7 @@ class TestVerifyEngagement:
         reactor.pause = pause
         lane = _make_lane("lane1")
 
-        result = ams._verify_engagement(lane)
+        result = ams._verify_engagement(lane, gcmd="callback")
 
         assert result is True
         assert any(
@@ -2412,7 +2412,7 @@ class TestVerifyEngagement:
         ams._oams_extrude = MagicMock()
         lane = _make_lane("lane1")
 
-        result = ams._verify_engagement(lane)
+        result = ams._verify_engagement(lane, gcmd="callback")
 
         assert result is False
         assert (
@@ -2432,7 +2432,7 @@ class TestVerifyEngagement:
             side_effect=lambda *a, **k: setattr(oams, "encoder_clicks", 6))
         lane = _make_lane("lane1")
 
-        result = ams._verify_engagement(lane)
+        result = ams._verify_engagement(lane, gcmd="callback")
 
         assert result is False
         assert (
@@ -2452,14 +2452,14 @@ class TestVerifyEngagement:
             side_effect=lambda *a, **k: setattr(oams, "encoder_clicks", 4))
         lane = _make_lane("lane1")
 
-        assert ams._verify_engagement(lane) is True
+        assert ams._verify_engagement(lane, gcmd="callback") is True
 
     def test_no_oams_returns_false_without_reading_encoder(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
         ams._oams_extrude = MagicMock()
         lane = _make_lane("lane1")
 
-        result = ams._verify_engagement(lane)
+        result = ams._verify_engagement(lane, gcmd="callback")
 
         assert result is False
 
@@ -2468,7 +2468,7 @@ class TestVerifyEngagement:
         ams._oams_extrude = MagicMock()
         lane = _make_lane("lane1")
 
-        result = ams._verify_engagement(lane)
+        result = ams._verify_engagement(lane, gcmd="callback")
 
         assert result is False
 
@@ -2479,7 +2479,7 @@ class TestVerifyEngagement:
         ams._oams_extrude = MagicMock()
         lane = _make_lane("lane1")
 
-        ams._verify_engagement(lane)
+        ams._verify_engagement(lane, gcmd="callback")
 
         calls = ams._oams_extrude.call_args_list
         assert calls[0][0][0] == 5.0  # prime = min(5.0, 20.0)
@@ -2491,7 +2491,7 @@ class TestVerifyEngagement:
         ams._oams_extrude = MagicMock()
         lane = _make_lane("lane1")
 
-        ams._verify_engagement(lane)
+        ams._verify_engagement(lane, gcmd="callback")
 
         assert ams._oams_extrude.call_count == 1
         assert ams._oams_extrude.call_args_list[0][0][0] == 3.0
@@ -2500,7 +2500,7 @@ class TestVerifyEngagement:
 class TestOamsExtrude:
     def test_runs_extrude_gcode(self):
         ams, afc, printer, reactor = _make_ams()
-        ams._oams_extrude(12.5, 300.0, "test")
+        ams._oams_extrude(12.5, 300.0, "test", gcmd="callback")
         afc.gcode.run_script_from_command.assert_called_once_with(
             "G92 E0\nG1 E12.500 F300\nM400")
 
@@ -2513,7 +2513,7 @@ class TestAdvanceToolStnToNozzle:
         ext.tool_stn = 10.0
         lane = _make_lane("lane1", extruder_obj=ext)
 
-        ams._advance_tool_stn_to_nozzle(lane, already_advanced=10.0)
+        ams._advance_tool_stn_to_nozzle(lane, already_advanced=10.0, gcmd="callback")
 
         ams._oams_extrude.assert_not_called()
 
@@ -2524,7 +2524,7 @@ class TestAdvanceToolStnToNozzle:
         ext.tool_stn = 10.0
         lane = _make_lane("lane1", extruder_obj=ext)
 
-        ams._advance_tool_stn_to_nozzle(lane, already_advanced=20.0)
+        ams._advance_tool_stn_to_nozzle(lane, already_advanced=20.0, gcmd="callback")
 
         ams._oams_extrude.assert_not_called()
 
@@ -2537,9 +2537,9 @@ class TestAdvanceToolStnToNozzle:
         ext.tool_load_speed = 25.0
         lane = _make_lane("lane1", extruder_obj=ext)
 
-        ams._advance_tool_stn_to_nozzle(lane, already_advanced=10.0)
+        ams._advance_tool_stn_to_nozzle(lane, already_advanced=10.0, gcmd="callback")
 
-        ams._oams_extrude.assert_called_once_with(20.0, 25.0 * 60.0, "tool_stn_to_nozzle")
+        ams._oams_extrude.assert_called_once_with(20.0, 25.0 * 60.0, "tool_stn_to_nozzle", gcmd="callback")
         afc.afcDeltaTime.log_with_time.assert_called_once()
         assert any(
             lvl == "info" and "advancing 20.0mm to nozzle" in m and "lane1" in m
@@ -2554,9 +2554,9 @@ class TestAdvanceToolStnToNozzle:
         ext.tool_load_speed = 25.0
         lane = _make_lane("lane1", extruder_obj=ext)
 
-        ams._advance_tool_stn_to_nozzle(lane)
+        ams._advance_tool_stn_to_nozzle(lane, gcmd="callback")
 
-        ams._oams_extrude.assert_called_once_with(15.0, 25.0 * 60.0, "tool_stn_to_nozzle")
+        ams._oams_extrude.assert_called_once_with(15.0, 25.0 * 60.0, "tool_stn_to_nozzle", gcmd="callback")
 
     def test_missing_tool_stn_attribute_defaults_to_zero(self):
         ams, afc, printer, reactor = _make_ams()
@@ -2564,7 +2564,7 @@ class TestAdvanceToolStnToNozzle:
         ext = MagicMock(spec=[])  # no tool_stn attribute
         lane = _make_lane("lane1", extruder_obj=ext)
 
-        ams._advance_tool_stn_to_nozzle(lane)
+        ams._advance_tool_stn_to_nozzle(lane, gcmd="callback")
 
         ams._oams_extrude.assert_not_called()
 
@@ -2827,13 +2827,13 @@ class TestPrepCaptureTd1:
     def test_not_configured_for_td1_returns_none(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", td1_when_loaded=False)
-        assert ams.prep_capture_td1(lane) is None
+        assert ams.prep_capture_td1(lane, gcmd="callback") is None
 
     def test_lane_already_active_returns_none(self):
         ams, afc, printer, reactor = _make_ams()
         afc.function.get_current_lane_obj.return_value = MagicMock()
         lane = _make_lane("lane1", td1_when_loaded=True)
-        assert ams.prep_capture_td1(lane) is None
+        assert ams.prep_capture_td1(lane, gcmd="callback") is None
 
     def test_delegates_to_capture_helper(self):
         ams, afc, printer, reactor = _make_ams()
@@ -2841,11 +2841,11 @@ class TestPrepCaptureTd1:
         ams._capture_td1_with_oams = MagicMock(return_value=(True, "ok"))
         lane = _make_lane("lane1", td1_when_loaded=True)
 
-        result = ams.prep_capture_td1(lane)
+        result = ams.prep_capture_td1(lane, gcmd="callback")
 
         assert result == (True, "ok")
         ams._capture_td1_with_oams.assert_called_once_with(
-            lane, require_loaded=True, require_enabled=False)
+            lane, require_loaded=True, require_enabled=False, gcmd="callback")
 
 
 class TestCaptureTd1Data:
@@ -2854,11 +2854,11 @@ class TestCaptureTd1Data:
         ams._capture_td1_with_oams = MagicMock(return_value=(False, "no data"))
         lane = _make_lane("lane1")
 
-        result = ams.capture_td1_data(lane)
+        result = ams.capture_td1_data(lane, gcmd="callback")
 
         assert result == (False, "no data")
         ams._capture_td1_with_oams.assert_called_once_with(
-            lane, require_loaded=True, require_enabled=False)
+            lane, require_loaded=True, require_enabled=False, gcmd="callback")
 
 
 class TestWaitForHubSettle:
@@ -2988,13 +2988,13 @@ class TestHandleSameFpsReload:
         source = _make_lane("lane1", map=None)
         target = _make_lane("lane2")
 
-        result = ams.handle_same_fps_reload(source, target)
+        result = ams.handle_same_fps_reload(source, target, gcmd="callback")
 
         assert result is True
         assert source.status == AFCLaneState.NONE
-        ams.lane_unloaded.assert_called_once_with(source)
+        ams.lane_unloaded.assert_called_once_with(source, gcmd="callback")
         target.set_tool_loaded.assert_called_once()
-        ams.lane_tool_loaded.assert_called_once_with(target)
+        ams.lane_tool_loaded.assert_called_once_with(target, gcmd="callback")
         afc.save_vars.assert_called_once()
         assert (
             "info", "Same-FPS infinite runout: lane1 -> lane2"
@@ -3013,10 +3013,11 @@ class TestHandleSameFpsReload:
         source = _make_lane("lane1", map="T0")
         target = _make_lane("lane2")
 
-        ams.handle_same_fps_reload(source, target)
+        ams.handle_same_fps_reload(source, target, gcmd="callback")
 
         ams.gcode.run_script_from_command.assert_called_once_with(
             "AFC_SWAP_MAPPING FROM=lane1 TO=lane2")
+        ams.gcode.run_script.assert_not_called()
 
     def test_swaps_mapping_via_afc_swap_mapping_when_no_source_map(self):
         """AFC_SWAP_MAPPING is called unconditionally, regardless of whether
@@ -3030,10 +3031,11 @@ class TestHandleSameFpsReload:
         source = _make_lane("lane1", map=None)
         target = _make_lane("lane2")
 
-        ams.handle_same_fps_reload(source, target)
+        ams.handle_same_fps_reload(source, target, gcmd="callback")
 
         ams.gcode.run_script_from_command.assert_called_once_with(
             "AFC_SWAP_MAPPING FROM=lane1 TO=lane2")
+        ams.gcode.run_script.assert_not_called()
 
     def test_hardware_load_failure_pauses_and_returns_false(self):
         ams, afc, printer, reactor = _make_ams()
@@ -3042,7 +3044,7 @@ class TestHandleSameFpsReload:
         source = _make_lane("lane1")
         target = _make_lane("lane2")
 
-        result = ams.handle_same_fps_reload(source, target)
+        result = ams.handle_same_fps_reload(source, target, gcmd="callback")
 
         assert result is False
         afc.error.AFC_error.assert_called_once()
@@ -3059,7 +3061,7 @@ class TestHandleSameFpsReload:
         source = _make_lane("lane1")
         target = _make_lane("lane2")
 
-        result = ams.handle_same_fps_reload(source, target)
+        result = ams.handle_same_fps_reload(source, target, gcmd="callback")
 
         assert result is False
         msg = afc.error.AFC_error.call_args[0][0]
@@ -3075,11 +3077,11 @@ class TestHandleRunout:
         ams.lane_unloaded = MagicMock()
         lane = _make_lane("lane1", runout_lane=None)
 
-        result = ams.handle_runout(lane)
+        result = ams.handle_runout(lane, gcmd="callback")
 
         assert result is True
         assert lane.status == AFCLaneState.NONE
-        ams.lane_unloaded.assert_called_once_with(lane)
+        ams.lane_unloaded.assert_called_once_with(lane, gcmd="callback")
         afc.error.AFC_error.assert_called_once()
         assert afc.error.AFC_error.call_args[1]["pause"] is True
 
@@ -3089,10 +3091,10 @@ class TestHandleRunout:
         ams._resolve_lane_reference = MagicMock(return_value=None)
         lane = _make_lane("lane1", runout_lane="missing_lane")
 
-        result = ams.handle_runout(lane)
+        result = ams.handle_runout(lane, gcmd="callback")
 
         assert result is True
-        ams.lane_unloaded.assert_called_once_with(lane)
+        ams.lane_unloaded.assert_called_once_with(lane, gcmd="callback")
         afc.error.AFC_error.assert_called_once()
 
     def test_same_extruder_triggers_seamless_reload(self):
@@ -3103,11 +3105,11 @@ class TestHandleRunout:
         ams.handle_same_fps_reload = MagicMock()
         lane = _make_lane("lane1", runout_lane="lane2")
 
-        result = ams.handle_runout(lane)
+        result = ams.handle_runout(lane, gcmd="callback")
 
         assert result is True
         assert lane._oams_runout_detected is True
-        ams.handle_same_fps_reload.assert_called_once_with(lane, target)
+        ams.handle_same_fps_reload.assert_called_once_with(lane, target, gcmd="callback")
         assert (
             "info", "OAMS same-FPS runout: lane1 -> lane2, seamless reload"
         ) in ams.logger.messages
@@ -3119,7 +3121,7 @@ class TestHandleRunout:
         ams._is_same_extruder = MagicMock(return_value=False)
         lane = _make_lane("lane1", runout_lane="lane2")
 
-        result = ams.handle_runout(lane)
+        result = ams.handle_runout(lane, gcmd="callback")
 
         assert result is False
         assert lane._oams_runout_empty is True
@@ -3134,17 +3136,17 @@ class TestSimpleOverrides:
     def test_prep_load_is_noop(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
-        assert ams.prep_load(lane) is None
+        assert ams.prep_load(lane, gcmd="callback") is None
 
     def test_prep_post_load_is_noop(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
-        assert ams.prep_post_load(lane) is None
+        assert ams.prep_post_load(lane, gcmd="callback") is None
 
     def test_eject_lane_logs_info(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1")
-        ams.eject_lane(lane)
+        ams.eject_lane(lane, gcmd="callback")
         assert (
             "info",
             "Eject not supported for OpenAMS lane lane1. "
@@ -3276,7 +3278,7 @@ class TestUnitLoadLane:
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load_sequence = MagicMock(return_value=True)
         lane = _make_lane("lane1")
-        assert ams.unit_load_lane(lane, MagicMock()) is True
+        assert ams.unit_load_lane(lane, MagicMock(), gcmd="callback") is True
         afc.error.handle_lane_failure.assert_not_called()
 
     def test_failure_calls_handle_lane_failure_and_returns_false(self):
@@ -3284,10 +3286,10 @@ class TestUnitLoadLane:
         ams._oams_load_sequence = MagicMock(return_value=False)
         afc.function.in_print.return_value = True
         lane = _make_lane("lane1")
-        result = ams.unit_load_lane(lane, MagicMock())
+        result = ams.unit_load_lane(lane, MagicMock(), gcmd="callback")
         assert result is False
         afc.error.handle_lane_failure.assert_called_once_with(
-            lane, "OpenAMS load failed for lane1", pause=True)
+            lane, "OpenAMS load failed for lane1", pause=True, gcmd="callback")
 
     def test_the_failure_reason_is_in_the_pause_message(self):
         ams, afc, printer, reactor = _make_ams()
@@ -3295,10 +3297,10 @@ class TestUnitLoadLane:
         ams._load_failure = "encoder moved only 2 clicks of the 10 needed"
         afc.function.in_print.return_value = False
         lane = _make_lane("lane1")
-        assert ams.unit_load_lane(lane, MagicMock()) is False
+        assert ams.unit_load_lane(lane, MagicMock(), gcmd="callback") is False
         afc.error.handle_lane_failure.assert_called_once_with(
             lane, "OpenAMS load failed for lane1: encoder moved only 2 clicks of the 10 needed",
-            pause=False)
+            pause=False, gcmd="callback")
 
 
 class TestUnitUnloadLane:
@@ -3311,16 +3313,16 @@ class TestUnitUnloadLane:
         extruder = MagicMock()
         extruder.tool_unload_speed = 25.0
         lane = _make_lane("lane1")
-        result = ams.unit_unload_lane(lane, extruder)
+        result = ams.unit_unload_lane(lane, extruder, gcmd="callback")
         assert result is True
         afc.save_vars.assert_called_once()
         assert lane.status == AFCLaneState.NONE
         afc.move_e_pos.assert_called_once_with(-2, 25.0, "Quick Pull", wait_tool=False)
         lane.disable_buffer.assert_called_once()
-        lane.sync_to_extruder.assert_called_once_with(gcmd=None)
+        lane.sync_to_extruder.assert_called_once_with(gcmd="callback")
         lane.select_lane.assert_called_once()
-        afc.do_tool_cut_tip_form.assert_called_once_with(lane, extruder, None)
-        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True)
+        afc.do_tool_cut_tip_form.assert_called_once_with(lane, extruder, gcmd="callback")
+        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True, gcmd="callback")
 
     def test_failure_returns_false_without_saving(self):
         ams, afc, printer, reactor = _make_ams()
@@ -3328,7 +3330,7 @@ class TestUnitUnloadLane:
         afc.move_e_pos = MagicMock()
         afc.do_tool_cut_tip_form = MagicMock()
         lane = _make_lane("lane1")
-        result = ams.unit_unload_lane(lane, MagicMock())
+        result = ams.unit_unload_lane(lane, MagicMock(), gcmd="callback")
         assert result is False
         afc.save_vars.assert_not_called()
 
@@ -3340,8 +3342,8 @@ class TestUnitUnloadLane:
         calls = []
         ams._monitor = MagicMock()
         ams._monitor.stop.side_effect = lambda: calls.append("stop")
-        afc.do_tool_cut_tip_form = MagicMock(side_effect=lambda *a: calls.append("tip"))
-        ams.unit_unload_lane(_make_lane("lane1"), MagicMock())
+        afc.do_tool_cut_tip_form = MagicMock(side_effect=lambda *a, **k: calls.append("tip"))
+        ams.unit_unload_lane(_make_lane("lane1"), MagicMock(), gcmd="callback")
         assert calls == ["stop", "tip"]
 
     def test_runs_post_unload_macro_when_configured(self):
@@ -3353,7 +3355,7 @@ class TestUnitUnloadLane:
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
         lane = _make_lane("lane1")
-        ams.unit_unload_lane(lane, MagicMock())
+        ams.unit_unload_lane(lane, MagicMock(), gcmd="callback")
         ams.gcode.run_script_from_command.assert_called_once_with("MY_MACRO")
 
 
@@ -3381,16 +3383,16 @@ class TestLaneUnloadingAndPrepareUnload:
         lane = _make_lane("lane1")
         super_mock = MagicMock()
         with patch.object(afcUnit, "lane_unloading", super_mock):
-            ams.lane_unloading(lane)
+            ams.lane_unloading(lane, gcmd="callback")
         ams.prepare_unload.assert_called_once()
-        super_mock.assert_called_once_with(lane)
+        super_mock.assert_called_once_with(lane, gcmd="callback")
 
     def test_lane_unloading_prepare_unload_exception_logged(self):
         ams, afc, printer, reactor = _make_ams()
         ams.prepare_unload = MagicMock(side_effect=Exception("boom"))
         lane = _make_lane("lane1")
         with patch.object(afcUnit, "lane_unloading", MagicMock()):
-            ams.lane_unloading(lane)  # must not raise
+            ams.lane_unloading(lane, gcmd="callback")  # must not raise
         assert (
             "warning", "OAMS: lane_unloading follower-stop error for lane1: boom"
         ) in ams.logger.messages
@@ -3401,13 +3403,13 @@ class TestOamsLoadSequence:
         ams, afc, printer, reactor = _make_ams()
         seen_active = {}
 
-        def fake_inner(lane, ext):
+        def fake_inner(lane, ext, gcmd=None):
             seen_active["during"] = ams._operation_active
             return True
         ams._oams_load_inner = fake_inner
         lane = _make_lane("lane1")
 
-        result = ams._oams_load_sequence(lane, MagicMock())
+        result = ams._oams_load_sequence(lane, MagicMock(), gcmd="callback")
 
         assert result is True
         assert seen_active["during"] is True
@@ -3420,7 +3422,7 @@ class TestOamsLoadSequence:
         lane = _make_lane("lane1")
 
         with pytest.raises(Exception):
-            ams._oams_load_sequence(lane, MagicMock())
+            ams._oams_load_sequence(lane, MagicMock(), gcmd="callback")
 
         assert ams._operation_active is False
         assert ams._prev_states_stale is True
@@ -3429,7 +3431,7 @@ class TestOamsLoadSequence:
         ams, afc, printer, reactor = _make_ams()
         ams._oams_load_inner = MagicMock(return_value=False)
         lane = _make_lane("lane1")
-        assert ams._oams_load_sequence(lane, MagicMock()) is False
+        assert ams._oams_load_sequence(lane, MagicMock(), gcmd="callback") is False
 
 
 class TestOamsLoadInner:
@@ -3439,7 +3441,7 @@ class TestOamsLoadInner:
         ams._hub_load_suppressed.add("lane1")
         lane = _make_lane("lane1")
 
-        ams._oams_load_inner(lane, MagicMock())
+        ams._oams_load_inner(lane, MagicMock(), gcmd="callback")
 
         assert "lane1" not in ams._hub_load_suppressed
 
@@ -3448,7 +3450,7 @@ class TestOamsLoadInner:
         ams._oams_load = MagicMock(return_value=False)
         lane = _make_lane("lane1")
 
-        result = ams._oams_load_inner(lane, MagicMock())
+        result = ams._oams_load_inner(lane, MagicMock(), gcmd="callback")
 
         assert result is False
         afc.save_vars.assert_not_called()
@@ -3458,7 +3460,7 @@ class TestOamsLoadInner:
         ams._oams_load = MagicMock(return_value=True)
         lane = _make_lane("lane1")
 
-        result = ams._oams_load_inner(lane, MagicMock())
+        result = ams._oams_load_inner(lane, MagicMock(), gcmd="callback")
 
         assert result is True
         assert lane.loaded_to_hub is True
@@ -3471,13 +3473,13 @@ class TestOamsUnloadSequence:
         ams, afc, printer, reactor = _make_ams()
         seen_active = {}
 
-        def fake_inner(lane, ext):
+        def fake_inner(lane, ext, gcmd=None):
             seen_active["during"] = ams._operation_active
             return True
         ams._oams_unload_inner = fake_inner
         lane = _make_lane("lane1")
 
-        result = ams._oams_unload_sequence(lane, MagicMock())
+        result = ams._oams_unload_sequence(lane, MagicMock(), gcmd="callback")
 
         assert result is True
         assert seen_active["during"] is True
@@ -3490,7 +3492,7 @@ class TestOamsUnloadSequence:
         lane = _make_lane("lane1")
 
         with pytest.raises(Exception):
-            ams._oams_unload_sequence(lane, MagicMock())
+            ams._oams_unload_sequence(lane, MagicMock(), gcmd="callback")
 
         assert ams._operation_active is False
         assert ams._prev_states_stale is True
@@ -3503,7 +3505,7 @@ class TestOamsUnloadInner:
         afc.function.in_print.return_value = True
         lane = _make_lane("lane1")
 
-        result = ams._oams_unload_inner(lane, MagicMock())
+        result = ams._oams_unload_inner(lane, MagicMock(), gcmd="callback")
 
         assert result is False
         afc.error.handle_lane_failure.assert_called_once()
@@ -3515,7 +3517,7 @@ class TestOamsUnloadInner:
         afc.function.in_print.return_value = False
         lane = _make_lane("lane1")
 
-        ams._oams_unload_inner(lane, MagicMock())
+        ams._oams_unload_inner(lane, MagicMock(), gcmd="callback")
 
         assert afc.error.handle_lane_failure.call_args[1]["pause"] is False
 
@@ -3526,10 +3528,10 @@ class TestOamsUnloadInner:
         ams.lane_tool_unloaded = MagicMock()
         lane = _make_lane("lane1")
 
-        result = ams._oams_unload_inner(lane, MagicMock())
+        result = ams._oams_unload_inner(lane, MagicMock(), gcmd="callback")
 
         assert result is True
-        ams.lane_tool_unloaded.assert_called_once_with(lane)
+        ams.lane_tool_unloaded.assert_called_once_with(lane, gcmd="callback")
         assert "lane1" in ams._hub_load_suppressed
         afc.afcDeltaTime.log_with_time.assert_called_once()
 
@@ -4028,7 +4030,7 @@ class TestOnStuckSpoolDetected:
 
         ams._on_stuck_spool_detected(fps_name="fps1")
 
-        ams._on_stuck_spool_recovery_needed.assert_called_once_with("fps1", "lane1")
+        ams._on_stuck_spool_recovery_needed.assert_called_once_with("fps1", "lane1", gcmd="callback")
         afc.error.AFC_error.assert_not_called()
 
     def test_auto_recovery_enabled_but_no_lane_falls_back_to_pause(self):
@@ -4117,7 +4119,7 @@ class TestOnStuckSpoolRecoveryNeeded:
         ams, afc, printer, reactor = _make_ams()
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
-        ams._on_stuck_spool_recovery_needed("fps1", "lane1")
+        ams._on_stuck_spool_recovery_needed("fps1", "lane1", gcmd="callback")
         ams.gcode.run_script_from_command.assert_called_once_with(
             "_AFC_OAMS_STUCK_RECOVERY LANE=lane1 FPS=fps1")
         assert (
@@ -4128,7 +4130,7 @@ class TestOnStuckSpoolRecoveryNeeded:
         ams, afc, printer, reactor = _make_ams()
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
-        ams._on_stuck_spool_recovery_needed(None, "lane1")
+        ams._on_stuck_spool_recovery_needed(None, "lane1", gcmd="callback")
         ams.gcode.run_script_from_command.assert_called_once_with(
             "_AFC_OAMS_STUCK_RECOVERY LANE=lane1 FPS=")
 
@@ -4137,7 +4139,7 @@ class TestOnStuckSpoolRecoveryNeeded:
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
         ams.gcode.run_script_from_command.side_effect = [Exception("boom"), None]
-        ams._on_stuck_spool_recovery_needed("fps1", "lane1")
+        ams._on_stuck_spool_recovery_needed("fps1", "lane1", gcmd="callback")
         assert ams.gcode.run_script_from_command.call_args_list[1][0][0] == "PAUSE"
         assert (
             "error", "Failed to schedule stuck spool recovery for lane1: boom"
@@ -4148,7 +4150,7 @@ class TestOnStuckSpoolRecoveryNeeded:
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
         ams.gcode.run_script_from_command.side_effect = Exception("boom")
-        ams._on_stuck_spool_recovery_needed("fps1", "lane1")  # must not raise
+        ams._on_stuck_spool_recovery_needed("fps1", "lane1", gcmd="callback")  # must not raise
         error_msgs = [m for lvl, m in ams.logger.messages if lvl == "error"]
         assert len(error_msgs) == 2
 
@@ -4156,7 +4158,7 @@ class TestOnStuckSpoolRecoveryNeeded:
 class TestStuckSpoolRecoveryFallback:
     def test_raises_afc_error_with_pause(self):
         ams, afc, printer, reactor = _make_ams()
-        ams._stuck_spool_recovery_fallback("fps1", "lane1", "some reason")
+        ams._stuck_spool_recovery_fallback("fps1", "lane1", "some reason", gcmd="callback")
         afc.error.AFC_error.assert_called_once()
         args, kwargs = afc.error.AFC_error.call_args
         assert "some reason" in args[0]
@@ -4170,7 +4172,7 @@ class TestStuckSpoolRecoveryFallback:
         afc.error.AFC_error.side_effect = Exception("no error handler")
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
-        ams._stuck_spool_recovery_fallback("fps1", "lane1", "reason")
+        ams._stuck_spool_recovery_fallback("fps1", "lane1", "reason", gcmd="callback")
         ams.gcode.run_script_from_command.assert_called_once_with("PAUSE")
         assert (
             "error",
@@ -4183,11 +4185,11 @@ class TestStuckSpoolRecoveryFallback:
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
         ams.gcode.run_script_from_command.side_effect = Exception("gcode dead")
-        ams._stuck_spool_recovery_fallback("fps1", "lane1", "reason")  # must not raise
+        ams._stuck_spool_recovery_fallback("fps1", "lane1", "reason", gcmd="callback")  # must not raise
 
     def test_uses_fps_name_when_lane_name_missing(self):
         ams, afc, printer, reactor = _make_ams()
-        ams._stuck_spool_recovery_fallback("fps1", None, "reason")
+        ams._stuck_spool_recovery_fallback("fps1", None, "reason", gcmd="callback")
         msg = afc.error.AFC_error.call_args[0][0]
         assert "fps1" in msg
 
@@ -4265,9 +4267,10 @@ class TestCmdStuckSpoolRecovery:
         ams, afc, printer, reactor = _make_ams()
         afc.lanes = {}
         ams._stuck_spool_recovery_fallback = MagicMock()
-        ams._cmd_stuck_spool_recovery(self._gcmd())
+        gcmd = self._gcmd()
+        ams._cmd_stuck_spool_recovery(gcmd)
         ams._stuck_spool_recovery_fallback.assert_called_once_with(
-            "fps1", "lane1", "lane not found")
+            "fps1", "lane1", "lane not found", gcmd=gcmd)
         assert (
             "error", "Stuck spool recovery: lane 'lane1' not found, pausing"
         ) in ams.logger.messages
@@ -4291,10 +4294,11 @@ class TestCmdStuckSpoolRecovery:
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
 
-        ams._cmd_stuck_spool_recovery(self._gcmd())
+        gcmd = self._gcmd()
+        ams._cmd_stuck_spool_recovery(gcmd)
 
-        afc.TOOL_UNLOAD.assert_called_once_with(lane, set_start_time=True)
-        afc.TOOL_LOAD.assert_called_once_with(lane, set_start_time=True)
+        afc.TOOL_UNLOAD.assert_called_once_with(lane, set_start_time=True, gcmd=gcmd)
+        afc.TOOL_LOAD.assert_called_once_with(lane, set_start_time=True, gcmd=gcmd)
         ams._stuck_spool_recovery_clear_oams_state.assert_called_once()
         ams.gcode.run_script_from_command.assert_any_call("AFC_RESUME")
         afc.save_pos.assert_called_once()
@@ -4352,10 +4356,11 @@ class TestCmdStuckSpoolRecovery:
         ams.gcode = MagicMock()
         ams.afc.gcode = ams.gcode
 
-        ams._cmd_stuck_spool_recovery(self._gcmd())
+        gcmd = self._gcmd()
+        ams._cmd_stuck_spool_recovery(gcmd)
 
-        afc.TOOL_UNLOAD.assert_called_once_with(lane, set_start_time=True)
-        afc.TOOL_LOAD.assert_called_once_with(lane, set_start_time=True)
+        afc.TOOL_UNLOAD.assert_called_once_with(lane, set_start_time=True, gcmd=gcmd)
+        afc.TOOL_LOAD.assert_called_once_with(lane, set_start_time=True, gcmd=gcmd)
         ams._stuck_spool_recovery_clear_oams_state.assert_called_once()
         ams.gcode.run_script_from_command.assert_any_call("AFC_RESUME")
         assert ams.logger.messages == [
@@ -4771,7 +4776,7 @@ class TestCmdClearErrors:
         ams.lane_tool_loaded = MagicMock()
         gcmd = _make_gcmd()
         ams.cmd_AFC_OAMS_CLEAR_ERRORS(gcmd)
-        ams.lane_tool_loaded.assert_called_once_with(lane)
+        ams.lane_tool_loaded.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_restores_leds_loaded_branch(self):
         oams = MagicMock()
@@ -4780,7 +4785,7 @@ class TestCmdClearErrors:
         ams.lane_loaded = MagicMock()
         gcmd = _make_gcmd()
         ams.cmd_AFC_OAMS_CLEAR_ERRORS(gcmd)
-        ams.lane_loaded.assert_called_once_with(lane)
+        ams.lane_loaded.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_restores_leds_unloaded_branch(self):
         oams = MagicMock()
@@ -4789,7 +4794,7 @@ class TestCmdClearErrors:
         ams.lane_unloaded = MagicMock()
         gcmd = _make_gcmd()
         ams.cmd_AFC_OAMS_CLEAR_ERRORS(gcmd)
-        ams.lane_unloaded.assert_called_once_with(lane)
+        ams.lane_unloaded.assert_called_once_with(lane, gcmd=gcmd)
 
     def test_led_restore_failure_for_one_lane_does_not_stop_others(self):
         oams = MagicMock()
@@ -4830,9 +4835,9 @@ class TestOnFilamentInsert:
         ams.lane_illuminate_spool = MagicMock()
         lane = _make_lane("lane1")
         with patch.object(afcUnit, "on_filament_insert", MagicMock()):
-            ams.on_filament_insert(lane)
+            ams.on_filament_insert(lane, gcmd="callback")
         assert lane.loaded_to_hub is True
-        ams.lane_loaded.assert_called_once_with(lane)
+        ams.lane_loaded.assert_called_once_with(lane, gcmd="callback")
         ams.lane_illuminate_spool.assert_called_once_with(lane)
 
     def test_updates_hardware_service_snapshot_when_mapped(self):
@@ -4845,7 +4850,7 @@ class TestOnFilamentInsert:
              patch("extras.AFC_OpenAMS.AMSHardwareService.for_printer") as mock_for_printer:
             hw = MagicMock()
             mock_for_printer.return_value = hw
-            ams.on_filament_insert(lane)
+            ams.on_filament_insert(lane, gcmd="callback")
         hw.update_lane_snapshot.assert_called_once()
 
     def test_no_snapshot_update_when_unmapped(self):
@@ -4855,7 +4860,7 @@ class TestOnFilamentInsert:
         lane = _make_lane("unmapped")
         with patch.object(afcUnit, "on_filament_insert", MagicMock()), \
              patch("extras.AFC_OpenAMS.AMSHardwareService.for_printer") as mock_for_printer:
-            ams.on_filament_insert(lane)
+            ams.on_filament_insert(lane, gcmd="callback")
         mock_for_printer.assert_not_called()
 
     def test_calls_super(self):
@@ -4865,8 +4870,8 @@ class TestOnFilamentInsert:
         lane = _make_lane("lane1")
         super_call = MagicMock()
         with patch.object(afcUnit, "on_filament_insert", super_call):
-            ams.on_filament_insert(lane)
-        super_call.assert_called_once_with(lane)
+            ams.on_filament_insert(lane, gcmd="callback")
+        super_call.assert_called_once_with(lane, gcmd="callback")
 
 
 class TestOnFilamentRemove:
@@ -4876,9 +4881,9 @@ class TestOnFilamentRemove:
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         lane = _make_lane("lane1", loaded_to_hub=True, tool_loaded=False)
-        ams.on_filament_remove(lane)
+        ams.on_filament_remove(lane, gcmd="callback")
         assert lane.loaded_to_hub is False
-        ams.lane_not_ready.assert_called_once_with(lane)
+        ams.lane_not_ready.assert_called_once_with(lane, gcmd="callback")
 
     def test_cancels_pending_spool_loaded_timer(self):
         ams, afc, printer, reactor = _make_ams()
@@ -4889,7 +4894,7 @@ class TestOnFilamentRemove:
         reactor.unregister_timer = MagicMock()
         ams._pending_spool_loaded_timers["lane1"] = timer
         lane = _make_lane("lane1", tool_loaded=False)
-        ams.on_filament_remove(lane)
+        ams.on_filament_remove(lane, gcmd="callback")
         reactor.unregister_timer.assert_called_once_with(timer)
         assert "lane1" not in ams._pending_spool_loaded_timers
 
@@ -4901,7 +4906,7 @@ class TestOnFilamentRemove:
         reactor.unregister_timer = MagicMock(side_effect=Exception("boom"))
         ams._pending_spool_loaded_timers["lane1"] = MagicMock()
         lane = _make_lane("lane1", tool_loaded=False)
-        ams.on_filament_remove(lane)  # must not raise
+        ams.on_filament_remove(lane, gcmd="callback")  # must not raise
         assert "lane1" not in ams._pending_spool_loaded_timers
 
     def test_clears_lane_info_when_not_tool_loaded(self):
@@ -4910,8 +4915,8 @@ class TestOnFilamentRemove:
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         lane = _make_lane("lane1", tool_loaded=False)
-        ams.on_filament_remove(lane)
-        ams._clear_lane_info.assert_called_once_with(lane)
+        ams.on_filament_remove(lane, gcmd="callback")
+        ams._clear_lane_info.assert_called_once_with(lane, gcmd="callback")
         ams._clear_oams_state_for_bay.assert_called_once()
 
     def test_skips_clear_lane_info_when_tool_loaded_runout(self):
@@ -4920,7 +4925,7 @@ class TestOnFilamentRemove:
         ams._clear_lane_info = MagicMock()
         ams._clear_oams_state_for_bay = MagicMock()
         lane = _make_lane("lane1", tool_loaded=True)
-        ams.on_filament_remove(lane)
+        ams.on_filament_remove(lane, gcmd="callback")
         ams._clear_lane_info.assert_not_called()
         ams._clear_oams_state_for_bay.assert_not_called()
 
@@ -4934,7 +4939,7 @@ class TestOnFilamentRemove:
         with patch("extras.AFC_OpenAMS.AMSHardwareService.for_printer") as mock_for_printer:
             hw = MagicMock()
             mock_for_printer.return_value = hw
-            ams.on_filament_remove(lane)
+            ams.on_filament_remove(lane, gcmd="callback")
         hw.update_lane_snapshot.assert_called_once()
 
 
@@ -5023,7 +5028,7 @@ class TestClearLaneInfo:
     def test_clears_material_and_color(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", material="PLA", color="#FF0000", spool_id=None)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         assert lane.material == ""
         assert lane.color == ""
 
@@ -5031,7 +5036,7 @@ class TestClearLaneInfo:
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_vendor="Prusament", filament_name="PLA Galaxy",
                           spool_id=None)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         assert lane.spool_vendor == ""
         assert lane.filament_name == ""
 
@@ -5045,7 +5050,7 @@ class TestClearLaneInfo:
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_vendor="Prusament", filament_name="PLA Galaxy",
                           material="PLA", color="#FF0000", spool_id=None)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         assert lane.spool_vendor == ""
         assert lane.filament_name == ""
         assert lane.material == ""
@@ -5056,32 +5061,32 @@ class TestClearLaneInfo:
     def test_no_spool_id_skips_spoolman_clear(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=None)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         afc.spool.set_spoolID.assert_not_called()
 
     def test_zero_spool_id_skips_spoolman_clear(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=0)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         afc.spool.set_spoolID.assert_not_called()
 
     def test_real_spool_id_clears_spoolman_record(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=42)
-        ams._clear_lane_info(lane)
-        afc.spool.set_spoolID.assert_called_once_with(lane, "", save_vars=False)
+        ams._clear_lane_info(lane, gcmd="callback")
+        afc.spool.set_spoolID.assert_called_once_with(lane, "", save_vars=False, gcmd="callback")
 
     def test_calls_save_vars(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=42)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         afc.save_vars.assert_called_once()
 
     def test_spoolman_clear_failure_logged_as_warning(self):
         ams, afc, printer, reactor = _make_ams()
         afc.spool.set_spoolID.side_effect = Exception("moonraker offline")
         lane = _make_lane("lane1", spool_id=42)
-        ams._clear_lane_info(lane)  # must not raise
+        ams._clear_lane_info(lane, gcmd="callback")  # must not raise
         assert (
             "warning", "OAMS: failed to clear spool_id on lane1: moonraker offline"
         ) in ams.logger.messages
@@ -5089,14 +5094,14 @@ class TestClearLaneInfo:
     def test_calls_send_lane_data(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=None)
-        ams._clear_lane_info(lane)
+        ams._clear_lane_info(lane, gcmd="callback")
         lane.send_lane_data.assert_called_once()
 
     def test_send_lane_data_failure_is_swallowed(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", spool_id=None)
         lane.send_lane_data.side_effect = Exception("boom")
-        ams._clear_lane_info(lane)  # must not raise
+        ams._clear_lane_info(lane, gcmd="callback")  # must not raise
 
 
 class TestCancelAndMarkLoaded:
@@ -5173,7 +5178,7 @@ class TestClearLaneStateAfterTd1:
     def test_tool_loaded_unloads_tool(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", tool_loaded=True)
-        ams._clear_lane_state_after_td1(lane)
+        ams._clear_lane_state_after_td1(lane, gcmd="callback")
         lane.set_tool_unloaded.assert_called_once()
         afc.save_vars.assert_called_once()
 
@@ -5182,7 +5187,7 @@ class TestClearLaneStateAfterTd1:
         ext = MagicMock()
         ext.lane_loaded = "lane1"
         lane = _make_lane("lane1", tool_loaded=False, extruder_obj=ext)
-        ams._clear_lane_state_after_td1(lane)
+        ams._clear_lane_state_after_td1(lane, gcmd="callback")
         assert ext.lane_loaded is None
 
     def test_non_matching_extruder_lane_loaded_untouched(self):
@@ -5190,20 +5195,20 @@ class TestClearLaneStateAfterTd1:
         ext = MagicMock()
         ext.lane_loaded = "other_lane"
         lane = _make_lane("lane1", tool_loaded=False, extruder_obj=ext)
-        ams._clear_lane_state_after_td1(lane)
+        ams._clear_lane_state_after_td1(lane, gcmd="callback")
         assert ext.lane_loaded == "other_lane"
 
     def test_no_extruder_obj_is_safe(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", tool_loaded=False, extruder_obj=None)
-        ams._clear_lane_state_after_td1(lane)  # must not raise
+        ams._clear_lane_state_after_td1(lane, gcmd="callback")  # must not raise
         afc.save_vars.assert_called_once()
 
     def test_exception_during_state_clear_is_swallowed(self):
         ams, afc, printer, reactor = _make_ams()
         lane = _make_lane("lane1", tool_loaded=True)
         lane.set_tool_unloaded.side_effect = Exception("boom")
-        ams._clear_lane_state_after_td1(lane)  # must not raise
+        ams._clear_lane_state_after_td1(lane, gcmd="callback")  # must not raise
         afc.save_vars.assert_called_once()
 
 
@@ -5216,7 +5221,7 @@ class TestUnloadAfterTd1:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = _make_lane("lane1")
 
-        ams._unload_after_td1(lane, 0)
+        ams._unload_after_td1(lane, 0, gcmd="callback")
 
         assert oams.unload_spool.call_count == 1
         oams.clear_errors.assert_called_once()
@@ -5233,7 +5238,7 @@ class TestUnloadAfterTd1:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = _make_lane("lane1")
 
-        ams._unload_after_td1(lane, 0)
+        ams._unload_after_td1(lane, 0, gcmd="callback")
 
         assert oams.unload_spool.call_count == 3
 
@@ -5246,7 +5251,7 @@ class TestUnloadAfterTd1:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = _make_lane("lane1")
 
-        ams._unload_after_td1(lane, 0)
+        ams._unload_after_td1(lane, 0, gcmd="callback")
 
         assert oams.unload_spool.call_count == 2
         assert (
@@ -5262,7 +5267,7 @@ class TestUnloadAfterTd1:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = _make_lane("lane1")
 
-        ams._unload_after_td1(lane, 0)  # must not raise
+        ams._unload_after_td1(lane, 0, gcmd="callback")  # must not raise
 
     def test_always_clears_lane_state_after_td1(self):
         ams, afc, printer, reactor = _make_ams()
@@ -5273,9 +5278,9 @@ class TestUnloadAfterTd1:
         ams._clear_lane_state_after_td1 = MagicMock()
         lane = _make_lane("lane1")
 
-        ams._unload_after_td1(lane, 0)
+        ams._unload_after_td1(lane, 0, gcmd="callback")
 
-        ams._clear_lane_state_after_td1.assert_called_once_with(lane)
+        ams._clear_lane_state_after_td1.assert_called_once_with(lane, gcmd="callback")
 
 
 class TestCancelAndCleanupTd1:
@@ -5288,13 +5293,13 @@ class TestCancelAndCleanupTd1:
         ams._clear_lane_state_after_td1 = MagicMock()
         lane = _make_lane("lane1")
 
-        ams._cancel_and_cleanup_td1(lane, 1)
+        ams._cancel_and_cleanup_td1(lane, 1, gcmd="callback")
 
         ams._cancel_and_mark_loaded.assert_called_once_with(1, "lane1")
         oams.set_oams_follower.assert_called_once_with(0, 0)
         oams.unload_spool.assert_called_once()
         oams.clear_errors.assert_called_once()
-        ams._clear_lane_state_after_td1.assert_called_once_with(lane)
+        ams._clear_lane_state_after_td1.assert_called_once_with(lane, gcmd="callback")
         ams._wait_for_idle.assert_called_once()
 
     def test_each_step_failure_is_independently_swallowed(self):
@@ -5309,9 +5314,9 @@ class TestCancelAndCleanupTd1:
         ams._clear_lane_state_after_td1 = MagicMock()
         lane = _make_lane("lane1")
 
-        ams._cancel_and_cleanup_td1(lane, 1)  # must not raise
+        ams._cancel_and_cleanup_td1(lane, 1, gcmd="callback")  # must not raise
 
-        ams._clear_lane_state_after_td1.assert_called_once_with(lane)
+        ams._clear_lane_state_after_td1.assert_called_once_with(lane, gcmd="callback")
 
 
 class TestGetTd1Snapshot:
@@ -5442,7 +5447,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
         assert ams._load_failure == ""
@@ -5450,7 +5455,7 @@ class TestOamsLoad:
     def test_no_oams_returns_false(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
         lane = self._lane()
-        assert ams._oams_load(lane) is False
+        assert ams._oams_load(lane, gcmd="callback") is False
         assert ("error", "OAMS hardware not available") in ams.logger.messages
 
     def test_determine_current_spool_exception_falls_through_to_real_load(self):
@@ -5463,7 +5468,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
         oams.load_spool_with_retry.assert_called_once()
@@ -5484,7 +5489,7 @@ class TestOamsLoad:
         ams._monitor = monitor
         lane = self._lane()
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
         assert oams.current_spool == 0
@@ -5507,7 +5512,7 @@ class TestOamsLoad:
         ams._monitor = None
         lane = self._lane()
 
-        result = ams._oams_load(lane)  # must not raise
+        result = ams._oams_load(lane, gcmd="callback")  # must not raise
 
         assert result is True
         assert lane.loaded_to_hub is True
@@ -5523,7 +5528,7 @@ class TestOamsLoad:
         lane = self._lane()
         lane.get_toolhead_pre_sensor_state = MagicMock(return_value=False)
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
         oams.load_spool_with_retry.assert_called_once()
@@ -5543,7 +5548,7 @@ class TestOamsLoad:
         lane = self._lane()
         lane.get_toolhead_pre_sensor_state = MagicMock(side_effect=Exception("boom"))
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
 
@@ -5557,7 +5562,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
 
@@ -5574,7 +5579,7 @@ class TestOamsLoad:
         buf = MagicMock()
         lane = self._lane(buffer_obj=buf)
 
-        ams._oams_load(lane)
+        ams._oams_load(lane, gcmd="callback")
 
         monitor.stop.assert_called_once()
         buf.enable_advance_latch.assert_called_once()
@@ -5590,7 +5595,7 @@ class TestOamsLoad:
         buf = MagicMock(spec=[])  # no enable_advance_latch
         lane = self._lane(buffer_obj=buf)
 
-        ams._oams_load(lane)  # must not raise
+        ams._oams_load(lane, gcmd="callback")  # must not raise
 
     def test_follower_stopped_then_enabled_before_load(self):
         oams = MagicMock()
@@ -5605,7 +5610,7 @@ class TestOamsLoad:
         afc.reactor.pause = MagicMock()
         lane = self._lane()
 
-        ams._oams_load(lane)
+        ams._oams_load(lane, gcmd="callback")
 
         # First call stops (enable=0), second enables forward (enable=1)
         calls = follower.set_follower_state.call_args_list
@@ -5626,7 +5631,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane, max_retries=3)
+        result = ams._oams_load(lane, max_retries=3, gcmd="callback")
 
         assert result is True
         assert oams.load_spool_with_retry.call_count == 2
@@ -5645,12 +5650,12 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
         ams._verify_engagement.assert_not_called()
         ams._advance_tool_stn_to_nozzle.assert_called_once_with(
-            lane, already_advanced=0.0)
+            lane, already_advanced=0.0, gcmd="callback")
 
     def test_non_deferred_engagement_advances_remaining_distance(self):
         oams = MagicMock()
@@ -5663,10 +5668,10 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        ams._oams_load(lane)
+        ams._oams_load(lane, gcmd="callback")
 
         ams._advance_tool_stn_to_nozzle.assert_called_once_with(
-            lane, already_advanced=ams._engagement_length)
+            lane, already_advanced=ams._engagement_length, gcmd="callback")
 
     def test_success_enables_follower_and_starts_monitor(self):
         oams = MagicMock()
@@ -5682,7 +5687,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane)
+        result = ams._oams_load(lane, gcmd="callback")
 
         assert result is True
         follower.enable_follower.assert_any_call(
@@ -5706,7 +5711,7 @@ class TestOamsLoad:
         lane = self._lane()
         lane.extruder_obj.tool_stn_unload = 15.0
 
-        result = ams._oams_load(lane, max_retries=1)
+        result = ams._oams_load(lane, max_retries=1, gcmd="callback")
 
         assert result is False
         ams._oams_extrude.assert_called_once()
@@ -5744,7 +5749,7 @@ class TestOamsLoad:
         ams._oams_extrude = MagicMock()
         lane = self._lane()  # tool_stn_unload=0 by default
 
-        ams._oams_load(lane, max_retries=1)
+        ams._oams_load(lane, max_retries=1, gcmd="callback")
 
         ams._oams_extrude.assert_not_called()
 
@@ -5758,7 +5763,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        ams._oams_load(lane, max_retries=1)  # must not raise
+        ams._oams_load(lane, max_retries=1, gcmd="callback")  # must not raise
 
         assert (
             "debug", "clear_errors after failed load: boom"
@@ -5778,7 +5783,7 @@ class TestOamsLoad:
         afc.reactor.pause = MagicMock()
         lane = self._lane()
 
-        result = ams._oams_load(lane, max_retries=2)
+        result = ams._oams_load(lane, max_retries=2, gcmd="callback")
 
         assert result is True
         follower.enable_follower.assert_any_call(
@@ -5798,7 +5803,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane, max_retries=2)  # must not raise
+        result = ams._oams_load(lane, max_retries=2, gcmd="callback")  # must not raise
 
         assert result is True
 
@@ -5813,7 +5818,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane, max_retries=1)
+        result = ams._oams_load(lane, max_retries=1, gcmd="callback")
 
         assert result is False
         reenable_calls = [
@@ -5833,7 +5838,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane, max_retries=2)
+        result = ams._oams_load(lane, max_retries=2, gcmd="callback")
 
         assert result is True
         assert any(
@@ -5847,7 +5852,7 @@ class TestOamsLoad:
         ams._wait_for_idle = MagicMock(return_value=True)
         lane = self._lane()
 
-        result = ams._oams_load(lane, max_retries=2)
+        result = ams._oams_load(lane, max_retries=2, gcmd="callback")
 
         assert result is False
         assert any("failed after 2 attempts" in m for _, m in ams.logger.messages)
@@ -5872,7 +5877,7 @@ class TestOamsUnload:
 
     def test_no_oams_returns_false(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
-        assert ams._oams_unload(self._lane()) is False
+        assert ams._oams_unload(self._lane(), gcmd="callback") is False
         assert ("error", "OAMS hardware not available") in ams.logger.messages
 
     def test_stops_monitor(self):
@@ -5883,7 +5888,7 @@ class TestOamsUnload:
         monitor = MagicMock()
         ams._monitor = monitor
 
-        ams._oams_unload(self._lane())
+        ams._oams_unload(self._lane(), gcmd="callback")
 
         monitor.stop.assert_called_once()
         monitor.notify_unload_complete.assert_called_once()
@@ -5896,7 +5901,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         ams._monitor = None
 
-        assert ams._oams_unload(self._lane()) is True
+        assert ams._oams_unload(self._lane(), gcmd="callback") is True
 
     def test_follower_reversed_before_retract(self):
         oams = self._ready_oams()
@@ -5907,7 +5912,7 @@ class TestOamsUnload:
         ams._follower = follower
         afc.reactor.pause = MagicMock()
 
-        ams._oams_unload(self._lane())
+        ams._oams_unload(self._lane(), gcmd="callback")
 
         follower.enable_follower.assert_any_call(
             ams._get_monitor_state(), oams, 0,
@@ -5927,7 +5932,7 @@ class TestOamsUnload:
         follower.enable_follower.side_effect = Exception("mcu offline")
         ams._follower = follower
 
-        ams._oams_unload(self._lane())  # must not raise
+        ams._oams_unload(self._lane(), gcmd="callback")  # must not raise
 
         assert (
             "warning",
@@ -5941,7 +5946,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         ams._follower = None
 
-        assert ams._oams_unload(self._lane()) is True
+        assert ams._oams_unload(self._lane(), gcmd="callback") is True
 
     def test_pre_retract_runs_when_tool_stn_unload_set(self):
         oams = self._ready_oams()
@@ -5952,7 +5957,7 @@ class TestOamsUnload:
         lane = self._lane()
         lane.extruder_obj.tool_stn_unload = 15.0
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         ams._oams_extrude.assert_called_once()
         assert ams._oams_extrude.call_args[0][0] == -25.0  # -(15+10)
@@ -5967,7 +5972,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         ams._oams_extrude = MagicMock()
 
-        ams._oams_unload(self._lane())  # tool_stn_unload=0 by default
+        ams._oams_unload(self._lane(), gcmd="callback")  # tool_stn_unload=0 by default
 
         ams._oams_extrude.assert_not_called()
 
@@ -5980,7 +5985,7 @@ class TestOamsUnload:
         lane = self._lane()
         lane.extruder_obj.tool_stn_unload = 15.0
 
-        ams._oams_unload(lane)  # must not raise
+        ams._oams_unload(lane, gcmd="callback")  # must not raise
 
         assert (
             "warning", "Extruder retract before OAMS unload failed: boom"
@@ -5993,7 +5998,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         lane = self._lane(_oams_runout_empty=True)
 
-        result = ams._oams_unload(lane)
+        result = ams._oams_unload(lane, gcmd="callback")
 
         assert result is True
         assert lane._oams_runout_empty is False
@@ -6010,7 +6015,7 @@ class TestOamsUnload:
         ams._wait_for_idle = MagicMock(return_value=True)
         ams._wait_for_hub_settle = MagicMock(return_value=True)
 
-        result = ams._oams_unload(self._lane())
+        result = ams._oams_unload(self._lane(), gcmd="callback")
 
         assert result is True
         assert oams.current_spool is None
@@ -6026,7 +6031,7 @@ class TestOamsUnload:
         ams._wait_for_idle = MagicMock(return_value=True)
         ams._wait_for_hub_settle = MagicMock(return_value=True)
 
-        result = ams._oams_unload(self._lane())
+        result = ams._oams_unload(self._lane(), gcmd="callback")
 
         assert result is True
         oams.unload_spool_with_retry.assert_called_once()
@@ -6038,7 +6043,7 @@ class TestOamsUnload:
         ams._wait_for_idle = MagicMock(return_value=True)
         ams._wait_for_hub_settle = MagicMock(return_value=True)
 
-        result = ams._oams_unload(self._lane())
+        result = ams._oams_unload(self._lane(), gcmd="callback")
 
         assert result is False
 
@@ -6049,7 +6054,7 @@ class TestOamsUnload:
         ams._wait_for_idle = MagicMock(return_value=True)
         ams._wait_for_hub_settle = MagicMock(return_value=True)
 
-        result = ams._oams_unload(self._lane())
+        result = ams._oams_unload(self._lane(), gcmd="callback")
 
         assert result is True
         assert oams.current_spool is None
@@ -6064,7 +6069,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         afc.gcode = MagicMock()
 
-        ams._oams_unload(self._lane())
+        ams._oams_unload(self._lane(), gcmd="callback")
 
         afc.gcode.run_script_from_command.assert_any_call("M83")
         afc.gcode.run_script_from_command.assert_any_call("G1 E-20.00 F1500")
@@ -6081,7 +6086,7 @@ class TestOamsUnload:
         lane = self._lane()
         lane.extruder_obj.tool_stn_unload = 15.0
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         afc.gcode.run_script_from_command.assert_any_call("G1 E-15.00 F1500")
 
@@ -6093,7 +6098,7 @@ class TestOamsUnload:
         afc.gcode = MagicMock()
         afc.gcode.run_script_from_command.side_effect = Exception("gcode busy")
 
-        ams._oams_unload(self._lane())  # must not raise
+        ams._oams_unload(self._lane(), gcmd="callback")  # must not raise
 
         assert (
             "warning", "Concurrent retract failed: gcode busy"
@@ -6107,7 +6112,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         lane = self._lane()
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         assert lane.prep_state is True
         assert lane.loaded_to_hub is True
@@ -6121,7 +6126,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         lane = self._lane(prep_state="untouched")
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         assert lane.prep_state == "untouched"
 
@@ -6133,7 +6138,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         lane = self._lane(prep_state="untouched")
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         assert lane.prep_state == "untouched"
 
@@ -6146,7 +6151,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         lane = self._lane(prep_state="untouched")
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         assert lane.prep_state == "untouched"
 
@@ -6157,7 +6162,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         lane = self._lane()
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         assert lane._load_state is False
         assert ams._last_hub[0] is False
@@ -6169,7 +6174,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=False)
         lane = self._lane(_load_state="untouched")
 
-        ams._oams_unload(lane)
+        ams._oams_unload(lane, gcmd="callback")
 
         assert lane._load_state == "untouched"
 
@@ -6181,7 +6186,7 @@ class TestOamsUnload:
         ams._wait_for_hub_settle = MagicMock(return_value=True)
         lane = self._lane()
 
-        ams._oams_unload(lane)  # must not raise
+        ams._oams_unload(lane, gcmd="callback")  # must not raise
 
         assert lane._load_state is False
 
@@ -6191,7 +6196,7 @@ class TestOamsUnload:
         ams, afc, printer, reactor = _make_ams(oams=oams)
         ams._wait_for_idle = MagicMock(return_value=True)
 
-        result = ams._oams_unload(self._lane())
+        result = ams._oams_unload(self._lane(), gcmd="callback")
 
         assert result is False
         assert any(
@@ -6214,14 +6219,14 @@ class TestCalibrateTd1:
     def test_no_td1_device_id_returns_false(self):
         ams, afc, printer, reactor = _make_ams(oams=MagicMock())
         lane = self._lane(td1_device_id=None)
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
         assert success is False
         assert "td1_device_id" in msg
 
     def test_no_oams_returns_false(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
         lane = self._lane()
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
         assert success is False
         assert "not available" in msg
 
@@ -6230,7 +6235,7 @@ class TestCalibrateTd1:
         ams, afc, printer, reactor = _make_ams(oams=oams)
         afc.function.check_for_td1_id.return_value = (False, "bad id")
         lane = self._lane()
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
         assert success is False
         assert msg == "bad id"
 
@@ -6241,7 +6246,7 @@ class TestCalibrateTd1:
         afc.function.check_for_td1_id.return_value = (True, "")
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is False
         assert "Failed to start load" in msg
@@ -6256,7 +6261,7 @@ class TestCalibrateTd1:
         ams._cancel_and_cleanup_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is False
         assert "did not trigger" in msg
@@ -6272,7 +6277,7 @@ class TestCalibrateTd1:
         ams._cancel_and_cleanup_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)  # must not raise
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")  # must not raise
 
         assert success is False
         assert "did not trigger" in msg
@@ -6299,7 +6304,7 @@ class TestCalibrateTd1:
         ams._unload_after_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is False  # FPS stop before TD-1, but hub did trigger
         assert "did not detect filament" in msg
@@ -6318,11 +6323,11 @@ class TestCalibrateTd1:
         ams._unload_after_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is False
         assert "did not detect filament" in msg
-        ams._unload_after_td1.assert_called_once_with(lane, ams._get_openams_spool_index(lane))
+        ams._unload_after_td1.assert_called_once_with(lane, ams._get_openams_spool_index(lane), gcmd="callback")
         assert any(
             lvl == "info" and m.startswith("TD-1 cal: FPS pressure 0.90")
             for lvl, m in ams.logger.messages)
@@ -6348,7 +6353,7 @@ class TestCalibrateTd1:
         ams._unload_after_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is False
         assert "did not detect filament" in msg
@@ -6372,7 +6377,7 @@ class TestCalibrateTd1:
         reactor.pause = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is True
         assert delta == 100  # |encoder_at_td1(250) - encoder_at_hub(150)|
@@ -6419,7 +6424,7 @@ class TestCalibrateTd1:
         ams._unload_after_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is True
 
@@ -6434,7 +6439,7 @@ class TestCalibrateTd1:
         ams._cancel_and_cleanup_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)  # must not raise
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")  # must not raise
 
         assert success is False
         assert "did not trigger" in msg
@@ -6478,7 +6483,7 @@ class TestCalibrateTd1:
                 oams._in_td1_phase = True  # flip once we're past the hub-wait loop
         reactor.pause = pause
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)  # must not raise
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")  # must not raise
 
         assert success is False
         assert "did not detect filament" in msg
@@ -6511,7 +6516,7 @@ class TestCalibrateTd1:
         ams._unload_after_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")
 
         assert success is False
         assert "did not detect filament" in msg
@@ -6530,7 +6535,7 @@ class TestCalibrateTd1:
         ams._unload_after_td1 = MagicMock()
         lane = self._lane()
 
-        success, msg, delta = ams.calibrate_td1(lane, 0, 0)  # must not raise
+        success, msg, delta = ams.calibrate_td1(lane, 0, 0, gcmd="callback")  # must not raise
 
         assert success is False
 
@@ -6551,6 +6556,7 @@ class TestCaptureTd1WithOams:
     def _capture(self, ams, lane, **kwargs):
         kwargs.setdefault("require_loaded", True)
         kwargs.setdefault("require_enabled", False)
+        kwargs.setdefault("gcmd", "callback")
         return ams._capture_td1_with_oams(lane, **kwargs)
 
     def test_settle_delay_pauses_when_within_window(self):
@@ -6724,7 +6730,7 @@ class TestCaptureTd1WithOams:
         assert "Hub sensor did not trigger" in msg
         oams.unload_spool.assert_called_once()
         oams.clear_errors.assert_called_once()
-        ams._clear_lane_state_after_td1.assert_called_once_with(lane)
+        ams._clear_lane_state_after_td1.assert_called_once_with(lane, gcmd="callback")
         ams._cancel_and_mark_loaded.assert_called_once_with(0, "lane1")
         oams.set_oams_follower.assert_called_once_with(0, 0)
         assert reactor.pause.call_count >= 1
@@ -6776,7 +6782,7 @@ class TestCaptureTd1WithOams:
         success, msg = self._capture(ams, lane)  # must not raise
 
         assert success is False
-        ams._clear_lane_state_after_td1.assert_called_once_with(lane)
+        ams._clear_lane_state_after_td1.assert_called_once_with(lane, gcmd="callback")
 
     def test_encoder_before_read_failure_runs_cleanup(self):
         oams = MagicMock()
@@ -6796,7 +6802,7 @@ class TestCaptureTd1WithOams:
         ams._cancel_and_mark_loaded.assert_called_once_with(0, "lane1")
         oams.unload_spool.assert_called_once()
         oams.clear_errors.assert_called_once()
-        ams._clear_lane_state_after_td1.assert_called_once_with(lane)
+        ams._clear_lane_state_after_td1.assert_called_once_with(lane, gcmd="callback")
 
     def test_encoder_before_failure_cleanup_step_failures_are_all_swallowed(self):
         oams = MagicMock()
@@ -6814,7 +6820,7 @@ class TestCaptureTd1WithOams:
         success, msg = self._capture(ams, lane)  # must not raise
 
         assert success is False
-        ams._clear_lane_state_after_td1.assert_called_once_with(lane)
+        ams._clear_lane_state_after_td1.assert_called_once_with(lane, gcmd="callback")
 
     def test_td1_never_detected_after_target_clicks_reached(self):
         oams = MagicMock()
@@ -6990,7 +6996,7 @@ class TestSystemTest:
     def test_no_oams_reports_not_connected(self):
         ams, afc, printer, reactor = _make_ams(oams=None)
         lane = _make_lane("lane1")
-        result = ams.system_Test(lane, 0, False, True)
+        result = ams.system_Test(lane, 0, False, True, gcmd="callback")
         assert result is False
 
     def test_empty_bay_reports_ready_for_spool(self):
@@ -7002,12 +7008,12 @@ class TestSystemTest:
         lane = _make_lane("lane1", remember_spool=False)
         ams._spool_map["lane1"] = 0
 
-        result = ams.system_Test(lane, 0, False, True)
+        result = ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         assert result is True
         afc.spool.clear_values.assert_called_once_with(lane)
         ams.lane_loaded.assert_not_called()
-        lane.unit_obj.lane_not_ready.assert_called_once_with(lane)
+        lane.unit_obj.lane_not_ready.assert_called_once_with(lane, gcmd="callback")
         assert any(
             lvl == "info" and m.startswith("lane1 tool cmd: T0 ")
             for lvl, m in ams.logger.messages)
@@ -7025,7 +7031,7 @@ class TestSystemTest:
         lane = _make_lane("lane1", remember_spool=False)
         # No ams._spool_map["lane1"] entry -> slot defaults to -1.
 
-        result = ams.system_Test(lane, 0, False, True)
+        result = ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         assert result is True
         assert lane.prep_state is False
@@ -7041,7 +7047,7 @@ class TestSystemTest:
         lane = _make_lane("lane1", remember_spool=True)
         ams._spool_map["lane1"] = 0
 
-        ams.system_Test(lane, 0, False, True)
+        ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         afc.spool.clear_values.assert_not_called()
 
@@ -7055,13 +7061,13 @@ class TestSystemTest:
         lane = _make_lane("lane1", tool_loaded=False)
         ams._spool_map["lane1"] = 0
 
-        result = ams.system_Test(lane, 0, False, True)
+        result = ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         assert result is True
         assert lane.prep_state is True
         assert lane.loaded_to_hub is True
         assert lane.status == AFCLaneState.LOADED
-        ams.lane_loaded.assert_called_once_with(lane)
+        ams.lane_loaded.assert_called_once_with(lane, gcmd="callback")
         ams.lane_illuminate_spool.assert_called_once_with(lane)
 
     def test_tool_loaded_active_lane_sets_tooled_state(self):
@@ -7079,12 +7085,12 @@ class TestSystemTest:
         ams._spool_map["lane1"] = 0
         afc.current = "lane1"
 
-        result = ams.system_Test(lane, 0, False, True)
+        result = ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         assert result is True
         assert lane.status == AFCLaneState.TOOLED
         afc.spool.set_active_spool.assert_called_once_with(lane.spool_id)
-        ams.lane_tool_loaded.assert_called_once_with(lane)
+        ams.lane_tool_loaded.assert_called_once_with(lane, gcmd="callback")
         lane.enable_buffer.assert_called_once()
         lane.sync_to_extruder.assert_called_once()
 
@@ -7104,7 +7110,7 @@ class TestSystemTest:
         ams._spool_map["lane1"] = 0
         afc.current = "lane1"
 
-        ams.system_Test(lane, 0, False, True)
+        ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         printer.send_event.assert_called_once_with("afc:tool_loaded", lane)
 
@@ -7123,9 +7129,9 @@ class TestSystemTest:
         ams._spool_map["lane1"] = 0
         afc.current = "some_other_lane"
 
-        ams.system_Test(lane, 0, False, True)
+        ams.system_Test(lane, 0, False, True, gcmd="callback")
 
-        ams.lane_tool_loaded_idle.assert_called_once_with(lane)
+        ams.lane_tool_loaded_idle.assert_called_once_with(lane, gcmd="callback")
 
     def test_tool_loaded_enables_follower_and_monitor(self):
         oams = MagicMock()
@@ -7146,7 +7152,7 @@ class TestSystemTest:
         ams._spool_map["lane1"] = 0
         afc.current = "some_other_lane"
 
-        ams.system_Test(lane, 0, False, True)
+        ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         follower.enable_follower.assert_called_once()
         monitor.notify_load_complete.assert_called_once()
@@ -7165,7 +7171,7 @@ class TestSystemTest:
         lane = _make_lane("lane1", tool_loaded=True, extruder_obj=ext)
         ams._spool_map["lane1"] = 0
 
-        ams.system_Test(lane, 0, False, True)
+        ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         ams.lane_tool_loaded.assert_not_called()
 
@@ -7177,7 +7183,7 @@ class TestSystemTest:
         lane = _make_lane("lane1")
         ams._spool_map["lane1"] = 0
 
-        ams.system_Test(lane, 0, True, True)
+        ams.system_Test(lane, 0, True, True, gcmd="callback")
 
         afc.function.TcmdAssign.assert_called_once_with(lane)
 
@@ -7189,7 +7195,7 @@ class TestSystemTest:
         lane = _make_lane("lane1")
         ams._spool_map["lane1"] = 0
 
-        ams.system_Test(lane, 0, False, True)
+        ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         afc.function.TcmdAssign.assert_not_called()
 
@@ -7201,7 +7207,7 @@ class TestSystemTest:
         lane = _make_lane("lane1")
         ams._spool_map["lane1"] = 0
 
-        ams.system_Test(lane, 0, False, True)
+        ams.system_Test(lane, 0, False, True, gcmd="callback")
 
         lane.do_enable.assert_called_once_with(False)
         lane.set_afc_prep_done.assert_called_once()

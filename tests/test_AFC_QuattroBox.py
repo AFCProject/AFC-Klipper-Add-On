@@ -137,15 +137,15 @@ class TestQuattroBoxLaneLoading:
         unit.set_logo_color = MagicMock()
         lane = _make_lane()
         with patch.object(afcUnit, "lane_loading") as mock_super:
-            unit.lane_loading(lane)
-        mock_super.assert_called_once_with(lane)
+            unit.lane_loading(lane, gcmd="callback")
+        mock_super.assert_called_once_with(lane, gcmd="callback")
 
     def test_calls_set_logo_color_with_led_logo_loading(self) -> None:
         unit = _make_quattro()
         unit.set_logo_color = MagicMock()
         lane = _make_lane()
         with patch.object(afcUnit, "lane_loading"):
-            unit.lane_loading(lane)
+            unit.lane_loading(lane, gcmd="callback")
         unit.set_logo_color.assert_called_once_with(unit.led_logo_loading)
 
 
@@ -157,15 +157,15 @@ class TestQuattroBoxLaneToolLoaded:
         unit.set_logo_color = MagicMock()
         lane = _make_lane()
         with patch.object(afcUnit, "lane_tool_loaded") as mock_super:
-            unit.lane_tool_loaded(lane)
-        mock_super.assert_called_once_with(lane)
+            unit.lane_tool_loaded(lane, gcmd="callback")
+        mock_super.assert_called_once_with(lane, gcmd="callback")
 
     def test_calls_set_logo_color_with_lane_color(self) -> None:
         unit = _make_quattro()
         unit.set_logo_color = MagicMock()
         lane = _make_lane(color="#00FF00")
         with patch.object(afcUnit, "lane_tool_loaded"):
-            unit.lane_tool_loaded(lane)
+            unit.lane_tool_loaded(lane, gcmd="callback")
         unit.set_logo_color.assert_called_once_with("#00FF00")
 
 
@@ -177,15 +177,15 @@ class TestQuattroBoxLaneToolUnloaded:
         unit.set_logo_color = MagicMock()
         lane = _make_lane()
         with patch.object(afcUnit, "lane_tool_unloaded") as mock_super:
-            unit.lane_tool_unloaded(lane)
-        mock_super.assert_called_once_with(lane)
+            unit.lane_tool_unloaded(lane, gcmd="callback")
+        mock_super.assert_called_once_with(lane, gcmd="callback")
 
     def test_calls_set_logo_color_with_led_logo_color(self) -> None:
         unit = _make_quattro()
         unit.set_logo_color = MagicMock()
         lane = _make_lane()
         with patch.object(afcUnit, "lane_tool_unloaded"):
-            unit.lane_tool_unloaded(lane)
+            unit.lane_tool_unloaded(lane, gcmd="callback")
         unit.set_logo_color.assert_called_once_with(unit.led_logo_color)
 
 

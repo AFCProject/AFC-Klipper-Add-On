@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
+    from extras.AFC_utils import AFCGcmd
 
 if TYPE_CHECKING:
     from extras.AFC import afc
@@ -58,12 +59,13 @@ class afcPrep:
             if not self.dis_unload_macro:
                 self.afc.function._rename(self.afc.BASE_UNLOAD_FILAMENT, self.afc.RENAMED_UNLOAD_FILAMENT, self.afc.cmd_TOOL_UNLOAD, self.afc.cmd_TOOL_UNLOAD_help)
 
-    def _td1_prep(self, overrall_status):
+    def _td1_prep(self, overrall_status, gcmd: AFCGcmd):
         '''
         Helper function to perform TD-1 data capture during PREP
 
         :prep overrall_status: Status of all the lanes, if error occurred during lane prep TD-1 data
                                will not be captured
+        :param gcmd: command context the capture is run through, if any
         '''
         capture_td1_data = self.get_td1_data and self.afc.td1_present
         any_td1_error = False
@@ -75,7 +77,7 @@ class afcPrep:
         # have selectors to make sure the selector is on the correct lane
         current_lane = self.afc.function.get_current_lane_obj()
         if current_lane is not None:
-            current_lane.unit_obj.select_lane(current_lane)
+            current_lane.unit_obj.select_lane(current_lane, gcmd=gcmd)
             if capture_td1_data:
                 self.logger.info("Cannot capture TD-1 data during PREP since toolhead is loaded")
         elif capture_td1_data:
@@ -89,7 +91,7 @@ class afcPrep:
                     for lane in self.afc.lanes.values():
                         if (lane.td1_device_id
                             and lane.load_state and lane.prep_state):
-                            return_status, msg = lane.get_td1_data()
+                            return_status, msg = lane.get_td1_data(gcmd=gcmd)
                             if not return_status:
                                 break
                     self.logger.info("Done capturing TD-1 data")
@@ -114,14 +116,15 @@ class afcPrep:
                 # there is actual data in this file as we do not want to overwrite and put
                 # users boxturtles into a weird state if prep continues.
                 self.afc.error.AFC_error(f"Error when trying to open and decode {self.afc.VarFile}.unit file.\n" + \
-                                          "Please fix file or delete if file is empty, then restart klipper.", False)
+                                          "Please fix file or delete if file is empty, then restart klipper.",
+                                          False, gcmd=gcmd)
                 self.logger.error("", traceback=f"{e}")
                 return
 
         else:
             error_string = 'Error: {}.unit file not found. Please check the path in the '.format(self.afc.VarFile)
             error_string += 'AFC.cfg file and make sure the file and path exists.'
-            self.afc.error.AFC_error(error_string, False)
+            self.afc.error.AFC_error(error_string, False, gcmd=gcmd)
 
         # check if Lane is supposed to be loaded in tool head from saved file
         for extruder in self.afc.tools.keys():
@@ -131,7 +134,7 @@ class afcPrep:
                 # Calls ACTIVATE_EXTRUDER if current toolhead on shuttle is not the active extruder
                 if self.afc.function.get_current_extruder() != extruder_obj.th_extruder_name:
                     self.afc.run_script(
-                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.th_extruder_name}", gcmd
+                        f"ACTIVATE_EXTRUDER EXTRUDER={extruder_obj.th_extruder_name}", gcmd=gcmd
                     )
             if 'system' in units and "extruders" in units["system"]:
                 # Check to see if lane_loaded is in dictionary and its not an empty string
@@ -148,7 +151,7 @@ class afcPrep:
                     virt_state = bool(units["system"]["extruders"]
                                       .get(extruder_obj.name, {})
                                       .get("virtual_tool_start", False))
-                extruder_obj.restore_virtual_tool_start(virt_state)
+                extruder_obj.restore_virtual_tool_start(virt_state, gcmd=gcmd)
 
         self.afc.print_version(console_only=True)
         if self.afc.snapmaker_printer:
@@ -165,7 +168,8 @@ class afcPrep:
                 if cur_lane.name in units[cur_lane.unit]:
                     if 'spool_id' in units[cur_lane.unit][cur_lane.name]: cur_lane.spool_id = units[cur_lane.unit][cur_lane.name]['spool_id']
                     if self.afc.spoolman is not None and cur_lane.spool_id:
-                        self.afc.spool.set_spoolID(cur_lane, cur_lane.spool_id, save_vars=False)
+                        self.afc.spool.set_spoolID(cur_lane, cur_lane.spool_id, save_vars=False,
+                                                   gcmd=gcmd)
                     else:
                         if 'material' in units[cur_lane.unit][cur_lane.name]:
                             cur_lane.material = units[cur_lane.unit][cur_lane.name]['material']
@@ -231,7 +235,7 @@ class afcPrep:
             try: cur_unit = self.afc.units[unit]
             except:
                 error_string = 'Error: {} Unit not found in  config section.'.format(unit)
-                self.afc.error.AFC_error(error_string, False)
+                self.afc.error.AFC_error(error_string, False, gcmd=gcmd)
                 return
             self.logger.info('{} {} Prepping lanes'.format(cur_unit.type, unit))
             lanes_for_first_hub = []
@@ -243,7 +247,8 @@ class afcPrep:
                     lanes_for_first_hub.append(lane.name)
                     hub_name = lane.hub_obj.fullname
 
-                if not cur_unit.system_Test(lane, self.delay, self.assignTcmd, self.enable):
+                if not cur_unit.system_Test(lane, self.delay, self.assignTcmd, self.enable,
+                                            gcmd=gcmd):
                     LaneCheck = False
             # Warn user if multiple hubs were found and hub was not assigned to unit/stepper
             if len(lanes_for_first_hub) != 0:
@@ -261,13 +266,13 @@ class afcPrep:
         except:
             pass
 
-        self._td1_prep(overrall_status)
+        self._td1_prep(overrall_status, gcmd=gcmd)
         # look up what current lane should be a call select lane, this is more for units that
         # have selectors to make sure the selector is on the correct lane
         current_lane = self.afc.function.get_current_lane_obj()
         if current_lane is not None:
-            current_lane.unit_obj.select_lane(current_lane)
-            current_lane.sync_to_extruder()
+            current_lane.unit_obj.select_lane(current_lane, gcmd=gcmd)
+            current_lane.sync_to_extruder(gcmd=gcmd)
 
         # Restore previous bypass state if virtual bypass is active
         bypass_name = "Bypass"
