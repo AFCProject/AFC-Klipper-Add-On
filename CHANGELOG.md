@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hub_clear_move_dis` as `dist_hub`, so a staged ACE lane parks short of a hub sensor that sits
   past the point where the tubes merge. Recalibrate ACE lanes with a hub sensor after updating.
 
+### Fixed
+- A print whose file Moonraker doesn't have, such as the virtual job Kalico's `PRINT_PA_TOWER`
+  runs, no longer reports "Error getting data from moonraker" to the console at print start. The
+  404 is logged as a debug message and the print continues with no toolchange count, as before.
+  Other Moonraker failures are still reported as errors.
+
 ## [11-21-2026]
 ### Added
 - Filtering of message that get logged to AFC_ACE_serial.log, before it was very chatty and would constantly log to file. Logging that has been suppressed can be turned back on by adding `debug: True` into your unit config.
