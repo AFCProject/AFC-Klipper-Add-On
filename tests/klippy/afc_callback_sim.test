@@ -29,8 +29,8 @@ SIMULATE_CALLBACK OBJECT="AFC_button lane1" METHOD=button_callback STATE=0 DELTA
 # BUTTON_CALIBRATION CANCEL=1 short-circuits before any ADC button lookup,
 # so it runs the same whether or not ADC buttons are configured (none are,
 # here). afcFunction has no get_status(), so ASSERT can't read its session
-# state back directly; this proves the command's own real gcmd dispatch
-# (prompt_end plus resetting session state) completes without raising or
-# deadlocking, same as every other line in this file with no trailing
-# ASSERT.
+# state back directly; EXPECT_LOG instead confirms the handler's own prompt
+# actually logged, so this doesn't just pass on an unregistered/unknown
+# command silently falling through to the end of the file.
 BUTTON_CALIBRATION CANCEL=1
+EXPECT_LOG action:prompt_begin Button Calibration Cancelled

@@ -193,6 +193,36 @@ class TestAFCButtonInit:
         btn = _make_button("lane1", analog_range="500,1500")
         assert (btn.analog_min, btn.analog_max) == (500.0, 1500.0)
 
+    def test_analog_range_with_an_empty_field_is_rejected(self) -> None:
+        """Klipper's real getfloatlist() rejects an empty field rather than silently skipping it,
+        so `500,,1500` must fail to construct instead of being parsed as a valid pair."""
+        with pytest.raises(ValueError):
+            _make_button("lane1", analog_range="500,,1500")
+
+    def test_analog_min_max_parsed_from_file_backed_config(self) -> None:
+        """analog_range read via MockConfig.fileconfig (as a real printer.cfg value would be)
+        must parse the same way as one passed through the values dict."""
+        from tests.conftest import MockAFC, MockConfig, MockLogger, MockPrinter
+
+        afc = MockAFC()
+        afc.logger = MockLogger()
+        printer = MockPrinter(afc=afc)
+        printer._objects["buttons"] = MagicMock()
+        printer._objects["gcode_macro"] = _FakeGCodeMacro()
+        lane = MagicMock()
+        lane.name = "lane1"
+        afc.lanes = {"lane1": lane}
+        afc.function.button_calibration_active = False
+
+        config = MockConfig(name="AFC_button lane1", printer=printer,
+                            values={"pin": "PA0", "long_press_duration": 1.2,
+                                   "short_press_gcode": "", "long_press_gcode": ""})
+        config.fileconfig.set(config.section, "analog_range", "500,1500")
+        btn = AFCButton(config)
+        printer.send_event("klippy:ready")
+
+        assert (btn.analog_min, btn.analog_max) == (500.0, 1500.0)
+
     def test_pullup_default_with_analog_range(self) -> None:
         btn = _make_button("lane1", analog_range="500,1500")
         assert btn.pullup == 4700.0
@@ -218,23 +248,53 @@ class TestAFCButtonInit:
         assert btn.pin == "PB3"
 
     def test_registers_debounce_button_for_digital_pin(self) -> None:
-        btn = _make_button("lane1")
-        buttons_mock = btn.printer._objects["buttons"]
-        buttons_mock.register_debounce_button.assert_called_once()
-        call_args = buttons_mock.register_debounce_button.call_args[0]
-        assert call_args[0] == btn.pin
-        assert call_args[1] == btn.button_callback
+        from tests.conftest import MockAFC, MockConfig, MockLogger, MockPrinter
+
+        afc = MockAFC()
+        afc.logger = MockLogger()
+        printer = MockPrinter(afc=afc)
+        printer._objects["buttons"] = MagicMock()
+        printer._objects["gcode_macro"] = _FakeGCodeMacro()
+        lane = MagicMock()
+        lane.name = "lane1"
+        afc.lanes = {"lane1": lane}
+        afc.function.button_calibration_active = False
+        config = MockConfig(name="AFC_button lane1", printer=printer,
+                            values={"pin": "PA0", "long_press_duration": 1.2,
+                                   "short_press_gcode": "", "long_press_gcode": ""})
+
+        btn = AFCButton(config)
+        printer.send_event("klippy:ready")
+
+        buttons_mock = printer._objects["buttons"]
+        buttons_mock.register_debounce_button.assert_called_once_with(
+            btn.pin, btn.button_callback, config)
         buttons_mock.register_debounce_adc_button.assert_not_called()
 
     def test_registers_debounce_adc_button_for_adc_pin(self) -> None:
-        btn = _make_button("lane1", analog_range="500,1500",
-                           analog_pullup_resistor=2200.0)
-        buttons_mock = btn.printer._objects["buttons"]
-        buttons_mock.register_debounce_adc_button.assert_called_once()
-        call_args = buttons_mock.register_debounce_adc_button.call_args[0]
-        assert call_args[0] == btn.pin
-        assert call_args[1:4] == (500.0, 1500.0, 2200.0)
-        assert call_args[4] == btn.button_callback
+        from tests.conftest import MockAFC, MockConfig, MockLogger, MockPrinter
+
+        afc = MockAFC()
+        afc.logger = MockLogger()
+        printer = MockPrinter(afc=afc)
+        printer._objects["buttons"] = MagicMock()
+        printer._objects["gcode_macro"] = _FakeGCodeMacro()
+        lane = MagicMock()
+        lane.name = "lane1"
+        afc.lanes = {"lane1": lane}
+        afc.function.button_calibration_active = False
+        config = MockConfig(name="AFC_button lane1", printer=printer,
+                            values={"pin": "PA0", "long_press_duration": 1.2,
+                                   "short_press_gcode": "", "long_press_gcode": "",
+                                   "analog_range": "500,1500",
+                                   "analog_pullup_resistor": 2200.0})
+
+        btn = AFCButton(config)
+        printer.send_event("klippy:ready")
+
+        buttons_mock = printer._objects["buttons"]
+        buttons_mock.register_debounce_adc_button.assert_called_once_with(
+            btn.pin, 500.0, 1500.0, 2200.0, btn.button_callback, config)
         buttons_mock.register_debounce_button.assert_not_called()
 
     def test_falls_back_to_register_buttons_for_digital_pin(self) -> None:
@@ -401,9 +461,14 @@ class TestGetResistance:
         assert result == pytest.approx(expected, rel=1e-6)
 
     def test_clamps_value_near_one(self) -> None:
+        """value=1.0 is a valid, in-range ADC ratio (0.0 <= 1.0 <= 1.0), so
+        _get_adc_ratio() selects it as-is; the out-of-range timestamp (10.0)
+        only confirms it was correctly rejected as the other field. The clamp
+        under test here is get_resistance()'s own max(0.00001, min(0.99999,
+        value))."""
         btn = _make_button("lane1", analog_range="500,1500",
                            analog_pullup_resistor=4700.0)
-        _register_adc_sample(btn, value=1.5, timestamp=10.0, value_first=True)
+        _register_adc_sample(btn, value=1.0, timestamp=10.0, value_first=True)
         result = btn.get_resistance()
         expected = 4700.0 * 0.99999 / (1.0 - 0.99999)
         assert result == pytest.approx(expected, rel=1e-6)
@@ -479,8 +544,10 @@ class TestRunCustomPressGcode:
         btn._run_custom_press_gcode(template)
         btn.afc.logger.debug.assert_called_once()
         call_args = btn.afc.logger.debug.call_args
+        assert call_args[0][0] == "lane1: error running AFC_button lane1:short_press_gcode"
         assert call_args[1]["only_debug"] is True
         assert "bad template" in call_args[1]["traceback"]
+        assert btn.afc.logger.messages == []
 
     def test_run_script_exception_reports_afc_error_and_returns_true(self) -> None:
         btn = _make_button("lane1")
