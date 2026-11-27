@@ -763,6 +763,7 @@ class TestBufferToggle:
         buf.start_fault_detection = MagicMock()
 
         buf.disable_fault_sensitivity()
+        assert buf.fault_sensitivity == 0
         buf.enable_buffer(lane)
         buf.set_multiplier.assert_called_once_with(buf.multiplier_high)
         assert buf.enable is True
@@ -770,6 +771,7 @@ class TestBufferToggle:
         assert buf.logger.messages == [("debug", "TN buffer enabled for lane1")]
 
         buf.restore_fault_sensitivity()
+        assert buf.fault_sensitivity == 60
         buf.enable_buffer(lane)
         buf.start_fault_detection.assert_called_once_with(0, pytest.approx(1.65))
         assert buf.enable is True
