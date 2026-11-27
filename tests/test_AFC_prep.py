@@ -171,7 +171,8 @@ class TestTd1Prep:
 
 
 class TestPrepRestoreFilamentInfo:
-    def _run_prep(self, lane_vars, spoolman=None, tmp_path=None, current_lane_obj=None):
+    def _run_prep(self, lane_vars, spoolman=None, tmp_path=None, current_lane_obj=None,
+                  filament_id=""):
         from tests.conftest import MockConfig, MockPrinter, MockAFC
 
         afc = MockAFC()
@@ -216,7 +217,7 @@ class TestPrepRestoreFilamentInfo:
         lane.spool_id = None
         lane.spool_vendor = ""
         lane.filament_name = ""
-        lane.filament_id = ""
+        lane.filament_id = filament_id
         lane.runout_lane = None
         lane.map = None
         lane.unit_obj = unit
@@ -278,8 +279,9 @@ class TestPrepRestoreFilamentInfo:
         assert lane.filament_id == "OFDSrzZ8"
 
     def test_missing_key_leaves_filament_id_unchanged(self, tmp_path):
-        lane, _ = self._run_prep({"filament_name": "PLA"}, tmp_path=tmp_path)
-        assert lane.filament_id == ""
+        lane, _ = self._run_prep({"filament_name": "PLA"}, tmp_path=tmp_path,
+                                 filament_id="OFDSrzZ8")
+        assert lane.filament_id == "OFDSrzZ8"
 
 
 class TestPrepSelectCurrentLane(TestPrepRestoreFilamentInfo):
