@@ -1,0 +1,71 @@
+# AFC buffer fault-during-real-SD-print integration test.
+#
+# Reproduces the production "A legacy G-code context cannot acquire the
+# mutex" crash: a buffer fault fires while something else holds the gcode
+# mutex, so old-style run_script enters a legacy context to run PAUSE, and
+# a nested run_script() inside AFC_PAUSE later fails once that mutex is
+# legitimately released by its original holder.
+#
+# On the current branch, extruder_pos_update_event threads gcmd="callback"
+# through pause_print/run_script, so this never takes the legacy-context
+# path and passes here.
+#
+# REACTOR_PAUSE HOLD_MUTEX=1 stands in for the real in-flight move that was
+# holding the mutex in production.
+#
+# Prerequisites:
+#   - tests/dict/stm32h723.dict must exist
+#   - KLIPPER_PATH must point to a Klipper clone with chelper built
+
+DICTIONARY stm32h723.dict
+CONFIG afc_buffer_sdcard_print.cfg
+
+PREP
+
+AFC_CLEAR_MESSAGE
+
+G28
+
+ENABLE_BUFFER BUFFER=buf1 LANE=lane1
+
+# Arms fault detection (starts the fault timer, sets filament_error_pos).
+AFC_SET_ERROR_SENSITIVITY BUFFER=buf1 SENSITIVITY=5.0
+
+# A real lane move (must happen before the SD print starts below, since
+# LANE_MOVE refuses to run mid-print), then a real trailing-pin transition
+# (buffer compressing, mimicking a clog).
+LANE_MOVE LANE=lane1 DISTANCE=50
+SIMULATE_CALLBACK OBJECT="AFC_buffer buf1" METHOD=trailing_callback STATE=1
+ASSERT TEST="{ printer['AFC_buffer buf1'].state == 'Advancing' }"
+
+# Force the extruder-position-vs-threshold comparison to read as an overrun
+# (this harness never moves a real toolhead extruder on its own). This
+# doesn't fire the fault itself -- AFC_buffer's own recurring
+# extruder_pos_update_event timer (already running since ENABLE_BUFFER)
+# picks this up and fires on its own the next time the reactor gets
+# control, same as it would in a real print.
+#
+# This must happen before SDCARD_PRINT_FILE: newer Klipper opens the print
+# file through a background executor, which yields back to the reactor
+# mid-command. That lets the already-due fault-check timer sneak in a tick
+# right there, before any later SET_ATTR in this same batch would have
+# applied, so it would see the real sensitivity-derived threshold instead
+# of this forced overrun and skip the fault.
+SET_ATTR OBJECT="AFC_buffer buf1" ATTR=filament_error_pos VALUE=-1000.0
+SET_ATTR OBJECT="AFC_buffer buf1" ATTR=past_extruder_position VALUE=0.0
+# pause_on_error ignores pauses for 2s after klippy:ready; clear that gate.
+SET_ATTR OBJECT="AFC_buffer buf1" ATTR=min_event_systime VALUE=0.0
+
+# Starts a real SD-card print (sets print_stats to 'printing' and registers
+# virtual_sdcard's work_timer), so pause_resume.send_pause_command() below
+# genuinely engages virtual_sdcard.do_pause() instead of a no-op.
+SDCARD_PRINT_FILE FILENAME=fault_dwell.gcode
+
+# Holds the mutex across that first reactor yield, so the fault fires with
+# it genuinely held (mutex.test()==True), then releases almost immediately
+# -- same as a real move finishing partway through AFC_PAUSE's own
+# processing. The second REACTOR_PAUSE gives the rest of the PAUSE chain
+# time to run.
+REACTOR_PAUSE DELAY=0.0005 HOLD_MUTEX=1
+REACTOR_PAUSE DELAY=0.1
+ASSERT TEST="{ printer['pause_resume'].is_paused }"

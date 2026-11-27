@@ -537,7 +537,7 @@ class TestAfcAddMapping:
         assert lane1.map == ["T0"]
         spool.afc.error.AFC_error.assert_called_once_with(
             "Cannot map T1 to lane1, as mapping already exists.", False
-        )
+        , gcmd=gcmd)
 
     def test_skips_and_logs_error_when_mapping_is_not_t_number_format(self):
         spool = _make_spool()
@@ -552,7 +552,7 @@ class TestAfcAddMapping:
         assert lane1.map == ["T0"]
         spool.afc.error.AFC_error.assert_called_once_with(
             "'CUSTOM_LANE' is not a valid mapping, expect T(n) format.", False
-        )
+        , gcmd=gcmd)
 
 
 # ── cmd_AFC_REMOVE_MAPPING ───────────────────────────────────────────────────────
@@ -639,7 +639,8 @@ class TestAfcRemoveMapping:
         spool.afc.tool_cmds = {}
         gcmd = _make_gcmd(MAPPING="T9")
         spool.cmd_AFC_REMOVE_MAPPING(gcmd)
-        spool.afc.error.AFC_error.assert_called_once_with("Mapping T9 does not exist", False)
+        spool.afc.error.AFC_error.assert_called_once_with(
+            "Mapping T9 does not exist", False, gcmd=gcmd)
         assert "T9" not in spool.gcode._commands
 
     def test_missing_lane_object_still_unregisters_command(self):
@@ -781,7 +782,7 @@ class TestSetColor:
         spool.afc.lanes = {"lane1": lane}
         gcmd = _make_gcmd(LANE="lane1", COLOR="#FF0000")
         spool.cmd_SET_COLOR(gcmd)
-        lane.unit_obj.lane_loaded.assert_called_once_with(lane, force=True)
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane, force=True, gcmd=gcmd)
         
 
     def test_not_set_led_lane_loaded_not_lane_in_unit(self):
@@ -1515,17 +1516,19 @@ class TestClearValues:
 
 class TestSetValues:
     def test_sets_defaults_when_not_remember_spool(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
         spool.afc.default_material_type = "PLA"
         spool.set_spoolID = MagicMock()
-        spool._set_values(lane)
+        spool._set_values(lane, gcmd=gcmd)
         assert lane.material == "PLA"
         assert lane.weight == 1000
         spool.set_spoolID.assert_not_called()
 
     def test_calls_set_spool_id_when_next_spool_id_set(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1533,11 +1536,12 @@ class TestSetValues:
         spool.afc.spoolman = MagicMock()
         spool.next_spool_id = 42
         spool.set_spoolID = MagicMock()
-        spool._set_values(lane)
-        spool.set_spoolID.assert_called_once_with(lane, 42, on_done=None)
+        spool._set_values(lane, gcmd=gcmd)
+        spool.set_spoolID.assert_called_once_with(lane, 42, on_done=None, gcmd=gcmd)
         assert spool.next_spool_id is None  # consumed after use
 
     def test_set_value_material_not_set_remember_spool(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = True
@@ -1547,11 +1551,12 @@ class TestSetValues:
         spool.afc.spoolman = MagicMock()
         spool.next_spool_id = 42
         spool.set_spoolID = MagicMock()
-        spool._set_values(lane)
+        spool._set_values(lane, gcmd=gcmd)
         assert lane.material == ""
         assert lane.weight == 0
 
     def test_set_value_material_not_set_no_spool_id(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1559,11 +1564,12 @@ class TestSetValues:
         spool.afc.default_material_type = "PLA"
         spool.afc.spoolman = MagicMock()
         spool.set_spoolID = MagicMock()
-        spool._set_values(lane)
+        spool._set_values(lane, gcmd=gcmd)
         assert lane.material == ""
         assert lane.weight == 0
     
     def test_set_value_material_not_set_no_color(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1573,11 +1579,12 @@ class TestSetValues:
         spool.afc.spoolman = MagicMock()
         spool.next_spool_id = 42
         spool.set_spoolID = MagicMock()
-        spool._set_values(lane)
+        spool._set_values(lane, gcmd=gcmd)
         assert lane.material == ""
         assert lane.weight == 0
 
     def test_on_done_forwarded_to_set_spool_id_when_next_spool_id_set(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1585,11 +1592,12 @@ class TestSetValues:
         spool.next_spool_id = 42
         spool.set_spoolID = MagicMock()
         on_done = MagicMock()
-        spool._set_values(lane, on_done=on_done)
-        spool.set_spoolID.assert_called_once_with(lane, 42, on_done=on_done)
+        spool._set_values(lane, on_done=on_done, gcmd=gcmd)
+        spool.set_spoolID.assert_called_once_with(lane, 42, on_done=on_done, gcmd=gcmd)
         on_done.assert_not_called()  # only set_spoolID's async fetch may call it
 
     def test_on_done_called_immediately_when_no_pending_spool_id(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1597,19 +1605,20 @@ class TestSetValues:
         spool.next_spool_id = None
         spool.set_spoolID = MagicMock()
         on_done = MagicMock()
-        spool._set_values(lane, on_done=on_done)
+        spool._set_values(lane, on_done=on_done, gcmd=gcmd)
         spool.set_spoolID.assert_not_called()
         on_done.assert_called_once()
 
     def test_on_done_not_required(self):
         """Existing callers that don't pass on_done keep working unchanged."""
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
         spool.afc.spoolman = MagicMock()
         spool.next_spool_id = None
         spool.set_spoolID = MagicMock()
-        spool._set_values(lane)  # must not raise
+        spool._set_values(lane, gcmd=gcmd)  # must not raise
 
 
 # ── set_spoolID ───────────────────────────────────────────────────────────────
@@ -1647,34 +1656,38 @@ class TestSetSpoolID:
         """Covers the `spoolman is not None` half of the combined condition
         being falsy on its own -- _make_spool()'s afc.moonraker defaults to
         set, so this proves moonraker alone isn't enough either."""
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
         spool.clear_values = MagicMock()
-        spool.set_spoolID(lane, "")
+        spool.set_spoolID(lane, "", gcmd=gcmd)
         spool.clear_values.assert_called_once_with(lane)
     
     def test_no_spool_remember_spool_clear_spoolid(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = True
         spool.clear_values = MagicMock()
-        spool.set_spoolID(lane, "")
+        spool.set_spoolID(lane, "", gcmd=gcmd)
         spool.clear_values.assert_not_called()
 
     def test_spoolman_set_but_no_moonraker_clears_values(self):
         """Covers the `moonraker is not None` half of the combined condition
         being falsy on its own, with spoolman still set -- proves spoolman
         alone isn't enough to enter the lookup branch."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         spool.afc.moonraker = None
         lane = _make_lane()
         lane.remember_spool = False
         spool.clear_values = MagicMock()
-        spool.set_spoolID(lane, "42")
+        spool.set_spoolID(lane, "42", gcmd=gcmd)
         spool.clear_values.assert_called_once_with(lane)
 
     def test_valid_spool_id_sets_lane_attributes(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         spool.set_snapmaker_filament_params = MagicMock()
         lane = _make_lane()
@@ -1682,7 +1695,7 @@ class TestSetSpoolID:
         lane.espooler = MagicMock()
         result = _make_spool_result()
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.spool_id == 42
         assert lane.material == "PLA"
         assert lane.color == "#FF0000"
@@ -1691,6 +1704,7 @@ class TestSetSpoolID:
         spool.afc.function.afc_led.assert_not_called()
 
     def test_valid_spool_id_sets_vendor(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         spool.set_snapmaker_filament_params = MagicMock()
         lane = _make_lane()
@@ -1700,7 +1714,7 @@ class TestSetSpoolID:
         result["filament"]["vendor"] = {}
         result["filament"]["vendor"]["name"] = "Polymaker"
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.spool_id == 42
         assert lane.material == "PLA"
         assert lane.color == "#FF0000"
@@ -1709,6 +1723,7 @@ class TestSetSpoolID:
         spool.afc.function.afc_led.assert_not_called()
 
     def test_valid_spool_id_lane_not_loaded_lane_in_unit(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1718,10 +1733,11 @@ class TestSetSpoolID:
         spool.afc.units[lane.unit] = lane.unit_obj
         result = _make_spool_result()
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         spool.afc.function.afc_led.assert_not_called()
 
     def test_valid_spool_id_lane_loaded_lane_in_unit(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.load_state = True
@@ -1731,10 +1747,11 @@ class TestSetSpoolID:
         lane.espooler = MagicMock()
         result = _make_spool_result()
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
-        lane.unit_obj.lane_loaded.assert_called_once_with(lane, force=True)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
+        lane.unit_obj.lane_loaded.assert_called_once_with(lane, force=True, gcmd="callback")
 
     def test_valid_spool_id_lane_loaded_lane_not_in_unit(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.load_state = True
@@ -1743,10 +1760,11 @@ class TestSetSpoolID:
         lane.espooler = MagicMock()
         result = _make_spool_result()
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         spool.afc.function.afc_led.assert_not_called()
 
     def test_zero_weight_triggers_error_when_check_enabled(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1755,7 +1773,7 @@ class TestSetSpoolID:
         _stub_get_spool(spool, result)
         spool.disable_weight_check = False
         spool.clear_values = MagicMock()
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         spool.afc.error.AFC_error.assert_called()
         spool.clear_values.assert_called()
 
@@ -1763,6 +1781,7 @@ class TestSetSpoolID:
         """The invalid-weight early return is inside _apply_spool_data's
         finally block, so it must not skip these -- same guarantee as the
         exception and success paths."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         spool.set_snapmaker_filament_params = MagicMock()
         lane = _make_lane()
@@ -1773,13 +1792,14 @@ class TestSetSpoolID:
         spool.disable_weight_check = False
         on_done = MagicMock()
 
-        spool.set_spoolID(lane, 42, on_done=on_done)
+        spool.set_spoolID(lane, 42, on_done=on_done, gcmd=gcmd)
 
         spool.set_snapmaker_filament_params.assert_called_once_with(lane)
         spool.afc.save_vars.assert_called_once_with()
         on_done.assert_called_once_with()
 
     def test_disable_weight_check_skips_validation(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1787,10 +1807,11 @@ class TestSetSpoolID:
         result = _make_spool_result(weight=0.0)
         _stub_get_spool(spool, result)
         spool.disable_weight_check = True
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         spool.afc.error.AFC_error.assert_not_called()
 
     def test_multi_color_takes_first_color(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1798,11 +1819,12 @@ class TestSetSpoolID:
         result = _make_spool_result()
         result["filament"]["multi_color_hexes"] = "AABBCC,001122,334455"
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color == "#AABBCC"
         assert lane.multi_color == result["filament"]["multi_color_hexes"].split(",")
 
     def test_multi_color_is_none(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
@@ -1810,11 +1832,12 @@ class TestSetSpoolID:
         result = _make_spool_result(color_hex="AABBCC")
         result["filament"]["multi_color_hexes"] = None
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color == "#AABBCC"
         assert lane.multi_color == []
 
     def test_ignore_spoolman_material_temps_skips_extruder_temp(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         spool.afc.ignore_spoolman_material_temps = True
         lane = _make_lane()
@@ -1823,7 +1846,7 @@ class TestSetSpoolID:
         lane.espooler = MagicMock()
         result = _make_spool_result()
         _stub_get_spool(spool, result)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         # extruder_temp should NOT be overwritten when the flag is True
         assert lane.extruder_temp is None
 
@@ -1831,46 +1854,50 @@ class TestSetSpoolID:
         """A failed/not-found lookup delivers None to the callback (get_spool
         already logs its own "not found" message); _apply_spool_data must
         still report it via AFC_error rather than crashing."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
         _stub_get_spool(spool, None)
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         spool.afc.error.AFC_error.assert_called_once()
         assert "42" in spool.afc.error.AFC_error.call_args[0][0]
 
     def test_exception_while_applying_spool_data_calls_afc_error(self):
         """An exception raised while processing a successful response (e.g.
         malformed data) must still be caught and reported, not crash."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
         _stub_get_spool(spool, {"filament": None})  # .get() on None -> AttributeError
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
         spool.afc.error.AFC_error.assert_called_once()
 
     def test_get_spool_int_conversion_failure_calls_afc_error(self):
         """SpoolID that can't convert to int (defensive edge case; normal
         callers already validate) must be reported, not crash, and must not
         dispatch a lookup at all."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
         spool.afc.moonraker.get_spool = MagicMock()
-        spool.set_spoolID(lane, "not-a-number")
+        spool.set_spoolID(lane, "not-a-number", gcmd=gcmd)
         spool.afc.error.AFC_error.assert_called_once()
         spool.afc.moonraker.get_spool.assert_not_called()
 
     def test_valid_spool_id_dispatches_async_lookup_without_blocking(self):
         """set_spoolID must not block on the lookup: with a callback that
         never fires, the lane must remain unmodified when set_spoolID returns."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
         original_spool_id = lane.spool_id
         spool.afc.moonraker.get_spool = MagicMock()  # never invokes its callback
 
-        spool.set_spoolID(lane, 42)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
 
         spool.afc.moonraker.get_spool.assert_called_once()
         assert spool.afc.moonraker.get_spool.call_args[0][0] == 42
@@ -1880,40 +1907,44 @@ class TestSetSpoolID:
     def test_sync_clear_path_calls_on_done(self):
         """Covers the synchronous branch of set_spoolID (no moonraker lookup
         needed) still invoking on_done."""
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane()
         lane.remember_spool = False
         on_done = MagicMock()
-        spool.set_spoolID(lane, "", on_done=on_done)
+        spool.set_spoolID(lane, "", on_done=on_done, gcmd=gcmd)
         on_done.assert_called_once_with()
 
     def test_async_path_calls_on_done_via_apply_spool_data(self):
         """Covers _apply_spool_data's finally block invoking on_done once
         the async lookup resolves through the real set_spoolID/get_spool wiring."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
         lane.espooler = MagicMock()
         _stub_get_spool(spool, _make_spool_result())
         on_done = MagicMock()
-        spool.set_spoolID(lane, 42, on_done=on_done)
+        spool.set_spoolID(lane, 42, on_done=on_done, gcmd=gcmd)
         on_done.assert_called_once_with()
 
     def test_empty_spool_id_with_spoolman_not_remember_spool_clears_values(self):
         """spoolman not None + SpoolID='' + not remember_spool → clear_values."""
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = False
         spool.clear_values = MagicMock()
-        spool.set_spoolID(lane, "")
+        spool.set_spoolID(lane, "", gcmd=gcmd)
         spool.clear_values.assert_called_once_with(lane)
     
     def test_remember_spool_clear_spoolid(self):
+        gcmd = _make_gcmd()
         spool = self._make_spool_with_spoolman()
         lane = _make_lane()
         lane.remember_spool = True
         spool.clear_values = MagicMock()
-        spool.set_spoolID(lane, "")
+        spool.set_spoolID(lane, "", gcmd=gcmd)
         spool.clear_values.assert_not_called()
 
 # ── cmd_SET_SPOOL_ID ──────────────────────────────────────────────────────────
@@ -2047,14 +2078,16 @@ class TestCmdSetSpoolID:
 
 class TestAutoSwitchFlagReset:
     def test_set_values_resets_auto_switch_flag(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane("lane1")
         lane.auto_switch_triggered = True
         lane.remember_spool = False
-        spool._set_values(lane)
+        spool._set_values(lane, gcmd=gcmd)
         assert lane.auto_switch_triggered is False
 
     def test_clear_values_resets_auto_switch_flag(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         lane = _make_lane("lane1")
         lane.auto_switch_triggered = True
@@ -2063,6 +2096,7 @@ class TestAutoSwitchFlagReset:
         assert lane.auto_switch_triggered is False
 
     def test_set_spoolID_resets_auto_switch_flag(self):
+        gcmd = _make_gcmd()
         spool = _make_spool()
         spool.afc.spoolman = "http://spoolman:7912"
         spool.afc.moonraker = MagicMock()
@@ -2084,7 +2118,7 @@ class TestAutoSwitchFlagReset:
         lane.auto_switch_triggered = True
         lane.espooler = MagicMock()
         lane.espooler.espooler_values = MagicMock()
-        spool.set_spoolID(lane, "123")
+        spool.set_spoolID(lane, "123", gcmd=gcmd)
         assert lane.auto_switch_triggered is False
 
 class TestSetSnapmakerFilamentParams:

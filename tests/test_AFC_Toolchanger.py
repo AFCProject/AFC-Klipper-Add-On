@@ -59,13 +59,13 @@ class TestSystemTest:
     def test_returns_true(self):
         tool = _make_toolchanger()
         lane = _make_lane_for_system_test()
-        result = tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        result = tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
         assert result is True
 
     def test_assign_tcmd_true_calls_tcmd_assign(self):
         tool = _make_toolchanger()
         lane = _make_lane_for_system_test()
-        tool.system_Test(lane, delay=0, assignTcmd=True, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=True, enable_movement=True, gcmd=_build_gcmd())
         tool.afc.function.TcmdAssign.assert_called_once_with(lane)
 
     def test_assign_tcmd_false_does_not_call_tcmd_assign(self):
@@ -73,19 +73,19 @@ class TestSystemTest:
         truthy case above."""
         tool = _make_toolchanger()
         lane = _make_lane_for_system_test()
-        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
         tool.afc.function.TcmdAssign.assert_not_called()
 
     def test_sends_lane_data(self):
         tool = _make_toolchanger()
         lane = _make_lane_for_system_test()
-        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
         lane.send_lane_data.assert_called_once()
 
     def test_marks_prep_done(self):
         tool = _make_toolchanger()
         lane = _make_lane_for_system_test()
-        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
         lane.set_afc_prep_done.assert_called_once()
 
     def test_loaded_message_when_prepped_loaded_and_lane_loaded_matches_name(self):
@@ -98,7 +98,7 @@ class TestSystemTest:
         lane.extruder_obj.lane_loaded = "lane1"
         lane.extruder_obj.prep_on_shuttle_check.return_value = " [on shuttle]"
 
-        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
 
         raw_msgs = [m for lvl, m in tool.logger.messages if lvl == "raw"]
         assert raw_msgs == [
@@ -114,7 +114,7 @@ class TestSystemTest:
         lane.load_state = True
         lane.extruder_obj.lane_loaded = "lane1"
 
-        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
 
         raw_msgs = [m for lvl, m in tool.logger.messages if lvl == "raw"]
         assert raw_msgs == ["lane1 tool cmd: T0  "]
@@ -128,7 +128,7 @@ class TestSystemTest:
         lane.load_state = False
         lane.extruder_obj.lane_loaded = "lane1"
 
-        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
 
         raw_msgs = [m for lvl, m in tool.logger.messages if lvl == "raw"]
         assert raw_msgs == ["lane1 tool cmd: T0  "]
@@ -142,7 +142,7 @@ class TestSystemTest:
         lane.load_state = True
         lane.extruder_obj.lane_loaded = "some_other_lane"
 
-        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True)
+        tool.system_Test(lane, delay=0, assignTcmd=False, enable_movement=True, gcmd=_build_gcmd())
 
         raw_msgs = [m for lvl, m in tool.logger.messages if lvl == "raw"]
         assert raw_msgs == ["lane1 tool cmd: T0  "]
@@ -179,7 +179,7 @@ class TestMoveToHub:
     def test_returns_success_zero_distance_no_warning(self):
         tool = _make_toolchanger()
         lane = MagicMock()
-        result = tool.move_to_hub(lane, dist=50.0, dir=MagicMock())
+        result = tool.move_to_hub(lane, dist=50.0, dir=MagicMock(), gcmd=_build_gcmd())
         assert result == (True, 0, AFCMoveWarning.NONE)
 
 
@@ -187,7 +187,7 @@ class TestMoveToLoad:
     def test_returns_success_zero_distance_no_warning(self):
         tool = _make_toolchanger()
         lane = MagicMock()
-        result = tool.move_to_load(lane, dist=50.0, dir=MagicMock())
+        result = tool.move_to_load(lane, dist=50.0, dir=MagicMock(), gcmd=_build_gcmd())
         assert result == (True, 0, AFCMoveWarning.NONE)
 
 
@@ -196,7 +196,7 @@ class TestLoadThenHome:
         tool = _make_toolchanger()
         lane = MagicMock()
         result = tool.load_then_home(lane, distance=50.0, assist_active=MagicMock(),
-                                     endstop=MagicMock())
+                                     endstop=MagicMock(), gcmd=_build_gcmd())
         assert result == (True, 0, AFCMoveWarning.NONE)
 
 
@@ -357,7 +357,55 @@ class TestCmdAFCUnselectTool:
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
-        tool.afc.function.handle_activate_extruder.assert_called_once_with(gcmd)
+        tool.afc.function.handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
+
+    def test_waits_for_toolhead_moves(self):
+        extruder = _make_extruder_obj()
+        tool = _make_toolchanger_for_unselect(current_extruder=extruder)
+        gcmd = _build_gcmd()
+
+        tool.cmd_AFC_UNSELECT_TOOL(gcmd)
+
+        tool.afc.toolhead.wait_moves.assert_called_once()
+
+    def test_waits_for_moves_before_activating_extruder_custom_script(self):
+        """The unselect script, then the wait, must happen before
+        handle_activate_extruder runs, not after, to avoid the race condition
+        it's guarding against. Covers the custom-unselect script."""
+        extruder = _make_extruder_obj()
+        extruder.custom_unselect = "MY_CUSTOM_UNSELECT"
+        tool = _make_toolchanger_for_unselect(current_extruder=extruder)
+        call_order = []
+        tool.afc.run_script = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("script"))
+        tool.afc.toolhead.wait_moves = MagicMock(
+            side_effect=lambda: call_order.append("wait_moves"))
+        tool.afc.function.handle_activate_extruder = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("handle_activate_extruder"))
+        gcmd = _build_gcmd()
+
+        tool.cmd_AFC_UNSELECT_TOOL(gcmd)
+
+        assert call_order == ["script", "wait_moves", "handle_activate_extruder"]
+
+    def test_waits_for_moves_before_activating_extruder_default_script(self):
+        """Independent coverage of the falsy `custom_unselect` branch: the
+        default UNSELECT_TOOL script must order the same way."""
+        extruder = _make_extruder_obj()
+        extruder.custom_unselect = None
+        tool = _make_toolchanger_for_unselect(current_extruder=extruder)
+        call_order = []
+        tool.afc.run_script = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("script"))
+        tool.afc.toolhead.wait_moves = MagicMock(
+            side_effect=lambda: call_order.append("wait_moves"))
+        tool.afc.function.handle_activate_extruder = MagicMock(
+            side_effect=lambda *a, **k: call_order.append("handle_activate_extruder"))
+        gcmd = _build_gcmd()
+
+        tool.cmd_AFC_UNSELECT_TOOL(gcmd)
+
+        assert call_order == ["script", "wait_moves", "handle_activate_extruder"]
 
     def test_current_state_goes_tool_dock_during_unselect_then_idle(self):
         extruder = _make_extruder_obj()
@@ -446,7 +494,7 @@ class TestCmdAFCUnselectTool:
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
-        lane_obj.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane_obj)
+        lane_obj.unit_obj.lane_tool_loaded_idle.assert_called_once_with(lane_obj, gcmd=gcmd)
         lane_obj.unit_obj.lane_tool_unloaded.assert_not_called()
         lane_obj.extruder_obj.set_status_led.assert_not_called()
 
@@ -460,7 +508,7 @@ class TestCmdAFCUnselectTool:
 
         tool.cmd_AFC_UNSELECT_TOOL(gcmd)
 
-        lane_obj.unit_obj.lane_tool_unloaded.assert_called_once_with(lane_obj)
+        lane_obj.unit_obj.lane_tool_unloaded.assert_called_once_with(lane_obj, gcmd=gcmd)
         lane_obj.unit_obj.lane_tool_loaded_idle.assert_not_called()
 
     def test_set_status_led_when_prep_state_false(self):
@@ -548,7 +596,7 @@ class TestToolSwap:
 
         tool.afc.gcode.run_script_from_command = MagicMock(side_effect=_capture)
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         assert captured["status"] == State.TOOL_PICKUP
         assert captured["next_pickup"] is True
@@ -558,7 +606,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         assert lane.extruder_obj.next_pickup is False
         assert lane.extruder_obj.status == State.IDLE
@@ -578,7 +626,7 @@ class TestToolSwap:
 
         tool.afc.gcode.run_script_from_command = MagicMock(side_effect=_capture)
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         assert captured["status"] == State.TOOL_DOCK
         assert current_extruder.status == State.IDLE
@@ -590,7 +638,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         assert lane.extruder_obj.status == State.IDLE
 
@@ -602,7 +650,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = current_extruder
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         current_extruder.estats.tool_unselected.increase_count.assert_called_once()
 
@@ -614,7 +662,7 @@ class TestToolSwap:
         lane = _make_lane_for_tool_swap()
         lane.extruder_obj.custom_tool_swap = "MY_CUSTOM_SWAP"
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         tool.afc.gcode.run_script_from_command.assert_called_once_with("MY_CUSTOM_SWAP")
         info_msgs = [m for lvl, m in tool.logger.messages if lvl == "info"]
@@ -627,7 +675,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap(extruder_name="extruder")
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         tool.afc.gcode.run_script_from_command.assert_called_once_with("SELECT_TOOL T=0")
 
@@ -638,7 +686,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap(extruder_name="extruder2")
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         tool.afc.gcode.run_script_from_command.assert_called_once_with("SELECT_TOOL T=2")
 
@@ -649,7 +697,7 @@ class TestToolSwap:
         tool.afc.afc_stats.average_tool_swap_time = MagicMock()
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         tool.afc.afc_stats.average_tool_swap_time.average_time.assert_called_once_with(
             tool.afc.afcDeltaTime.delta_time
@@ -664,14 +712,14 @@ class TestToolSwap:
         lane = _make_lane_for_tool_swap()
 
         # Must not raise despite average_tool_swap_time being None.
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
     def test_set_start_time_true_calls_set_start_time(self):
         tool = _make_toolchanger_for_tool_swap()
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane, set_start_time=True)
+        tool.tool_swap(lane, set_start_time=True, gcmd=_build_gcmd())
 
         tool.afc.afcDeltaTime.set_start_time.assert_called_once()
 
@@ -682,7 +730,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane, set_start_time=False)
+        tool.tool_swap(lane, set_start_time=False, gcmd=_build_gcmd())
 
         tool.afc.afcDeltaTime.set_start_time.assert_not_called()
 
@@ -690,18 +738,19 @@ class TestToolSwap:
         tool = _make_toolchanger_for_tool_swap()
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
+        gcmd = _build_gcmd()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=gcmd)
 
         lane.activate_toolhead_extruder.assert_called_once()
-        tool.afc.function._handle_activate_extruder.assert_called_once_with(0, None)
+        tool.afc.function.handle_activate_extruder.assert_called_once_with(0, gcmd=gcmd)
 
     def test_waits_for_toolhead_moves(self):
         tool = _make_toolchanger_for_tool_swap()
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         tool.afc.toolhead.wait_moves.assert_called_once()
 
@@ -710,7 +759,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         calls = tool.afc.function.log_toolhead_pos.call_args_list
         assert [c.args[0] for c in calls] == ["Before toolswap: ", "After toolswap: "]
@@ -720,7 +769,7 @@ class TestToolSwap:
         tool.function.get_current_extruder_obj.return_value = None
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         lane.extruder_obj.estats.tool_selected.increase_count.assert_called_once()
 
@@ -735,7 +784,7 @@ class TestToolSwap:
         tool.afc.gcode_move.homing_position = [0.5, 0.5, 0.5, 0.5]
         lane = _make_lane_for_tool_swap()
 
-        tool.tool_swap(lane)
+        tool.tool_swap(lane, gcmd=_build_gcmd())
 
         assert tool.afc.last_gcode_position == [10.0, 20.0, 5.0, 100.0]
         assert tool.afc.base_position == [1.0, 2.0, 3.0, 4.0]

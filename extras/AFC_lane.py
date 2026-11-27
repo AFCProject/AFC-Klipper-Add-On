@@ -18,7 +18,7 @@ from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
-    from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC import afc
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_hub import afc_hub
@@ -36,6 +36,9 @@ except: raise error(ERROR_STR.format(import_lib="AFC_assist", trace=traceback.fo
 
 try: from extras.AFC_stats import AFCStats_var
 except: raise error(ERROR_STR.format(import_lib="AFC_stats", trace=traceback.format_exc()))
+
+try: from extras.AFC_buffer import FPS_PSF_TYPES
+except: raise error(ERROR_STR.format(import_lib="AFC_buffer", trace=traceback.format_exc()))
 
 # Unit types that only have load switch
 ONLY_LOAD_TYPES = ["HTLF", "Claymore", "OpenAMS", "ACE", "ACE2"]
@@ -650,12 +653,12 @@ class AFCLane:
         endstop on the shared drive stepper this lane homes through.
 
         No-op when this lane owns its own stepper, has no buffer of its own,
-        or that buffer is not FPS_PSF.
+        or that buffer is not FPS_PSF_TYPES.
         """
         homing_stepper = self.drive_stepper
         if (homing_stepper is None
             or self.buffer_obj is None
-            or self.buffer_obj.type != "FPS_PSF"):
+            or self.buffer_obj.type not in FPS_PSF_TYPES):
             return
 
         stepper = homing_stepper.extruder_stepper.stepper
@@ -936,15 +939,16 @@ class AFCLane:
             if assist_active:
                 self.espooler.assist(0)
 
-    def move_auto_speed(self, distance):
+    def move_auto_speed(self, distance, gcmd: AFCGcmd):
         """
         Helper function for determining speed and accel from passed in distance
 
         :param distance: Distance to move filament
+        :param gcmd: command context the homing pause is run through, if lane selection fails
         """
         dist_hub_move_speed, dist_hub_move_accel, assist_active = self.get_speed_accel(mode=SpeedMode.NONE,
                                                                                        distance=distance)
-        self.move(distance, dist_hub_move_speed, dist_hub_move_accel, assist_active)
+        self.move(distance, dist_hub_move_speed, dist_hub_move_accel, assist_active, gcmd=gcmd)
 
     def get_speed_accel(self, mode: SpeedMode, distance=None) -> float:
         """
@@ -1003,13 +1007,15 @@ class AFCLane:
         return (self.is_direct_hub()
                 or (self.hub_obj and getattr(self.hub_obj, "use_dist_hub", False) ))
 
-    def select_lane(self):
+    def select_lane(self, *, gcmd: AFCGcmd):
         """
         Helper function to select lane, calls unit lane selection function.
-        """
-        self.unit_obj.select_lane( self )
 
-    def move(self, distance, speed, accel, assist_active=False):
+        :param gcmd: command context the homing pause is run through, if homing fails
+        """
+        self.unit_obj.select_lane(self, gcmd=gcmd)
+
+    def move(self, distance, speed, accel, assist_active=False, *, gcmd: AFCGcmd):
         """
         Move the specified lane a given distance with specified speed and acceleration.
         This function calculates the movement parameters and commands the stepper motor
@@ -1018,15 +1024,19 @@ class AFCLane:
         distance (float): The distance to move.
         speed (float): The speed of the movement.
         accel (float): The acceleration of the movement.
+
+        :param gcmd: command context the homing pause is run through, if lane selection fails
         """
-        self.unit_obj.select_lane( self )
+        self.unit_obj.select_lane(self, gcmd=gcmd)
         with self.assist_move( speed, distance < 0, assist_active):
             if self.drive_stepper is not None:
-                self.drive_stepper.move(distance, speed, accel, assist_active)
+                self.drive_stepper.move(distance, speed, accel, assist_active, gcmd=gcmd)
 
-    def move_to(self, distance: float, speed_mode: SpeedMode,
-                endstop:AFCHomingPoints|str=AFCHomingPoints.NONE,
-                assist_active=AssistActive.NO, use_homing=True) -> tuple[bool, float|int, AFCMoveWarning]:
+    def move_to(
+        self, distance: float, speed_mode: SpeedMode,
+        endstop:AFCHomingPoints|str=AFCHomingPoints.NONE, assist_active=AssistActive.NO,
+        use_homing=True, *, gcmd: AFCGcmd
+    ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling stepper move_advance or home_to functions based
         off use_homing parameter
@@ -1036,6 +1046,7 @@ class AFCLane:
         :param endstop: When homing is enabled, used to specify which endstop to home to
         :param assist_active: AssistActive type to enable/disable espoolers when moving stepper
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
+        :param gcmd: command context the pause is run through, if homing fails
         :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
 
             - Returns True if move was successful
@@ -1063,13 +1074,13 @@ class AFCLane:
                 new_distance = distance + self.homing_overshoot
                 if distance < 0:
                     new_distance = distance - self.homing_overshoot
-                self.unit_obj.select_lane(self)
+                self.unit_obj.select_lane(self, gcmd=gcmd)
                 speed, accel = self.get_speed_accel(speed_mode)
                 try:
+                    active_assist = self.get_active_assist(distance, assist_active)
                     homed, mov_dis, error = home_to(endstop, new_distance, speed, accel,
-                            distance > 0, assist_active=self.get_active_assist(distance,
-                                                                               assist_active)
-                    )
+                                                    distance > 0, assist_active=active_assist,
+                                                    gcmd=gcmd)
                 finally:
                     # Restoring drive stepper assist move method
                     if drive_stepper_assist:
@@ -1081,7 +1092,7 @@ class AFCLane:
 
                 return homed, mov_dis, warn
             else:
-                self.move_advanced(distance, speed_mode, assist_active )
+                self.move_advanced(distance, speed_mode, assist_active, gcmd=gcmd)
                 return True, 0, warn
         else:
             if self.extruder_obj.is_standalone():
@@ -1090,7 +1101,8 @@ class AFCLane:
                 return False, 0, AFCMoveWarning.ERROR
 
 
-    def move_advanced(self, distance, speed_mode: SpeedMode, assist_active: AssistActive = AssistActive.NO):
+    def move_advanced(self, distance, speed_mode: SpeedMode,
+                      assist_active: AssistActive = AssistActive.NO, *, gcmd: AFCGcmd):
         """
         Wrapper for move function and is used to compute several arguments
         to move the lane accordingly.
@@ -1098,6 +1110,7 @@ class AFCLane:
         :param distance: The distance to move.
         :param speed_mode: Identifies which speed to use.
         :param assist_active: Determines to force assist or to dynamically determine.
+        :param gcmd: command context the homing pause is run through, if lane selection fails
         """
         # Stepperless units have no drive stepper, so the move below would
         # silently no-op. Delegate to the unit's firmware-driven lane_move
@@ -1113,7 +1126,7 @@ class AFCLane:
 
         assist = self.get_active_assist(distance, assist_active)
 
-        self.move(distance, speed, accel, assist)
+        self.move(distance, speed, accel, assist, gcmd=gcmd)
 
     def set_afc_prep_done(self):
         """
@@ -1123,25 +1136,29 @@ class AFCLane:
         """
         self._afc_prep_done = True
 
-    def _perform_infinite_runout(self):
+    def _perform_infinite_runout(self, gcmd: AFCGcmd):
         """
         Common function for infinite spool runout
             - Unloads current lane and loads the next lane as specified by runout variable.
             - Swaps mapping between current lane and runout lane so correct lane is loaded with T(n) macro
             - Once changeover is successful print is automatically resumed
+
+        :param gcmd: command context this runout was triggered through
         """
         self.status = AFCLaneState.NONE
         self.logger.info("Infinite Spool triggered for {}".format(self.name))
         empty_lane = self.afc.lanes.get(self.afc.current)
 
         if not empty_lane:
-            self.afc.error.AFC_error(f"Error when looking up current lane:{self.afc.current}")
+            self.afc.error.AFC_error(f"Error when looking up current lane:{self.afc.current}",
+                                     gcmd=gcmd)
             return
 
         change_lane = self.afc.lanes.get(self.runout_lane)
         # Verifying lanes are valid before continuing
         if not change_lane:
-            self.afc.error.AFC_error(f"Error when looking up runout lane:{self.runout_lane} for lane:{self.name}")
+            error_str = f"Error when looking up runout lane:{self.runout_lane} for lane:{self.name}"
+            self.afc.error.AFC_error(error_str, gcmd=gcmd)
             return
 
         change_lane.status = AFCLaneState.INFINITE_RUNOUT
@@ -1153,20 +1170,19 @@ class AFCLane:
 
         # Position will be restored after new lane loaded so that nozzle does not sit
         # on print while lane is unloading
-        self.afc.CHANGE_TOOL(change_lane, restore_pos=False)
+        self.afc.CHANGE_TOOL(change_lane, restore_pos=False, gcmd=gcmd)
 
         # Only continue if a error did not happen
         if not self.afc.error_state:
             try:
                 # Swap mapping with runout lane
                 self.afc.run_script(
-                    f'AFC_SWAP_MAPPING FROM={empty_lane.name} TO={change_lane.name}'
+                    f'AFC_SWAP_MAPPING FROM={empty_lane.name} TO={change_lane.name}', gcmd=gcmd
                 )
             except CommandError:
                 self.afc.error.AFC_error(
                     f"Error when trying swap mapping from {empty_lane.name} to {change_lane.name}",
-                    pause=True
-                )
+                    pause=True, gcmd=gcmd)
                 return
 
             # Turn off runout extruder LEDs and turn on other extruder LEDs if extruders are
@@ -1174,14 +1190,14 @@ class AFCLane:
             if empty_lane.extruder_obj != change_lane.extruder_obj:
                 empty_lane.extruder_obj.set_print_leds(0, quiet=True)
                 change_lane.extruder_obj.set_print_leds(1, quiet=True)
-                change_lane.unit_obj.lane_tool_loaded(change_lane)
+                change_lane.unit_obj.lane_tool_loaded(change_lane, gcmd=gcmd)
 
             # Resume pos
             self.afc.restore_pos()
             # Resume with manual issued command
             self.afc.error.pause_resume.send_resume_command()
             # Set LED to not ready
-            self.unit_obj.lane_not_ready(self)
+            self.unit_obj.lane_not_ready(self, gcmd=gcmd)
 
     def _handle_auto_spool_switch(self):
         """
@@ -1192,13 +1208,15 @@ class AFCLane:
             return
 
         if self.runout_lane is not None:
-            self._perform_infinite_runout()
+            self._perform_infinite_runout(gcmd="callback")
         else:
-            self._perform_pause_runout()
+            self._perform_pause_runout(gcmd="callback")
 
-    def _perform_pause_runout(self):
+    def _perform_pause_runout(self, gcmd: AFCGcmd):
         """
         Common function to pause print when runout occurs, fully unloads and ejects spool if specified by user
+
+        :param gcmd: command context this runout was triggered through
         """
         # Unload if user has set AFC to unload on runout
         if self.unit_obj.unload_on_runout:
@@ -1206,9 +1224,9 @@ class AFCLane:
             self.afc.error.pause_resume.send_pause_command()
             self.afc.save_pos()
             # self.gcode.run_script_from_command('PAUSE')
-            unloaded = self.afc.TOOL_UNLOAD(self)
+            unloaded = self.afc.TOOL_UNLOAD(self, gcmd=gcmd)
             if unloaded and not self.afc.error_state:
-                self.afc.LANE_UNLOAD(self)
+                self.afc.LANE_UNLOAD(self, gcmd=gcmd)
             else:
                 self.afc.afc_stats.increase_unload_error_count(self.afc)
         # Pause print
@@ -1219,13 +1237,15 @@ class AFCLane:
             runout_method = "Runout triggered"
         msg = "{} for lane {} and runout lane is not setup to switch to another lane.".format(runout_method, self.name)
         msg += "\nPlease manually load next spool into toolhead and then hit resume to continue."
-        self.unit_obj.lane_not_ready(self)
-        self.afc.error.AFC_error(msg)
+        self.unit_obj.lane_not_ready(self, gcmd=gcmd)
+        self.afc.error.AFC_error(msg, gcmd=gcmd)
 
-    def _prep_capture_td1(self):
+    def _prep_capture_td1(self, gcmd: AFCGcmd):
         """
         Common function to grab TD-1 data once user inserts filament into a lane. Only happens if user has specified
         this by setting `capture_td1_when_loaded: True` and if hub is clear and toolhead is not loaded.
+
+        :param gcmd: command context the TD-1 fetch is run through
         """
         if self.td1_when_loaded:
             # Stepperless units capture TD-1 through their own feed path
@@ -1233,10 +1253,10 @@ class AFCLane:
             # unit intercept here; a non-None return means it handled it.
             # Units without this hook (e.g. BoxTurtle) fall through unchanged.
             hook = getattr(self.unit_obj, 'prep_capture_td1', None)
-            if hook is not None and hook(self) is not None:
+            if hook is not None and hook(self, gcmd=gcmd) is not None:
                 return
             if not self.hub_obj.state and self.afc.function.get_current_lane_obj() is None:
-                self.get_td1_data()
+                self.get_td1_data(gcmd=gcmd)
             else:
                 self.logger.info(f"Cannot get TD-1 data for {self.name}, either toolhead is loaded or hub shows filament in path")
 
@@ -1294,30 +1314,32 @@ class AFCLane:
 
                 # TODO: maybe set_loaded can happen after the on_filament_insert call so next spool id
                 # does not have to be stored into _afc_staged_spool_id. need to understand ACE logic better once impementing ACE
-                self.set_loaded()
+                self.set_loaded(gcmd="callback")
                 # on_filament_insert only when this wasn't a suppressed
                 # (operation-driven) state change.
                 if not self._load_suppressed:
                     if hasattr(self.unit_obj, 'on_filament_insert'):
-                        self.unit_obj.on_filament_insert(self)
+                        self.unit_obj.on_filament_insert(self, gcmd="callback")
                 self._load_suppressed = False
 
                 # Check if user wants to get TD-1 data when loading
                 if (self.td1_device_id
                     and not self.tool_loaded):
-                    self._prep_capture_td1()
+                    self._prep_capture_td1(gcmd="callback")
 
                 if self.hub == 'direct_load': # TODO: change to is_direct_hub
                     # Check to see if the printer is printing or moving, as trying to load while printer is doing something will crash klipper
                     if self.afc.function.is_printing(check_movement=True):
-                        self.afc.error.AFC_error("Cannot load spool to toolhead while printer is actively moving or homing", False)
+                        self.afc.error.AFC_error(
+                            "Cannot load spool to toolhead while printer is actively moving or homing",
+                            False, gcmd="callback")
                     else:
-                        if not self.afc.TOOL_LOAD(self):
+                        if not self.afc.TOOL_LOAD(self, gcmd="callback"):
                             self.afc.afc_stats.increase_load_error_count(self.afc)
 
-                self._post_prep_user_macro()
+                self._post_prep_user_macro(gcmd="callback")
             else:
-                self.unit_obj.on_filament_remove(self)
+                self.unit_obj.on_filament_remove(self, gcmd="callback")
                 # Don't run if user disabled sensor in gui
                 fila_load = getattr(self, 'fila_load', None)
                 if (fila_load
@@ -1331,15 +1353,15 @@ class AFCLane:
                     # runout itself, or False to defer to AFC's generic
                     # infinite-spool / pause behavior below.
                     handle_runout = getattr(self.unit_obj, "handle_runout", None)
-                    handled = handle_runout(self) if handle_runout else False
+                    handled = handle_runout(self, gcmd="callback") if handle_runout else False
                     if not handled:
                         # Checking to make sure runout_lane is set
                         if self.runout_lane is not None:
-                            self._perform_infinite_runout()
+                            self._perform_infinite_runout(gcmd="callback")
                         else:
-                            self._perform_pause_runout()
+                            self._perform_pause_runout(gcmd="callback")
                 elif self.status != "calibrating":
-                    self.set_unloaded()
+                    self.set_unloaded(gcmd="callback")
 
         self.afc.save_vars()
 
@@ -1373,7 +1395,8 @@ class AFCLane:
             and self.hub == "direct_load"
             and not self.afc.auto_home
             and not self.afc.function.is_homed()):
-            self.afc.error.AFC_error("Please home printer before directly loading to toolhead", False)
+            self.afc.error.AFC_error("Please home printer before directly loading to toolhead",
+                                     False, gcmd="callback")
             return
 
         self.prep_active = True
@@ -1402,15 +1425,17 @@ class AFCLane:
                             # Check to see if the printer is printing or moving, as trying to load while printer is doing something will crash klipper
                             if (self.afc.function.is_printing(check_movement=True)
                                 or any(lane.prep_active for lane in self.afc.lanes.values() if lane is not self)):
-                                self.afc.error.AFC_error(f"Cannot load {self.name} spool while printer is actively moving or homing", False)
+                                self.afc.error.AFC_error(
+                                    f"Cannot load {self.name} spool while printer is actively "
+                                    "moving or homing", False, gcmd="callback")
                                 return
 
                             # Record PREP activity (any lane) for handle_prep_runout's guard
                             self.afc.last_prep_activity_time = eventtime
-                            self.unit_obj.lane_loading(self)
+                            self.unit_obj.lane_loading(self, gcmd="callback")
 
                             # Calling common load function
-                            self.unit_obj.prep_load(self)
+                            self.unit_obj.prep_load(self, gcmd="callback")
 
                             self.status = AFCLaneState.NONE
                             self.logger.debug(f"Prep: Load Done-{self.name}")
@@ -1420,7 +1445,7 @@ class AFCLane:
                             if (self.hub == 'direct_load'
                                 and self.prep_state):
                                 self.logger.debug(f"Prep: direct load logic-{self.name}-{self.hub}")
-                                if not self.afc.TOOL_LOAD(self):
+                                if not self.afc.TOOL_LOAD(self, gcmd="callback"):
                                     self.afc.afc_stats.increase_load_error_count(self.afc)
                                 # TOOL_LOAD already pushed the active spool to Spoolman using
                                 # whatever spool_id was set before this point. _set_values can
@@ -1429,22 +1454,23 @@ class AFCLane:
                                 # re-push once that settles rather than leaving Spoolman pointed
                                 # at the stale value TOOL_LOAD saw.
                                 self.afc.spool._set_values(
-                                    self, on_done=lambda: self.afc.spool.set_active_spool(self.spool_id))
+                                    self, on_done=lambda: self.afc.spool.set_active_spool(self.spool_id),
+                                    gcmd="callback")
                                 self.logger.debug(f"Prep: direct load logic done-{self.name}-{self.hub}")
                                 break
 
-                            self.unit_obj.prep_post_load(self)
+                            self.unit_obj.prep_post_load(self, gcmd="callback")
 
                             self.do_enable(False)
                             if (self.load_state
                                 and self.prep_state):
-                                self.set_loaded()
-                                self._post_prep_user_macro()
+                                self.set_loaded(gcmd="callback")
+                                self._post_prep_user_macro(gcmd="callback")
                                 # Check if user wants to get TD-1 data when loading
                                 # TODO: When implementing multi-extruder this could still happen if a lane is loaded for a
                                 # different extruder/hub
                                 if self.td1_device_id:
-                                    self._prep_capture_td1()
+                                    self._prep_capture_td1(gcmd="callback")
 
                         elif(self.prep_state == True
                             and self.raw_load_state == True
@@ -1455,7 +1481,7 @@ class AFCLane:
                                 message += f'\n    If filament is not stuck in sensor run AFC_RECOVER_LANE LANE={self.name}'
                                 message += " to reset internal AFC state."
                             message += '\n    Once cleared try loading again'
-                            self.afc.error.AFC_error(message, pause=False)
+                            self.afc.error.AFC_error(message, pause=False, gcmd="callback")
         finally:
             self.prep_active = False
         self.afc.save_vars()
@@ -1494,9 +1520,9 @@ class AFCLane:
                     self.logger.warning("Prep runout has been detected, but pause and runout detection has been disabled")
                 # Checking to make sure runout_lane is set
                 elif self.runout_lane is not None:
-                    self._perform_infinite_runout()
+                    self._perform_infinite_runout(gcmd="callback")
                 else:
-                    self._perform_pause_runout()
+                    self._perform_pause_runout(gcmd="callback")
             elif not prep_state:
                 # Defer instead of acting while another lane's PREP cycle may still be
                 # driving a stepper, see _recheck_prep_runout().
@@ -1510,7 +1536,7 @@ class AFCLane:
                         )
                     return
                 # Filament is unloaded
-                self.set_unloaded()
+                self.set_unloaded(gcmd="callback")
 
         self.afc.save_vars()
 
@@ -1540,16 +1566,18 @@ class AFCLane:
             )
             return
         self.prep_recheck_pending = False
-        self.set_unloaded()
+        self.set_unloaded(gcmd="callback")
         self.afc.save_vars()
 
-    def _post_prep_user_macro(self):
+    def _post_prep_user_macro(self, gcmd: AFCGcmd):
         """
         Function to call macro once filament has successfully been loaded during prep callback
+
+        :param gcmd: command context the macro is run through
         """
         if self.afc.function.check_macro_present(self.post_prep_macro):
             cmd = f"{self.post_prep_macro} LANE={self.name}"
-            self.afc.run_script(cmd)
+            self.afc.run_script(cmd, gcmd=gcmd)
 
     def do_enable(self, enable):
         if self.drive_stepper is not None:
@@ -1558,7 +1586,7 @@ class AFCLane:
     def sync_print_time(self):
         return
 
-    def sync_to_extruder(self, update_current=True, *, gcmd: Optional[GCodeCommand]=None):
+    def sync_to_extruder(self, update_current=True, *, gcmd: AFCGcmd):
         """
         Helper function to sync lane to extruder and set print current if specified.
 
@@ -1570,7 +1598,7 @@ class AFCLane:
                                                 th_extruder_name=self.extruder_obj.th_extruder_name,
                                                 gcmd=gcmd)
 
-    def unsync_to_extruder(self, update_current=True, gcmd: Optional[GCodeCommand]=None):
+    def unsync_to_extruder(self, update_current=True, *, gcmd: AFCGcmd):
         """
         Helper function to un-sync lane to extruder and set load current if specified.
 
@@ -1580,30 +1608,49 @@ class AFCLane:
         if self.drive_stepper is not None:
             self.drive_stepper.unsync_to_extruder(update_current, gcmd=gcmd)
 
-    def _set_current(self, current):
-        return
-
-    def set_load_current(self, gcmd: Optional[GCodeCommand]=None):
+    def set_load_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use run current value
 
         :param gcmd: command context to run the macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.set_load_current(gcmd)
+            self.drive_stepper.set_load_current(gcmd=gcmd)
 
-    def set_print_current(self, gcmd: Optional[GCodeCommand]=None):
+    def set_print_current(self, gcmd: AFCGcmd):
         """
         Helper function to update TMC current to use print current value
 
         :param gcmd: command context to run the macro through, if any
         """
         if self.drive_stepper is not None:
-            self.drive_stepper.set_print_current(gcmd)
+            self.drive_stepper.set_print_current(gcmd=gcmd)
 
     def update_rotation_distance(self, multiplier):
         if self.drive_stepper is not None:
             self.drive_stepper.update_rotation_distance( multiplier )
+
+    def reset_drive_stepper(self) -> Optional[float]:
+        """
+        Resets drive_stepper to its base rotation distance.
+
+        :return type: Rotation distance it had before the reset, or None if there's no drive_stepper
+        """
+        if self.drive_stepper is None:
+            return None
+        previous_rotation_distance = self.drive_stepper.get_current_rotation_distance()
+        self.drive_stepper.update_rotation_distance(1)
+        return previous_rotation_distance
+
+    def restore_drive_stepper(self, previous_rotation_distance: Optional[float]) -> None:
+        """
+        Restores drive_stepper to the rotation distance `reset_drive_stepper` saved.
+
+        :param previous_rotation_distance: Value `reset_drive_stepper` returned, or None
+        """
+        if (self.drive_stepper is not None
+            and previous_rotation_distance is not None):
+            self.drive_stepper.set_current_rotation_distance(previous_rotation_distance)
 
     def calculate_effective_diameter(self, weight_g, spool_width_mm=60):
 
@@ -1729,17 +1776,21 @@ class AFCLane:
         if self.weight < 0:
             self.weight = 0
 
-    def set_loaded(self):
+    def set_loaded(self, *, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when filament in loaded into lane
+
+        :param gcmd: command context the led macros are run through, if any
         """
         self.status = AFCLaneState.LOADED
-        self.unit_obj.lane_loaded(self)
-        self.afc.spool._set_values(self)
+        self.unit_obj.lane_loaded(self, gcmd=gcmd)
+        self.afc.spool._set_values(self, gcmd=gcmd)
 
-    def set_unloaded(self):
+    def set_unloaded(self, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when filament is unloaded from lane
+
+        :param gcmd: command context the led macros are run through, if any
         """
         self.tool_loaded = False
         self.status = AFCLaneState.NONE
@@ -1747,15 +1798,16 @@ class AFCLane:
         self.td1_data = {}
         if not self.remember_spool:
             self.afc.spool.clear_values(self)
-        self.unit_obj.lane_not_ready(self)
+        self.unit_obj.lane_not_ready(self, gcmd=gcmd)
 
-    def set_tool_loaded(self, normal_toolchange: bool=False):
+    def set_tool_loaded(self, normal_toolchange: bool=False, *, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when lane is loaded into toolhead
 
         :param normal_toolchange: Set to True when calling this function within the normal toolchange
           flow. When this is set to true AFC current_loading variable is updated and active spool id
           is set.
+        :param gcmd: command context the led macros are run through, if any
         """
         self.tool_loaded = True
         self.extruder_obj.lane_loaded = self.name
@@ -1766,15 +1818,16 @@ class AFCLane:
             self.afc.spool.set_active_spool(self.spool_id)
         self.afc.spool.set_snapmaker_filament_params(self)
 
-        self.unit_obj.lane_tool_loaded(self)
+        self.unit_obj.lane_tool_loaded(self, gcmd=gcmd)
 
-    def set_tool_unloaded(self, normal_toolchange: bool=False):
+    def set_tool_unloaded(self, normal_toolchange: bool=False, *, gcmd: AFCGcmd):
         """
         Helper function for setting multiple variables when lane is unloaded from toolhead
 
         :param normal_toolchange: Set to True when calling this function within the normal toolchange
           flow. When this is set to true AFC current_loading variable is updated and active spool id
           is unset.
+        :param gcmd: command context the led macros are run through, if any
         """
         self.tool_loaded = False
         self.extruder_obj.lane_loaded = None
@@ -1784,7 +1837,7 @@ class AFCLane:
             self.afc.current_loading = None
             self.afc.spool.set_active_spool(None)
 
-        self.unit_obj.lane_tool_unloaded(self)
+        self.unit_obj.lane_tool_unloaded(self, gcmd=gcmd)
 
     def enable_buffer(self, disable_fault: bool=False):
         """
@@ -1889,11 +1942,12 @@ class AFCLane:
             return False
         return self.status in (AFCLaneState.TOOLED, AFCLaneState.LOADED)
 
-    def handle_toolhead_runout(self, sensor=None):
+    def handle_toolhead_runout(self, gcmd: AFCGcmd, sensor=None):
         """
         Handles runout detection at the toolhead sensor.
         If all upstream sensors (prep, load, hub) still detect filament, this indicates a break or jam at the toolhead.
         Otherwise, triggers normal runout handling logic. Only triggers during normal printing states and when printing.
+        :param gcmd: command context this runout was triggered through
         :param sensor: Optional name of the triggering sensor for user notification.
         """
         # Only trigger runout logic if in a normal printing state, printer is actively printing
@@ -1919,7 +1973,7 @@ class AFCLane:
             )
             self.afc.error.pause_resume.send_pause_command()
             self.afc.save_pos()
-            self.afc.error.AFC_error(msg)
+            self.afc.error.AFC_error(msg, gcmd=gcmd)
         else:
             # Don't run if user disabled sensor in gui
             sensor_obj = self.extruder_obj.fila_tool_start if sensor == "tool_start" else self.extruder_obj.fila_tool_end
@@ -1931,21 +1985,22 @@ class AFCLane:
                 # TODO: For now this only works for standalone toolheads, more reboust toolhead
                 # infinite runout can be added when resolving Issue #729. So for now if a toolhead
                 # runsout and its not a standalone lane AFC will pause.
-                self._perform_infinite_runout()
+                self._perform_infinite_runout(gcmd=gcmd)
                 # TODO: set tool unloaded here
             else:
-                self._perform_pause_runout()
+                self._perform_pause_runout(gcmd=gcmd)
 
                 if self.extruder_obj.is_standalone():
-                    self.set_tool_unloaded()
-                    self.set_unloaded()
+                    self.set_tool_unloaded(gcmd=gcmd)
+                    self.set_unloaded(gcmd=gcmd)
                     self.afc.save_vars()
 
-    def handle_hub_runout(self, sensor=None):
+    def handle_hub_runout(self, gcmd: AFCGcmd, sensor=None):
         """
         Handles runout detection at the hub sensor.
         If both upstream sensors (prep, load) still detect filament but hub does not, this indicates a break or jam at the hub.
         Otherwise, triggers normal runout handling logic. Only triggers during normal printing states and when printing.
+        :param gcmd: command context this runout was triggered through
         :param sensor: Optional name of the triggering sensor for user notification.
         """
         # Only trigger runout logic if in a normal printing state AND printer is actively printing
@@ -1965,11 +2020,11 @@ class AFCLane:
             )
             self.afc.error.pause_resume.send_pause_command()
             self.afc.save_pos()
-            self.afc.error.AFC_error(msg)
+            self.afc.error.AFC_error(msg, gcmd=gcmd)
         # No else: do not trigger infinite runout or pause runout here
 
     # Toolchanger functions
-    def tool_swap(self, gcmd: Optional[GCodeCommand]=None):
+    def tool_swap(self, gcmd: AFCGcmd):
         """
         Helper function for calling extruder's tool_swap function
 
@@ -2102,13 +2157,15 @@ class AFCLane:
         """
         valid, _ = self.afc.function._check_td1_id_in_data(devices, self.td1_device_id)
         if valid:
-            self.unit_obj._apply_td1_data(self, datetime.now(), devices, ignore_time=True)
+            self.unit_obj._apply_td1_data(self, datetime.now(), devices, ignore_time=True,
+                                          gcmd="callback")
 
-    def get_td1_data(self):
+    def get_td1_data(self, gcmd: AFCGcmd):
         """
         Captures TD-1 data for lane. Has error checking to verify that lane is loaded, hub is not blocked
         and that TD-1 device is still detected before trying to capture data.
 
+        :param gcmd: command context the moves are run through, if any
         :return tuple: (status, msg) where status is True if data was captured successfully
         """
         # Stepperless units can't use the stepper moves below — they feed to
@@ -2118,7 +2175,7 @@ class AFCLane:
         # fall through unchanged.
         hook = getattr(self.unit_obj, 'capture_td1_data', None)
         if hook is not None:
-            result = hook(self)
+            result = hook(self, gcmd)
             if result is not None:
                 return result
 
@@ -2129,37 +2186,37 @@ class AFCLane:
         if self.td1_device_id is None:
             msg = f"Cannot grab TD-1 data for {self.name}, td1_device_id is a required "
             msg += "field in AFC_hub or per AFC_lane"
-            self.afc.error.AFC_error(msg, pause=False)
+            self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
             return False, msg
 
         if self.td1_bowden_length is None:
             msg = f"td1_bowden_length is not set for {self.name}. "
             msg += "Please run AFC_CALIBRATION to calibrate TD1 length for "
             msg += "lane before trying to capture TD1 data."
-            self.afc.error.AFC_error(msg, pause=False)
+            self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
             return False, msg
 
         if not self.load_state and not self.prep_state:
             msg = f"{self.name} not loaded, cannot capture TD-1 data for lane"
-            self.afc.error.AFC_error(msg, pause=False)
+            self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
             return False, msg
 
         if self.hub_obj.state:
             msg = f"Hub for {self.name} detects filament, cannot capture TD-1 data for lane"
-            self.afc.error.AFC_error(msg, pause=False)
+            self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
             return False, msg
 
         if (self.is_direct_hub()
             and self.tool_loaded):
             msg = f"{self.name} loaded to toolhead, unload from toolhead before trying "
             msg += "to capture TD1 data."
-            self.afc.error.AFC_error(msg, pause=False)
+            self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
             return False, msg
 
         # Verify TD-1 is still connected before trying to get data
         valid, msg = self.afc.function.check_for_td1_id(self.td1_device_id)
         if not valid:
-            self.afc.error.AFC_error(msg, pause=False)
+            self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
             return False, msg
         else:
             error, msg = self.afc.function.check_for_td1_error()
@@ -2173,37 +2230,37 @@ class AFCLane:
                     if self.afc.homing_enabled:
                         move_dis += self.hub_obj.move_dis
                     self.unit_obj.move_to_hub(self, move_dis, MoveDirection.POS,
-                                              self.afc.homing_enabled)
+                                              self.afc.homing_enabled, gcmd=gcmd)
                     self.loaded_to_hub = True
 
                 while not self.hub_obj.state:
                     if max_move_tries >= self.afc.max_move_tries:
                         fail_message = f"Failed to trigger hub {self.hub_obj.name} for {self.name}\n"
                         fail_message += "Cannot capture TD-1 data, verify that hub switch is properly working before continuing"
-                        self.afc.error.AFC_error(fail_message, pause=False)
+                        self.afc.error.AFC_error(fail_message, pause=False, gcmd=gcmd)
                         self.do_enable(False)
                         return False, fail_message
 
                     if max_move_tries == 0:
-                        self.move_auto_speed(self.hub_obj.move_dis)
+                        self.move_auto_speed(self.hub_obj.move_dis, gcmd=gcmd)
                     else:
-                        self.move_auto_speed(self.short_move_dis)
+                        self.move_auto_speed(self.short_move_dis, gcmd=gcmd)
                     max_move_tries += 1
 
             compare_time = datetime.now()
-            self.move_auto_speed(self.td1_bowden_length)
+            self.move_auto_speed(self.td1_bowden_length, gcmd=gcmd)
             self.afc.reactor.pause(self.afc.reactor.monotonic() + 5)
 
-            success = self.unit_obj.get_td1_data(self, compare_time)
+            success = self.unit_obj.get_td1_data(self, compare_time, gcmd=gcmd)
             if not success:
                 msg = f"Not able to gather TD-1 data after moving {self.td1_bowden_length}mm"
-                self.afc.error.AFC_error(msg, pause=False)
+                self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
                 status = False
 
             self.unit_obj.move_to_hub(self, self.hub_obj.td1_bowden_length,
                                       MoveDirection.NEG,
                                       self.afc.homing_enabled,
-                                      speed_mode=SpeedMode.LONG)
+                                      speed_mode=SpeedMode.LONG, gcmd=gcmd)
             if success:
                 self.send_lane_data()
 
@@ -2213,20 +2270,20 @@ class AFCLane:
                     if max_move_tries >= self.afc.max_move_tries:
                         fail_message = f"Failed to un-trigger hub {self.hub_obj.name} for {self.name}\n"
                         fail_message += "Verify that hub switch is properly working before continuing"
-                        self.afc.error.AFC_error(fail_message, pause=False)
+                        self.afc.error.AFC_error(fail_message, pause=False, gcmd=gcmd)
                         self.do_enable(False)
                         return False, fail_message
 
-                    self.move_auto_speed(self.short_move_dis * -1)
+                    self.move_auto_speed(self.short_move_dis * -1, gcmd=gcmd)
                     max_move_tries += 1
 
-                self.move_auto_speed(self.hub_obj.hub_clear_move_dis * -1)
-            self.unit_obj.return_to_home()
+                self.move_auto_speed(self.hub_obj.hub_clear_move_dis * -1, gcmd=gcmd)
+            self.unit_obj.return_to_home(gcmd=gcmd)
             self.do_enable(False)
 
         else:
             msg = "Cannot gather TD-1 data, hub sensor not clear. Please clear hub and try again."
-            self.afc.error.AFC_error(msg, pause=False)
+            self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
             status = False
         return status, msg
 
@@ -2253,7 +2310,9 @@ class AFCLane:
         ```
         """
         if not self.load_state:
-            self.afc.error.AFC_error("Lane:{} is not loaded, ensure that the LOAD switch is properly configured and filament is detected.".format(self.name), pause=False)
+            error_str = (f"Lane:{self.name} is not loaded, ensure that the LOAD switch is "
+                        "properly configured and filament is detected.")
+            self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
             return
 
         # Do not set lane as loaded if virtual bypass or normal bypass is triggered
@@ -2272,11 +2331,13 @@ class AFCLane:
 
         self.afc.function.unset_lane_loaded(gcmd)
 
-        self.afc.function.handle_activate_extruder()
-        self.set_tool_loaded(normal_toolchange=True)
+        self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
+        self.set_tool_loaded(normal_toolchange=True, gcmd=gcmd)
         self.sync_to_extruder(gcmd=gcmd)
+        self.do_enable(True)
+        self.enable_buffer()
         self.afc.save_vars()
-        self.unit_obj.select_lane(self)
+        self.unit_obj.select_lane(self, gcmd=gcmd)
         self.logger.info("Manually set {} loaded to toolhead".format(self.name))
 
     cmd_SET_LONG_MOVE_SPEED_help = "Gives ability to set long_moves_speed or rev_long_moves_speed_factor values without having to update config and restart"
@@ -2453,7 +2514,7 @@ class AFCLane:
 
         # prevents issue where values are retained on next load when remember_me is set to false while lane is unloaded
         if not self.remember_spool and self.status == AFCLaneState.NONE:
-            self.afc.spool.set_spoolID(self, None)
+            self.afc.spool.set_spoolID(self, None, gcmd=gcmd)
 
         try:
             self.afc.function.ConfigRewrite(self.fullname, "remember_spool", self.remember_spool, "")
@@ -2489,7 +2550,7 @@ class AFCLane:
         self.td1_data = {}
         if not self.remember_spool:
             self.afc.spool.clear_values(self)
-        self.unit_obj.lane_not_ready(self)
+        self.unit_obj.lane_not_ready(self, gcmd=gcmd)
         self.logger.info(f"{self.name} reset")
         self.afc.save_vars()
 

@@ -31,6 +31,7 @@ except:
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
     from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from extras.AFC_lane import AFCLane, AFCMoveWarning
 
 class AFC_Claymore(AFC_vivid):
@@ -57,7 +58,8 @@ class AFC_Claymore(AFC_vivid):
         self.logo = f'<span class=success--text>{self.type} Ready\n</span>'
         self.logo_error = f'<span class=error--text>{self.type} Not Ready</span>\n'
 
-    def _move_lane(self, lane: AFCLane, delay: float=1, enable_movement: bool=True) -> bool:
+    def _move_lane(self, lane: AFCLane, delay: float=1, enable_movement: bool=True,
+                   *, gcmd: AFCGcmd) -> bool:
         """
         Method to check if filament is loaded into lane. Claymore lanes
         report their current load_state directly, without moving filament.
@@ -65,12 +67,13 @@ class AFC_Claymore(AFC_vivid):
         :param lane: Lane to check
         :param delay: Unused for this method
         :param enable_movement: Unused for this method
+        :param gcmd: command context, unused here but accepted for interface parity
         :return bool: Returns lane's current load_state
         """
         return lane.load_state
 
-    def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: bool,
-                    enable_movement: bool) -> bool:
+    def system_Test(self, cur_lane: AFCLane, delay: float, assignTcmd: bool, enable_movement: bool,
+                    gcmd: AFCGcmd) -> bool:
         """
         Runs the standard system test. Claymore units don't support movement
         during the test, so enable_movement is always forced to False.
@@ -81,21 +84,23 @@ class AFC_Claymore(AFC_vivid):
         :param delay: Delay amount to wait between forward/backward movements
         :param assignTcmd: When True assigns a tool number to cur_lane
         :param enable_movement: Ignored, Claymore units always run with movement disabled
+        :param gcmd: command context the led macros are run through, if any
         :return bool: True if the system test succeeded
         """
         cur_lane.prep_state = cur_lane.load_state
-        return super().system_Test( cur_lane, delay, assignTcmd, False)
+        return super().system_Test( cur_lane, delay, assignTcmd, False, gcmd=gcmd)
 
-    def unselect_lane(self, move_distance: float=5) -> None:
+    def unselect_lane(self, move_distance: float=5, *, gcmd: AFCGcmd) -> None:
         """
         Move the selector by a configurable distance to free filament in a lane, e.g. when
         ejecting filament.
 
         :param move_distance: Distance in millimeters to move the selector. Defaults to 5 mm.
+        :param gcmd: command context the move is run through
         """
-        super().unselect_lane(move_distance=move_distance)
+        super().unselect_lane(move_distance=move_distance, gcmd=gcmd)
 
-    def eject_lane(self, lane: AFCLane) -> None:
+    def eject_lane(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Method to select lane and eject spool, uses homing to move spool to prep sensor. Movement
         will stop once prep sensor is no longer triggered if movement has not already stopped.
@@ -104,13 +109,15 @@ class AFC_Claymore(AFC_vivid):
         be easily removed.
 
         :param lane: Lane to eject spool
+        :param gcmd: command context the eject is run through, if any
         """
-        afcBoxTurtle.eject_lane(self, lane)
+        afcBoxTurtle.eject_lane(self, lane, gcmd=gcmd)
 
     def move_to_hub(self, lane: AFCLane, dist: float,
                     dir: MoveDirection, use_homing: bool=True,
                     speed_mode: SpeedMode=SpeedMode.HUB,
-                    assist_active: AssistActive=AssistActive.DYNAMIC
+                    assist_active: AssistActive=AssistActive.DYNAMIC, *,
+                    gcmd: AFCGcmd
                 ) -> tuple[bool, float|int, AFCMoveWarning]:
         """
         Helper method for calling lanes move_to method and passing in lanes load endstop as trigger
@@ -122,6 +129,7 @@ class AFC_Claymore(AFC_vivid):
         :param use_homing: When enabled home_to logic is used, else move_advance logic is used
         :param speed_mode: SpeedMode type to use when moving stepper
         :param assist_active: ViViD does not have spoolers, setting this parameter does nothing.
+        :param gcmd: command context the pause is run through, if homing fails
 
         :return tuple[bool, float|int, AFCMoveWarning]: A tuple containing:
 
@@ -132,8 +140,8 @@ class AFC_Claymore(AFC_vivid):
                   when no error or not full movement detected. When homing is disabled, always returns
                   True, 0, AFCMoveWarning.NONE.
         """
-        return afcBoxTurtle.move_to_hub(self, lane, dist, dir, use_homing,
-                                        speed_mode, assist_active)
+        return afcBoxTurtle.move_to_hub(self, lane, dist, dir, use_homing, speed_mode,
+                                        assist_active, gcmd=gcmd)
 
     def calibrate_lane(self, cur_lane: AFCLane, tol: float|int,
                        gcmd: GCodeCommand) -> tuple[bool, str, float|int]:

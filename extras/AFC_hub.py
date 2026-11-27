@@ -21,7 +21,7 @@ except: raise config_error(ERROR_STR.format(import_lib="AFC_unit", trace=traceba
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
-    from gcode import GCodeCommand
+    from extras.AFC_utils import AFCGcmd
     from klippy import Printer
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
@@ -123,7 +123,7 @@ class afc_hub:
         current_lane_name = getattr(self.afc, 'current', None)
         if current_lane_name and current_lane_name in self.lanes:
             lane = self.lanes[current_lane_name]
-            lane.handle_hub_runout(sensor=self.name)
+            lane.handle_hub_runout(gcmd="callback", sensor=self.name)
         self.fila.runout_helper.min_event_systime = self.reactor.monotonic() + self.fila.runout_helper.event_delay
 
     def handle_connect(self) -> None:
@@ -178,7 +178,7 @@ class afc_hub:
         """
         self._state = bool(state)
 
-    def hub_cut(self, cur_lane: AFCLane, gcmd: Optional[GCodeCommand]=None) -> None:
+    def hub_cut(self, cur_lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Run the hub's filament-cutting sequence: feed the lane until the hub
         sensor triggers, jog back and forth to find the trigger point
@@ -193,40 +193,44 @@ class afc_hub:
         servo_string = 'SET_SERVO SERVO={servo} ANGLE={{angle}}'.format(servo=self.cut_servo_name)
 
         # Prep the servo for cutting.
-        self.afc.run_script(servo_string.format(angle=self.cut_servo_prep_angle), gcmd)
+        self.afc.run_script(servo_string.format(angle=self.cut_servo_prep_angle), gcmd=gcmd)
         # Load the lane until the hub is triggered.
         while not self.state:
-            cur_lane.move(self.move_dis, cur_lane.short_moves_speed, cur_lane.short_moves_accel)
+            cur_lane.move(self.move_dis, cur_lane.short_moves_speed, cur_lane.short_moves_accel,
+                          gcmd=gcmd)
 
         # To have an accurate reference position for `hub_cut_dist`, move back and forth in smaller steps
         # to find the point where the hub just triggers.
         while self.state:
-            cur_lane.move(-10, cur_lane.short_moves_speed, cur_lane.short_moves_accel, self.assisted_retract)
+            cur_lane.move(-10, cur_lane.short_moves_speed, cur_lane.short_moves_accel,
+                          self.assisted_retract, gcmd=gcmd)
         while not self.state:
-            cur_lane.move(2, cur_lane.short_moves_speed, cur_lane.short_moves_accel)
+            cur_lane.move(2, cur_lane.short_moves_speed, cur_lane.short_moves_accel, gcmd=gcmd)
 
         # Feed the `hub_cut_dist` amount.
-        cur_lane.move(self.cut_dist, cur_lane.short_moves_speed, cur_lane.short_moves_accel)
+        cur_lane.move(self.cut_dist, cur_lane.short_moves_speed, cur_lane.short_moves_accel,
+                      gcmd=gcmd)
         # Have a snooze
         self.reactor.pause(self.reactor.monotonic() + 0.5)
 
 
         # Choppy Chop
-        self.afc.run_script(servo_string.format(angle=self.cut_servo_clip_angle), gcmd)
+        self.afc.run_script(servo_string.format(angle=self.cut_servo_clip_angle), gcmd=gcmd)
         if self.cut_confirm:
             self.reactor.pause(self.reactor.monotonic() + 0.5)
             # ReChop, To be doubly choppy sure.
-            self.afc.run_script(servo_string.format(angle=self.cut_servo_prep_angle), gcmd)
+            self.afc.run_script(servo_string.format(angle=self.cut_servo_prep_angle), gcmd=gcmd)
 
             self.reactor.pause(self.reactor.monotonic() + 1)
-            self.afc.run_script(servo_string.format(angle=self.cut_servo_clip_angle), gcmd)
+            self.afc.run_script(servo_string.format(angle=self.cut_servo_clip_angle), gcmd=gcmd)
         # Longer Snooze
         self.reactor.pause(self.reactor.monotonic() + 1)
         # Align bowden tube (reset)
-        self.afc.run_script(servo_string.format(angle=self.cut_servo_pass_angle), gcmd)
+        self.afc.run_script(servo_string.format(angle=self.cut_servo_pass_angle), gcmd=gcmd)
 
         # Retract lane by `hub_cut_clear`.
-        cur_lane.move(-self.cut_clear, cur_lane.short_moves_speed, cur_lane.short_moves_accel, self.assisted_retract)
+        cur_lane.move(-self.cut_clear, cur_lane.short_moves_speed, cur_lane.short_moves_accel,
+                      self.assisted_retract, gcmd=gcmd)
 
     def get_status(self, eventtime: Optional[float]=None) -> Dict[str, Any]:
         """

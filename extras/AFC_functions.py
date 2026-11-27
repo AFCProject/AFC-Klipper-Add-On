@@ -31,8 +31,10 @@ if TYPE_CHECKING:
     from extras.AFC_extruder import AFCExtruder
     from extras.AFC_stepper import AFCExtruderStepper
     from extras.AFC_hub import afc_hub
+    from extras.AFC_button import AFCButton
     from gcode import GCodeCommand
     from extras.gcode_move import GCodeMove
+    from extras.AFC_utils import AFCGcmd
 
 try: from extras.AFC_utils import ERROR_STR
 except: raise error("Error when trying to import AFC_utils.ERROR_STR\n{trace}".format(trace=traceback.format_exc()))
@@ -45,6 +47,36 @@ except: raise error(ERROR_STR.format(import_lib="AFC_lane", trace=traceback.form
 
 try: from extras.AFC_unit import CALI_WARN
 except: raise error(ERROR_STR.format(import_lib="AFC_unit", trace=traceback.format_exc()))
+
+# BUTTON_CALIBRATION_PRESS_DELTA, BUTTON_CALIBRATION_RANGE, BUTTON_CALIBRATION_SAMPLE_COUNT, and
+# ADC_SATURATION_RATIO live on AFCButton itself as per-button config options, since the right value
+# for each depends on a given button's wiring/resistor ladder.
+
+# Poll interval for the background ADC watch during button calibration.
+BUTTON_CALIBRATION_POLL_TIME = 0.1
+# Minimum time between logged resistance readings while polling, so the log isn't flooded at the
+# full poll rate.
+BUTTON_CALIBRATION_LOG_INTERVAL = 0.5
+# Ratio ceiling AFCButton.get_resistance() clamps to; matches its clamp so a saturated button's
+# fallback max always covers every value it can report. (There's no literal 1.0:
+# resistance_at_ratio(1.0) divides by zero.)
+BUTTON_CALIBRATION_SATURATION_MAX_RATIO = 0.99999
+# Ratio-space fallback tolerance for release detection, used when the ohm delta exceeds the button's
+# calibration_press_delta; resistance blows up for a near-identical ratio close to saturation, where
+# ohms alone can't tell.
+BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE = 0.001
+# Maximum time (seconds) a single stage may wait on the user before the session cancels, so a
+# stalled ADC reading or an abandoned prompt can't leave button_calibration_active stuck True,
+# refusing every AFC button press.
+BUTTON_CALIBRATION_STAGE_TIMEOUT = 60.0
+# How long a stage may go without an ADC sample before a one-time warning names the stalled pin,
+# well short of BUTTON_CALIBRATION_STAGE_TIMEOUT so the user gets an earlier, specific signal
+# instead of a silent retry loop.
+BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT = 5.0
+# Ratio-space agreement tolerance for two saturated press readings, used instead of a button's own
+# ohms tolerance: resistance is hypersensitive to ratio right at the ADC ceiling, so a tiny
+# raw-ratio difference there can look like a huge ohms disagreement and falsely reject a press.
+BUTTON_CALIBRATION_SATURATION_AGREEMENT_RATIO_TOLERANCE = BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE
 
 
 def round_floats(value: Any, digits: int = 6) -> Any:
@@ -117,7 +149,7 @@ class afcFunction:
         self.printer.register_event_handler("afc_hub:register_macros",self.register_hub_macros)
         # TODO: Use or remove once fully moved away from KTC
         # self.reactor = self.printer.get_reactor()
-        # self.activate_extruder_cb = self.reactor.register_timer( self._handle_activate_extruder )
+        # self.activate_extruder_cb = self.reactor.register_timer( self.handle_activate_extruder )
         self.printer.register_event_handler("afc:moonraker_connect", self.handle_moonraker_connect)
         self.auto_var_file = None
         self.errorLog = {}
@@ -142,30 +174,55 @@ class afcFunction:
         self.stn_calibration_original: float = 0.0
         self.stn_calibration_extruder: Optional[str] = None
         self.stn_calibration_lane: Optional[str] = None
+        self.button_calibration_active: bool = False
+        self.button_calibration_queue: List[AFCButton] = []
+        self.button_calibration_stage: str = ""
+        self.button_calibration_baseline: Optional[float] = None
+        self.button_calibration_samples: List[float] = []
+        self.button_calibration_first_value: Optional[float] = None
+        self.button_calibration_gcmd: Optional[GCodeCommand] = None
+        self.button_calibration_timer: Any = None
+        self.button_calibration_last_log_time: float = 0.0
+        # The just-finished button whose release we're waiting to see, and the baseline it was
+        # calibrated against, while stage=="await_release".
+        self.button_calibration_await_button: Optional[AFCButton] = None
+        self.button_calibration_await_baseline: Optional[float] = None
+        # Only set once the completion prompt's Restart Klipper button is shown, so
+        # BUTTON_CALIBRATION_RESTART can't be used to force a restart outside of that specific
+        # prompt.
+        self.button_calibration_restart_pending: bool = False
+        # Per-stage timeout
+        self.button_calibration_stage_deadline: Optional[float] = None
+        self.button_calibration_stage_started: Optional[float] = None
+        self.button_calibration_no_sample_warned: bool = False
+        # Names of buttons actually saved/skipped so far this session, reported separately once
+        # the queue finishes.
+        self.button_calibration_saved: List[str] = []
+        self.button_calibration_skipped: List[str] = []
         self.register_commands(self.show_macros, 'AFC_CALIBRATION', self.cmd_AFC_CALIBRATION,
                                self.cmd_AFC_CALIBRATION_help)
-        self.register_commands(False, 'AFC_TOOLHEAD_CALIBRATION',
-                               self.cmd_AFC_TOOLHEAD_CALIBRATION,
+        self.register_commands(False, 'AFC_BUTTON_CALIBRATION',self.cmd_AFC_BUTTON_CALIBRATION,
+                               self.cmd_AFC_BUTTON_CALIBRATION_help)
+        self.register_commands(False, 'AFC_TOOLHEAD_CALIBRATION', self.cmd_AFC_TOOLHEAD_CALIBRATION,
                                self.cmd_AFC_TOOLHEAD_CALIBRATION_help,
                                self.cmd_AFC_TOOLHEAD_CALIBRATION_options)
-        self.register_commands(False, 'AFC_TOOL_STN_CALIBRATION',
-                               self.cmd_AFC_TOOL_STN_CALIBRATION,
+        self.register_commands(False, 'AFC_TOOL_STN_CALIBRATION', self.cmd_AFC_TOOL_STN_CALIBRATION,
                                self.cmd_AFC_TOOL_STN_CALIBRATION_help,
                                self.cmd_AFC_TOOL_STN_CALIBRATION_options)
         self.register_commands(False, 'AFC_TOOL_STN_UNLOAD_CALIBRATION',
                                self.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION,
                                self.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION_help,
                                self.cmd_AFC_TOOL_STN_UNLOAD_CALIBRATION_options)
-        self.register_commands(False, 'AFC_CUTTER_CALIBRATION',
-                               self.cmd_AFC_CUTTER_CALIBRATION,
+        self.register_commands(False, 'AFC_CUTTER_CALIBRATION', self.cmd_AFC_CUTTER_CALIBRATION,
                                self.cmd_AFC_CUTTER_CALIBRATION_help,
                                self.cmd_AFC_CUTTER_CALIBRATION_options)
-        self.register_commands(self.show_macros, 'AFC_RESET',       self.cmd_AFC_RESET,         self.cmd_AFC_RESET_help,
-                               self.cmd_AFC_RESET_options)
+        self.register_commands(self.show_macros, 'AFC_RESET', self.cmd_AFC_RESET,
+                               self.cmd_AFC_RESET_help, self.cmd_AFC_RESET_options)
         self.register_commands(self.show_macros, 'AFC_TEST_LANES', self.cmd_AFC_TEST_LANES,
                                self.cmd_AFC_TEST_LANES_help)
         # Always adding this so it will show up as a button in guis
-        self.register_commands(self.show_macros, 'AFC_GET_TD_ONE_DATA', self.cmd_AFC_GET_TD_ONE_DATA,   self.cmd_AFC_GET_TD_ONE_DATA_help)
+        self.register_commands(self.show_macros, 'AFC_GET_TD_ONE_DATA',
+                               self.cmd_AFC_GET_TD_ONE_DATA, self.cmd_AFC_GET_TD_ONE_DATA_help)
 
     def register_lane_macros(self, lane_obj):
         """
@@ -208,6 +265,13 @@ class afcFunction:
         self.auto_var_file = Path(self.afc.VarFile).parent.joinpath("AFC_auto_vars.cfg")
         self.afc.gcode.register_command('CALIBRATE_AFC',   self.cmd_CALIBRATE_AFC,   desc=self.cmd_CALIBRATE_AFC_help)
         self.afc.gcode.register_command('ALL_CALIBRATION', self.cmd_ALL_CALIBRATION, desc=self.cmd_ALL_CALIBRATION_help)
+        self.afc.gcode.register_command('BUTTON_CALIBRATION', self.cmd_BUTTON_CALIBRATION,
+                                        desc=self.cmd_BUTTON_CALIBRATION_help)
+        self.afc.gcode.register_command('BUTTON_CALIBRATION_RESTART',
+                                        self.cmd_BUTTON_CALIBRATION_RESTART,
+                                        desc=self.cmd_BUTTON_CALIBRATION_RESTART_help)
+        self.button_calibration_timer = self.afc.reactor.register_timer(
+            self._button_calibration_poll)
         self.afc.gcode.register_command('AFC_CALI_FAIL',   self.cmd_AFC_CALI_FAIL,   desc=self.cmd_AFC_CALI_FAIL_help)
         self.afc.gcode.register_command('AFC_HAPPY_P',     self.cmd_AFC_HAPPY_P,     desc=self.cmd_AFC_HAPPY_P_help)
         self.afc.gcode.register_command('TEST_LANE', self.cmd_TEST_LANE, desc=self.cmd_TEST_LANE_help)
@@ -391,8 +455,7 @@ class afcFunction:
         except Exception:
             return False
 
-    def check_homed(self, error_msg: Optional[str]=None,
-                    gcmd: Optional[GCodeCommand]=None) -> bool:
+    def check_homed(self, error_msg: Optional[str]=None, *, gcmd: AFCGcmd) -> bool:
         """
         Helper function to determine if printer is currently homed, if not, then apply G28
 
@@ -403,22 +466,25 @@ class afcFunction:
         """
         if not self.is_homed():
             if self.afc.auto_home:
-                self.afc.run_script("G28", gcmd)
+                self.afc.run_script("G28", gcmd=gcmd)
                 self.afc.toolhead.wait_moves()
                 if self.afc.auto_level_macro is not None:
                     if self.check_macro_present(self.afc.auto_level_macro):
-                        self.afc.run_script(self.afc.auto_level_macro, gcmd)
+                        self.afc.run_script(self.afc.auto_level_macro, gcmd=gcmd)
                         self.afc.toolhead.wait_moves()
                     else:
-                        self.afc.error.AFC_error("Auto level macro defined, but not found in printer configuration.",
-                                                 False, stack_name=inspect.currentframe().f_back.f_code.co_name)
+                        self.afc.error.AFC_error(
+                            "Auto level macro defined, but not found in printer configuration.",
+                            False, stack_name=inspect.currentframe().f_back.f_code.co_name,
+                            gcmd=gcmd)
                         return False
                 return True
             else:
                 if error_msg is None:
                     error_msg = "Please home printer before doing a tool load"
-                self.afc.error.AFC_error(error_msg,
-                                         False, stack_name=inspect.currentframe().f_back.f_code.co_name)
+                self.afc.error.AFC_error(error_msg, False,
+                                         stack_name=inspect.currentframe().f_back.f_code.co_name,
+                                         gcmd=gcmd)
                 return False
         else:
             return True
@@ -650,19 +716,17 @@ class afcFunction:
             return 'Prep:{}'.format(self.HexConvert(cur_lane.led_prep_loaded).split(':')[-1])
         return 'Not Ready:{}'.format(self.HexConvert(cur_lane.led_not_ready).split(':')[-1])
 
-    def handle_activate_extruder(self, gcmd: Optional[GCodeCommand]=None):
+    def handle_activate_extruder_cb(self):
         """
         Function used to deactivate lanes motors and buffers, then enables current extruders lane
 
         This will also be tied to a callback once multiple extruders are implemented
-
-        :param gcmd: command context to run the current-change macros through, if any
         """
         # Wait until printer is not moving so klipper does not crash
         # self.reactor.update_timer( self.activate_extruder_cb, self.reactor.monotonic() + 5 )
-        self._handle_activate_extruder(0, gcmd)
+        self.handle_activate_extruder(0, gcmd="sub_command")
 
-    def _handle_activate_extruder(self, eventtime, gcmd: Optional[GCodeCommand]=None):
+    def handle_activate_extruder(self, eventtime, gcmd: AFCGcmd):
         """
         Supposed to be a callback function from timer, currently this is not called from timer event.
         TODO: Update this functionality before pushing to main/dev or once fully moved away from KTC
@@ -681,16 +745,16 @@ class afcFunction:
                 obj.disable_buffer()
                 if (cur_lane_loaded is None
                     or (obj.unit_obj.name != cur_lane_loaded.unit_obj.name)):
-                    obj.unit_obj.return_to_home()
+                    obj.unit_obj.return_to_home(gcmd=gcmd)
                 obj.unsync_to_extruder(gcmd=gcmd)
                 if obj.prep_state and obj.load_state:
                     if obj.tool_loaded:
                         # If tool is loaded, set led to tool loaded color
-                        obj.unit_obj.lane_tool_loaded_idle(obj)
+                        obj.unit_obj.lane_tool_loaded_idle(obj, gcmd=gcmd)
                     else:
-                        obj.unit_obj.lane_loaded(obj)
+                        obj.unit_obj.lane_loaded(obj, gcmd=gcmd)
                 else:
-                    obj.unit_obj.lane_not_ready(obj)
+                    obj.unit_obj.lane_not_ready(obj, gcmd=gcmd)
 
         # Exit early if lane is None
         if cur_lane_loaded is None:
@@ -699,13 +763,13 @@ class afcFunction:
         # Switch spoolman ID
         self.afc.spool.set_active_spool(cur_lane_loaded.spool_id)
         # Set lanes tool loaded led (uses filament color when available via _get_lane_color)
-        cur_lane_loaded.unit_obj.lane_tool_loaded( cur_lane_loaded )
+        cur_lane_loaded.unit_obj.lane_tool_loaded( cur_lane_loaded, gcmd=gcmd )
         # Enable stepper
         cur_lane_loaded.do_enable(True)
         # Enable buffer
         cur_lane_loaded.enable_buffer()
         cur_lane_loaded.sync_to_extruder(gcmd=gcmd)
-        cur_lane_loaded.unit_obj.select_lane( cur_lane_loaded )
+        cur_lane_loaded.unit_obj.select_lane( cur_lane_loaded, gcmd=gcmd )
         self.logger.debug("Activate extruder done")
         # TODO: Remove or add back once fully moved away from KTC
         # return self.reactor.NEVER
@@ -719,13 +783,13 @@ class afcFunction:
         cur_lane_loaded = self.get_current_lane_obj()
         if cur_lane_loaded is not None:
             cur_lane_loaded.unsync_to_extruder(gcmd=gcmd)
-            cur_lane_loaded.set_tool_unloaded(normal_toolchange=True)
-            cur_lane_loaded.unit_obj.return_to_home()
-            self.afc.function.handle_activate_extruder(gcmd)
+            cur_lane_loaded.set_tool_unloaded(normal_toolchange=True, gcmd=gcmd)
+            cur_lane_loaded.unit_obj.return_to_home(gcmd=gcmd)
+            self.afc.function.handle_activate_extruder(0, gcmd=gcmd)
             self.logger.info("Manually removing {} loaded from toolhead".format(cur_lane_loaded.name))
             self.afc.save_vars()
 
-    def select_loaded_lane(self, gcmd: Optional[GCodeCommand]=None):
+    def select_loaded_lane(self, gcmd: AFCGcmd):
         """
         Function looks up what the current lane loaded is and calls a common `select_lane` function so
         that units that have selectors this makes sure the correct lane is selected if user moves other
@@ -735,9 +799,9 @@ class afcFunction:
         """
         current_lane = self.get_current_lane_obj()
         if current_lane is not None:
-            current_lane.unit_obj.select_lane(current_lane)
+            current_lane.unit_obj.select_lane(current_lane, gcmd=gcmd)
             # Set current back to print current after lane move
-            current_lane.set_print_current(gcmd)
+            current_lane.set_print_current(gcmd=gcmd)
 
     def log_toolhead_pos(self, move_pre: str = "") -> None:
         """
@@ -1013,7 +1077,7 @@ class afcFunction:
                     self.config.access_tracking[(name.lower(), option.lower())] = 1
             self.printer.load_object(self.config, name)
 
-    def _safe_extrude(self, amount_mm, feedrate=100, gcmd: Optional[GCodeCommand]=None):
+    def _safe_extrude(self, amount_mm, feedrate=100, *, gcmd: AFCGcmd):
         """
         Helper function to safely extrude a given amount of filament, checking if the lane is loaded and
         if the toolhead is in absolute mode.
@@ -1022,12 +1086,12 @@ class afcFunction:
         :param feedrate: Feedrate for extrusion in mm/min
         :param gcmd: command context to run the extrude moves through, if any
         """
-        self.afc.run_script("M400", gcmd)  # Finish queued moves
-        self.afc.run_script("M83", gcmd)  # Relative extrusion mode
-        self.afc.run_script("G92 E0", gcmd)  # Zero extruder
+        self.afc.run_script("M400", gcmd=gcmd)  # Finish queued moves
+        self.afc.run_script("M83", gcmd=gcmd)  # Relative extrusion mode
+        self.afc.run_script("G92 E0", gcmd=gcmd)  # Zero extruder
         self.afc.logger.info(f"Extruding {amount_mm}mm")
-        self.afc.run_script(f"G1 E{amount_mm} F{feedrate}", gcmd)
-        self.afc.run_script("M82", gcmd)
+        self.afc.run_script(f"G1 E{amount_mm} F{feedrate}", gcmd=gcmd)
+        self.afc.run_script("M82", gcmd=gcmd)
 
     def _lane_calibration(self, lanes: str, unit: Optional[str], tol: float, dis: float,
                           gcmd: GCodeCommand) -> tuple[bool, list[str], list[str]]:
@@ -1072,13 +1136,17 @@ class afcFunction:
             if not lane.load_state or not lane.prep_state:
                 self.logger.info(f"{lane.name} not loaded skipping to next loaded lane")
                 continue
-            # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
-            if lane.is_direct_hub():
-                checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol, gcmd=gcmd)
-            else:
-                checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol, gcmd=gcmd)
+            previous_rotation_distance = lane.reset_drive_stepper()
+            try:
+                # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
+                if lane.is_direct_hub():
+                    checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol, gcmd=gcmd)
+                else:
+                    checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol, gcmd=gcmd)
+            finally:
+                lane.restore_drive_stepper(previous_rotation_distance)
             if(not checked):
-                self.afc.error.AFC_error(msg, False)
+                self.afc.error.AFC_error(msg, False, gcmd=gcmd)
 
                 reset_lane = False
                 # Check to see if lane has hub object and thats its triggered, this will control
@@ -1086,7 +1154,8 @@ class afcFunction:
                 if hasattr(lane, "hub_obj") and hasattr(lane.hub_obj, "state"):
                     reset_lane = lane.hub_obj.state
 
-                self._afc_cali_fail(cali=lane.name, dis=abs(pos), reset_lane=(pos!=0 and reset_lane),fail_message=msg)
+                self._afc_cali_fail(cali=lane.name, dis=abs(pos), reset_lane=(pos!=0 and reset_lane),
+                                    fail_message=msg, gcmd=gcmd)
                 return checked, [], []
             else:
                 if msg == "calibration_lane":
@@ -1108,7 +1177,7 @@ class afcFunction:
 
 
     def _afc_cali_comp(self, cali: str, title: str,
-                       additional_msg: str, gcmd: Optional[GCodeCommand]=None):
+                       additional_msg: str, gcmd: AFCGcmd):
         """
         This method handles the completion of the AFC calibration process by displaying a prompt to the user, asking
         whether they want to perform more calibrations.
@@ -1136,8 +1205,7 @@ class afcFunction:
                                True, None)
 
     def _afc_cali_fail(self, cali: str, dis: str, reset_lane: bool=True,
-                       title: str="AFC Calibration Failed", fail_message: str="",
-                       gcmd: GCodeCommand=None):
+                       title: str="AFC Calibration Failed", fail_message: str="", *, gcmd: AFCGcmd):
         """
         This method opens a prompt after an AFC calibration failure. It informs the user about the failure and provides
         instructions to reset the lane and review the error messages in the console. The user is prompted to take corrective
@@ -1231,24 +1299,29 @@ class afcFunction:
                 error = True
         return error, set_tool_start_back_to_none, failed_msg
 
-    def _resolve_calibration_lane(self, extruder_name: str,
-                                  lane_name: Optional[str]) -> Optional[AFCLane]:
+    def _resolve_calibration_lane(
+        self, extruder_name: str, lane_name: Optional[str],
+        gcmd: AFCGcmd
+    ) -> Optional[AFCLane]:
         """
         Resolve a lane for toolhead calibration.
 
         :param extruder_name: AFC extruder being calibrated
         :param lane_name: requested lane name, or None to resolve a single suitable lane
+        :param gcmd: command context the pause is run through, if any
         :return AFCLane: resolved lane, or None when a lane cannot be resolved
         """
         extruder = self.afc.tools.get(extruder_name)
         if extruder is None:
-            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False)
+            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False,
+                                     gcmd=gcmd)
             return None
 
         lane = self.afc.lanes.get(lane_name) if lane_name else None
         if (lane_name
             and lane is None):
-            self.afc.error.AFC_error(f"'{lane_name}' is not a valid lane", pause=False)
+            self.afc.error.AFC_error(f"'{lane_name}' is not a valid lane", pause=False,
+                                     gcmd=gcmd)
             return None
 
         if lane is None:
@@ -1262,13 +1335,14 @@ class afcFunction:
                 if len(lanes) != 1:
                     self.afc.error.AFC_error(
                         "Select a lane from AFC_TOOLHEAD_CALIBRATION before continuing.",
-                        pause=False)
+                        pause=False, gcmd=gcmd)
                     return None
                 lane = lanes[0]
 
         if lane.extruder_obj is not extruder:
             self.afc.error.AFC_error(
-                f"Lane '{lane.name}' does not belong to extruder '{extruder_name}'.", pause=False)
+                f"Lane '{lane.name}' does not belong to extruder '{extruder_name}'.", pause=False,
+                gcmd=gcmd)
             return None
 
         return lane
@@ -1298,7 +1372,7 @@ class afcFunction:
         :param lane_name: requested lane name, or None to resolve a single suitable lane
         :return AFCLane: loaded lane, or None when a lane cannot be resolved or loaded
         """
-        lane = self._resolve_calibration_lane(extruder_name, lane_name)
+        lane = self._resolve_calibration_lane(extruder_name, lane_name, gcmd=prompt.gcode)
         if lane is None:
             return None
 
@@ -1311,7 +1385,8 @@ class afcFunction:
             self.afc.CHANGE_TOOL(lane, gcmd=prompt.gcode)
             if self.afc.current != lane.name:
                 self.afc.error.AFC_error(
-                    f"Lane '{lane.name}' did not load for toolhead calibration.", pause=False)
+                    f"Lane '{lane.name}' did not load for toolhead calibration.", pause=False,
+                    gcmd=prompt.gcode)
                 return None
         finally:
             prompt.p_end()
@@ -1449,7 +1524,7 @@ class afcFunction:
         if lane is not None:
             if (self.afc.park
                 and self.afc.park_cmd):
-                self.afc.run_script(self.afc.park_cmd, gcmd)
+                self.afc.run_script(self.afc.park_cmd, gcmd=gcmd)
             self.logger.info('Starting test for lane(s): {}'.format(lane))
             lane_obj = self.afc.lanes.get(lane)
             if lane != 'all':
@@ -1528,8 +1603,10 @@ class afcFunction:
         text = ('The following prompts will lead you through the calibration of your AFC '
                 'unit(s). First, select a unit to calibrate. *All values will be '
                 'automatically updated in the appropriate config sections.')
-        button_style = "primary"
-        for index, (key, item) in enumerate(self.afc.units.items()):
+        # Counts only the buttons actually shown, not units skipped below, so the primary/secondary
+        # alternation stays correct regardless of how many units end up filtered out.
+        visible_count = 0
+        for key, item in self.afc.units.items():
             # Only showing calibrations for units that have lanes
             if len(self.afc.units.get(key).lanes) == 0:
                 continue
@@ -1542,15 +1619,637 @@ class afcFunction:
             # Create a button for each unit
             button_label = f"{key}"
             button_command = f'UNIT_CALIBRATION UNIT={key}'
-            button_style = "primary" if index % 2 == 0 else "secondary"
+            button_style = "primary" if visible_count % 2 == 0 else "secondary"
             buttons.append((button_label, button_command, button_style))
+            visible_count += 1
 
-        button_style = "secondary" if button_style == "primary" else button_style
-        buttons.append(("Toolhead Calibration", "AFC_TOOLHEAD_CALIBRATION", "info"))
+        buttons.append(("Toolhead Calibration", "AFC_TOOLHEAD_CALIBRATION",
+                       "primary" if visible_count % 2 == 0 else "secondary"))
+        visible_count += 1
+        if self._get_adc_buttons():
+            buttons.append(("Button Calibration", "AFC_BUTTON_CALIBRATION",
+                           "primary" if visible_count % 2 == 0 else "secondary"))
 
         bow_footer = [("All Lanes in all units", "ALL_CALIBRATION", "secondary")]
-        prompt.create_custom_p(title, text, buttons,
-                               True, None, bow_footer)
+        prompt.create_custom_p(title, text, buttons, True, None, bow_footer)
+
+    def _get_adc_buttons(self) -> List[AFCButton]:
+        """
+        List every configured ADC based AFC_button, in config order.
+
+        :return List[AFCButton]: ADC buttons found, empty when none are configured
+        """
+        return [button for _, button in self.printer.lookup_objects(module="AFC_button")
+                if getattr(button, "is_adc_button", False)]
+
+    cmd_AFC_BUTTON_CALIBRATION_help = 'Open prompt to select which ADC button(s) to calibrate'
+    def cmd_AFC_BUTTON_CALIBRATION(self, gcmd: GCodeCommand) -> None:
+        """
+        Open a prompt to start ADC button calibration by selecting a button.
+
+        Creates a button for each configured ADC button and allows calibrating all of them in one
+        pass.
+
+        Usage
+        -------
+        `AFC_BUTTON_CALIBRATION`
+
+        Example
+        -------
+        ```
+        AFC_BUTTON_CALIBRATION
+        ```
+        """
+        prompt = AFCprompt(gcmd, self.logger)
+        title = 'Button Calibration'
+        text = ('The following prompts will lead you through calibrating the press '
+                'threshold for your ADC based buttons. First, select a button to '
+                'calibrate.')
+        buttons = []
+        for index, button in enumerate(self._get_adc_buttons()):
+            button_style = "primary" if index % 2 == 0 else "secondary"
+            buttons.append((button.name, f'BUTTON_CALIBRATION BUTTON={button.name}',
+                           button_style))
+
+        footer = [("All Buttons", "BUTTON_CALIBRATION ALL=1", "secondary")]
+        prompt.create_custom_p(title, text, buttons, True, None, footer)
+
+    def _reset_button_calibration_values(self) -> None:
+        """
+        Stop the button calibration poll timer and clear session state, so a new BUTTON_CALIBRATION
+        call starts fresh.
+        """
+        self.afc.reactor.update_timer(self.button_calibration_timer, self.afc.reactor.NEVER)
+        self.button_calibration_active = False
+        self.button_calibration_queue = []
+        self.button_calibration_stage = ""
+        self.button_calibration_baseline = None
+        self.button_calibration_samples = []
+        self.button_calibration_first_value = None
+        self.button_calibration_gcmd = None
+        self.button_calibration_last_log_time = 0.0
+        self.button_calibration_await_button = None
+        self.button_calibration_await_baseline = None
+        self.button_calibration_restart_pending = False
+        self.button_calibration_stage_deadline = None
+        self.button_calibration_stage_started = None
+        self.button_calibration_no_sample_warned = False
+        self.button_calibration_saved = []
+        self.button_calibration_skipped = []
+
+    def _start_button_calibration_stage_clock(self) -> None:
+        """
+        (Re)start the per-stage timeout window and no-ADC-sample tracking. Call whenever a new stage
+        begins waiting on the user or on the ADC (the initial press_1, each later press_1 from
+        `_start_next_button_calibration`, the "release"/"press_2" transitions, and "await_release"),
+        so every stage gets its own fresh BUTTON_CALIBRATION_STAGE_TIMEOUT window rather than
+        inheriting whatever time was left on the previous one.
+        """
+        now = self.afc.reactor.monotonic()
+        self.button_calibration_stage_deadline = now + BUTTON_CALIBRATION_STAGE_TIMEOUT
+        self.button_calibration_stage_started = now
+        self.button_calibration_no_sample_warned = False
+
+    def _timeout_button_calibration(self, button: AFCButton, gcmd: AFCGcmd) -> None:
+        """
+        Cancel the active button calibration session because its current stage exceeded
+        BUTTON_CALIBRATION_STAGE_TIMEOUT, so a stalled ADC reading or a user who walked away
+        mid-prompt can't permanently disable every AFC button.
+
+        :param button: button whose stage timed out, named in the error
+        :param gcmd: command context this timeout was detected under
+        """
+        stage = self.button_calibration_stage
+        stored_gcmd = self.button_calibration_gcmd
+        self._reset_button_calibration_values()
+        error_str = (f"Button calibration timed out waiting on {button.name} during the "
+                    f"'{stage}' stage; calibration was cancelled.")
+        self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+        if stored_gcmd is not None:
+            prompt = AFCprompt(stored_gcmd, self.logger)
+            text = (f"Button calibration timed out waiting on {button.name}. "
+                    "Calibration was cancelled.")
+            prompt.create_custom_p("Button Calibration Timed Out", text, None, True, None, None)
+
+    def _cancel_button_calibration_for_print(self, gcmd: AFCGcmd) -> None:
+        """
+        Cancel the active button calibration session because a print started while it was running,
+        so a sample or save can't land mid-print.
+
+        :param gcmd: command context this cancellation was detected under
+        """
+        stored_gcmd = self.button_calibration_gcmd
+        self._reset_button_calibration_values()
+        error_str = "Button calibration cancelled because a print started."
+        self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+        if stored_gcmd is not None:
+            prompt = AFCprompt(stored_gcmd, self.logger)
+            text = "Button calibration cancelled because a print started."
+            prompt.create_custom_p("Button Calibration Cancelled", text, None, True, None, None)
+
+    def _warn_if_adc_stalled(self, button: AFCButton, eventtime: float, gcmd: AFCGcmd) -> None:
+        """
+        Log a one-time error naming the pin if no ADC sample has arrived for `button` within
+        BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT seconds of the current stage starting, since a
+        silently stalled poll would otherwise just retry at BUTTON_CALIBRATION_POLL_TIME with no
+        visible sign anything is wrong until BUTTON_CALIBRATION_STAGE_TIMEOUT eventually cancels
+        the whole session.
+
+        :param button: button whose ADC reading is currently unavailable
+        :param eventtime: reactor event time of this poll
+        :param gcmd: command context this stall was detected under
+        """
+        if self.button_calibration_no_sample_warned:
+            return
+        started = self.button_calibration_stage_started
+        if (started is not None
+            and eventtime - started >= BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT):
+            self.button_calibration_no_sample_warned = True
+            error_str = (f"Button calibration: no ADC reading received for {button.name} "
+                        f"(pin {button.pin}) after "
+                        f"{BUTTON_CALIBRATION_ADC_SAMPLE_TIMEOUT:.0f}s; still waiting.")
+            self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+
+    def _show_button_calibration_prompt(self, text: str) -> None:
+        """
+        Show a status prompt during an active button calibration session, with a Cancel button that
+        stops the poll timer and resets state.
+
+        :param text: Prompt body text
+        """
+        prompt = AFCprompt(self.button_calibration_gcmd, self.logger)
+        cancel_footer = [("Cancel", "BUTTON_CALIBRATION CANCEL=1", "warning")]
+        prompt.create_custom_p("Button Calibration", text, None, False, None, cancel_footer)
+
+    cmd_BUTTON_CALIBRATION_help = 'Interactively calibrate analog_range for one or all ADC buttons'
+    def cmd_BUTTON_CALIBRATION(self, gcmd: GCodeCommand) -> None:
+        """
+        Start, or cancel, ADC button press threshold calibration for one or all configured ADC
+        buttons.
+
+        Each selected button is calibrated in turn: the user presses it twice (once released and
+        pressed again on prompt) while the ADC pin is watched in the background, and the two
+        measured resistances are averaged to derive analog_range.
+
+        Usage
+        -------
+        `BUTTON_CALIBRATION BUTTON=<name> | ALL=1`
+
+        Example
+        -------
+        ```
+        BUTTON_CALIBRATION ALL=1
+        ```
+        """
+        prompt = AFCprompt(gcmd, self.logger)
+        if bool(gcmd.get_int("CANCEL", 0, minval=0, maxval=1)):
+            self._reset_button_calibration_values()
+            text = "Button calibration cancelled."
+            prompt.create_custom_p("Button Calibration Cancelled", text, None, True, None, None)
+            return
+
+        if self.button_calibration_active:
+            self.afc.error.AFC_error("Button calibration is already running.", pause=False,
+                                     gcmd=gcmd)
+            return
+
+        if self.in_print():
+            prompt.p_end()
+            self.afc.error.AFC_error("Button calibration cannot run during a print.", pause=False,
+                                     gcmd=gcmd)
+            return
+
+        adc_buttons = self._get_adc_buttons()
+        queue: List[AFCButton]
+        if bool(gcmd.get_int("ALL", 0, minval=0, maxval=1)):
+            queue = list(adc_buttons)
+        else:
+            button_name = gcmd.get("BUTTON", "")
+            # An exact name match always wins, even if some button happens to be literally named
+            # "all"
+            match = next((button for button in adc_buttons if button.name == button_name), None)
+            if match is not None:
+                queue = [match]
+            elif button_name.lower() == "all":
+                queue = list(adc_buttons)
+            else:
+                prompt.p_end()
+                self.afc.error.AFC_error(f"'{button_name}' is not a valid ADC button", pause=False,
+                                         gcmd=gcmd)
+                return
+
+        if not queue:
+            prompt.p_end()
+            self.afc.error.AFC_error("No ADC buttons are configured to calibrate.", pause=False,
+                                     gcmd=gcmd)
+            return
+
+        self.button_calibration_active = True
+        self.button_calibration_queue = queue
+        self.button_calibration_stage = "press_1"
+        self.button_calibration_baseline = None
+        self.button_calibration_samples = []
+        self.button_calibration_first_value = None
+        self.button_calibration_gcmd = gcmd
+        self.button_calibration_await_button = None
+        self.button_calibration_await_baseline = None
+        self.button_calibration_restart_pending = False
+        self.button_calibration_saved = []
+        self.button_calibration_skipped = []
+        self._start_button_calibration_stage_clock()
+
+        text = ("You will press each button twice. Only release a button once you are "
+                f"told to.\n\nPress and hold the {queue[0].name} button now.")
+        prompt.create_custom_p("Button Calibration", text, None, False, None,
+                               [("Cancel", "BUTTON_CALIBRATION CANCEL=1", "warning")])
+
+        self.afc.reactor.update_timer(self.button_calibration_timer, self.afc.reactor.NOW)
+
+    cmd_BUTTON_CALIBRATION_RESTART_help = 'Close the calibration prompt and restart Klipper'
+    def cmd_BUTTON_CALIBRATION_RESTART(self, gcmd: GCodeCommand) -> None:
+        """
+        Close the button calibration completion prompt, then restart Klipper so the newly calibrated
+        analog_range values take effect. A plain RESTART never sends the prompt_end action by
+        itself, so the dialog would otherwise stay open in the UI after the restart.
+
+        Only does anything right after a button calibration session actually completes, so this
+        can't be used to force a restart outside of that specific completion prompt. Also refused
+        while a print is active, in case one started after calibration completed but before the
+        user clicked Restart; `restart_pending` stays set so the restart can still be run once
+        printing finishes.
+
+        Usage
+        -------
+        `BUTTON_CALIBRATION_RESTART`
+
+        Example
+        -------
+        ```
+        BUTTON_CALIBRATION_RESTART
+        ```
+        """
+        if not self.button_calibration_restart_pending:
+            self.afc.error.AFC_error("No completed button calibration is pending a restart.",
+                                     pause=False, gcmd=gcmd)
+            return
+
+        if self.in_print():
+            self.afc.error.AFC_error("Cannot restart Klipper during a print; restart manually "
+                                     "after it finishes.", pause=False, gcmd=gcmd)
+            return
+
+        self.button_calibration_restart_pending = False
+        self.afc.gcode.respond_raw("// action:prompt_end")
+        self.afc.run_script("RESTART", gcmd)
+
+    def _collect_button_sample(self, button: AFCButton, resistance: float) -> Optional[float]:
+        """
+        Append one resistance reading to the in-progress sample buffer.
+
+        :param button: button being sampled, for its calibration_sample_count
+        :param resistance: resistance just read, in ohms
+        :return Optional[float]: the average once button.calibration_sample_count readings have been
+            collected (also clears the buffer for the next measurement), else None while still
+            collecting
+        """
+        samples = self.button_calibration_samples
+        samples.append(resistance)
+        if len(samples) < button.calibration_sample_count:
+            return None
+        average = sum(samples) / len(samples)
+        self.button_calibration_samples = []
+        return average
+
+    def _is_released(self, button: AFCButton, resistance: float, baseline: float) -> bool:
+        """
+        Check whether `resistance` is close enough to `baseline` to count as released, falling back
+        to a ratio-space comparison near saturation. Also used, inverted, to detect a press: the
+        same ratio-space fallback keeps near-saturation ADC drift from being mistaken for a press.
+
+        :param button: button whose pullup converts resistance to ratio
+        :param resistance: resistance just measured, in ohms
+        :param baseline: released baseline resistance to compare against, in ohms
+        :return bool: True when the two readings are the same (released) reading
+        """
+        if abs(resistance - baseline) <= button.calibration_press_delta:
+            return True
+        ratio_delta = abs(button.ratio_at_resistance(resistance)
+                          - button.ratio_at_resistance(baseline))
+        return ratio_delta <= BUTTON_CALIBRATION_RELEASE_RATIO_TOLERANCE
+
+    def _start_next_button_calibration(self) -> None:
+        """
+        Prompt the user to press the button now at the head of the queue. Its baseline is sampled
+        fresh in the poll loop below rather than read here. Only called once the previously
+        calibrated button's own release has been confirmed, so that sampling starts with hands
+        already clear of every button.
+        """
+        next_button = self.button_calibration_queue[0]
+        self.button_calibration_stage = "press_1"
+        self.button_calibration_baseline = None
+        self.button_calibration_samples = []
+        self._start_button_calibration_stage_clock()
+        self._show_button_calibration_prompt(f"Press and hold the {next_button.name} button now.")
+
+    def _poll_await_release(self, eventtime: float, gcmd: AFCGcmd) -> float:
+        """
+        Reactor timer callback (stage=="await_release"): watches the just finished button's own
+        resistance until it returns near the baseline it was calibrated against, confirming the user
+        actually released it, then starts the next button in the queue.
+
+        :param eventtime: Reactor event time of this poll
+        :param gcmd: command context this poll is running under
+        :return float: next poll time, or reactor.NEVER once the session ends
+        """
+        button = self.button_calibration_await_button
+        baseline = self.button_calibration_await_baseline
+        if (button is None
+            or baseline is None):
+            # Shouldn't happen: await_release is only entered with both set.
+            self._start_next_button_calibration()
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        if (self.button_calibration_stage_deadline is not None
+            and eventtime >= self.button_calibration_stage_deadline):
+            self._timeout_button_calibration(button, gcmd=gcmd)
+            return self.afc.reactor.NEVER
+
+        resistance = button.get_resistance()
+        if resistance is None:
+            self._warn_if_adc_stalled(button, eventtime, gcmd=gcmd)
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        if (eventtime - self.button_calibration_last_log_time >= BUTTON_CALIBRATION_LOG_INTERVAL):
+            self.button_calibration_last_log_time = eventtime
+            raw_ratio = button._get_adc_ratio()
+            self.logger.debug(f"Button calibration: waiting for {button.name} to release, "
+                              f"resistance={resistance:.1f} ohms (baseline={baseline:.1f}, "
+                              f"raw_ratio={raw_ratio})")
+
+        if self._is_released(button, resistance, baseline):
+            if self._collect_button_sample(button, resistance) is not None:
+                self.button_calibration_await_button = None
+                self.button_calibration_await_baseline = None
+                self._start_next_button_calibration()
+        else:
+            self.button_calibration_samples = []
+
+        if not self.button_calibration_active:
+            return self.afc.reactor.NEVER
+        return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+    def _button_calibration_poll(self, eventtime: float) -> float:
+        """
+        Reactor timer callback: watches the active button's ADC resistance and advances the
+        calibration state machine as it moves away from (a press) and back to (a release) that
+        button's released baseline.
+
+        :param eventtime: Reactor event time of this poll
+        :return float: next poll time, or reactor.NEVER once the session ends
+        """
+        gcmd: AFCGcmd = "callback"
+        if (not self.button_calibration_active
+            or not self.button_calibration_queue):
+            return self.afc.reactor.NEVER
+
+        if self.in_print():
+            self._cancel_button_calibration_for_print(gcmd=gcmd)
+            return self.afc.reactor.NEVER
+
+        if self.button_calibration_stage == "await_release":
+            return self._poll_await_release(eventtime, gcmd=gcmd)
+
+        button = self.button_calibration_queue[0]
+
+        if (self.button_calibration_stage_deadline is not None
+            and eventtime >= self.button_calibration_stage_deadline):
+            self._timeout_button_calibration(button, gcmd=gcmd)
+            return self.afc.reactor.NEVER
+
+        resistance = button.get_resistance()
+        if resistance is None:
+            self._warn_if_adc_stalled(button, eventtime, gcmd=gcmd)
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        if (eventtime - self.button_calibration_last_log_time >= BUTTON_CALIBRATION_LOG_INTERVAL):
+            self.button_calibration_last_log_time = eventtime
+            raw_ratio = button._get_adc_ratio()
+            self.logger.debug(f"Button calibration: {button.name} resistance={resistance:.1f} ohms "
+                              f"(baseline={self.button_calibration_baseline}, stage="
+                              f"{self.button_calibration_stage}, raw_ratio={raw_ratio})")
+
+        baseline = self.button_calibration_baseline
+        if baseline is None:
+            sampled = self._collect_button_sample(button, resistance)
+            if sampled is not None:
+                self.button_calibration_baseline = sampled
+                self.logger.info(f"Button calibration: baseline resistance for {button.name} is "
+                                 f"{sampled:.1f} ohms")
+            return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+        is_pressed = not self._is_released(button, resistance, baseline)
+        if self.button_calibration_stage == "press_1":
+            if is_pressed:
+                sampled = self._collect_button_sample(button, resistance)
+                if sampled is not None:
+                    self.button_calibration_first_value = sampled
+                    self.button_calibration_stage = "release"
+                    self._start_button_calibration_stage_clock()
+                    self._show_button_calibration_prompt(
+                        f"Release the {button.name} button, then press it again.")
+            else:
+                self.button_calibration_samples = []
+        elif self.button_calibration_stage == "release":
+            if self._is_released(button, resistance, baseline):
+                if self._collect_button_sample(button, resistance) is not None:
+                    self.button_calibration_stage = "press_2"
+                    self._start_button_calibration_stage_clock()
+            else:
+                self.button_calibration_samples = []
+        elif self.button_calibration_stage == "press_2":
+            if is_pressed:
+                sampled = self._collect_button_sample(button, resistance)
+                if sampled is not None:
+                    self._finish_button_measurement(button, sampled, gcmd=gcmd)
+            else:
+                self.button_calibration_samples = []
+
+        if not self.button_calibration_active:
+            return self.afc.reactor.NEVER
+        return eventtime + BUTTON_CALIBRATION_POLL_TIME
+
+    def _range_overlaps_other_button(self, button: AFCButton, min_value: float,
+                                     max_value: float) -> Optional[AFCButton]:
+        """
+        Check whether `[min_value, max_value]` overlaps another configured ADC button's current
+        analog_range on the same ADC pin, whether that candidate range came from a saturated reading
+        or a normal averaged one. Buttons on different pins are registered separately with Klipper
+        and can never actually conflict, no matter how their ranges compare.
+
+        :param button: button the range is being derived for, excluded from the check
+        :param min_value: candidate analog_range minimum, in ohms
+        :param max_value: candidate analog_range maximum, in ohms
+        :return Optional[AFCButton]: the first other button whose range overlaps, or `None` when
+            there's no conflict
+        """
+        pin = button.pin.strip()
+        for other in self._get_adc_buttons():
+            if (other is button
+                or other.pin.strip() != pin):
+                continue
+            if (min_value <= other.analog_max
+                and max_value >= other.analog_min):
+                return other
+        return None
+
+    def _advance_button_calibration_queue(self, button: AFCButton) -> None:
+        """
+        Pop `button` off the calibration queue and either wait for it to be released before starting
+        the next button, or finish the session if it was the last one.
+
+        :param button: button that was just processed (calibrated or skipped)
+        """
+        finished_baseline = self.button_calibration_baseline
+        self.button_calibration_queue.pop(0)
+        self.button_calibration_first_value = None
+
+        if self.button_calibration_queue:
+            # Wait for button's own resistance to return to its baseline (confirming it was actually
+            # released) before reading the next button's baseline, rather than reading it
+            # immediately while the user may still be lifting off this one.
+            self.button_calibration_stage = "await_release"
+            self.button_calibration_await_button = button
+            self.button_calibration_await_baseline = finished_baseline
+            self.button_calibration_baseline = None
+            self._start_button_calibration_stage_clock()
+            self._show_button_calibration_prompt(f"Release the {button.name} button.")
+        else:
+            self.button_calibration_active = False
+            self.button_calibration_stage = ""
+            self.button_calibration_baseline = None
+            saved = self.button_calibration_saved
+            skipped = self.button_calibration_skipped
+            self.button_calibration_restart_pending = bool(saved)
+            prompt = AFCprompt(self.button_calibration_gcmd, self.logger)
+            if saved:
+                text = f"Calibrated: {', '.join(saved)}."
+            else:
+                text = "No buttons were calibrated."
+            if skipped:
+                text += f"\n\nSkipped (not changed): {', '.join(skipped)}."
+            if saved:
+                text += ("\n\nThe new analog_range values only take effect after a Klipper "
+                         "restart. Click Restart button to restart now or Done and restart "
+                         "later.")
+                footer = ([("Restart Klipper", "BUTTON_CALIBRATION_RESTART", "primary")]
+                          + prompt.DONE_BTN)
+            else:
+                footer = prompt.DONE_BTN
+            prompt.create_custom_p("Button Calibration Complete", text, None, False, None, footer)
+
+    def _finish_button_measurement(self, button: AFCButton, second_value: float,
+                                   gcmd: AFCGcmd) -> None:
+        """
+        Average the two captured press resistances for `button` and derive/save its analog_range,
+        then advance the calibration queue. A saturated reading derives the range from fixed ADC
+        ratios instead of the average; either way, the save is skipped if the two readings disagree,
+        aren't far enough from baseline, or conflict with another button's analog_range.
+
+        Saturation is decided once from the two readings actually captured, not a fresh
+        `is_adc_saturated()` call, so it can't disagree with the check above about what was
+        measured.
+
+        :param button: button whose second press resistance was just captured
+        :param second_value: resistance captured on the second press, in ohms
+        :param gcmd: command context this measurement completed under
+        """
+        first_value = self.button_calibration_first_value
+        if first_value is None:
+            first_value = second_value
+        average = (first_value + second_value) / 2.0
+
+        first_ratio = button.ratio_at_resistance(first_value)
+        second_ratio = button.ratio_at_resistance(second_value)
+        both_saturated = (first_ratio >= button.adc_saturation_ratio
+                          and second_ratio >= button.adc_saturation_ratio)
+
+        finished_baseline = self.button_calibration_baseline
+        baseline_text = f"{finished_baseline:.1f}" if finished_baseline is not None else "unknown"
+        raw_ratio = button._get_adc_ratio()
+        self.logger.debug(f"Button calibration: {button.name} baseline={baseline_text} ohms, "
+                          f"press1={first_value:.1f} ohms, press2={second_value:.1f} ohms, "
+                          f"average={average:.1f} ohms, raw_ratio={raw_ratio}")
+
+        if finished_baseline is not None:
+            if both_saturated:
+                # Resistance is hypersensitive to ratio right at the ADC ceiling, so compare the two
+                # presses in ratio space instead of ohms here; see
+                # BUTTON_CALIBRATION_SATURATION_AGREEMENT_RATIO_TOLERANCE.
+                disagrees = (abs(first_ratio - second_ratio)
+                            > BUTTON_CALIBRATION_SATURATION_AGREEMENT_RATIO_TOLERANCE)
+            else:
+                disagrees = (abs(first_value - second_value)
+                            > 2.0 * button.calibration_range)
+            average_delta = abs(average - finished_baseline)
+            if (disagrees
+                or average_delta <= button.calibration_press_delta):
+                error_str = (
+                    f"Button calibration: {button.name}'s two press readings "
+                    f"({first_value:.1f}, {second_value:.1f} ohms) don't agree closely enough, "
+                    f"or aren't far enough from the released baseline ({finished_baseline:.1f} "
+                    f"ohms), to trust. Recalibrate {button.name}; its analog_range was not "
+                    "changed."
+                )
+                self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+                self.button_calibration_skipped.append(button.name)
+                self._advance_button_calibration_queue(button)
+                return
+
+        if both_saturated:
+            min_value = button.resistance_at_ratio(button.adc_saturation_ratio)
+            max_value = (button.resistance_at_ratio(BUTTON_CALIBRATION_SATURATION_MAX_RATIO)
+                        + button.calibration_range)
+            self.logger.debug(f"Button calibration: {button.name} press reading is maxed out "
+                             f"(average={average:.1f} ohms); using a range derived from the "
+                             "ADC ratio instead.")
+        else:
+            min_value = average - button.calibration_range
+            max_value = average + button.calibration_range
+
+        if (finished_baseline is not None
+            and min_value <= finished_baseline <= max_value):
+            error_str = (
+                f"Button calibration: {button.name}'s derived range "
+                f"({min_value:.1f},{max_value:.1f}) also contains its own released baseline "
+                f"({finished_baseline:.1f} ohms), so Klipper would read it as pressed while idle. "
+                f"Recalibrate {button.name}; its analog_range was not changed."
+            )
+            self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+            self.button_calibration_skipped.append(button.name)
+            self._advance_button_calibration_queue(button)
+            return
+
+        conflict = self._range_overlaps_other_button(button, min_value, max_value)
+        if conflict is not None:
+            error_str = (
+                f"Button calibration: {button.name}'s derived range "
+                f"({min_value:.1f},{max_value:.1f}) overlaps {conflict.name}'s "
+                f"analog_range ({conflict.analog_min:.1f},{conflict.analog_max:.1f}). "
+                f"Check {button.name}'s wiring and recalibrate it; its analog_range "
+                "was not changed."
+            )
+            self.afc.error.AFC_error(error_str, pause=False, gcmd=gcmd)
+            self.button_calibration_skipped.append(button.name)
+            self._advance_button_calibration_queue(button)
+            return
+
+        msg = f"\n<span class=info--text>Calibrated {button.name}: average={average:.1f}</span>"
+        self.ConfigRewrite(button.fullname, "analog_range", f"{min_value:.1f},{max_value:.1f}", msg)
+        button.analog_min = min_value
+        button.analog_max = max_value
+
+        self.button_calibration_saved.append(button.name)
+        self._advance_button_calibration_queue(button)
 
     cmd_AFC_TOOLHEAD_CALIBRATION_help = 'Open the toolhead variable calibration menu'
     cmd_AFC_TOOLHEAD_CALIBRATION_options = {
@@ -1594,28 +2293,37 @@ class afcFunction:
 
         if extruder_name not in self.afc.tools:
             prompt.p_end()
-            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False)
+            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False,
+                                     gcmd=gcmd)
             return
 
         extruder = self.afc.tools[extruder_name]
-        lanes = [lane for lane in self.afc.lanes.values() if lane.extruder_obj is extruder]
+        lanes = []
+        for lane in self.afc.lanes.values():
+            if (lane.extruder_obj is extruder
+                and lane.load_state):
+                lanes.append(lane)
         if lane_name:
             lane = self.afc.lanes.get(lane_name)
             if (lane is None
-                or lane.extruder_obj is not extruder):
+                or lane.extruder_obj is not extruder
+                or not lane.load_state):
                 prompt.p_end()
                 self.afc.error.AFC_error(
                     f"'{lane_name}' is not a valid lane for extruder '{extruder_name}'",
-                    pause=False)
+                    pause=False, gcmd=gcmd)
                 return
         else:
             current_lane = self.afc.lanes.get(self.afc.current)
+            toolchanger_lane = self.afc.lanes.get(extruder.lane_loaded)
             if (current_lane is not None
-                and current_lane.extruder_obj is extruder):
+                and current_lane.extruder_obj is extruder
+                and current_lane.load_state):
                 lane_name = current_lane.name
             # Check for toolchangers
-            elif (extruder.lane_loaded is not None):
-                lane_name = extruder.lane_loaded
+            elif (toolchanger_lane is not None
+                  and toolchanger_lane.load_state):
+                lane_name = toolchanger_lane.name
             elif len(lanes) == 1:
                 lane_name = lanes[0].name
             else:
@@ -1628,7 +2336,7 @@ class afcFunction:
                 text = ("Select a representative lane for toolhead calibration. This only "
                         "needs to be done once per toolhead/extruder, not for every lane.")
                 if not buttons:
-                    text = f"No lanes are configured for extruder '{extruder_name}'."
+                    text = f"No loaded lanes are available for extruder '{extruder_name}'."
                 prompt.create_custom_p("Toolhead Calibration", text, buttons, True, None, None)
                 return
 
@@ -1637,9 +2345,8 @@ class afcFunction:
         buttons = []
         if not extruder.lane_loaded:
             buttons.append(("tool_stn", f"AFC_TOOL_STN_CALIBRATION {lane_param}", "primary"))
-        buttons += [
-            ("Cutter Retract", f"AFC_CUTTER_CALIBRATION {lane_param}", "info"),
-            ("tool_stn_unload", stn_unload_command, "secondary"),
+        buttons += [("Cutter Retract", f"AFC_CUTTER_CALIBRATION {lane_param}", "info"),
+                    ("tool_stn_unload", stn_unload_command, "secondary"),
         ]
         text = (f"Calibrate {extruder_name} with {lane_name}.\n"
                 "tool_stn controls loading to the nozzle(Note: Button only shows up when toolhead is unloaded)\n"
@@ -1676,13 +2383,14 @@ class afcFunction:
         lane_name = gcmd.get("LANE", None)
         if extruder_name not in self.afc.tools:
             prompt.p_end()
-            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False)
+            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False,
+                                     gcmd=gcmd)
             return
 
         if self.in_print():
             prompt.p_end()
             self.afc.error.AFC_error("tool_stn calibration cannot run during a print.",
-                                     pause=False)
+                                     pause=False, gcmd=gcmd)
             return
 
         extruder = self.afc.tools[extruder_name]
@@ -1696,9 +2404,10 @@ class afcFunction:
                 or self.cutter_calibration_active):
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Finish or cancel the active toolhead calibration first.", pause=False)
+                    "Finish or cancel the active toolhead calibration first.", pause=False,
+                    gcmd=gcmd)
                 return
-            lane = self._resolve_calibration_lane(extruder_name, lane_name)
+            lane = self._resolve_calibration_lane(extruder_name, lane_name, gcmd=gcmd)
             if lane is None:
                 prompt.p_end()
                 return
@@ -1706,7 +2415,8 @@ class afcFunction:
                 or extruder.lane_loaded is not None):
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Unload the toolhead before starting tool_stn calibration.", pause=False)
+                    "Unload the toolhead before starting tool_stn calibration.", pause=False,
+                    gcmd=gcmd)
                 return
             text = f"Loading {lane.name} into toolhead"
             prompt.create_custom_p("Loading Lane", text, None, False, None, None)
@@ -1716,7 +2426,7 @@ class afcFunction:
                     prompt.p_end()
                     self.afc.error.AFC_error(
                         f"Lane '{lane.name}' did not load to the extruder gears or sensor.",
-                        pause=False)
+                        pause=False, gcmd=gcmd)
                     return
             finally:
                 prompt.p_end()
@@ -1734,7 +2444,8 @@ class afcFunction:
                 or lane_name not in (None, self.stn_calibration_lane)):
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Finish or cancel the active tool_stn calibration first.", pause=False)
+                    "Finish or cancel the active tool_stn calibration first.",pause=False,
+                    gcmd=gcmd)
                 return
 
         if cancel:
@@ -1750,7 +2461,7 @@ class afcFunction:
             prompt.p_end()
             self.afc.error.AFC_error(
                 "The calibrated lane is no longer loaded; cancel and restart calibration.",
-                pause=False)
+                pause=False, gcmd=gcmd)
             return
 
         lane_name = lane.name
@@ -1778,7 +2489,8 @@ class afcFunction:
                     self._reset_stn_calibration_values()
                     prompt.p_end()
                     self.afc.error.AFC_error(
-                        f"Lane '{lane_name}' did not unload during the tool_stn test.", pause=False)
+                        f"Lane '{lane_name}' did not unload during the tool_stn test.", pause=False,
+                        gcmd=gcmd)
                     return
 
                 text = f"Loading {lane.name} into toolhead"
@@ -1789,7 +2501,7 @@ class afcFunction:
                     prompt.p_end()
                     self.afc.error.AFC_error(
                         f"Lane '{lane_name}' did not reload; the original tool_stn was restored.",
-                        pause=False)
+                        pause=False, gcmd=gcmd)
                     return
                 self.afc.restore_pos()
                 # Following command is needed just in case someone has AFC setup to restore temperature
@@ -1802,7 +2514,7 @@ class afcFunction:
             if self.stn_calibration_distance <= 0:
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Move filament to the nozzle before saving tool_stn.", pause=False)
+                    "Move filament to the nozzle before saving tool_stn.", pause=False, gcmd=gcmd)
                 return
             self.ConfigRewrite(extruder.fullname, 'tool_stn', extruder.tool_stn, '')
             text = f"Saved tool_stn {extruder.tool_stn:.3f}mm for {extruder_name}."
@@ -1855,7 +2567,8 @@ class afcFunction:
         lane_name = gcmd.get("LANE", None)
         if extruder_name not in self.afc.tools:
             prompt.p_end()
-            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False)
+            self.afc.error.AFC_error(f"'{extruder_name}' is not a valid extruder", pause=False,
+                                     gcmd=gcmd)
             return
 
         start = bool(gcmd.get_int("START", 0, minval=0, maxval=1))
@@ -1867,20 +2580,20 @@ class afcFunction:
         if self.in_print():
             prompt.p_end()
             self.afc.error.AFC_error(
-                "tool_stn_unload calibration cannot run during a print.", pause=False)
+                "tool_stn_unload calibration cannot run during a print.", pause=False, gcmd=gcmd)
             return
 
         if not active:
             if getattr(self, "cutter_calibration_active", False):
                 prompt.p_end()
                 self.afc.error.AFC_error("Cutter retract calibration is already active.",
-                                         pause=False)
+                                         pause=False, gcmd=gcmd)
                 return
             if not self.afc.tool_cut:
                 prompt.p_end()
                 self.afc.error.AFC_error(
                     "tool_stn_unload calibration requires tool cutting, but the cutter is "
-                    "disabled.", pause=False)
+                    "disabled.", pause=False, gcmd=gcmd)
                 return
             lane = self._load_calibration_lane(extruder_name, lane_name, prompt)
             if lane is None:
@@ -1901,7 +2614,7 @@ class afcFunction:
             self._check_and_set_temp_for_calibration_lane(lane, prompt)
 
             cutter_command = getattr(self.afc, "tool_cut_cmd", None) or "AFC_CUT"
-            self.afc.run_script(f"{cutter_command} EXTRUDER={extruder_name}", gcmd)
+            self.afc.run_script(f"{cutter_command} EXTRUDER={extruder_name}", gcmd=gcmd)
             self.afc.toolhead.wait_moves()
             self.stn_unload_calibration_active = True
             self.stn_unload_calibration_distance = 0.0
@@ -1915,7 +2628,7 @@ class afcFunction:
                 prompt.p_end()
                 self.afc.error.AFC_error(
                     "Finish or cancel the active tool_stn_unload calibration first.",
-                    pause=False)
+                    pause=False, gcmd=gcmd)
                 return
 
         extruder = self.afc.tools[extruder_name]
@@ -1931,7 +2644,7 @@ class afcFunction:
             prompt.p_end()
             self.afc.error.AFC_error(
                 "Cannot save tool_stn_unload while a toolhead sensor is still triggered.",
-                pause=False)
+                pause=False, gcmd=gcmd)
             return
         if (cancel
             or complete):
@@ -1940,7 +2653,7 @@ class afcFunction:
                 and measured <= 0):
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Retract filament before saving tool_stn_unload.", pause=False)
+                    "Retract filament before saving tool_stn_unload.", pause=False, gcmd=gcmd)
                 return
             if measured:
                 text = f"Moving filament back tool_stn distance({extruder.tool_stn})"
@@ -1967,14 +2680,14 @@ class afcFunction:
             if abs(move) > 25.0:
                 prompt.p_end()
                 self.afc.error.AFC_error("Calibration MOVE must be between -25mm and 25mm.",
-                                         pause=False)
+                                         pause=False, gcmd=gcmd)
                 return
             if move > 0:
                 move = min(move, self.stn_unload_calibration_distance)
             elif self.stn_unload_calibration_distance - move > 200.0:
                 prompt.p_end()
                 self.afc.error.AFC_error("Calibration is limited to 200mm of retraction.",
-                                         pause=False)
+                                         pause=False, gcmd=gcmd)
                 return
             if move:
                 prompt.p_end()
@@ -2047,27 +2760,28 @@ class afcFunction:
         if extruder_name not in self.afc.tools:
             prompt.p_end()
             self.afc.error.AFC_error("Select a valid extruder for cutter calibration.",
-                                     pause=False)
+                                     pause=False, gcmd=gcmd)
             return
 
         if self.in_print():
             prompt.p_end()
             self.afc.error.AFC_error("Cutter retract calibration cannot run during a print.",
-                                     pause=False)
+                                     pause=False, gcmd=gcmd)
             return
 
         if not active:
             if getattr(self, "stn_unload_calibration_active", False):
                 prompt.p_end()
                 self.afc.error.AFC_error("tool_stn_unload calibration is already active.",
-                                         pause=False)
+                                         pause=False, gcmd=gcmd)
                 return
             if (move
                 or complete
                 or cancel):
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Start AFC_CUTTER_CALIBRATION before using its prompt actions.", pause=False)
+                    "Start AFC_CUTTER_CALIBRATION before using its prompt actions.", pause=False,
+                    gcmd=gcmd)
                 return
             prompt.p_end()
 
@@ -2092,7 +2806,7 @@ class afcFunction:
                 or self.afc.current != lane_name):
                 prompt.p_end()
                 self.afc.error.AFC_error("Finish or cancel the active cutter calibration first.",
-                                         pause=False)
+                                         pause=False, gcmd=gcmd)
                 return
         extruder = self.afc.tools[extruder_name]
         if cancel:
@@ -2111,7 +2825,8 @@ class afcFunction:
             if retract_length <= 0:
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Retract filament past the safety margin before saving.", pause=False)
+                    "Retract filament past the safety margin before saving.",
+                    pause=False, gcmd=gcmd)
                 return
 
             prompt.p_end()
@@ -2128,7 +2843,7 @@ class afcFunction:
                 macro_name = per_tool_macro
             self.afc.run_script(f"SET_GCODE_VARIABLE MACRO={macro_name} "
                                 f"VARIABLE=retract_length "
-                                f"VALUE={retract_length}", gcmd)
+                                f"VALUE={retract_length}", gcmd=gcmd)
             section_name = f"gcode_macro {macro_name}"
             self.ConfigRewrite(section_name, 'variable_retract_length', retract_length, '')
 
@@ -2148,7 +2863,8 @@ class afcFunction:
             if abs(move) > 25.0:
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Cutter calibration MOVE must be between -25mm and 25mm.", pause=False)
+                    "Cutter calibration MOVE must be between -25mm and 25mm.", pause=False,
+                    gcmd=gcmd)
                 return
 
             # Positive movement is only permitted to undo retraction performed by this calibration.
@@ -2157,7 +2873,8 @@ class afcFunction:
             elif self.cutter_calibration_distance - move > 200.0:
                 prompt.p_end()
                 self.afc.error.AFC_error(
-                    "Cutter calibration is limited to 200mm of total retraction.", pause=False)
+                    "Cutter calibration is limited to 200mm of total retraction.", pause=False,
+                    gcmd=gcmd)
                 return
 
             if move:
@@ -2273,29 +2990,35 @@ class afcFunction:
 
         # Check to make sure lane and unit is valid
         if lanes is not None and lanes != 'all' and lanes not in self.afc.lanes:
-            self.afc.error.AFC_error("'{}' is not a valid lane".format(lanes), pause=False)
+            self.afc.error.AFC_error(f"'{lanes}' is not a valid lane",pause=False, gcmd=gcmd)
             return
 
         if (lanes is not None
             and lanes != 'all'
             and self.afc.lanes.get(lanes).extruder_obj.is_standalone()):
-            self.afc.error.AFC_error(f"{lanes} is a standalone lane, cannot calibrate", pause=False)
+            self.afc.error.AFC_error(f"{lanes} is a standalone lane, cannot calibrate", pause=False,
+                                     gcmd=gcmd)
             return
 
         if unit is not None and unit not in self.afc.units:
-            self.afc.error.AFC_error("'{}' is not a valid unit".format(unit), pause=False)
+            self.afc.error.AFC_error(f"'{unit}' is not a valid unit", pause=False,gcmd=gcmd)
             return
 
         if afc_bl is not None and afc_bl not in self.afc.lanes:
-            self.afc.error.AFC_error("'{}' is not a valid lane to calibrate bowden length".format(afc_bl), pause=False)
+            self.afc.error.AFC_error(f"'{afc_bl}' is not a valid lane to calibrate bowden length",
+                                     pause=False, gcmd=gcmd)
             return
 
         if td1 is not None:
             if not self.afc.td1_present:
-                self.afc.error.AFC_error("TD-1 is not present, will not be able to calibrate bowden length for TD-1", pause=False)
+                self.afc.error.AFC_error(
+                    "TD-1 is not present, will not be able to calibrate bowden length for TD-1",
+                    pause=False, gcmd=gcmd)
             else:
                 if td1 not in self.afc.lanes:
-                    self.afc.error.AFC_error(f"'{td1}' is not a valid lane to calibrate TD-1 bowden length", pause=False)
+                    self.afc.error.AFC_error(
+                        f"'{td1}' is not a valid lane to calibrate TD-1 bowden length",
+                        pause=False, gcmd=gcmd)
                 else:
                     td1_lane_valid = True
 
@@ -2320,7 +3043,7 @@ class afcFunction:
                 failed_check, set_tool_start_back_to_none, msg = self._calibration_check_tool_start(cur_lane)
                 if failed_check:
                     additional_msg.append(msg)
-                    self.afc.error.AFC_error(msg, pause=False)
+                    self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
                     checked = False
                     return
 
@@ -2329,6 +3052,7 @@ class afcFunction:
                 # caught on the inside lip of the toolhead if its docked. By moving the toolhead to Y 120
                 # it has been found to make loading filament into the toolhead more reliable.
                 snapmaker_tool_selected = False
+                previous_rotation_distance: Optional[float] = None
                 try:
                     if (self.afc.snapmaker_printer
                         and self.afc.park_pre_load):
@@ -2338,42 +3062,45 @@ class afcFunction:
                             checked = False
                             return
                         select_tool_cmd = f"AFC_SELECT_TOOL TOOL={cur_lane.extruder_obj.name}"
-                        self.afc.run_script(select_tool_cmd, gcmd)
+                        self.afc.run_script(select_tool_cmd, gcmd=gcmd)
                         snapmaker_tool_selected = True
                         selected_tool = self.get_current_extruder_obj()
                         if (selected_tool is None
                             or selected_tool.name != cur_lane.extruder_obj.name):
                             self.afc.error.AFC_error(
                                 f"Failed to select tool '{cur_lane.extruder_obj.name}' before Bowden calibration",
-                                pause=False,
+                                pause=False, gcmd=gcmd,
                             )
                             checked = False
                             return
                         if self.afc.park_pre_load_cmd:
-                            self.afc.run_script(f"{self.afc.park_pre_load_cmd}", gcmd)
+                            self.afc.run_script(f"{self.afc.park_pre_load_cmd}", gcmd=gcmd)
 
                     self.logger.info('Starting AFC distance Calibrations')
 
+                    previous_rotation_distance = cur_lane.reset_drive_stepper()
                     checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(
                         cur_lane, dis, tol, gcmd=gcmd)
                     if not checked:
                         msg = '{} failed to calibrate bowden length {}'.format(afc_bl, msg)
-                        self.afc.error.AFC_error(msg, pause=False)
+                        self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
 
                         reset_dis = abs(pos) if pos != 0 else None
                         self._afc_cali_fail(cali=cur_lane.name, dis=reset_dis,
                                             reset_lane=cur_lane.hub_obj.state,
-                                            title="AFC Bowden Calibration Failed", fail_message=msg)
+                                            title="AFC Bowden Calibration Failed", fail_message=msg,
+                                            gcmd=gcmd)
                         return
                     else: calibrated.append('Bowden_length: {}'.format(afc_bl))
 
                     self.logger.info("Bowden length calibration Done!")
 
                 finally:
+                    cur_lane.restore_drive_stepper(previous_rotation_distance)
                     if set_tool_start_back_to_none:
                         cur_lane.extruder_obj.tool_start = None
                     if snapmaker_tool_selected:
-                        self.afc.run_script("AFC_UNSELECT_TOOL", gcmd)
+                        self.afc.run_script("AFC_UNSELECT_TOOL", gcmd=gcmd)
 
             # Calibration for TD-1 bowden length
             if (td1 is not None
@@ -2385,25 +3112,30 @@ class afcFunction:
                     and td1_lane.tool_loaded):
                     msg = f"{td1_lane.name} loaded to toolhead, unload from toolhead before "
                     msg += "trying to calibrate td1_bowden_length."
-                    self.afc.error.AFC_error(msg, pause=False)
+                    self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
                     checked = False
                     return
                 if td1_lane.hub_obj.state:
                     msg = f"{td1_lane.hub_obj.name} hub is triggered, make sure hub is clear before trying to calibrate TD-1 bowden length"
-                    self.afc.error.AFC_error(msg, pause=False)
+                    self.afc.error.AFC_error(msg, pause=False, gcmd=gcmd)
                     fail_cmd = (f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE=0 "
                                f"msg='{msg}' RESET=0")
-                    self.afc.run_script(fail_cmd, gcmd)
+                    self.afc.run_script(fail_cmd, gcmd=gcmd)
                     checked = False
                     return
 
-                checked, msg, pos = td1_lane.unit_obj.calibrate_td1( td1_lane, dis, tol)
+                previous_rotation_distance = td1_lane.reset_drive_stepper()
+                try:
+                    checked, msg, pos = td1_lane.unit_obj.calibrate_td1(td1_lane, dis, tol,
+                                                                        gcmd=gcmd)
+                finally:
+                    td1_lane.restore_drive_stepper(previous_rotation_distance)
                 if not checked:
                     fail_string = f"{td1} failed to calibrate TD-1 bowden length, {msg}"
-                    self.afc.error.AFC_error(fail_string, pause=False)
+                    self.afc.error.AFC_error(fail_string, pause=False, gcmd=gcmd)
                     fail_cmd = (f"AFC_CALI_FAIL TITLE='{title} Failed' FAIL={td1} DISTANCE={pos} "
                                f"msg='{fail_string}' RESET=1")
-                    self.afc.run_script(fail_cmd, gcmd)
+                    self.afc.run_script(fail_cmd, gcmd=gcmd)
                     return
                 else:
                     calibrated.append(f"'TD1_Bowden_length: {td1}'")
@@ -2415,7 +3147,7 @@ class afcFunction:
                 if additional_msg:
                     msg = " ".join(additional_msg)
 
-                self._afc_cali_comp(lanes_calibrated, title, msg)
+                self._afc_cali_comp(lanes_calibrated, title, msg, gcmd=gcmd)
 
     cmd_AFC_HAPPY_P_help = 'Opens prompt after calibration is complete'
     def cmd_AFC_HAPPY_P(self, gcmd):
@@ -2481,7 +3213,7 @@ class afcFunction:
         reset_lane      = bool(gcmd.get_int("RESET", 1))
         title           = gcmd.get("TITLE", "AFC Calibration Failed")
         fail_message    = gcmd.get("MSG", "")
-        self._afc_cali_fail(cali, dis, reset_lane, title, fail_message, gcmd)
+        self._afc_cali_fail(cali, dis, reset_lane, title, fail_message, gcmd=gcmd)
 
     cmd_AFC_RESET_help = 'Opens prompt to select lane to reset.'
     cmd_AFC_RESET_options = {"DISTANCE": {"default": "30", "type": "float"}}
@@ -2563,12 +3295,14 @@ class afcFunction:
 
         if not lane:
             prompt.p_end()
-            self.afc.error.AFC_error("No lane selected to reset, please provide a lane to reset.", pause=False)
+            self.afc.error.AFC_error("No lane selected to reset, please provide a lane to reset.",
+                                     pause=False, gcmd=gcmd)
             return
 
         if lane not in self.afc.lanes:
             prompt.p_end()
-            self.afc.error.AFC_error("'{}' is not a valid lane".format(lane), pause=False)
+            self.afc.error.AFC_error("'{}' is not a valid lane".format(lane),
+                                     pause=False, gcmd=gcmd)
             return
 
         if long_dis is not None:
@@ -2578,7 +3312,7 @@ class afcFunction:
                     raise ValueError("DISTANCE must be a positive number.")
             except (ValueError, TypeError):
                 prompt.p_end()
-                self.afc.error.AFC_error("DISTANCE must be a valid number.", pause=False)
+                self.afc.error.AFC_error("DISTANCE must be a valid number.", pause=False, gcmd=gcmd)
                 return
 
         cur_lane: Union[AFCLane, AFCExtruderStepper] = self.afc.lanes[lane]
@@ -2587,12 +3321,16 @@ class afcFunction:
 
         if not CUR_HUB.state:
             prompt.p_end()
-            self.afc.error.AFC_error("Hub is already clear while trying to reset '{}'".format(lane), pause=False)
+            self.afc.error.AFC_error(f"Hub is already clear while trying to reset '{lane}'",
+                                     pause=False, gcmd=gcmd)
             return
 
         if (tool_load := self.get_current_lane_obj()) is not None:
             prompt.p_end()
-            self.afc.error.AFC_error("Toolhead is loaded with '{}', unload or check sensor before resetting lane".format(tool_load.name), pause=False)
+            self.afc.error.AFC_error(
+                "Toolhead is loaded with '{}', unload or check sensor before resetting lane".format(
+                    tool_load.name),
+                pause=False, gcmd=gcmd)
             return
 
         prompt.p_end()
@@ -2605,7 +3343,7 @@ class afcFunction:
         if hasattr(cur_lane.unit_obj, 'get_lane_reset_command'):
             reset_cmd = cur_lane.unit_obj.get_lane_reset_command(cur_lane, long_dis)
             if reset_cmd is not None:
-                self.afc.run_script(reset_cmd, gcmd)
+                self.afc.run_script(reset_cmd, gcmd=gcmd)
             else:
                 self.logger.info(f"{lane} does not support distance-based reset for its unit type")
             return
@@ -2617,25 +3355,30 @@ class afcFunction:
         if long_dis is not None:
             cur_lane.unit_obj.move_to_hub(cur_lane, float(long_dis),
                                           MoveDirection.NEG, self.afc.homing_enabled,
-                                          AssistActive.YES)
+                                          AssistActive.YES, gcmd=gcmd)
 
         while CUR_HUB.state:
-            cur_lane.move(short_move * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+            cur_lane.move(short_move * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel,
+                          True, gcmd=gcmd)
             pos -= short_move
 
             if not cur_lane.raw_load_state:
-                self.afc.error.AFC_error(fail_state_msg.format(cur_lane, "load"), pause=False)
+                self.afc.error.AFC_error(fail_state_msg.format(cur_lane, "load"),
+                                         pause=False, gcmd=gcmd)
                 return
 
             if not cur_lane.prep_state:
-                self.afc.error.AFC_error(fail_state_msg.format(cur_lane, "prep"), pause=False)
+                self.afc.error.AFC_error(fail_state_msg.format(cur_lane, "prep"),
+                                         pause=False, gcmd=gcmd)
                 return
 
             if abs(pos) >= CUR_HUB.afc_bowden_length:
-                self.afc.error.AFC_error("'{}' failed to reset to hub".format(cur_lane), pause=False)
+                self.afc.error.AFC_error("'{}' failed to reset to hub".format(cur_lane),
+                                         pause=False, gcmd=gcmd)
                 return
 
-        cur_lane.move(CUR_HUB.hub_clear_move_dis * -1, cur_lane.short_moves_speed, cur_lane.short_moves_accel, True)
+        cur_lane.move(CUR_HUB.hub_clear_move_dis * -1, cur_lane.short_moves_speed,
+                      cur_lane.short_moves_accel, True, gcmd=gcmd)
         cur_lane.loaded_to_hub = True
         cur_lane.do_enable(False)
 
@@ -2721,11 +3464,11 @@ class afcFunction:
                 if (cur_lane.td1_device_id
                     and cur_lane.load_state
                     and cur_lane.prep_state):
-                    success, msg = cur_lane.get_td1_data()
+                    success, msg = cur_lane.get_td1_data(gcmd=gcmd)
                     if not success:
                         fail_cmd = (f"AFC_CALI_FAIL TITLE='Get TD-1 data Failed' FAIL={cur_lane} "
                                    f"DISTANCE=0 msg='{msg}' RESET=0")
-                        self.afc.run_script(fail_cmd, gcmd)
+                        self.afc.run_script(fail_cmd, gcmd=gcmd)
                         return
 
             lanes_captured = "'TD-1 Data captured for all lanes'"
@@ -2733,22 +3476,22 @@ class afcFunction:
             if lane in self.afc.lanes:
                 self.logger.info(f"Capturing TD-1 data for {lane}")
                 cur_lane = self.afc.lanes[lane]
-                success, msg = cur_lane.get_td1_data()
+                success, msg = cur_lane.get_td1_data(gcmd=gcmd)
                 if not success:
                     msg = msg.replace("\n", " ")
                     fail_cmd = (f"AFC_CALI_FAIL TITLE='Get TD-1 data Failed' FAIL={cur_lane} "
                                f"DISTANCE=0 msg='{msg}' RESET=0")
-                    self.afc.run_script(fail_cmd, gcmd)
+                    self.afc.run_script(fail_cmd, gcmd=gcmd)
                     return
                 lanes_captured = f"'TD-1 Data captured for {cur_lane.name}'"
             else:
                 fail_message = f"'{lane} not valid lane, cannot capture TD-1 data'"
-                self.afc.error.AFC_error(fail_message, pause=False)
+                self.afc.error.AFC_error(fail_message, pause=False, gcmd=gcmd)
                 fail_cmd = (f"AFC_CALI_FAIL TITLE='Get TD-1 data Completed' FAIL={lane} "
                            f"msg='{fail_message}' RESET=0")
-                self.afc.run_script(fail_cmd, gcmd)
+                self.afc.run_script(fail_cmd, gcmd=gcmd)
                 return
-        self.afc.run_script('AFC_HAPPY_P STEP={}'.format(lanes_captured), gcmd)
+        self.afc.run_script('AFC_HAPPY_P STEP={}'.format(lanes_captured), gcmd=gcmd)
 
     cmd_AFC_RESET_TD1_help = "Sends reboot command to specified TD-1 device"
     def cmd_AFC_RESET_TD1(self, gcmd):
@@ -2898,7 +3641,7 @@ class afcFunction:
         """
         lane = gcmd.get('LANE', None)
         if lane is None:
-            self.afc.error.AFC_error('Must select LANE', False)
+            self.afc.error.AFC_error('Must select LANE', False, gcmd=gcmd)
             return
 
         if lane not in self.afc.lanes:

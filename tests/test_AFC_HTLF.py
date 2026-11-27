@@ -384,15 +384,15 @@ class TestSystemTest:
     def test_sets_prep_state_from_load_state(self):
         unit, cur_lane, _ = self._make()
         with patch.object(afcBoxTurtle, "system_Test", MagicMock(return_value=True)):
-            unit.system_Test(cur_lane, 1.0, False, True)
+            unit.system_Test(cur_lane, 1.0, False, True, "callback")
         assert cur_lane.prep_state is True
 
     def test_calls_return_to_home_prep_first_when_not_prep_homed(self):
         unit, cur_lane, _ = self._make(prep_homed=False)
         with patch.object(afcBoxTurtle, "system_Test", MagicMock(return_value=True)):
-            unit.system_Test(cur_lane, 1.0, False, True)
+            unit.system_Test(cur_lane, 1.0, False, True, "callback")
         assert unit.return_to_home.call_args_list[0] == \
-            call(prep=True, disable_selector=False)
+            call(prep=True, disable_selector=False, gcmd="callback")
 
     def test_skips_prep_return_to_home_when_already_prep_homed(self):
         """When prep_homed is already True, only the final unconditional
@@ -400,26 +400,26 @@ class TestSystemTest:
         the prep=True call rather than it happening to look the same."""
         unit, cur_lane, _ = self._make(prep_homed=True)
         with patch.object(afcBoxTurtle, "system_Test", MagicMock(return_value=True)):
-            unit.system_Test(cur_lane, 1.0, False, True)
-        assert unit.return_to_home.call_args_list == [call()]
+            unit.system_Test(cur_lane, 1.0, False, True, "callback")
+        assert unit.return_to_home.call_args_list == [call(gcmd="callback")]
 
     def test_always_calls_return_to_home_unconditionally_after_super(self):
         unit, cur_lane, _ = self._make(prep_homed=False)
         with patch.object(afcBoxTurtle, "system_Test", MagicMock(return_value=True)):
-            unit.system_Test(cur_lane, 1.0, False, True)
-        assert unit.return_to_home.call_args_list[-1] == call()
+            unit.system_Test(cur_lane, 1.0, False, True, "callback")
+        assert unit.return_to_home.call_args_list[-1] == call(gcmd="callback")
 
     def test_calls_super_system_test_with_correct_args(self):
         unit, cur_lane, _ = self._make(prep_homed=True)
         super_mock = MagicMock(return_value=True)
         with patch.object(afcBoxTurtle, "system_Test", super_mock):
-            unit.system_Test(cur_lane, 2.5, True, False)
-        super_mock.assert_called_once_with(cur_lane, 2.5, True, False)
+            unit.system_Test(cur_lane, 2.5, True, False, "callback")
+        super_mock.assert_called_once_with(cur_lane, 2.5, True, False, gcmd="callback")
 
     def test_returns_true_when_prep_homed_true_and_status_true(self):
         unit, cur_lane, _ = self._make(prep_homed=True)
         with patch.object(afcBoxTurtle, "system_Test", MagicMock(return_value=True)):
-            result = unit.system_Test(cur_lane, 1.0, False, True)
+            result = unit.system_Test(cur_lane, 1.0, False, True, "callback")
         assert result is True
 
     def test_returns_false_when_prep_homed_false_even_if_status_true(self):
@@ -428,7 +428,7 @@ class TestSystemTest:
         unit, cur_lane, _ = self._make(prep_homed=False)
         # return_to_home is mocked out, so it won't flip prep_homed to True.
         with patch.object(afcBoxTurtle, "system_Test", MagicMock(return_value=True)):
-            result = unit.system_Test(cur_lane, 1.0, False, True)
+            result = unit.system_Test(cur_lane, 1.0, False, True, "callback")
         assert result is False
 
     def test_returns_false_when_status_false_even_if_prep_homed_true(self):
@@ -436,7 +436,7 @@ class TestSystemTest:
         prep_homed alone is True here yet the result must be False."""
         unit, cur_lane, _ = self._make(prep_homed=True)
         with patch.object(afcBoxTurtle, "system_Test", MagicMock(return_value=False)):
-            result = unit.system_Test(cur_lane, 1.0, False, True)
+            result = unit.system_Test(cur_lane, 1.0, False, True, "callback")
         assert result is False
 
 
@@ -446,8 +446,9 @@ class TestCmdAfcHomeUnit:
     def test_calls_return_to_home(self):
         unit = _make_htlf()
         unit.return_to_home = MagicMock()
-        unit.cmd_AFC_HOME_UNIT(MagicMock())
-        unit.return_to_home.assert_called_once_with()
+        gcmd = MagicMock()
+        unit.cmd_AFC_HOME_UNIT(gcmd)
+        unit.return_to_home.assert_called_once_with(gcmd=gcmd)
 
 
 # ── return_to_home ───────────────────────────────────────────────────────────
@@ -459,7 +460,7 @@ def _convergent_move_selector_home(unit, iterations=1, homed_distance=5.0):
     when homing_enabled). Used to make return_to_home's while loop converge
     deterministically instead of spinning forever on a fully-mocked stepper."""
     state = {"n": 0}
-    def _side_effect(distance):
+    def _side_effect(distance, *, gcmd):
         state["n"] += 1
         unit._homed_distance = homed_distance
         if state["n"] >= iterations:
@@ -476,7 +477,7 @@ class TestReturnToHome:
         unit.current_selected_lane = None
         unit.home_state = True  # also short-circuits the loop
         unit._move_selector_home = MagicMock()
-        unit.return_to_home()
+        unit.return_to_home(gcmd="callback")
         unit._move_selector_home.assert_not_called()
 
     def test_fast_move_skipped_when_home_state_already_true(self):
@@ -484,7 +485,7 @@ class TestReturnToHome:
         unit.current_selected_lane = MagicMock(index=1)
         unit.home_state = True
         unit._move_selector_home = MagicMock()
-        unit.return_to_home()
+        unit.return_to_home(gcmd="callback")
         unit._move_selector_home.assert_not_called()
 
     def test_fast_move_skipped_when_prep_true(self):
@@ -498,7 +499,7 @@ class TestReturnToHome:
         unit._move_selector_home = MagicMock(
             side_effect=_convergent_move_selector_home(unit, iterations=1)
         )
-        unit.return_to_home(prep=True)
+        unit.return_to_home(prep=True, gcmd="callback")
         assert unit._move_selector_home.call_count == 1
 
     def test_fast_move_runs_with_200_when_all_conditions_true_and_homing_enabled(self):
@@ -511,8 +512,8 @@ class TestReturnToHome:
         unit._move_selector_home = MagicMock(
             side_effect=_convergent_move_selector_home(unit, iterations=2)
         )
-        unit.return_to_home(prep=False)
-        assert unit._move_selector_home.call_args_list[0] == call(200)
+        unit.return_to_home(prep=False, gcmd="callback")
+        assert unit._move_selector_home.call_args_list[0] == call(200, gcmd="callback")
         assert unit._move_selector_home.call_count == 2  # fast-move + 1 loop iteration
 
     def test_fast_move_uses_calculated_distance_when_homing_disabled(self):
@@ -525,9 +526,9 @@ class TestReturnToHome:
         unit._move_selector_home = MagicMock(
             side_effect=_convergent_move_selector_home(unit, iterations=1)
         )
-        unit.return_to_home(prep=False)
+        unit.return_to_home(prep=False, gcmd="callback")
         unit.calculate_lobe_movement.assert_called_once_with(3)
-        assert unit._move_selector_home.call_args_list[0] == call(17.5)
+        assert unit._move_selector_home.call_args_list[0] == call(17.5, gcmd="callback")
 
     # -- main while loop --
 
@@ -537,7 +538,7 @@ class TestReturnToHome:
         unit.home_state = True
         unit.prep_homed = False
         unit._move_selector_home = MagicMock()
-        result = unit.return_to_home()
+        result = unit.return_to_home(gcmd="callback")
         unit._move_selector_home.assert_not_called()
         assert result is True
         assert unit.prep_homed is True
@@ -550,7 +551,7 @@ class TestReturnToHome:
         unit._move_selector_home = MagicMock(
             side_effect=_convergent_move_selector_home(unit, iterations=3, homed_distance=2.0)
         )
-        result = unit.return_to_home()
+        result = unit.return_to_home(gcmd="callback")
         assert unit._move_selector_home.call_count == 3
         assert result is True
 
@@ -562,8 +563,8 @@ class TestReturnToHome:
         unit._move_selector_home = MagicMock(
             side_effect=_convergent_move_selector_home(unit, iterations=1)
         )
-        unit.return_to_home()
-        unit._move_selector_home.assert_called_once_with(1)
+        unit.return_to_home(gcmd="callback")
+        unit._move_selector_home.assert_called_once_with(1, gcmd="callback")
 
     def test_total_moved_accumulates_homed_distance_when_homing_enabled(self):
         """Verified via the failed_to_home threshold: with homing_enabled
@@ -577,14 +578,14 @@ class TestReturnToHome:
         unit.home_state = False
         unit.afc.homing_enabled = True
         unit._move_selector_home = MagicMock(
-            side_effect=lambda d: setattr(unit, "_homed_distance", 30.0)
+            side_effect=lambda d, **kwargs: setattr(unit, "_homed_distance", 30.0)
         )
-        result = unit.return_to_home()
+        result = unit.return_to_home(gcmd="callback")
         assert result is False
         assert unit.failed_to_home is True
         assert unit._move_selector_home.call_count == 1
         unit.afc.error.AFC_error.assert_called_once_with(
-            f"Failed to home {unit.name}", False
+            f"Failed to home {unit.name}", False, gcmd="callback"
         )
 
     def test_total_moved_accumulates_move_distance_when_homing_disabled(self):
@@ -597,7 +598,7 @@ class TestReturnToHome:
         unit.home_state = False
         unit.afc.homing_enabled = False
         unit._move_selector_home = MagicMock()  # never sets home_state
-        result = unit.return_to_home()
+        result = unit.return_to_home(gcmd="callback")
         assert result is False
         assert unit.failed_to_home is True
         assert unit._move_selector_home.call_count == 25
@@ -611,9 +612,9 @@ class TestReturnToHome:
         unit.prep_homed = False
         unit.afc.homing_enabled = True
         unit._move_selector_home = MagicMock(
-            side_effect=lambda d: setattr(unit, "_homed_distance", 30.0)
+            side_effect=lambda d, **kwargs: setattr(unit, "_homed_distance", 30.0)
         )
-        unit.return_to_home()
+        unit.return_to_home(gcmd="callback")
         assert unit.prep_homed is False
 
     # -- success-path bookkeeping --
@@ -623,35 +624,35 @@ class TestReturnToHome:
         unit.current_selected_lane = None
         unit.home_state = True
         unit.prep_homed = False
-        unit.return_to_home()
+        unit.return_to_home(gcmd="callback")
         assert unit.prep_homed is True
 
     def test_current_selected_lane_reset_to_none_on_success(self):
         unit = _make_htlf()
         unit.current_selected_lane = MagicMock(index=1)
         unit.home_state = True
-        unit.return_to_home()
+        unit.return_to_home(gcmd="callback")
         assert unit.current_selected_lane is None
 
     def test_disable_selector_true_calls_do_enable_false_on_success(self):
         unit = _make_htlf()
         unit.current_selected_lane = None
         unit.home_state = True
-        unit.return_to_home(disable_selector=True)
+        unit.return_to_home(disable_selector=True, gcmd="callback")
         unit.selector_stepper_obj.do_enable.assert_called_once_with(False)
 
     def test_disable_selector_false_skips_do_enable_on_success(self):
         unit = _make_htlf()
         unit.current_selected_lane = None
         unit.home_state = True
-        unit.return_to_home(disable_selector=False)
+        unit.return_to_home(disable_selector=False, gcmd="callback")
         unit.selector_stepper_obj.do_enable.assert_not_called()
 
     def test_returns_true_on_success(self):
         unit = _make_htlf()
         unit.current_selected_lane = None
         unit.home_state = True
-        assert unit.return_to_home() is True
+        assert unit.return_to_home(gcmd="callback") is True
 
 
 # ── calculate_lobe_movement ──────────────────────────────────────────────────
@@ -696,7 +697,7 @@ class TestSelectLane:
         unit = _make_htlf()
         lane = MagicMock()
         lane.fullname = "AFC_stepper lane1"
-        result = unit.select_lane(lane, disable_selector=True)
+        result = unit.select_lane(lane, disable_selector=True, gcmd="callback")
         assert result == (False, 0.0)
         unit.selector_stepper_obj.do_enable.assert_not_called()
 
@@ -711,11 +712,12 @@ class TestSelectLane:
         lane.fullname = "AFC_HTLF lane2"
         lane.index = 2
         lane.name = "lane2"
-        result = unit.select_lane(lane)
+        result = unit.select_lane(lane, gcmd="callback")
         unit.selector_stepper_obj.move.assert_called_once_with(
-            12.0, unit.selector_movement_speed, unit.selector_movement_accel, False
+            12.0, unit.selector_movement_speed, unit.selector_movement_accel, False,
+            gcmd="callback"
         )
-        unit._selector_cal_dis_adjust.assert_called_once_with(lane)
+        unit._selector_cal_dis_adjust.assert_called_once_with(lane, gcmd="callback")
         assert unit.current_selected_lane is lane
         assert result == (True, 3.5)
 
@@ -726,7 +728,7 @@ class TestSelectLane:
         lane = MagicMock()
         lane.fullname = "AFC_HTLF lane2"
         lane.name = "lane2"
-        result = unit.select_lane(lane)
+        result = unit.select_lane(lane, gcmd="callback")
         assert result == (False, 0.0)
         assert unit.current_selected_lane is None
         assert unit.logger.messages == [
@@ -743,8 +745,8 @@ class TestSelectLane:
         lane = MagicMock()
         lane.fullname = "AFC_HTLF lane2"
         lane.index = 1
-        unit.select_lane(lane, disable_selector=True)
-        unit.return_to_home.assert_called_once_with(disable_selector=False)
+        unit.select_lane(lane, disable_selector=True, gcmd="callback")
+        unit.return_to_home.assert_called_once_with(disable_selector=False, gcmd="callback")
 
     def test_already_selected_lane_skips_homing_and_returns_true(self):
         unit = _make_htlf()
@@ -752,7 +754,7 @@ class TestSelectLane:
         lane.fullname = "AFC_HTLF lane2"
         unit.current_selected_lane = lane
         unit.return_to_home = MagicMock()
-        result = unit.select_lane(lane)
+        result = unit.select_lane(lane, gcmd="callback")
         unit.return_to_home.assert_not_called()
         assert result == (True, 0.0)
 
@@ -761,7 +763,7 @@ class TestSelectLane:
         lane = MagicMock()
         lane.fullname = "AFC_HTLF lane2"
         unit.current_selected_lane = lane  # already-selected path
-        unit.select_lane(lane, disable_selector=True)
+        unit.select_lane(lane, disable_selector=True, gcmd="callback")
         unit.selector_stepper_obj.do_enable.assert_called_once_with(False)
 
     def test_disable_selector_false_skips_do_enable_in_finally(self):
@@ -769,7 +771,7 @@ class TestSelectLane:
         lane = MagicMock()
         lane.fullname = "AFC_HTLF lane2"
         unit.current_selected_lane = lane  # already-selected path
-        unit.select_lane(lane, disable_selector=False)
+        unit.select_lane(lane, disable_selector=False, gcmd="callback")
         unit.selector_stepper_obj.do_enable.assert_not_called()
 
     def test_sel_dir_accepted_but_has_no_effect(self):
@@ -786,10 +788,10 @@ class TestSelectLane:
         lane.fullname = "AFC_HTLF lane2"
         lane.index = 2
         lane.name = "lane2"
-        result_true = unit.select_lane(lane, sel_dir=True)
+        result_true = unit.select_lane(lane, sel_dir=True, gcmd="callback")
 
         unit.current_selected_lane = None
-        result_false = unit.select_lane(lane, sel_dir=False)
+        result_false = unit.select_lane(lane, sel_dir=False, gcmd="callback")
 
         assert result_true == result_false == (True, 3.5)
 
@@ -836,13 +838,13 @@ class TestCheckRunout:
 class TestPrepLoad:
     def test_returns_none(self):
         unit = _make_htlf()
-        assert unit.prep_load(MagicMock()) is None
+        assert unit.prep_load(MagicMock(), gcmd="callback") is None
 
 
 class TestPrepPostLoad:
     def test_returns_none(self):
         unit = _make_htlf()
-        assert unit.prep_post_load(MagicMock()) is None
+        assert unit.prep_post_load(MagicMock(), gcmd="callback") is None
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -966,7 +968,7 @@ class TestMoveSelectorHome:
         unit.selector_movement_accel = 75.0
         unit.home_endstop_name = "HTLF_1_home"
         unit.selector_stepper_obj.do_homing_move.return_value = (True, 12.5)
-        unit._move_selector_home(10.0)
+        unit._move_selector_home(10.0, gcmd="callback")
         unit.selector_stepper_obj.do_homing_move.assert_called_once_with(
             -10.0, 50.0, 75.0, "HTLF_1_home", assist_active=False
         )
@@ -977,14 +979,14 @@ class TestMoveSelectorHome:
         unit = _make_htlf()
         unit.afc.homing_enabled = True
         unit.selector_stepper_obj.do_homing_move.return_value = (True, 42.5)
-        unit._move_selector_home(10.0)
+        unit._move_selector_home(10.0, gcmd="callback")
         assert unit._homed_distance == 42.5
 
     def test_homing_enabled_logs_success_and_distance(self):
         unit = _make_htlf()
         unit.afc.homing_enabled = True
         unit.selector_stepper_obj.do_homing_move.return_value = (False, 7.0)
-        unit._move_selector_home(10.0)
+        unit._move_selector_home(10.0, gcmd="callback")
         assert unit.logger.messages == [
             ("debug", "HTLF: Homing done, success:False, distance:7.0")
         ]
@@ -994,13 +996,14 @@ class TestMoveSelectorHome:
         unit.afc.homing_enabled = False
         unit.selector_movement_speed = 50.0
         unit.selector_movement_accel = 75.0
-        unit._move_selector_home(10.0)
-        unit.selector_stepper_obj.move.assert_called_once_with(-10.0, 50.0, 75.0, False)
+        unit._move_selector_home(10.0, gcmd="callback")
+        unit.selector_stepper_obj.move.assert_called_once_with(
+            -10.0, 50.0, 75.0, False, gcmd="callback")
 
     def test_homing_disabled_does_not_call_do_homing_move(self):
         unit = _make_htlf()
         unit.afc.homing_enabled = False
-        unit._move_selector_home(10.0)
+        unit._move_selector_home(10.0, gcmd="callback")
         unit.selector_stepper_obj.do_homing_move.assert_not_called()
 
 

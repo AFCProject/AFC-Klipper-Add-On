@@ -31,7 +31,7 @@ from urllib.error import (
     HTTPError
 )
 
-from typing import TYPE_CHECKING, Optional, Callable, List, Any, Union
+from typing import TYPE_CHECKING, Optional, Callable, List, Any, Union, Literal
 
 if TYPE_CHECKING:
     from extras.AFC_logger import AFC_logger
@@ -44,6 +44,15 @@ if TYPE_CHECKING:
     from extras.pause_resume import PauseResume
     from extras.idle_timeout import IdleTimeout
     from pins import PrinterPins
+
+    # Command context a gcode script is run through: a real gcmd, "callback"
+    # for a true async context with no held mutex (hardware/sensor
+    # callbacks, reactor timers, deferred completion callbacks), "sub_command" for an event handler
+    # fired synchronously from inside another command's own gcode context, which can't release the
+    # mutex until this call stack returns to it, or "force_acquire" for a true async context (same
+    # as "callback") whose script must always go through gcode.run_script() itself rather than any
+    # gcmd-aware path, regardless of Kalico's run_script_from_command capability.
+    AFCGcmd = Union[GCodeCommand, Literal["callback", "sub_command", "force_acquire"]]
 
 ERROR_STR = "Error trying to import {import_lib}, please rerun install-afc.sh script in your AFC-Klipper-Add-On directory then restart klipper\n\n{trace}"
 
@@ -228,22 +237,31 @@ class DebounceButton:
         self.physical_state: Optional[bool] = None
         self.latest_eventtime: float = 0.0
 
-    def button_handler(self, state: bool) -> None:
+    def button_handler(self, state: bool, force: bool = False, immediate: bool = False) -> None:
         """
         Kalico/snapmaker-style entry point: no eventtime is passed in, so the
-        current reactor time is used instead.
+        current reactor time is used instead. `force`/`immediate` are
+        accepted since some Kalico/Snapmaker note_filament_present calls
+        pass them, but are otherwise unused here.
 
         :param state: New filament-present state
+        :param force: Accepted for Kalico's/Snapmaker's calling convention, unused
+        :param immediate: Accepted for Kalico's calling convention, unused
         """
         self._button_handler(self.reactor.monotonic(), state)
 
-    def _button_handler(self, eventtime: float, state: bool) -> None:
+    def _button_handler(self, eventtime: float, state: bool, force: bool = False,
+                        immediate: bool = False) -> None:
         """
         Records a raw (not yet debounced) filament-present state change and
-        schedules the debounced event to run after debounce_delay.
+        schedules the debounced event to run after debounce_delay. `force`/
+        `immediate` are accepted for the same Kalico calling conventions as
+        `button_handler`, but are otherwise unused here.
 
         :param eventtime: Reactor time the state change was observed at
         :param state: New filament-present state
+        :param force: Accepted for Kalico's calling convention, unused
+        :param immediate: Accepted for Kalico's calling convention, unused
         """
         self.physical_state = state
         self.latest_eventtime = eventtime
@@ -270,11 +288,17 @@ class DebounceButton:
             return
         # enact state transition and trigger action
         self.logical_state = self.physical_state
-        # Kalico is different from klipper and eventtime is not passed in
+        # bind() checks the call would succeed without invoking button_action.
         try:
-            try:
+            inspect.signature(self.button_action).bind(is_filament_present=self.logical_state)
+            takes_is_filament_present_alone = True
+        except TypeError:
+            takes_is_filament_present_alone = False
+
+        try:
+            if takes_is_filament_present_alone:
                 self.button_action(is_filament_present=self.logical_state)
-            except TypeError:
+            else:
                 self.button_action(eventtime, self.logical_state)
         # Catching error here since klipper can also throw and error and don't want this
         # to actually crash klipper
@@ -304,6 +328,15 @@ class VirtualRunoutHelper:
         self._reactor: Reactor = printer.get_reactor()
         self.name: str = name
         self.runout_callback: Optional[Callable[..., Any]] = runout_cb
+        # Cached here, once, so note_filament_present doesn't re-inspect
+        # runout_callback's signature on every filament-present transition.
+        self._runout_callback_is_keyword_only: bool = False
+        if runout_cb is not None:
+            try:
+                inspect.signature(runout_cb).bind(0.0)
+            except TypeError:
+                # Can't take eventtime positionally, e.g. **kwargs or *args, eventtime.
+                self._runout_callback_is_keyword_only = True
         self.sensor_enabled: bool = bool(enable_runout)
         self.filament_present: bool = False
         self.insert_gcode: Optional[str] = None
@@ -339,10 +372,10 @@ class VirtualRunoutHelper:
             and callable(self.runout_callback)
             and is_printing):
             try:
-                try:
-                    self.runout_callback(eventtime)
-                except TypeError:
+                if self._runout_callback_is_keyword_only:
                     self.runout_callback(eventtime=eventtime)
+                else:
+                    self.runout_callback(eventtime)
             # Catching error here since klipper can also throw and error and don't want this
             # to actually crash klipper
             except Exception:
@@ -456,7 +489,7 @@ class VirtualFilamentSensor:
         enable = bool(gcmd.get_int("ENABLE", 1, minval=0, maxval=1))
         self.runout_helper.sensor_enabled = enable
         if self.enable_cb is not None:
-            self.enable_cb(enable)
+            self.enable_cb(enable, gcmd=gcmd)
 
 class PollingEndstopWrapper:
     """
@@ -691,13 +724,16 @@ class AFC_moonraker:
                 self._log_async(self.logger.error, "Unexpected error in moonraker background writer")
                 self._log_async(self.logger.debug, traceback.format_exc())
 
-    def _get_results(self, url_string: Union[str, Request], print_error: bool=True) -> Optional[Any]:
+    def _get_results(self, url_string: Union[str, Request], print_error: bool=True,
+                     missing_ok: bool=False) -> Optional[Any]:
         """
         Helper function to get results, check for errors and return data if successful
 
         :param url_string: URL encoded string or Request to fetch/post data to moonraker
         :param print_error: Set to True for error to be displayed in console/mainsail panel, setting
                             to False will still write error to log via debug message
+        :param missing_ok: Set to True when a 404 is an expected "nothing there" answer, it is then
+                           logged as a debug message instead of an error
 
         :returns: Returns result dictionary if data is valid, returns None if and error occurred
         """
@@ -718,6 +754,12 @@ class AFC_moonraker:
                 else:
                     self._log_async(logger, self.ERROR_STRING)
                     self._log_async(logger, f"Response: {resp.status} Reason: {resp.reason}")
+        except HTTPError as e:
+            if (missing_ok
+                and e.code == 404):
+                self._log_async(self.logger.debug, f"Moonraker has no entry for {e.filename}")
+            else:
+                self._log_async(logger, self.ERROR_STRING, traceback=traceback.format_exc())
         except:
             self._log_async(logger, self.ERROR_STRING, traceback=traceback.format_exc())
             data = None
@@ -779,10 +821,14 @@ class AFC_moonraker:
         Does the actual GET for a print file's metadata. Called from the
         background writer thread; schedules callback on the reactor thread.
 
+        A file moonraker doesn't know (e.g. a firmware-generated virtual print such as Kalico's
+        `PRINT_PA_TOWER`) has no metadata, which is not an error.
+
         :param filename: Filename to query moonraker and pull metadata for
         :param callback: Called with the metadata dict (or None on failure)
         """
-        resp: Optional[dict[str, Any]] = self._get_results(urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}"))
+        url = urljoin(self.host, f"{self.FILENAME_PATH}{quote(filename)}")
+        resp: Optional[dict[str, Any]] = self._get_results(url, missing_ok=True)
         self.reactor.register_async_callback(lambda et, resp=resp: callback(resp))
 
     def get_afc_stats(self) -> Optional[dict[str, Any]]:
