@@ -1740,6 +1740,15 @@ class afc:
             # Exit early if no lane is provided.
             return False
 
+        # custom_load_cmd is opaque user gcode, so gear-only loading can't be honored. Reject
+        # it here, before any tool swap or unload of another lane moves filament.
+        if (load_to_gears
+            and cur_lane.custom_load_cmd):
+            error_str = (f"Lane {cur_lane.name}: custom load command does not support "
+                        "gear-only loading.")
+            self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
+            return False
+
         # Check if the bypass filament sensor is triggered; abort loading if filament is already present.
         if self._check_bypass(gcmd=gcmd): return False
 
@@ -1903,6 +1912,14 @@ class afc:
         :param gcmd: command context to run load macros through, if any
         :return bool: True when loading succeeds, otherwise False
         """
+        # Reject before the pre-load macro/temperature prep run
+        if (cur_lane.custom_load_cmd
+            and load_to_gears):
+            error_str = (f"Lane {cur_lane.name}: custom load command does not support "
+                         "gear-only loading.")
+            self.error.AFC_error(error_str, pause=self.function.in_print(), gcmd=gcmd)
+            return False
+
         if (self.park_pre_load
             and self.park_pre_load_cmd):
             self.run_script(self.park_pre_load_cmd, gcmd=gcmd)
@@ -1929,7 +1946,8 @@ class afc:
                 self.error.handle_lane_failure(cur_lane, message, gcmd=gcmd)
                 return False
         elif hasattr(cur_lane.unit_obj, "unit_load_lane"):
-            if not cur_lane.unit_obj.unit_load_lane(cur_lane, cur_extruder, gcmd=gcmd):
+            if not cur_lane.unit_obj.unit_load_lane(cur_lane, cur_extruder,
+                                                    load_to_gears=load_to_gears, gcmd=gcmd):
                 return False
         else:
             use_direct_dist = False

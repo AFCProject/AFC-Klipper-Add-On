@@ -3428,6 +3428,31 @@ class TestCmdAfcToolheadCalibration:
 
         assert "not a valid lane" in func.afc.error.AFC_error.call_args.args[0]
 
+    def test_toolhead_menu_rejects_explicit_lane_without_load_state(self) -> None:
+        """An explicit LANE= selection must also require filament loaded into
+        the slot, closing the bypass of the picker's own load_state filter."""
+        func, _ = _make_calibration_func()
+        func.afc.lanes["lane1"].load_state = False
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        assert "not a valid lane" in func.afc.error.AFC_error.call_args.args[0]
+        assert func.logger.messages == [("raw", "// action:prompt_end")]
+
+    def test_toolhead_menu_accepts_explicit_lane_with_load_state(self) -> None:
+        """The counterpart of the rejection test above: an explicit LANE=
+        selection with filament loaded into the slot must still be accepted."""
+        func, _ = _make_calibration_func()
+        func.afc.lanes["lane1"].load_state = True
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        func.afc.error.AFC_error.assert_not_called()
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("LANE=lane1" in message for message in raw_messages)
+
     def test_toolhead_menu_rejects_lane_owned_by_different_extruder(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.tools["other"] = MagicMock()
@@ -3445,7 +3470,7 @@ class TestCmdAfcToolheadCalibration:
         func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
 
         raw_messages = [message for level, message in func.logger.messages if level == "raw"]
-        assert any("No lanes are configured" in message for message in raw_messages)
+        assert any("No loaded lanes are available" in message for message in raw_messages)
 
     def test_toolhead_menu_ignores_current_lane_owned_by_another_extruder(self) -> None:
         func, loaded_extruder = _make_calibration_func()
@@ -3514,6 +3539,68 @@ class TestCmdAfcToolheadCalibration:
         assert any("tool_stn_unload|AFC_TOOL_STN_UNLOAD_CALIBRATION" in message
                    for message in raw_messages)
 
+    def test_toolhead_menu_skips_current_lane_without_load_state(self) -> None:
+        """The auto-selected `current_lane` fallback must also require
+        load_state, same as an explicit LANE=, instead of trusting
+        afc.current alone. Falls through to the single-remaining-lane pick
+        since lane1 (the only other lane) is also unloaded here."""
+        func, extruder = _make_calibration_func()
+        func.afc.lanes["lane1"].load_state = False
+        second_lane = MagicMock()
+        second_lane.name = "lane2"
+        second_lane.extruder_obj = extruder
+        second_lane.load_state = True
+        func.afc.lanes["lane2"] = second_lane
+        extruder.lanes["lane2"] = second_lane
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+
+        assert func.logger.messages == [
+            ("raw", "// action:prompt_begin Toolhead Calibration"),
+            ("raw", "// action:prompt_text Calibrate extruder with lane2."),
+            ("raw", "// action:prompt_text tool_stn controls loading to the nozzle(Note: "
+             "Button only shows up when toolhead is unloaded)"),
+            ("raw", "// action:prompt_text tool_stn_unload controls the movement after "
+             "cutting that clears the toolhead sensor or extruder gears."),
+            ("raw", "// action:prompt_text Cutter Retract helps you find how much to "
+             "retract when cutting."),
+            ("raw", "// action:prompt_button tool_stn|AFC_TOOL_STN_CALIBRATION EXTRUDER=extruder "
+             "LANE=lane2|primary"),
+            ("raw", "// action:prompt_button Cutter Retract|AFC_CUTTER_CALIBRATION "
+             "EXTRUDER=extruder LANE=lane2|info"),
+            ("raw", "// action:prompt_button tool_stn_unload|AFC_TOOL_STN_UNLOAD_CALIBRATION "
+             "EXTRUDER=extruder LANE=lane2|secondary"),
+            ("raw", "// action:prompt_footer_button Cancel|RESPOND TYPE=command "
+             "MSG=action:prompt_end|warning"),
+            ("raw", "// action:prompt_show"),
+        ]
+
+    def test_toolhead_menu_resolves_lane_loaded_requires_load_state(self) -> None:
+        """Independent coverage of the toolchanger-specific fallback: a stale
+        or desynced extruder.lane_loaded pointing at a lane that isn't
+        actually load_state must not be trusted either."""
+        func, extruder = _make_calibration_func()
+        func.afc.current = None
+        func.afc.lanes["lane1"].load_state = False
+        second_lane = MagicMock()
+        second_lane.name = "lane2"
+        second_lane.extruder_obj = extruder
+        second_lane.load_state = False
+        func.afc.lanes["lane2"] = second_lane
+        extruder.lanes["lane2"] = second_lane
+        extruder.lane_loaded = "lane2"
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+
+        assert func.logger.messages == [
+            ("raw", "// action:prompt_begin Toolhead Calibration"),
+            ("raw", "// action:prompt_text No loaded lanes are available for extruder "
+             "'extruder'."),
+            ("raw", "// action:prompt_footer_button Cancel|RESPOND TYPE=command "
+             "MSG=action:prompt_end|warning"),
+            ("raw", "// action:prompt_show"),
+        ]
+
     def test_toolhead_menu_reports_no_configured_extruders(self) -> None:
         func, _ = _make_calibration_func()
         func.afc.tools = {}
@@ -3531,6 +3618,65 @@ class TestCmdAfcToolheadCalibration:
 
         func.afc.error.AFC_error.assert_called_once_with(
             "'other' is not a valid extruder", pause=False, gcmd=gcmd)
+
+    def test_toolhead_menu_excludes_unloaded_lane_from_single_lane_resolution(self) -> None:
+        """A lane with no filament loaded into its slot must not be
+        auto-resolved as the representative lane for tool_stn calibration."""
+        func, extruder = _make_calibration_func()
+        func.afc.current = None
+        func.afc.lanes["lane1"].load_state = False
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("No loaded lanes are available" in message for message in raw_messages)
+        assert not any("LANE=lane1" in message for message in raw_messages)
+
+    def test_toolhead_menu_excludes_unloaded_lane_from_picker(self) -> None:
+        """With three lanes on the same extruder, the picker buttons only
+        offer the two with filament loaded into their slot."""
+        func, extruder = _make_calibration_func()
+        func.afc.current = None
+        func.afc.lanes["lane1"].load_state = True
+        second_lane = MagicMock()
+        second_lane.name = "lane2"
+        second_lane.extruder_obj = extruder
+        second_lane.load_state = True
+        third_lane = MagicMock()
+        third_lane.name = "lane3"
+        third_lane.extruder_obj = extruder
+        third_lane.load_state = False
+        func.afc.lanes["lane2"] = second_lane
+        func.afc.lanes["lane3"] = third_lane
+        extruder.lanes["lane2"] = second_lane
+        extruder.lanes["lane3"] = third_lane
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("LANE=lane1" in message for message in raw_messages)
+        assert any("LANE=lane2" in message for message in raw_messages)
+        assert not any("LANE=lane3" in message for message in raw_messages)
+
+    def test_toolhead_menu_includes_loaded_lane_in_picker(self) -> None:
+        """The counterpart of the exclusion test above: a lane with filament
+        loaded into its slot must still appear in the picker."""
+        func, extruder = _make_calibration_func()
+        func.afc.current = None
+        func.afc.lanes["lane1"].load_state = True
+        second_lane = MagicMock()
+        second_lane.name = "lane2"
+        second_lane.extruder_obj = extruder
+        second_lane.load_state = False
+        func.afc.lanes["lane2"] = second_lane
+        extruder.lanes["lane2"] = second_lane
+
+        func.cmd_AFC_TOOLHEAD_CALIBRATION(_make_gcmd(EXTRUDER="extruder"))
+
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert any("AFC_TOOL_STN_CALIBRATION EXTRUDER=extruder LANE=lane1" in message
+                   for message in raw_messages)
+        assert not any("LANE=lane2" in message for message in raw_messages)
 
 
 class TestCmdAfcToolStnCalibration:

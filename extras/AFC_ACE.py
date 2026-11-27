@@ -2096,7 +2096,8 @@ class afcACE(afcUnit):
         except Exception:
             pass
 
-    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
+    def unit_load_lane(self, cur_lane: AFCLane, cur_extruder: Any, load_to_gears: bool=False, *,
+                       gcmd: AFCGcmd) -> bool:
         """
         Full toolhead load for a stepperless ACE lane (AFC.load_sequence's
         unit_load_lane hook). Runs the ACE serial transport directly via
@@ -2105,11 +2106,12 @@ class afcACE(afcUnit):
 
         :param cur_lane: Lane to load.
         :param cur_extruder: Extruder the lane loads into.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context this load is running under, if any.
         :return bool: True on a verified load, False on failure.
         """
         afc = self.afc
-        if not self._ace_load_sequence(cur_lane, cur_extruder, gcmd=gcmd):
+        if not self._ace_load_sequence(cur_lane, cur_extruder, load_to_gears, gcmd=gcmd):
             return False
         cur_lane.status = AFCLaneState.TOOL_LOADED
         afc.save_vars()
@@ -2152,7 +2154,8 @@ class afcACE(afcUnit):
             # repeats this; harmless, since both calls are idempotent.
             self.finish_unload(cur_lane)
 
-    def _ace_load_sequence(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
+    def _ace_load_sequence(self, cur_lane: AFCLane, cur_extruder: Any, load_to_gears: bool=False, *,
+                           gcmd: AFCGcmd) -> bool:
         """
         ACE load transport: serial feed to toolhead area + feed assist.
 
@@ -2160,12 +2163,13 @@ class afcACE(afcUnit):
 
         :param cur_lane: Lane to load.
         :param cur_extruder: Extruder the lane loads into.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context this load is running under, if any.
         :return bool: True on a successful load transport.
         """
         self._operation_active = True
         try:
-            return self._ace_load_inner(cur_lane, cur_extruder, gcmd=gcmd)
+            return self._ace_load_inner(cur_lane, cur_extruder, load_to_gears, gcmd=gcmd)
         finally:
             self._operation_active = False
             self._prev_states_stale = True
@@ -2194,16 +2198,15 @@ class afcACE(afcUnit):
         errored = self._last_move_error == "feed_error"
         return errored, success
 
-    def _ace_load_inner(self, cur_lane: AFCLane, cur_extruder: Any, gcmd: AFCGcmd) -> bool:
+    def _ace_load_inner(self, cur_lane: AFCLane, cur_extruder: Any, load_to_gears: bool=False, *,
+                        gcmd: AFCGcmd) -> bool:
         """
-        ACE custom load, filament transport only.
-
-        AFC's load_sequence handles the shared toolhead engagement
-        (sync_to_extruder, tool_end, tool_stn, sensor verification,
-        buffer ram).
+        ACE custom load: serial transport to the toolhead sensor, then the tool_stn move to the
+        nozzle, unless `load_to_gears` is set.
 
         :param cur_lane: Lane to load.
         :param cur_extruder: Extruder the lane loads into.
+        :param load_to_gears: Stop after loading filament to the extruder gears or sensor.
         :param gcmd: command context this load is running under, if any.
         :return bool: True once filament reaches the toolhead sensor; False on
             any failure (handled via handle_lane_failure).
@@ -2356,7 +2359,8 @@ class afcACE(afcUnit):
             self._start_feed_assist(slot, explicit=True)
 
         tool_stn = cur_extruder.tool_stn or 0
-        if tool_stn > 0:
+        if (tool_stn > 0
+            and not load_to_gears):
             self.logger.info(
                 f"ACE load: advancing tool_stn {tool_stn:.0f}mm to nozzle for {cur_lane.name}")
             cur_lane.activate_toolhead_extruder()

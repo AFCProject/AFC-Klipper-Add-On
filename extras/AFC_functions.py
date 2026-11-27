@@ -2294,11 +2294,16 @@ class afcFunction:
             return
 
         extruder = self.afc.tools[extruder_name]
-        lanes = [lane for lane in self.afc.lanes.values() if lane.extruder_obj is extruder]
+        lanes = []
+        for lane in self.afc.lanes.values():
+            if (lane.extruder_obj is extruder
+                and lane.load_state):
+                lanes.append(lane)
         if lane_name:
             lane = self.afc.lanes.get(lane_name)
             if (lane is None
-                or lane.extruder_obj is not extruder):
+                or lane.extruder_obj is not extruder
+                or not lane.load_state):
                 prompt.p_end()
                 self.afc.error.AFC_error(
                     f"'{lane_name}' is not a valid lane for extruder '{extruder_name}'",
@@ -2306,12 +2311,15 @@ class afcFunction:
                 return
         else:
             current_lane = self.afc.lanes.get(self.afc.current)
+            toolchanger_lane = self.afc.lanes.get(extruder.lane_loaded)
             if (current_lane is not None
-                and current_lane.extruder_obj is extruder):
+                and current_lane.extruder_obj is extruder
+                and current_lane.load_state):
                 lane_name = current_lane.name
             # Check for toolchangers
-            elif (extruder.lane_loaded is not None):
-                lane_name = extruder.lane_loaded
+            elif (toolchanger_lane is not None
+                  and toolchanger_lane.load_state):
+                lane_name = toolchanger_lane.name
             elif len(lanes) == 1:
                 lane_name = lanes[0].name
             else:
@@ -2324,7 +2332,7 @@ class afcFunction:
                 text = ("Select a representative lane for toolhead calibration. This only "
                         "needs to be done once per toolhead/extruder, not for every lane.")
                 if not buttons:
-                    text = f"No lanes are configured for extruder '{extruder_name}'."
+                    text = f"No loaded lanes are available for extruder '{extruder_name}'."
                 prompt.create_custom_p("Toolhead Calibration", text, buttons, True, None, None)
                 return
 

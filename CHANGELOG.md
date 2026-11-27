@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Updated
 - Updated Park.cfg, Poop.cfg and Brush.cfg macros to support interacting with the Creality K1 CFS Upgrade Kit Poop Chute
 
+### Added
+- Added support for loading only to gear when doing tool_stn calibration for units that use the `unit_load_lane` path, fixes issue #876.
+
+### Fixes
+- When running tool_stn calibration, now only showing lanes that are loaded instead of all possible lanes for the selected extruder.
+
 ## [11-21-2026]
 ### Added
 - Filtering of message that get logged to AFC_ACE_serial.log, before it was very chatty and would constantly log to file. Logging that has been suppressed can be turned back on by adding `debug: True` into your unit config.
