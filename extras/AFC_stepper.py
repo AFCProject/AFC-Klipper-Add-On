@@ -380,6 +380,24 @@ class AFCExtruderStepper(AFCLane):
         """
         self.extruder_stepper.stepper.set_rotation_distance( self.base_rotation_dist / multiplier )
 
+    def get_current_rotation_distance(self) -> float:
+        """
+        Returns whatever rotation distance is currently set on the stepper, which may
+        differ from base_rotation_dist if a buffer correction multiplier is applied.
+
+        :return type: Stepper's currently configured rotation distance
+        """
+        return self.extruder_stepper.stepper.get_rotation_distance()[0]
+
+    def set_current_rotation_distance(self, rotation_distance: float) -> None:
+        """
+        Directly sets the stepper's rotation distance, bypassing the base/multiplier math
+        in `update_rotation_distance`. Used to restore a previously saved value.
+
+        :param rotation_distance: Rotation distance value to set
+        """
+        self.extruder_stepper.stepper.set_rotation_distance(rotation_distance)
+
     # ------------------ ManualStepper compatibility shims ------------------
     # These wrappers allow using Klipper's homing flow with our existing stepper
     def flush_step_generation(self):

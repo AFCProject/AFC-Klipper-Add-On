@@ -1136,11 +1136,15 @@ class afcFunction:
             if not lane.load_state or not lane.prep_state:
                 self.logger.info(f"{lane.name} not loaded skipping to next loaded lane")
                 continue
-            # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
-            if lane.is_direct_hub():
-                checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol, gcmd=gcmd)
-            else:
-                checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol, gcmd=gcmd)
+            previous_rotation_distance = lane.reset_drive_stepper()
+            try:
+                # Calibrate the specific lane, call calibrate_bowden if lane is direct hub
+                if lane.is_direct_hub():
+                    checked, msg, pos = lane.unit_obj.calibrate_bowden(lane, dis, tol, gcmd=gcmd)
+                else:
+                    checked, msg, pos = lane.unit_obj.calibrate_lane(lane, tol, gcmd=gcmd)
+            finally:
+                lane.restore_drive_stepper(previous_rotation_distance)
             if(not checked):
                 self.afc.error.AFC_error(msg, False, gcmd=gcmd)
 
@@ -3048,6 +3052,7 @@ class afcFunction:
                 # caught on the inside lip of the toolhead if its docked. By moving the toolhead to Y 120
                 # it has been found to make loading filament into the toolhead more reliable.
                 snapmaker_tool_selected = False
+                previous_rotation_distance: Optional[float] = None
                 try:
                     if (self.afc.snapmaker_printer
                         and self.afc.park_pre_load):
@@ -3073,6 +3078,7 @@ class afcFunction:
 
                     self.logger.info('Starting AFC distance Calibrations')
 
+                    previous_rotation_distance = cur_lane.reset_drive_stepper()
                     checked, msg, pos = cur_lane.unit_obj.calibrate_bowden(
                         cur_lane, dis, tol, gcmd=gcmd)
                     if not checked:
@@ -3090,6 +3096,7 @@ class afcFunction:
                     self.logger.info("Bowden length calibration Done!")
 
                 finally:
+                    cur_lane.restore_drive_stepper(previous_rotation_distance)
                     if set_tool_start_back_to_none:
                         cur_lane.extruder_obj.tool_start = None
                     if snapmaker_tool_selected:
@@ -3117,7 +3124,12 @@ class afcFunction:
                     checked = False
                     return
 
-                checked, msg, pos = td1_lane.unit_obj.calibrate_td1( td1_lane, dis, tol, gcmd=gcmd)
+                previous_rotation_distance = td1_lane.reset_drive_stepper()
+                try:
+                    checked, msg, pos = td1_lane.unit_obj.calibrate_td1(td1_lane, dis, tol,
+                                                                        gcmd=gcmd)
+                finally:
+                    td1_lane.restore_drive_stepper(previous_rotation_distance)
                 if not checked:
                     fail_string = f"{td1} failed to calibrate TD-1 bowden length, {msg}"
                     self.afc.error.AFC_error(fail_string, pause=False, gcmd=gcmd)

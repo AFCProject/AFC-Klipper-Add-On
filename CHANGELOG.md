@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-25-2026]
+## Fixed
+- Buffers getting enabled when a lane is loaded and toolhead is docked during PREP
+
+## Added
+- Resetting steppers rotation distance when performing calibration to make sure correct rotation distance is being used while calibrating.
 ## [11-24-2026]
 ### Changed
 - `AFC_ACE_CALIBRATE_HUB` stores the measured lane to hub sensor distance less the hub's

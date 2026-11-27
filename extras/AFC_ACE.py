@@ -1836,9 +1836,9 @@ class afcACE(afcUnit):
                         self.lane_tool_loaded(cur_lane, gcmd=gcmd)
                         cur_lane.status = AFCLaneState.TOOLED
                         self.printer.send_event("afc:tool_loaded", cur_lane)
+                        cur_lane.enable_buffer()
                     else:
                         self.lane_tool_loaded_idle(cur_lane, gcmd=gcmd)
-                    cur_lane.enable_buffer()
 
                     # Start assist for any lane confirmed in the toolhead
                     # (afc.current may be None on toolchangers during prep);
