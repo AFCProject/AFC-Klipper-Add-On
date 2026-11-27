@@ -1,0 +1,19 @@
+[board_pins ${unit_name}]
+mcu: ${unit_name}
+aliases:
+    # Motors 4 and 5 share MOT4_UART.
+    # UART addresses: motors 1-4 use 0; motor 5 uses 1.
+    MOT1_STEP=PA7,  MOT1_DIR=PA6,  MOT1_EN=PC5,  MOT1_UART=PC4,
+    MOT2_STEP=PA3,  MOT2_DIR=PA2,  MOT2_EN=PA5,  MOT2_UART=PA4,
+    MOT3_STEP=PC3,  MOT3_DIR=PC2,  MOT3_EN=PA1,  MOT3_UART=PA0,
+    MOT4_STEP=PC15, MOT4_DIR=PC14, MOT4_EN=PC1,  MOT4_UART=PC0,
+    MOT5_STEP=PC11, MOT5_DIR=PC10, MOT5_EN=PC13,
+
+    RGB1=PA15,    RGB2=PC8,    RGB3=PC9,   RGB4=PD0,  RGB5=PD1,
+    TRG1=PA8,     TRG2=PD2,    TRG3=PD4,   TRG4=PD6,  TRG5=PB4,
+    LOAD1=PA9,    LOAD2=PD3,   LOAD3=PD5,  LOAD4=PB3, LOAD5=PB5,
+    BUTTON1=PA10, BUTTON2=PD9, BUTTON3=PD8, BUTTON4=PC7, BUTTON5=PC6,
+    FAN1=PA13,    FAN2=PB15,   FAN3=PB14,  FAN4=PB13, FAN5=PB1,
+    # FPS/PSF default: adc_pin uses TH1.
+    # TurtleNeck defaults: advance_pin uses TH1, trailing_pin uses TH2.
+    TH1=PB0,      TH2=PB2,     TH3=PB10,   TH4=PB11, TH5=PB12,

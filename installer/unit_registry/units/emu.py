@@ -16,7 +16,8 @@ from installer.unit_registry.emu import generate_emu_config
 from installer.unit_registry.options import (
     EMU_BOARD_TYPES,
     EMU_LANE_OPTIONS,
-    ChoiceOption,
+    EmuBoardOption,
+    EmuLaneOption,
     NameOption,
     UnitOption,
 )
@@ -83,13 +84,18 @@ class Emu(UnitType):
 
     def message(self, ctx: Context, sel: UnitSelection) -> str:
         """
-        Point the user at the per-lane connection settings and the board pins file.
+        Point the user at the board connection settings.
 
         :param ctx: installer context
         :param sel: the user's unit choices
         :return str: the message
         """
         cfg = ctx.afc_config_dir
+        if sel.emu_board_type == "EMB_C":
+            return (
+                "\n- Enter the CAN bus or serial information for your EMB-C board in "
+                f"{cfg}/AFC_{sel.unit_name}.cfg\n  "
+            )
         return (
             "\n- Ensure you enter either your CAN bus or serial information for each lane in "
             f"the {cfg}/AFC_{sel.unit_name}.cfg file\n\n"
@@ -97,9 +103,14 @@ class Emu(UnitType):
         )
 
     def _hardware_options(self) -> List[UnitOption]:
+        """
+        The board and lane choices shared by both install screens.
+
+        :return List[UnitOption]: the hardware options
+        """
         return [
-            ChoiceOption("EMU Lane Count", "emu_num_lanes", EMU_LANE_OPTIONS, cast=int),
-            ChoiceOption("EMU Board Type", "emu_board_type", EMU_BOARD_TYPES),
+            EmuLaneOption("EMU Lane Count", "emu_num_lanes", EMU_LANE_OPTIONS, cast=int),
+            EmuBoardOption("EMU Board Type", "emu_board_type", EMU_BOARD_TYPES),
         ]
 
     def install_options(self) -> List[UnitOption]:
