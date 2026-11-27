@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Added
 - Resetting steppers rotation distance when performing calibration to make sure correct rotation distance is being used while calibrating.
+
 ## [11-24-2026]
 ### Changed
 - `AFC_ACE_CALIBRATE_HUB` stores the measured lane to hub sensor distance less the hub's
@@ -29,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs, no longer reports "Error getting data from moonraker" to the console at print start. The
   404 is logged as a debug message and the print continues with no toolchange count, as before.
   Other Moonraker failures are still reported as errors.
+- Fixed ACE loads leaving the filament tip short of the extruder gears when the toolhead sensor
+  sits above them: the unit now keeps feeding `load_gear_push` mm (default 20) past the sensor,
+  at `tool_load_speed` alongside the extruder's `tool_stn` advance, and starts feed assist
+  after that push.
 
 ## [11-22-2026]
 ### Updated
