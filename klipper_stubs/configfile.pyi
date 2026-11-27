@@ -72,6 +72,17 @@ class ConfigWrapper:
     @overload
     def getlist(self, option: str, default: _T, sep: str = ',', count: Optional[int] = None,
                 note_valid: bool = True) -> Union[Tuple[str, ...], _T]: ...
+    # getfloatlist funnels through getlists the same way getlist does, just
+    # with parser=float instead of parser=str.
+    @overload
+    def getfloatlist(self, option: str, *, sep: str = ',', count: Optional[int] = None,
+                     note_valid: bool = True) -> Tuple[float, ...]: ...
+    @overload
+    def getfloatlist(self, option: str, default: Tuple[float, ...], sep: str = ',',
+                     count: Optional[int] = None, note_valid: bool = True) -> Tuple[float, ...]: ...
+    @overload
+    def getfloatlist(self, option: str, default: _T, sep: str = ',', count: Optional[int] = None,
+                     note_valid: bool = True) -> Union[Tuple[float, ...], _T]: ...
     @overload
     def getlists(self, option: str, *, seps: tuple = (',',), count: Optional[int] = None,
                  parser: Callable[[str], Any] = str, note_valid: bool = True) -> Tuple[Any, ...]: ...
