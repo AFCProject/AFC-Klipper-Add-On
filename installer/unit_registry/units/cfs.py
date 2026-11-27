@@ -43,6 +43,7 @@ class CfsBox(NamedTuple):
     name: str
     path: Path
     options: Dict[str, str]
+    header: str = ""        # the header line exactly as in the file, for editing it
 
 
 def _strip_comment(value: str) -> str:
@@ -69,10 +70,12 @@ def find_cfs_boxes(cfg_dir: Path) -> List[CfsBox]:
         except OSError:
             continue
         current: Optional[CfsBox] = None
-        for line in (raw.rstrip("\r\n") for raw in doc.lines):
+        for raw in doc.lines:
+            body = raw[:-1] if raw.endswith("\n") else raw   # as set_key_in_section sees it
+            line = body.rstrip("\r")
             match = _SECTION.match(line)
             if match:
-                current = CfsBox(match.group(1), path, {})
+                current = CfsBox(match.group(1), path, {}, body)
                 boxes.append(current)
                 continue
             if _HEADER.match(line):
@@ -157,10 +160,11 @@ def additional_box_config(name: str, first: CfsBox, box_addr: int, first_lane: i
         f"[AFC_lane lane{first_lane + slot}]\nunit: {name}:{slot + 1}\n" for slot in range(4)
     )
     return (
-        f"# Another Creality CFS on the same chain as {first.name}: box 1 OUT -> box 2 IN.\n"
-        "# Every box on a chain needs box_uid. Restart Klipper with the new box powered on:\n"
-        "# AFC.log names its uid (\"isn't in any [AFC_CFS] section\"). Put it in box_uid\n"
-        "# below, restart Klipper, then power-cycle the boxes once.\n"
+        f"# Another Creality CFS on the same chain (serial port) as {first.name}.\n"
+        "# Every box on a chain needs box_uid. Restart Klipper with the new box connected:\n"
+        "# the console (and AFC.log) names its uid (\"isn't in any [AFC_CFS] section\").\n"
+        "# Put it in box_uid below, restart Klipper, then unplug the CFS power adapter and\n"
+        "# plug it back in once.\n"
         "\n"
         f"[AFC_CFS {name}]\n"
         f"serial: {serial}   # same port as {first.name}\n"
@@ -226,8 +230,10 @@ class Cfs(UnitType):
         unit_file = cfg / f"AFC_{name}.cfg"
         boxes = find_cfs_boxes(cfg)
         if not boxes:
-            safe_copy(ctx, console, prompter, ctx.afc_path / "templates" / TEMPLATE, unit_file)
-            replace_text(unit_file, FIRST_NAME, name)
+            template = ctx.afc_path / "templates" / TEMPLATE
+            # a file the user chose to keep is left as it is
+            if safe_copy(ctx, console, prompter, template, unit_file) == "copied":
+                replace_text(unit_file, FIRST_NAME, name)
             return
         used = {_box_addr(box) for box in boxes}
         free = [addr for addr in range(1, MAX_BOXES + 1) if addr not in used]
@@ -273,7 +279,10 @@ class Cfs(UnitType):
                 return
             uid = normalize_uid(answer)
             if uid is not None:
-                set_key_in_section(first.path, f"[AFC_CFS {first.name}]", "box_uid", uid)
+                # the header exactly as found (trailing spaces, CRLF line ends), or nothing
+                # matches and the uid isn't written
+                header = first.header or f"[AFC_CFS {first.name}]"
+                set_key_in_section(first.path, header, "box_uid", uid)
                 return
             console.print_msg(
                 "WARNING",
@@ -304,11 +313,12 @@ class Cfs(UnitType):
         """
         return (
             f"\n- Set serial in the {ctx.afc_config_dir}/{TEMPLATE} file: run "
-            "ls /dev/serial/by-id/ and use the 1a86 device.\n\n"
-            "- Set cutter_sensor_pin there if the CFS kit's cutter switch is on a Klipper "
+            "ls /dev/serial/by-id/ and use your USB to RS-485 adapter (a 1a86 device for "
+            "the cable in Creality's CFS kit).\n\n"
+            "- Set cutter_sensor_pin there if your cutter switch is wired to a Klipper "
             "pin.\n\n"
             f"- In {ctx.afc_config_dir}/AFC_Hardware.cfg, set tool_stn to the toolhead "
-            "sensor-to-nozzle distance and tool_stn_unload to 0.\n  "
+            "sensor-to-nozzle distance, tool_stn_unload to 0 and tool_load_speed to 10.\n  "
         )
 
     def additional_message(self, ctx: Context, sel: UnitSelection) -> Optional[str]:
@@ -331,19 +341,21 @@ class Cfs(UnitType):
             return None
         lanes = sorted(section_names([unit_file], "AFC_lane"), key=_lane_sort_key)
         lane_text = f" with lanes {lanes[0]} to {lanes[-1]}" if lanes else ""
+        others = [b for b in find_cfs_boxes(ctx.afc_config_dir) if b.name != name]
+        first_text = f" as {others[0].name}" if others else ""
         # The uid prompt's warning is cleared off the screen, so repeat it here
-        missing = [b for b in find_cfs_boxes(ctx.afc_config_dir)
-                   if b.name != name and not b.options.get("box_uid")]
+        missing = [b for b in others if not b.options.get("box_uid")]
         missing_text = "".join(
             f"\n{b.name} has no box_uid yet: set it in {b.path} before restarting Klipper "
             f"(AFC_CFS_STATUS UNIT={b.name} shows it)." for b in missing
         )
         return (
             f"{name} created: it joins the CFS chain as box_addr {box.options['box_addr']}"
-            f"{lane_text}, on the same serial port and hub as the first box.\n"
-            f"Restart Klipper with the new box powered on. AFC.log names its uid (\"isn't in "
-            f"any [AFC_CFS] section\"): put it in box_uid in {unit_file}, restart Klipper, "
-            f"then power-cycle the boxes once.{missing_text}"
+            f"{lane_text}, on the same serial port and hub{first_text}.\n"
+            f"Restart Klipper with the new box connected. The console (and AFC.log) names its "
+            f"uid (\"isn't in any [AFC_CFS] section\"): put it in box_uid in {unit_file}, "
+            f"restart Klipper, then unplug the CFS power adapter and plug it back in once."
+            f"{missing_text}"
         )
 
     def additional_options(self) -> List[UnitOption]:
