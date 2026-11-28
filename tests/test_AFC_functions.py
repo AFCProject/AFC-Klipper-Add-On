@@ -3855,7 +3855,7 @@ class TestCmdAfcToolStnCalibration:
         assert func.stn_calibration_active is True
         assert func.stn_calibration_buffer_off is True
 
-    def test_buffer_stays_off_when_tool_end_never_triggers(self) -> None:
+    def test_buffer_back_on_when_tool_end_never_triggers(self) -> None:
         func, extruder = _make_calibration_func()
         func.afc.tool_stn_starts_at_tool_end.return_value = True
         func.afc.current = None
@@ -3867,7 +3867,7 @@ class TestCmdAfcToolStnCalibration:
         func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder", LANE="lane1"))
 
         lane.disable_buffer.assert_called_once_with()
-        lane.enable_buffer.assert_not_called()
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
         assert func.stn_calibration_active is False
         assert func.stn_calibration_buffer_off is False
 

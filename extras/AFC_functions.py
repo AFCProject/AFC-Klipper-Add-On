@@ -2454,6 +2454,9 @@ class afcFunction:
             # Start where a full load of this lane starts its tool_stn move
             if (self.afc.tool_stn_starts_at_tool_end(lane)
                 and not self.afc.load_to_tool_end(lane, extruder, gcmd=gcmd)):
+                # The lane stays loaded, so turn the buffer back on as other exits do
+                if buffer_off:
+                    lane.enable_buffer(disable_fault=True)
                 return
 
             self.stn_calibration_active = True
