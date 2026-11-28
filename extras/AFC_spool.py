@@ -452,27 +452,45 @@ class AFCSpool:
         specified by the 'LANE' parameter and sets its color to the value provided by the 'COLOR' parameter.
         The 'COLOR' parameter should be a hex color code.
 
+        A multi-color filament takes 'COLORS', a comma-separated list of two or more hex colors,
+        and 'COLOR_MODE': `gradient` when the color changes along the filament's length, or
+        `coaxial` when the colors run side by side, as in dual-color silk (default `gradient`).
+        The lane's color is 'COLOR', or the first entry of 'COLORS' when 'COLOR' is omitted.
+        Sending 'COLOR' alone returns the lane to one color.
+
         Usage
         -----
-        `SET_COLOR LANE=<lane> COLOR=<color>`
+        `SET_COLOR LANE=<lane> COLOR=<color> [COLORS=<color>,<color>,...] [COLOR_MODE=<gradient|coaxial>]`
 
         Example
         -----
         ```
         SET_COLOR LANE=lane1 COLOR=FF0000
+        SET_COLOR LANE=lane1 COLORS=FFD700,C0C0C0 COLOR_MODE=coaxial
         ```
         """
         lane = gcmd.get('LANE', None)
         if lane is None:
             self.logger.info("No LANE Defined")
             return
-        color = gcmd.get('COLOR', '#000000')
+        colors = [c.strip().replace('#', '') for c in gcmd.get('COLORS', '').split(',') if c.strip()]
+        color = gcmd.get('COLOR', colors[0] if colors else '#000000')
         if lane not in self.afc.lanes:
             self.logger.info(f"{lane} Unknown")
             return
         cur_lane = self.afc.lanes[lane]
-        cur_lane.color = f"#{color.replace('#', '')}"
-        cur_lane.multi_color = []
+        if len(colors) > 1:
+            color_mode = gcmd.get('COLOR_MODE', 'gradient').lower()
+            if color_mode not in ('gradient', 'coaxial'):
+                self.logger.info(f"Unknown COLOR_MODE {color_mode}, using gradient")
+                color_mode = 'gradient'
+            cur_lane.color = f"#{color.replace('#', '')}"
+            cur_lane.multi_color = colors
+            cur_lane.color_mode = color_mode
+        else:
+            cur_lane.color = f"#{color.replace('#', '')}"
+            cur_lane.multi_color = []
+            cur_lane.color_mode = ""
         cur_lane.send_lane_data()
         # Refresh LED only if filament is loaded — empty lanes keep their state color
         if (cur_lane.load_state
@@ -754,6 +772,7 @@ class AFCSpool:
         cur_lane.material = ''
         cur_lane.color = ''
         cur_lane.multi_color = []
+        cur_lane.color_mode = ""
         cur_lane.weight = 0
         cur_lane.auto_switch_triggered = False
         cur_lane.extruder_temp = None
@@ -886,15 +905,20 @@ class AFCSpool:
                         self.clear_values(cur_lane)
                         return
 
-                # Check to see if filament is defined as multi-color and take the first color for now
-                # Once support for multicolor is added this needs to be updated
+                # A multi-color filament keeps every color; the lane's color is the first one.
+                # Spoolman's multi_color_direction is 'longitudinal' (gradient) or 'coaxial'
                 multi_color_hex = self._get_filament_values(result['filament'], 'multi_color_hexes')
                 if multi_color_hex:
                     cur_lane.multi_color = multi_color_hex.split(",")
                     cur_lane.color = f"#{cur_lane.multi_color[0]}"
+                    direction = self._get_filament_values(result['filament'], 'multi_color_direction')
+                    cur_lane.color_mode = "coaxial" if direction == "coaxial" else "gradient"
                 else:
-                    cur_lane.color = f"#{self._get_filament_values(result['filament'], 'color_hex')}"
+                    # A filament without a color in Spoolman leaves the lane without one
+                    color_hex = self._get_filament_values(result['filament'], 'color_hex')
+                    cur_lane.color = f"#{color_hex}" if color_hex else ""
                     cur_lane.multi_color = []
+                    cur_lane.color_mode = ""
 
                 cur_lane.send_lane_data()
                 # Refresh LED only if filament is loaded — empty lanes keep their state color

@@ -16,11 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   placeholder, and asks for the first box's uid if it has none.
 
 ## [11-25-2026]
-## Fixed
+### Fixed
 - Buffers getting enabled when a lane is loaded and toolhead is docked during PREP
 
-## Added
+### Added
 - Resetting steppers rotation distance when performing calibration to make sure correct rotation distance is being used while calibrating.
+- Lanes keep a multi-color filament's colors and how they run. `SET_COLOR` takes
+  `COLORS=<color>,<color>,...` and `COLOR_MODE=gradient|coaxial`, and a Spoolman spool's
+  `multi_color_hexes` and `multi_color_direction` set them. `lane_data` gains `colors` (every
+  color as `#RRGGBB`) and `color_mode` (`solid`, `gradient` or `coaxial`), and the lane's
+  status gains `color_mode`. Both are saved across restarts. `SET_COLOR COLOR=` alone returns
+  the lane to one color.
 
 ## [11-24-2026]
 ### Added

@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import Enum
 from gcode import CommandError
 
-from typing import Optional, Union, TYPE_CHECKING
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper
@@ -132,6 +132,7 @@ class AFCLane:
         self.spool_id: Optional[Union[int, str]] = None
         self.color: str         = ""
         self.multi_color: list  = []
+        self.color_mode: str    = ""
         self.spool_vendor: str  = ""
         self.filament_name: str = ""
         self.filament_id: str   = ""
@@ -2072,6 +2073,7 @@ class AFCLane:
 
         scan_time = self.td1_data['scan_time'] if 'scan_time' in self.td1_data else ""
         td        = self.td1_data['td']        if 'td'        in self.td1_data else ""
+        colors, color_mode = self.lane_data_colors()
 
         for key in current_keys:
             lane_data = {
@@ -2079,6 +2081,8 @@ class AFCLane:
                 "key": key,
                 "value": {
                     "color"          : self.color,
+                    "colors"         : colors,
+                    "color_mode"     : color_mode,
                     "material"       : self.material,
                     "vendor_name"    : self.spool_vendor,
                     "name"           : self.filament_name,
@@ -2098,6 +2102,34 @@ class AFCLane:
 
         self._sent_lane_data_keys = current_keys
 
+    def lane_data_colors(self) -> Tuple[List[str], str]:
+        """
+        Returns the lane's colors for lane_data: every color in order as `#RRGGBB`, and
+        `solid` for one color, `gradient` (along the filament's length) or `coaxial`
+        (side by side, as in dual-color silk) for several. A lane without a color gives
+        an empty list and an empty mode.
+
+        :return tuple: (colors, color_mode) -- list of `#RRGGBB` strings and `solid`,
+                       `gradient`, `coaxial`, or `""` when the lane has no color.
+        """
+        if len(self.multi_color) > 1:
+            colors = [self._rgb_hex(c) for c in self.multi_color]
+            return colors, self.color_mode or "gradient"
+        if self.color and self.color != "#":
+            return [self._rgb_hex(self.color)], "solid"
+        return [], ""
+
+    @staticmethod
+    def _rgb_hex(color: str) -> str:
+        """
+        Returns a color as `#RRGGBB`: adds the leading `#` and drops the trailing alpha
+        of an eight-digit `RRGGBBAA` value, which Spoolman allows.
+        """
+        hex_value = color.replace('#', '')
+        if len(hex_value) == 8:
+            hex_value = hex_value[:6]
+        return f"#{hex_value}"
+
     def clear_lane_data(self):
         """
         Clears lane data that is currently stored at moonrakers `machine/set_lane_data`
@@ -2116,6 +2148,8 @@ class AFCLane:
                 "key": key,
                 "value": {
                     "color"          : "",
+                    "colors"         : [],
+                    "color_mode"     : "",
                     "material"       : "",
                     "vendor_name"    : "",
                     "name"           : "",
@@ -2590,9 +2624,11 @@ class AFCLane:
         response["color"]=self.color
         response["filament_name"] = self.filament_name
         response["spool_vendor"] = self.spool_vendor
+        response["multi_color_hexes"] = self.multi_color
+        response["color_mode"] = self.color_mode
         response["filament_id"] = self.filament_id
+
         if not save_to_file:
-            response["multi_color_hexes"] = self.multi_color
             response["initial_weight"] = self.espooler.espooler_values.full_weight
 
         response["weight"]=self.weight

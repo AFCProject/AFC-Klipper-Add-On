@@ -767,6 +767,56 @@ class TestRegisterCommands:
 # ── cmd_SET_COLOR ──────────────────────────────────────────────────────────────
 
 class TestSetColor:
+    def _run(self, **params):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        spool.afc.lanes = {"lane1": lane}
+        spool.set_snapmaker_filament_params = MagicMock()
+        spool.cmd_SET_COLOR(_make_gcmd(LANE="lane1", **params))
+        self.spool = spool
+        return lane
+
+    def test_colors_set_multi_color(self):
+        lane = self._run(COLOR="#FFD700", COLORS="#FFD700,#C0C0C0", COLOR_MODE="COAXIAL")
+        assert lane.color == "#FFD700"
+        assert lane.multi_color == ["FFD700", "C0C0C0"]
+        assert lane.color_mode == "coaxial"
+
+    def test_colors_without_color_use_first_entry(self):
+        lane = self._run(COLORS="AABBCC, 001122")
+        assert lane.color == "#AABBCC"
+        assert lane.multi_color == ["AABBCC", "001122"]
+        assert lane.color_mode == "gradient"
+
+    def test_explicit_color_kept_with_colors(self):
+        lane = self._run(COLOR="112233", COLORS="AABBCC,001122")
+        assert lane.color == "#112233"
+        assert lane.multi_color == ["AABBCC", "001122"]
+        assert lane.color_mode == "gradient"
+
+    def test_unknown_color_mode_falls_back_to_gradient(self):
+        lane = self._run(COLORS="AABBCC,001122", COLOR_MODE="striped")
+        assert lane.color_mode == "gradient"
+        assert self.spool.logger.messages == [("info", "Unknown COLOR_MODE striped, using gradient")]
+
+    def test_single_entry_colors_is_one_color(self):
+        lane = self._run(COLORS="AABBCC")
+        assert lane.color == "#AABBCC"
+        assert lane.multi_color == []
+        assert lane.color_mode == ""
+
+    def test_color_alone_returns_to_one_color(self):
+        spool = _make_spool()
+        lane = _make_lane("lane1")
+        lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "coaxial"
+        spool.afc.lanes = {"lane1": lane}
+        spool.set_snapmaker_filament_params = MagicMock()
+        spool.cmd_SET_COLOR(_make_gcmd(LANE="lane1", COLOR="00FF00"))
+        assert lane.color == "#00FF00"
+        assert lane.multi_color == []
+        assert lane.color_mode == ""
+
     def test_set_color_updates_lane_color(self):
         spool = _make_spool()
         lane = _make_lane("lane1")
@@ -2045,6 +2095,72 @@ class TestSetSpoolID:
         spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color == "#AABBCC"
         assert lane.multi_color == result["filament"]["multi_color_hexes"].split(",")
+
+    def test_multi_color_direction_coaxial(self):
+        gcmd = _make_gcmd()
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result()
+        result["filament"]["multi_color_hexes"] = "FFD700,C0C0C0"
+        result["filament"]["multi_color_direction"] = "coaxial"
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
+        assert lane.color_mode == "coaxial"
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
+
+    def test_multi_color_direction_longitudinal_is_gradient(self):
+        gcmd = _make_gcmd()
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        result = _make_spool_result()
+        result["filament"]["multi_color_hexes"] = "FFD700,C0C0C0"
+        result["filament"]["multi_color_direction"] = "longitudinal"
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
+        assert lane.color_mode == "gradient"
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
+
+    def test_colorless_filament_publishes_no_colors(self):
+        from tests.test_AFC_lane import _make_real_lane_for_colors
+        gcmd = _make_gcmd()
+        spool = self._make_spool_with_spoolman()
+        lane = _make_real_lane_for_colors()
+        lane.afc.common_density_values = ["PLA:1.24"]
+        lane.remember_spool = False
+        lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "coaxial"
+        result = _make_spool_result(color_hex=None)
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
+        payload = lane.afc.moonraker.send_lane_data.call_args[0][0]
+        assert payload["value"]["color"] == ""
+        assert payload["value"]["colors"] == []
+        assert payload["value"]["color_mode"] == ""
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
+
+    def test_colorless_filament_leaves_lane_without_color(self):
+        gcmd = _make_gcmd()
+        spool = self._make_spool_with_spoolman()
+        lane = _make_lane()
+        lane.remember_spool = False
+        lane.espooler = MagicMock()
+        lane.multi_color = ["AABBCC", "001122"]
+        lane.color_mode = "coaxial"
+        result = _make_spool_result(color_hex=None)
+        _stub_get_spool(spool, result)
+        spool.set_spoolID(lane, 42, gcmd=gcmd)
+        assert lane.color == ""
+        assert lane.multi_color == []
+        assert lane.color_mode == ""
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
 
     def test_multi_color_is_none(self):
         gcmd = _make_gcmd()
