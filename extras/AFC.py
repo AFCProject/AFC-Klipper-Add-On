@@ -1898,6 +1898,62 @@ class afc:
 
         return True
 
+    def uses_standard_load(self, cur_lane: AFCLane) -> bool:
+        """
+        Whether this lane loads through `load_sequence`'s standard path, rather than a
+        `custom_load_cmd` or its unit's own `unit_load_lane`.
+
+        :param cur_lane: Lane to check
+        :return bool: True when the standard load path is used
+        """
+        return (not cur_lane.custom_load_cmd
+                and not hasattr(cur_lane.unit_obj, "unit_load_lane"))
+
+    def tool_stn_starts_at_tool_end(self, cur_lane: AFCLane) -> bool:
+        """
+        Whether a full load of this lane starts its `tool_stn` move where the `tool_end` stage
+        stops.
+
+        Only the standard load path steps to `tool_end`. A unit's own `unit_load_lane` counts
+        `tool_stn` from the toolhead sensor, and a `custom_load_cmd` replaces the load entirely.
+
+        :param cur_lane: Lane to check
+        :return bool: True when `tool_end` is configured and the standard load path is used
+        """
+        return (bool(cur_lane.extruder_obj.tool_end)
+                and self.uses_standard_load(cur_lane))
+
+    def load_to_tool_end(self, cur_lane: AFCLane, cur_extruder: AFCExtruder,
+                         tool_attempts: int=0, *, gcmd: AFCGcmd) -> bool:
+        """
+        Extrude in `short_move_dis` steps until the post extruder gear sensor (`tool_end`)
+        triggers. `tool_stn` is measured from where this stops.
+
+        :param cur_lane: Lane being loaded, synced to the extruder.
+        :param cur_extruder: Extruder whose `tool_end` sensor is checked between moves.
+        :param tool_attempts: Load attempts already used, counted toward the limit.
+        :param gcmd: command context passed through to the failure handler
+        :return bool: True once `tool_end` triggers, False if it never does
+        """
+        while not cur_extruder.tool_end_state:
+            tool_attempts += 1
+            self.move_e_pos(cur_lane.short_move_dis, cur_extruder.tool_load_speed, "Tool end",
+                            wait_tool=True)
+            if tool_attempts > 20:
+                message = ("filament failed to trigger post extruder gear toolhead sensor, "
+                           "CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL")
+                message += ("\nTo resolve set lane loaded with "
+                            f"`SET_LANE_LOADED LANE={cur_lane.name}` macro.")
+                message += ("\nAlso might be a good idea to verify that post extruder gear "
+                            "toolhead sensor is working.")
+                if self.function.in_print():
+                    message += "\nOnce issue is resolved click resume to continue printing"
+                self.error.handle_lane_failure(cur_lane, message, gcmd=gcmd)
+                return False
+
+        self.afcDeltaTime.log_with_time("Filament loaded to post-sensor")
+        return True
+
     def load_sequence(self, cur_lane: AFCLane, cur_hub: afc_hub,
                       cur_extruder: AFCExtruder, load_to_gears: bool=False, *,
                       gcmd: AFCGcmd) -> bool:
@@ -2085,21 +2141,9 @@ class afc:
                 self.save_vars()
                 return True
 
-            if cur_extruder.tool_end:
-                while not cur_extruder.tool_end_state:
-                    tool_attempts += 1
-                    self.move_e_pos(cur_lane.short_move_dis, cur_extruder.tool_load_speed,
-                                    "Tool end", wait_tool=True )
-                    if tool_attempts > 20:
-                        message = 'filament failed to trigger post extruder gear toolhead sensor, CHECK FILAMENT PATH\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL'
-                        message += '\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={}` macro.'.format(cur_lane.name)
-                        message += '\nAlso might be a good idea to verify that post extruder gear toolhead sensor is working.'
-                        if self.function.in_print():
-                            message += '\nOnce issue is resolved click resume to continue printing'
-                        self.error.handle_lane_failure(cur_lane, message, gcmd=gcmd)
-                        return False
-
-                self.afcDeltaTime.log_with_time("Filament loaded to post-sensor")
+            if (cur_extruder.tool_end
+                and not self.load_to_tool_end(cur_lane, cur_extruder, tool_attempts, gcmd=gcmd)):
+                return False
 
             # Adjust tool position for loading.
             self.move_e_pos( cur_extruder.tool_stn, cur_extruder.tool_load_speed, "tool stn" )
