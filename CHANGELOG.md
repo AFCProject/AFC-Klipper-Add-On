@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Installer now support EMU-C boards.
 
+### Updated
+- `AFC_ACE_FEED_ASSIST` macro now does not require `ENABLE` and instead return the status of if the assist is active or not.
+
+### Fixed
+- When `UNSET_LANE_LOADED` is ran, ACE assist is now properly turned off.
+
 ## [11-26-2026]
 ### Added
 - Added Creality CFS to the installer. Additional CFS units join the first box's chain: the installer
@@ -49,7 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed ACE loads leaving the filament tip short of the extruder gears when the toolhead sensor
   sits above them: the unit now keeps feeding `load_gear_push` mm (default 20) past the sensor,
   at `tool_load_speed` alongside the extruder's `tool_stn` advance, and starts feed assist
-  after that push.
+  after that push..
+- Fixed ACE feed assist staying off after a `LANE_MOVE` on the loaded lane: the unit ends assist on
+  a slot it moves, so AFC now stops it before the move and restarts it after.
 
 ## [11-22-2026]
 ### Updated

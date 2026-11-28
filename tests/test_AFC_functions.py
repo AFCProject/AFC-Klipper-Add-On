@@ -6367,6 +6367,46 @@ class TestHandleActivateExtruder:
         active_lane.unit_obj.lane_loaded.assert_not_called()
 
 
+# ── unset_lane_loaded ──────────────────────────────────────────────────────
+
+class TestUnsetLaneLoaded:
+    def _make(self, cur_lane_loaded=None):
+        func = _make_real_func()
+        func.get_current_lane_obj = MagicMock(return_value=cur_lane_loaded)
+        func.afc.function = func
+        func.handle_activate_extruder = MagicMock()
+        func.afc.save_vars = MagicMock()
+        return func
+
+    def _make_lane(self):
+        lane = _make_afc_lane("AFC_stepper lane1")
+        lane.unsync_to_extruder = MagicMock()
+        lane.set_tool_unloaded = MagicMock()
+        lane.unit_obj = MagicMock()
+        return lane
+
+    def test_no_current_lane_does_nothing(self):
+        func = self._make(cur_lane_loaded=None)
+        gcmd = _make_gcmd()
+
+        func.unset_lane_loaded(gcmd)
+
+        func.afc.save_vars.assert_not_called()
+
+    def test_stops_feed_assist_before_unsyncing(self):
+        lane = self._make_lane()
+        func = self._make(cur_lane_loaded=lane)
+        gcmd = _make_gcmd()
+
+        func.unset_lane_loaded(gcmd)
+
+        lane.unit_obj.stop_feed_assist.assert_called_once_with(lane)
+        lane.unsync_to_extruder.assert_called_once_with(gcmd=gcmd)
+        lane.set_tool_unloaded.assert_called_once_with(normal_toolchange=True, gcmd=gcmd)
+        lane.unit_obj.return_to_home.assert_called_once_with(gcmd=gcmd)
+        func.afc.save_vars.assert_called_once()
+
+
 # ── check_for_td1_error / _check_td1_error_in_data ────────────────────────────
 
 class TestCheckForTd1Error:
