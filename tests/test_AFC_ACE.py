@@ -3466,6 +3466,9 @@ class TestAfcACELaneMove:
             ("get_status", {}), ("feed_filament", {"index": 0, "length": 50.0, "speed": 100.0}),
             ("get_status", {}), ("get_status", {}), ("get_status", {})]
         assert unit._feed_assist_active == set()
+        assert unit._operation_active is False
+        assert unit._prev_states_stale is True
+        assert unit.logger.messages == []
 
     def test_feed_on_the_active_lane_restarts_its_assist(self):
         unit, lane, wire = self._assisting(LaneSpec("lane0", prep=True, tool_loaded=True))
@@ -3477,6 +3480,8 @@ class TestAfcACELaneMove:
         assert unit._ace.commands[-2:] == [("get_status", {}), ("start_feed_assist", {"index": 0})]
         assert [m for m, _ in unit._ace.commands].count("start_feed_assist") == 1
         assert unit._feed_assist_active == {0}
+        assert unit._operation_active is False
+        assert unit._prev_states_stale is True
         assert unit.logger.messages == []
 
     def test_unwind_on_the_active_lane_restarts_its_assist(self):
@@ -3488,6 +3493,9 @@ class TestAfcACELaneMove:
                                                      "speed": 100.0, "mode": "normal"})]
         assert unit._ace.commands[-1] == ("start_feed_assist", {"index": 0})
         assert unit._feed_assist_active == {0}
+        assert unit._operation_active is False
+        assert unit._prev_states_stale is True
+        assert unit.logger.messages == []
 
     def test_move_on_a_lane_not_in_the_tool_drops_its_assist(self):
         unit, lane, wire = self._assisting(LaneSpec("lane0", prep=True))
@@ -3495,8 +3503,25 @@ class TestAfcACELaneMove:
         unit.lane_move(lane, 50.0, None)
 
         assert "start_feed_assist" not in [m for m, _ in unit._ace.commands]
+        assert ("stop_feed_assist", {"index": 0}) in unit._ace.commands
         assert unit._feed_assist_active == set()
+        assert unit._operation_active is False
+        assert unit._prev_states_stale is True
         assert unit.logger.messages == []
+
+    def test_failed_stop_still_restarts_assist_on_the_active_lane(self):
+        # The unit applies the stop on its side regardless of whether the ack
+        # times out, so tracking must not get stuck believing assist is still on.
+        unit, lane, wire = self._assisting(LaneSpec("lane0", prep=True, tool_loaded=True))
+        unit._ace.set_reply("stop_feed_assist", TIMEOUT)
+
+        unit.lane_move(lane, 50.0, None)
+
+        # Reconciliation must still attempt (and succeed at) the restart, not
+        # skip it believing the never-discarded slot was already correct.
+        assert ("start_feed_assist", {"index": 0}) in unit._ace.commands
+        assert unit._feed_assist_active == {0}
+        assert unit._operation_active is False
 
 
 class TestAfcACELaneUnload:

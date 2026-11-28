@@ -6371,7 +6371,7 @@ class TestHandleActivateExtruder:
 
 class TestUnsetLaneLoaded:
     def _make(self, cur_lane_loaded=None):
-        func = _make_func()
+        func = _make_real_func()
         func.get_current_lane_obj = MagicMock(return_value=cur_lane_loaded)
         func.afc.function = func
         func.handle_activate_extruder = MagicMock()

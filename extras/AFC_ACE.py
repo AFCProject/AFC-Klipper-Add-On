@@ -1682,8 +1682,10 @@ class afcACE(afcUnit):
             return
         had_assist = slot in self._feed_assist_active
         if had_assist:
-            # A move on an assisting slot ends its assist on the unit.
+            # A move ends assist on the unit even if the stop's ack times out, so
+            # always drop tracking here instead of leaving it stuck "on".
             self._stop_feed_assist(slot)
+            self._feed_assist_active.discard(slot)
         with self._operation():
             try:
                 self._wait_for_ace_ready()
