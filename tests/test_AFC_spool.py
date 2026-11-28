@@ -741,6 +741,13 @@ class TestResyncAfcMappingFromExtruderMapTable:
             "filament_used_g": [], "filament_used_mm": []}
         spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
         spool._set_map.assert_not_called()
+        # A regressed bounds check would index the empty lists directly, raise
+        # IndexError, and get swallowed by the method's own except Exception --
+        # still leaving _set_map uncalled above, so that alone can't tell a
+        # clean skip apart from a crash. The valid skip logs nothing and
+        # never cancels the print.
+        spool.afc.run_script.assert_not_called()
+        assert spool.logger.messages == []
 
     def test_missing_print_task_config_2_attribute_is_treated_as_unused(self):
         """getattr's default {} applies when print_task_config_obj doesn't expose
@@ -1105,6 +1112,45 @@ class TestResyncAfcMappingFromExtruderMapTable:
         for i in range(count):
             spool._set_map.assert_any_call(
                 spool.afc.lanes[f"lane_new{i}"], spool.afc.lanes[f"lane{i}"], f"T{i}")
+
+    def test_two_tool_swap_uses_the_real_set_map_without_corrupting_either_lane(self):
+        """Regression test: screen swaps T0 and T1 between lane_a and lane_b in single-mapping
+        mode. The first real `_set_map` call already completes the full swap, so the second
+        entry's stale pre-batch owner must be re-read and skipped, not reapplied."""
+        spool = self._make()
+        del spool._set_map
+        spool.enable_multiple_mapping = False
+
+        lane_a = _make_lane("lane_a", extruder_name="extruder", extruder_index=0)
+        lane_a.map = ["T0"]
+        lane_a.current_map = "T0"
+        lane_b = _make_lane("lane_b", extruder_name="extruder1", extruder_index=1)
+        lane_b.map = ["T1"]
+        lane_b.current_map = "T1"
+        spool.afc.lanes = {"lane_a": lane_a, "lane_b": lane_b}
+        spool.afc.tool_cmds = {"T0": "lane_a", "T1": "lane_b"}
+
+        extruder_a = MagicMock()
+        extruder_a.is_standalone.return_value = False
+        extruder_a.lane_loaded = "lane_a"
+        extruder_b = MagicMock()
+        extruder_b.is_standalone.return_value = False
+        extruder_b.lane_loaded = "lane_b"
+        spool.afc.tools = {"extruder": extruder_a, "extruder1": extruder_b}
+
+        # The screen swapped both: T0 now targets extruder1 (lane_b's extruder), T1 now
+        # targets extruder (lane_a's extruder).
+        spool.print_task_config_obj.print_task_config = {"extruder_map_table": [1, 0]}
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0, 1.0], "filament_used_mm": [0.0, 0.0]}
+
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+
+        assert lane_a.map == ["T1"]
+        assert lane_a.current_map == "T1"
+        assert lane_b.map == ["T0"]
+        assert lane_b.current_map == "T0"
+        assert spool.afc.tool_cmds == {"T0": "lane_b", "T1": "lane_a"}
 
 
 # ── cmd_AFC_SWAP_MAPPING ────────────────────────────────────────────────────────
@@ -3597,6 +3643,32 @@ class TestSetSnapmakerFilamentParams:
         print_task_config = spool.print_task_config_obj.print_task_config
 
         assert print_task_config["filament_type"][0] == "PETG-CF"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_recognized_type_with_a_digit_is_kept_as_is(self):
+        """"PA6-CF" and "PA-CF" are distinct, recognized types. Normalizing an already
+        recognized value would strip the "6" and silently store the wrong one."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "PA6-CF"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "PA6-CF"
         assert spool.logger.messages == []
 
     def test_snapmaker_printer_extruder_digits_alone_are_stripped(self):

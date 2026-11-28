@@ -154,9 +154,10 @@ class AFCSpool:
                     or getattr(self.afc, "default_material_type", None)
                     or "NONE"
                 )
-                # Strip special characters and digits, like the "+1" in "PETG-CF+1", but keep "-"
-                # since it appears in recognized types like "PA-CF" and "PETG-CF".
-                material = re.sub(r'[^A-Za-z-]', '', material) or "NONE"
+                # Some recognized types carry a digit, like "PA6-CF", so only normalize an
+                # unrecognized value. Strips special characters and digits but keeps "-".
+                if material not in FILAMENT_PROTO_MAIN_TYPE_MAPPING:
+                    material = re.sub(r'[^A-Za-z-]', '', material) or "NONE"
                 # Only set a type snapmaker actually recognizes; warn and fall back to NONE
                 # otherwise, rather than sending an unrecognized value.
                 if (material == "NONE"
@@ -364,11 +365,17 @@ class AFCSpool:
                 return
 
             for map_cmd, cur_lane, new_lane, screen_extruder_index in changes:
+                # An earlier swap may have already moved map_cmd off cur_lane, so re-read its
+                # current owner instead of trusting the pre-batch snapshot.
+                live_owner = self.afc.lanes.get(self.afc.tool_cmds.get(map_cmd))
+                if (live_owner is None
+                    or live_owner is new_lane):
+                    continue
                 warning_msg += (
                     f"{map_cmd} was {cur_lane.name} (extruder {cur_lane.lane_extruder_index}), now "
                     f"{new_lane.name} (extruder {screen_extruder_index}).\n"
                 )
-                self._set_map(new_lane, cur_lane, map_cmd)
+                self._set_map(new_lane, live_owner, map_cmd)
             if warning_msg:
                 warning_msg = ("The following mappings were changed from the printer's screen "
                                "or slicer:\n" + warning_msg)
