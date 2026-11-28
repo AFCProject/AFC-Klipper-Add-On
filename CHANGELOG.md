@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-28-2026]
+### Fixed
+- Park and Poop skip the safe-Y approach (`safe_loc_y`) when already at the target XY and
+  X and Y are homed. Poop still exits to `safe_loc_y` after purging.
+
 ## [11-27-2026]
 ### Added
 - Installer now support EMU-C boards.
