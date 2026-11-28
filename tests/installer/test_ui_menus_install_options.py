@@ -122,6 +122,22 @@ class TestView:
         menu, _, _, _, _ = build(tmp_path, [], itype="EMU")
         assert menu.view().art == "EMU"
 
+    def test_selecting_emb_c_keeps_the_buffer_and_limits_the_lane_row(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, ["14", "13"], itype="EMU",
+                                     emu_board_type="SLB", emu_num_lanes=8)
+        assert menu.step() == "install_options"
+        assert state.selection.emu_board_type == "EMB_C"
+        assert state.selection.emu_num_lanes == 5
+        assert state.selection.buffer_type == "Unknown"
+        assert state.message == "EMU Board Type: EMB_C"
+        assert ("11. Buffer type : Unknown (a buffer is required with ramming)"
+                in row_texts(menu.view()))
+        assert "13. EMU Lane Count : 5" in row_texts(menu.view())
+        assert menu.step() == "install_options"
+        assert state.selection.emu_num_lanes == 2
+        assert state.selection.buffer_type == "Unknown"
+        assert state.message == "EMU Lane Count: 2"
+
     def test_ace_has_no_sensor_row_only_a_buffer_and_version_row(self, tmp_path: Path) -> None:
         menu, _, _, _, _ = build(
             tmp_path, [], itype="ACE", sensor="Sensor", buffer="Internal", ace_unit_type="V1"

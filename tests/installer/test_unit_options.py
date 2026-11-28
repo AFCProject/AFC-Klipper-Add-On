@@ -6,7 +6,12 @@ import pytest
 from installer.platform_core.context import Context
 from installer.unit_registry.base import UnitType
 from installer.unit_registry.options import (
+    EMU_BOARD_TYPES,
+    EMU_EMB_C_LANE_OPTIONS,
+    EMU_LANE_OPTIONS,
     ChoiceOption,
+    EmuBoardOption,
+    EmuLaneOption,
     NameOption,
     UnitOption,
 )
@@ -68,6 +73,66 @@ class TestChoiceOption:
         assert isinstance(sel.emu_num_lanes, int)
 
 
+class TestEmuLaneOptionActivate:
+    @pytest.mark.parametrize("board,current,expected", [
+        ("EBB", 8, 1), ("SLB", 5, 6), ("EMB_C", 2, 3), ("EMB_C", 3, 4),
+        ("EMB_C", 4, 5), ("EMB_C", 5, 2), ("EMB_C", 1, 2), ("EMB_C", 8, 2),
+    ])
+    def test_cycles_only_supported_counts(
+        self, tmp_path: Path, board: str, current: int, expected: int
+    ) -> None:
+        option = EmuLaneOption("EMU Lane Count", "emu_num_lanes", EMU_LANE_OPTIONS, cast=int)
+        sel = UnitSelection(emu_board_type=board, emu_num_lanes=current)
+        assert activate(option, tmp_path, sel) == f"EMU Lane Count: {expected}"
+        assert sel.emu_num_lanes == expected
+        assert isinstance(sel.emu_num_lanes, int)
+        choices = {"EBB": EMU_LANE_OPTIONS, "SLB": EMU_LANE_OPTIONS,
+                   "EMB_C": EMU_EMB_C_LANE_OPTIONS}
+        assert option.choices == choices[board]
+
+    def test_reusing_the_option_after_a_board_change_restores_all_counts(
+        self, tmp_path: Path
+    ) -> None:
+        option = EmuLaneOption("EMU Lane Count", "emu_num_lanes", EMU_LANE_OPTIONS, cast=int)
+        sel = UnitSelection(emu_board_type="EMB_C", emu_num_lanes=5)
+        assert activate(option, tmp_path, sel) == "EMU Lane Count: 2"
+        assert sel.emu_num_lanes == 2
+        assert option.choices == EMU_EMB_C_LANE_OPTIONS
+        sel.emu_board_type = "SLB"
+        sel.emu_num_lanes = 5
+        assert activate(option, tmp_path, sel) == "EMU Lane Count: 6"
+        assert sel.emu_num_lanes == 6
+        assert option.choices == EMU_LANE_OPTIONS
+
+
+class TestEmuBoardOptionActivate:
+    @pytest.mark.parametrize("additional", [False, True])
+    @pytest.mark.parametrize("current,lanes,board,expected_lanes,buffer,additional_buffer", [
+        ("EBB", 8, "SLB", 8, "TurtleNeck", "None"),
+        ("SLB", 1, "EMB_C", 2, "Unknown", "None"),
+        ("SLB", 2, "EMB_C", 2, "TurtleNeck", "TurtleNeck"),
+        ("SLB", 3, "EMB_C", 3, "FPS_PSF", "FPS_PSF"),
+        ("SLB", 4, "EMB_C", 4, "None", "None"),
+        ("SLB", 5, "EMB_C", 5, "TurtleNeckV2", "TurtleNeckV2"),
+        ("SLB", 8, "EMB_C", 5, "TurtleNeck", "None"),
+        ("EMB_C", 4, "EBB", 4, "TurtleNeck", "None"),
+    ])
+    def test_limits_emb_c_lanes_without_changing_buffer_choices(
+        self, tmp_path: Path, additional: bool, current: str, lanes: int, board: str,
+        expected_lanes: int, buffer: str, additional_buffer: str,
+    ) -> None:
+        option = EmuBoardOption("EMU Board Type", "emu_board_type", EMU_BOARD_TYPES)
+        sel = UnitSelection(emu_board_type=current, emu_num_lanes=lanes,
+                            is_additional_unit=additional, buffer_type=buffer,
+                            additional_buffer_type=additional_buffer)
+        assert activate(option, tmp_path, sel) == f"EMU Board Type: {board}"
+        assert sel.emu_board_type == board
+        assert sel.emu_num_lanes == expected_lanes
+        assert sel.buffer_type == buffer
+        assert sel.additional_buffer_type == additional_buffer
+        assert sel.is_additional_unit is additional
+
+
 class TestNameOption:
     def test_the_first_unit_prompt(self, tmp_path: Path) -> None:
         sel = UnitSelection(installation_type="HTLF")
@@ -119,10 +184,11 @@ class TestUnitTypeDefaults:
 
         assert Plain().install_options() == []
         assert Plain().additional_options() == []
+        assert Plain().additional_message(None, UnitSelection()) is None  # type: ignore
 
     @pytest.mark.parametrize("unit", UNIT_TYPES, ids=[u.key for u in UNIT_TYPES])
     def test_buffer_selectable_and_ramming_wording(self, unit) -> None:  # type: ignore
-        no_choice = unit.key in ("ViViD", "OpenAMS")
+        no_choice = unit.key in ("ViViD", "OpenAMS", "CFS")
         assert unit.buffer_selectable is not no_choice
         expected = "an FPS Board" if unit.key == "OpenAMS" else "a TurtleNeck buffer"
         assert unit.ramming_hardware == expected

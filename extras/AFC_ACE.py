@@ -232,6 +232,10 @@ class afcACE(afcUnit):
         # feeds the whole way at feed_speed.
         self.load_approach_length = config.getfloat("load_approach_length", 30.0, minval=0.0)
         self.load_approach_speed = config.getfloat("load_approach_speed", 50.0, minval=1.0)
+        # mm the unit keeps feeding past the toolhead sensor, alongside the extruder's
+        # tool_stn advance and at its speed, so a sensor above the extruder gears still
+        # hands the tip to them. 0 leaves the whole tool_stn to the extruder.
+        self.load_gear_push = config.getfloat("load_gear_push", 20.0, minval=0.0)
         # Extra mm (beyond dist_hub) to retract when ejecting a hub-staged lane,
         # so the filament clears the hub and pulls fully back into the unit.
         self.eject_buffer = config.getfloat("eject_buffer", 475.0, minval=0.0)
@@ -1836,9 +1840,9 @@ class afcACE(afcUnit):
                         self.lane_tool_loaded(cur_lane, gcmd=gcmd)
                         cur_lane.status = AFCLaneState.TOOLED
                         self.printer.send_event("afc:tool_loaded", cur_lane)
+                        cur_lane.enable_buffer()
                     else:
                         self.lane_tool_loaded_idle(cur_lane, gcmd=gcmd)
-                    cur_lane.enable_buffer()
 
                     # Start assist for any lane confirmed in the toolhead
                     # (afc.current may be None on toolchangers during prep);
@@ -2355,20 +2359,59 @@ class afcACE(afcUnit):
         cur_lane.loaded_to_hub = True
         self._set_hub_state(cur_lane, True)
 
-        if self._use_feed_assist(cur_lane):
-            self._start_feed_assist(slot, explicit=True)
-
         tool_stn = cur_extruder.tool_stn or 0
         if (tool_stn > 0
             and not load_to_gears):
             self.logger.info(
                 f"ACE load: advancing tool_stn {tool_stn:.0f}mm to nozzle for {cur_lane.name}")
-            cur_lane.activate_toolhead_extruder()
-            afc.move_e_pos(tool_stn, cur_extruder.tool_load_speed, "tool stn")
+            self._advance_tool_stn(cur_lane, cur_extruder, slot, tool_stn)
             self._log_delta("ACE load: tool_stn to nozzle")
+
+        # Assist starts after the gear push: a feed on an assisting slot ends its assist.
+        if self._use_feed_assist(cur_lane):
+            self._start_feed_assist(slot, explicit=True)
 
         self._log_delta("ACE load transport complete")
         return True
+
+    def _advance_tool_stn(self, cur_lane: AFCLane, cur_extruder: Any, slot: int,
+                          tool_stn: float) -> None:
+        """
+        Move the extruder tool_stn mm while the unit feeds the first `load_gear_push` mm
+        at the same speed.
+
+        A toolhead sensor above the extruder gears leaves the tip short of them, so the
+        extruder alone would turn on nothing. Fed alongside, the tip meets the gears while
+        the extruder turns; the unit starts a little ahead of the queued extruder move, so
+        the tip can end a few mm past tool_stn, and the unit's buffer absorbs any excess
+        once the gears bite.
+
+        :param cur_lane: Lane being loaded.
+        :param cur_extruder: Extruder the lane loads into.
+        :param slot: 0-based ACE slot index of the lane.
+        :param tool_stn: Distance in mm from the toolhead sensor to the nozzle.
+        """
+        speed = cur_extruder.tool_load_speed
+        push = min(self.load_gear_push, tool_stn)
+        if push >= 1:
+            # A feed refused while the unit is busy would leave the extruder turning on air.
+            self._wait_for_ace_ready()
+        cur_lane.activate_toolhead_extruder()
+        self.afc.move_e_pos(tool_stn, speed, "tool stn")
+        if (push < 1
+            or self._ace is None):
+            return
+        feed_speed = min(speed, self.max_feed_speed)
+        try:
+            self._ace.feed_filament(slot, push, feed_speed)
+            done = self._wait_for_feed_complete(slot, push, feed_speed)
+        except Exception as e:
+            self.logger.warning(f"ACE load: push into the extruder gears failed for "
+                                f"{cur_lane.name}: {e}")
+            return
+        if not done:
+            self.logger.warning(f"ACE load: push into the extruder gears did not complete "
+                                f"for {cur_lane.name}")
 
     def lane_unloading(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """

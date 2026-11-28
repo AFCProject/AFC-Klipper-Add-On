@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Optional, Union, Any, Callable, TYPE_CHECKING
 import copy
+import json
 import traceback
 import re
 
@@ -39,6 +40,9 @@ class AFCSpool:
 
         # Temporary status variables
         self.next_spool_id: Optional[int] = None
+        # Per lane count of SET_FILAMENT_INFO FILAMENT_ID= edits, so a pending Spoolman
+        # lookup can tell the id was set after it was sent
+        self._filament_id_edits: dict[str, int] = {}
 
     def register_commands(self, afc: afc) -> None:
         """
@@ -574,10 +578,11 @@ class AFCSpool:
         self.afc.save_vars()
         self.set_snapmaker_filament_params(cur_lane)
 
-    cmd_SET_FILAMENT_INFO_help = "Sets filament vendor and name for a lane"
+    cmd_SET_FILAMENT_INFO_help = "Sets filament vendor, name and slicer filament id for a lane"
     def cmd_SET_FILAMENT_INFO(self, gcmd: GCodeCommand) -> None:
         """
-        Set the filament vendor and/or filament name for a lane without needing Spoolman.
+        Set the filament vendor, filament name and/or slicer filament id for a lane without
+        needing Spoolman.
 
         Values are published in lane_data and saved across restarts. They are cleared when
         the spool is replaced. A value that is not supplied is left unchanged, and an empty
@@ -587,15 +592,17 @@ class AFCSpool:
         ----
         VENDOR - Filament vendor/brand name. eg. Polymaker, Elegoo
         NAME - Filament name. eg. PolyTerra PLA
+        FILAMENT_ID - Slicer filament preset id, which OrcaSlicer matches to a compatible
+                      root filament preset for this lane. eg. OFDSrzZ8 (Generic PLA)
 
         Usage
         -----
-        `SET_FILAMENT_INFO LANE=<lane> VENDOR=<vendor> NAME=<filament name>`
+        `SET_FILAMENT_INFO LANE=<lane> VENDOR=<vendor> NAME=<filament name> FILAMENT_ID=<id>`
 
         Example
         -----
         ```
-        SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyTerra PLA"
+        SET_FILAMENT_INFO LANE=lane1 VENDOR="Generic" NAME="Generic PLA" FILAMENT_ID=OFDSrzZ8
         ```
         """
         lane = gcmd.get('LANE')
@@ -605,6 +612,10 @@ class AFCSpool:
         cur_lane = self.afc.lanes[lane]
         cur_lane.spool_vendor = gcmd.get('VENDOR', cur_lane.spool_vendor)
         cur_lane.filament_name = gcmd.get('NAME', cur_lane.filament_name)
+        cur_lane.filament_id = gcmd.get('FILAMENT_ID', cur_lane.filament_id)
+        if gcmd.get('FILAMENT_ID', None) is not None:
+            edits = self._filament_id_edits.get(cur_lane.name, 0)
+            self._filament_id_edits[cur_lane.name] = edits + 1
 
         cur_lane.send_lane_data()
         self.afc.save_vars()
@@ -636,6 +647,9 @@ class AFCSpool:
         This function handles setting the spool ID for a specified lane. It retrieves the lane
         specified by the 'LANE' parameter and updates its spool ID, material, color, and weight
         based on the information retrieved from the Spoolman API.
+
+        A different spool clears the lane's slicer filament id, which described the old
+        one: send `SET_FILAMENT_INFO FILAMENT_ID=` after this command, not before it.
 
         Usage
         -----
@@ -702,6 +716,24 @@ class AFCSpool:
             value = filament[field]
         return value
 
+    def _get_spoolman_extra(self, record: dict, field: str) -> str:
+        """
+        Helper function for reading a text extra field from a Spoolman spool or filament
+        record. Spoolman stores each extra field's value JSON encoded.
+
+        :param record: Spoolman spool or filament dictionary
+        :param field:  Extra field name
+        :return:       The field's text, or an empty string when it is not set
+        """
+        raw = (record.get("extra") or {}).get(field)
+        if not raw:
+            return ""
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            value = raw
+        return value if isinstance(value, str) else ""
+
     def _set_values(self, cur_lane: AFCLane, on_done: Optional[Callable[[], None]] = None, *,
                     gcmd: AFCGcmd) -> None:
         """
@@ -748,6 +780,7 @@ class AFCSpool:
         cur_lane.clear_lane_data()
         cur_lane.spool_vendor = ""
         cur_lane.filament_name = ""
+        cur_lane.filament_id = ""
 
     def set_spoolID(self, cur_lane: AFCLane, SpoolID: Optional[Union[int, str]],
                     save_vars: bool = True, on_done: Optional[Callable[[], None]] = None, *,
@@ -780,9 +813,11 @@ class AFCSpool:
                         f"Error when trying to get Spoolman data for ID:{SpoolID}, Error: {e}",
                         False, gcmd=gcmd)
                 else:
+                    edits = self._filament_id_edits.get(cur_lane.name, 0)
                     self.afc.moonraker.get_spool(
                         spool_id_int,
-                        lambda result: self._apply_spool_data(cur_lane, spool_id_value, result, save_vars, on_done))
+                        lambda result: self._apply_spool_data(cur_lane, spool_id_value, result,
+                                                              save_vars, on_done, edits))
                     return
             elif not cur_lane.remember_spool:
                 self.clear_values(cur_lane)
@@ -800,11 +835,16 @@ class AFCSpool:
 
     def _apply_spool_data(self, cur_lane: AFCLane, SpoolID: Union[int, str],
                           result: Optional[dict], save_vars: bool,
-                          on_done: Optional[Callable[[], None]] = None) -> None:
+                          on_done: Optional[Callable[[], None]] = None,
+                          filament_id_edits: int = 0) -> None:
         """
         Applies a Spoolman spool lookup result to a lane: material, color,
         weight, temperatures, etc. Runs as the completion callback for
         set_spoolID()'s async fetch, once moonraker's response arrives.
+
+        A different spool clears the lane's slicer filament id, which named the old
+        spool's filament, unless `SET_FILAMENT_INFO FILAMENT_ID=` set one after the lookup
+        was sent.
 
         :param cur_lane:  AFC lane to assign the spool to
         :param SpoolID:   Spoolman spool ID that was queried
@@ -812,11 +852,18 @@ class AFCSpool:
         :param save_vars: Whether to save AFC vars after assigning
         :param on_done:   Called once this attempt to apply spool data is finished,
                           on every exit path (success, invalid weight, or error)
+        :param filament_id_edits: The lane's filament id edit count when the lookup was sent
         """
         try:
             try:
                 if result is None:
                     raise ValueError(f"No spool data returned for SpoolID {SpoolID}")
+
+                id_edited = self._filament_id_edits.get(cur_lane.name, 0) != filament_id_edits
+                if (not id_edited
+                    and cur_lane.spool_id not in (None, '')
+                    and str(cur_lane.spool_id) != str(SpoolID)):
+                    cur_lane.filament_id = ""
 
                 cur_lane.spool_id = SpoolID
                 cur_lane.auto_switch_triggered = False
@@ -837,6 +884,13 @@ class AFCSpool:
                 cur_lane.spool_vendor       = ""
                 if vendor_result:
                     cur_lane.spool_vendor   = self._get_filament_values(vendor_result, "name", None)
+
+                # The slicer filament id, when Spoolman stores one on the filament:
+                # it names a product, so it lives on the filament, not the spool
+                filament_id = self._get_spoolman_extra(result["filament"], "orca_filament_id")
+                if (filament_id
+                    and not id_edited):
+                    cur_lane.filament_id = filament_id
 
                 weight_check = self.disable_weight_check
 

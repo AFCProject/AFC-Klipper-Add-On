@@ -235,6 +235,7 @@ def _make_afc_lane(fullname="AFC_stepper lane1"):
     lane.multi_color = []
     lane.color_mode = ""
     lane.custom_load_cmd = None
+    lane.filament_id = ""
     return lane
 
 
@@ -655,6 +656,57 @@ class TestSetPrintCurrent:
         lane.set_print_current(gcmd)
 
         lane.drive_stepper.set_print_current.assert_called_once_with(gcmd=gcmd)
+
+
+class TestResetDriveStepper:
+    def test_no_drive_stepper_returns_none(self):
+        lane = _make_real_afc_lane()
+        lane.drive_stepper = None
+
+        assert lane.reset_drive_stepper() is None
+
+    def test_sets_rotation_distance_to_base(self):
+        lane = _make_real_afc_lane()
+        lane.drive_stepper = MagicMock()
+        lane.drive_stepper.get_current_rotation_distance.return_value = 22.6789
+
+        lane.reset_drive_stepper()
+
+        lane.drive_stepper.update_rotation_distance.assert_called_once_with(1)
+
+    def test_returns_previous_rotation_distance(self):
+        lane = _make_real_afc_lane()
+        lane.drive_stepper = MagicMock()
+        lane.drive_stepper.get_current_rotation_distance.return_value = 22.6789
+
+        assert lane.reset_drive_stepper() == 22.6789
+
+
+class TestRestoreDriveStepper:
+    def test_no_drive_stepper_does_nothing(self):
+        lane = _make_real_afc_lane()
+        lane.drive_stepper = None
+
+        lane.restore_drive_stepper(22.6789)
+
+        # No AttributeError from calling into a None drive_stepper is itself
+        # the proof the guard fired.
+
+    def test_previous_rotation_distance_none_does_nothing(self):
+        lane = _make_real_afc_lane()
+        lane.drive_stepper = MagicMock()
+
+        lane.restore_drive_stepper(None)
+
+        lane.drive_stepper.set_current_rotation_distance.assert_not_called()
+
+    def test_restores_previous_rotation_distance(self):
+        lane = _make_real_afc_lane()
+        lane.drive_stepper = MagicMock()
+
+        lane.restore_drive_stepper(22.6789)
+
+        lane.drive_stepper.set_current_rotation_distance.assert_called_once_with(22.6789)
 
 
 class TestToolSwap:
@@ -1837,6 +1889,7 @@ def _make_lane_for_get_status(map_value):
     lane.color = ""
     lane.filament_name = ""
     lane.spool_vendor = ""
+    lane.filament_id = ""
     lane.multi_color = []
     lane.weight = 0
     lane.extruder_temp = None
@@ -2346,6 +2399,53 @@ class TestGetStatusSpoolVendor:
         lane.filament_name = "Overture Gray ASA"
         response = lane.get_status()
         assert response["filament_name"] == "Overture Gray ASA"
+
+
+def _make_real_lane_for_filament_id():
+    """A real AFCLane, mapped to T0, with moonraker and get_status's helpers mocked."""
+    lane = _make_real_afc_lane()
+    lane.connect_done = True
+    lane.map = ["T0"]
+    lane.afc.moonraker = MagicMock()
+    lane.afc.function = MagicMock()
+    lane.afc.function.get_filament_status.return_value = "a:b"
+    return lane
+
+
+class TestGetStatusFilamentId:
+    def test_filament_id_reported_live(self):
+        lane = _make_real_lane_for_filament_id()
+        lane.filament_id = "OFDSrzZ8"
+        response = lane.get_status()
+        assert response["filament_id"] == "OFDSrzZ8"
+
+    def test_filament_id_persisted_when_saving_to_file(self):
+        lane = _make_real_lane_for_filament_id()
+        lane.filament_id = "OFDSrzZ8"
+        response = lane.get_status(save_to_file=True)
+        assert response["filament_id"] == "OFDSrzZ8"
+
+
+class TestSendLaneDataFilamentId:
+    def test_filament_id_is_published(self):
+        lane = _make_real_lane_for_filament_id()
+        lane.filament_id = "OFDSrzZ8"
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["filament_id"] == "OFDSrzZ8"
+
+    def test_filament_id_empty_when_unset(self):
+        """An unset id is published as an empty string rather than omitted."""
+        lane = _make_real_lane_for_filament_id()
+        payload = _get_sent_payload(lane)
+        assert payload["value"]["filament_id"] == ""
+
+
+class TestClearLaneDataFilamentId:
+    def test_filament_id_is_cleared(self):
+        lane = _make_real_lane_for_filament_id()
+        lane.filament_id = "OFDSrzZ8"
+        payload = _get_cleared_payload(lane)
+        assert payload["value"]["filament_id"] == ""
 
 
 class TestSendLaneDataExtruderIndex:

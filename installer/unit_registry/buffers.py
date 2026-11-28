@@ -92,7 +92,8 @@ def _ask(prompter: Prompter, prompt: str) -> str:
 
 
 def query_tn_pins(
-    console: Console, prompter: Prompter, buffer_name: str, unit_name: str = "Turtle_1"
+    console: Console, prompter: Prompter, buffer_name: str, unit_name: str = "Turtle_1",
+    default_advance_pin: str = "", default_trailing_pin: str = "",
 ) -> Tuple[str, str]:
     """
     Ask for the TurtleNeck advance and trailing pins; blank keeps each default.
@@ -101,17 +102,19 @@ def query_tn_pins(
     :param prompter: where answers come from
     :param buffer_name: name shown in the messages
     :param unit_name: unit whose name forms the default pins
+    :param default_advance_pin: board-specific advance pin, empty uses the unit default
+    :param default_trailing_pin: board-specific trailing pin, empty uses the unit default
     :return Tuple[str, str]: advance pin, trailing pin
     """
-    advance = f"^{unit_name}:TN_ADV"
-    trailing = f"^{unit_name}:TN_TRL"
+    advance = default_advance_pin or f"^{unit_name}:TN_ADV"
+    trailing = default_trailing_pin or f"^{unit_name}:TN_TRL"
     console.print_msg(
         "INFO", f"\nPlease enter the pin numbers for the TurtleNeck buffer '{buffer_name}':"
     )
     console.print_msg("INFO", "(Leave blank to use the default values)")
     console.print_msg("INFO", "Ensure you use a pull-up '^' if you are using a AFC end stop pin.")
-    console.print_msg("INFO", f"(Default: ^{unit_name}:TN_ADV)")
-    console.print_msg("INFO", f"(Default: ^{unit_name}:TN_TRL)")
+    console.print_msg("INFO", f"(Default: {advance})")
+    console.print_msg("INFO", f"(Default: {trailing})")
     advance = _ask(prompter, f"  Enter the advance pin (default: {advance}): ") or advance
     trailing = _ask(prompter, f"  Enter the trailing pin (default: {trailing}): ") or trailing
     console.print_msg("INFO", f"Set {buffer_name} Advance pin: {advance}")
@@ -244,11 +247,19 @@ def apply_unit_buffer(
         return
     advance = trailing = adc = ""
     if buffer_type == "TurtleNeck":
-        advance, trailing = query_tn_pins(console, prompter, "TN", target.unit_name)
+        default_advance = default_trailing = ""
+        if (sel.installation_type == "EMU"
+            and sel.emu_board_type == "EMB_C"):
+            default_advance = f"^{target.unit_name}:TH1"
+            default_trailing = f"^{target.unit_name}:TH2"
+        advance, trailing = query_tn_pins(console, prompter, "TN", target.unit_name,
+                                          default_advance, default_trailing)
     elif buffer_type in FPS_STYLE_TYPES:
         default = ""
         if sel.installation_type == "EMU":
-            default = f"{target.unit_name}_lane1:TN"
+            default = f"{target.unit_name}_lane1:TH"
+            if sel.emu_board_type == "EMB_C":
+                default = f"{target.unit_name}:TH1"
         elif sel.installation_type == "OpenAMS":
             default = "fps:PA2"
         adc = query_fps_pin(console, prompter, buffer_type, target.unit_name, default)

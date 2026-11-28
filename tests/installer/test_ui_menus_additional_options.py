@@ -149,6 +149,22 @@ class TestView:
         menu, _, _, _, _ = build(tmp_path, [], itype="EMU")
         assert menu.view().art == "EMU"
 
+    def test_selecting_emb_c_keeps_the_shared_buffer_and_limits_lanes(self, tmp_path: Path) -> None:
+        menu, state, _, _, _ = build(tmp_path, ["3", "2"], itype="EMU", buffer="None",
+                                     emu_board_type="SLB", emu_num_lanes=1)
+        assert menu.step() == "additional_options"
+        assert state.selection.emu_board_type == "EMB_C"
+        assert state.selection.emu_num_lanes == 2
+        assert state.selection.additional_buffer_type == "None"
+        assert state.message == "EMU Board Type: EMB_C"
+        assert "2. EMU Lane Count : 2" in row_texts(menu.view())
+        assert ("4. Unit has its own buffer? : No (shared with an existing unit's buffer)"
+                in row_texts(menu.view()))
+        assert menu.step() == "additional_options"
+        assert state.selection.emu_num_lanes == 3
+        assert state.selection.additional_buffer_type == "None"
+        assert state.message == "EMU Lane Count: 3"
+
 
 class TestOptionRows:
     def test_the_name_row_asks_with_the_additional_prompt(self, tmp_path: Path) -> None:
@@ -366,6 +382,19 @@ class TestInstallKey:
         assert calls(deps) == ["install_additional"]
         assert rec.calls == []
         assert state.message == BASE.format(name="Vivid_1") + RESTART
+
+    def test_a_unit_message_replaces_the_generic_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rec = Recorder()
+        rec.install(monkeypatch)
+        menu, state, deps, _, _ = build(tmp_path, ["i"], itype="Creality CFS", buffer="None",
+                                        unit_name="CFS_2", turtle_renamed=True)
+        # FakeActions copies nothing, so the CFS unit reports the box as not added
+        assert menu.step() == "main"
+        assert calls(deps) == ["install_additional"]
+        assert state.message == (
+            "CFS_2 was not added: a CFS chain takes at most 4 boxes." + RESTART)
 
     def test_a_name_in_use_is_rejected_before_anything_runs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -135,6 +135,7 @@ class AFCLane:
         self.color_mode: str    = ""
         self.spool_vendor: str  = ""
         self.filament_name: str = ""
+        self.filament_id: str   = ""
         self.weight: float      = 0.
         self.auto_switch_triggered: bool = False
         self._material: str     = None
@@ -1631,6 +1632,28 @@ class AFCLane:
         if self.drive_stepper is not None:
             self.drive_stepper.update_rotation_distance( multiplier )
 
+    def reset_drive_stepper(self) -> Optional[float]:
+        """
+        Resets drive_stepper to its base rotation distance.
+
+        :return type: Rotation distance it had before the reset, or None if there's no drive_stepper
+        """
+        if self.drive_stepper is None:
+            return None
+        previous_rotation_distance = self.drive_stepper.get_current_rotation_distance()
+        self.drive_stepper.update_rotation_distance(1)
+        return previous_rotation_distance
+
+    def restore_drive_stepper(self, previous_rotation_distance: Optional[float]) -> None:
+        """
+        Restores drive_stepper to the rotation distance `reset_drive_stepper` saved.
+
+        :param previous_rotation_distance: Value `reset_drive_stepper` returned, or None
+        """
+        if (self.drive_stepper is not None
+            and previous_rotation_distance is not None):
+            self.drive_stepper.set_current_rotation_distance(previous_rotation_distance)
+
     def calculate_effective_diameter(self, weight_g, spool_width_mm=60):
 
         # Calculate the cross-sectional area of the filament
@@ -2063,6 +2086,7 @@ class AFCLane:
                     "material"       : self.material,
                     "vendor_name"    : self.spool_vendor,
                     "name"           : self.filament_name,
+                    "filament_id"    : self.filament_id,
                     "bed_temp"       : self.bed_temp,
                     "nozzle_temp"    : self.extruder_temp,
                     "scan_time"      : scan_time,
@@ -2129,6 +2153,7 @@ class AFCLane:
                     "material"       : "",
                     "vendor_name"    : "",
                     "name"           : "",
+                    "filament_id"    : "",
                     "bed_temp"       : "",
                     "nozzle_temp"    : "",
                     "scan_time"      : "",
@@ -2601,6 +2626,8 @@ class AFCLane:
         response["spool_vendor"] = self.spool_vendor
         response["multi_color_hexes"] = self.multi_color
         response["color_mode"] = self.color_mode
+        response["filament_id"] = self.filament_id
+
         if not save_to_file:
             response["initial_weight"] = self.espooler.espooler_values.full_weight
 

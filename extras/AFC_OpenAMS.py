@@ -2674,6 +2674,7 @@ class afcAMS(afcUnit):
         lane.color = ""
         lane.spool_vendor = ""
         lane.filament_name = ""
+        lane.filament_id = ""
         if getattr(lane, 'spool_id', None) not in (None, "", 0):
             try:
                 self.afc.spool.set_spoolID(lane, "", save_vars=False, gcmd=gcmd)

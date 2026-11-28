@@ -5,8 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [11-25-2026]
+## [11-27-2026]
 ### Added
+- Installer now support EMU-C boards.
+
+## [11-26-2026]
+### Added
+- Added Creality CFS to the installer. Additional CFS units join the first box's chain: the installer
+  writes their config with the shared hub, the next free `box_addr` and lane numbers, and a `box_uid`
+  placeholder, and asks for the first box's uid if it has none.
+
+## [11-25-2026]
+### Fixed
+- Buffers getting enabled when a lane is loaded and toolhead is docked during PREP
+
+### Added
+- Resetting steppers rotation distance when performing calibration to make sure correct rotation distance is being used while calibrating.
 - Lanes keep a multi-color filament's colors and how they run. `SET_COLOR` takes
   `COLORS=<color>,<color>,...` and `COLOR_MODE=gradient|coaxial`, and a Spoolman spool's
   `multi_color_hexes` and `multi_color_direction` set them. `lane_data` gains `colors` (every
@@ -15,16 +29,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the lane to one color.
 
 ## [11-24-2026]
+### Added
+- Lanes carry a slicer `filament_id`, set with `SET_FILAMENT_INFO LANE=<lane> FILAMENT_ID=<id>`, saved
+  across restarts, cleared with the spool's other values and published in `lane_data` and the lane's
+  status. OrcaSlicer matches a lane's `filament_id` to pick the exact filament preset before falling
+  back to the generic preset for its material.
+
 ### Changed
 - `AFC_ACE_CALIBRATE_HUB` stores the measured lane to hub sensor distance less the hub's
   `hub_clear_move_dis` as `dist_hub`, so a staged ACE lane parks short of a hub sensor that sits
   past the point where the tubes merge. Recalibrate ACE lanes with a hub sensor after updating.
 
 ### Fixed
+- Fixed a switched buffer and toolhead detection resulting in a bad multiplier when jam detection is enabled; resulting in false clog state. (#928)
 - A print whose file Moonraker doesn't have, such as the virtual job Kalico's `PRINT_PA_TOWER`
   runs, no longer reports "Error getting data from moonraker" to the console at print start. The
   404 is logged as a debug message and the print continues with no toolchange count, as before.
   Other Moonraker failures are still reported as errors.
+- Fixed ACE loads leaving the filament tip short of the extruder gears when the toolhead sensor
+  sits above them: the unit now keeps feeding `load_gear_push` mm (default 20) past the sensor,
+  at `tool_load_speed` alongside the extruder's `tool_stn` advance, and starts feed assist
+  after that push.
 
 ## [11-22-2026]
 ### Updated

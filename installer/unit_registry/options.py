@@ -19,7 +19,8 @@ CLAYMORE_BOARD_TYPES: Tuple[str, ...] = ("AFC_Lite",)
 QB_BOARD_TYPES: Tuple[str, ...] = ("MMB_1.0", "MMB_1.1", "MMB_2.0")
 QB_MOTOR_TYPES: Tuple[str, ...] = ("NEMA_17", "NEMA_14")
 EMU_LANE_OPTIONS: Tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8")
-EMU_BOARD_TYPES: Tuple[str, ...] = ("EBB", "SLB")
+EMU_EMB_C_LANE_OPTIONS: Tuple[str, ...] = ("2", "3", "4", "5")
+EMU_BOARD_TYPES: Tuple[str, ...] = ("EBB", "SLB", "EMB_C")
 ACE_UNIT_TYPES: Tuple[str, ...] = ("V1", "V2_Pro")
 
 
@@ -103,6 +104,46 @@ class ChoiceOption(UnitOption):
             following = self.choices[0]
         setattr(sel, self.attr, self.cast(following))
         return f"{self.label}: {following}"
+
+
+class EmuLaneOption(ChoiceOption):
+    """An EMU lane count limited by the selected board."""
+
+    def activate(self, ctx: Context, console: Console, prompter: Prompter,
+                 sel: UnitSelection) -> str:
+        """
+        Cycle through the lane counts supported by the selected board.
+
+        :param ctx: installer context
+        :param console: where messages go
+        :param prompter: unused
+        :param sel: the user's unit choices, lane count is updated
+        :return str: the selected lane count message
+        """
+        self.choices = EMU_LANE_OPTIONS
+        if sel.emu_board_type == "EMB_C":
+            self.choices = EMU_EMB_C_LANE_OPTIONS
+        return super().activate(ctx, console, prompter, sel)
+
+
+class EmuBoardOption(ChoiceOption):
+    """An EMU board choice that enforces the EMB-C lane limits."""
+
+    def activate(self, ctx: Context, console: Console, prompter: Prompter,
+                 sel: UnitSelection) -> str:
+        """
+        Cycle the board and limit EMB-C to two to five lanes.
+
+        :param ctx: installer context
+        :param console: where messages go
+        :param prompter: unused
+        :param sel: the user's unit choices, board and lane count are updated
+        :return str: the selected board message
+        """
+        message = super().activate(ctx, console, prompter, sel)
+        if sel.emu_board_type == "EMB_C":
+            sel.emu_num_lanes = max(2, min(5, sel.emu_num_lanes))
+        return message
 
 
 class NameOption(UnitOption):
