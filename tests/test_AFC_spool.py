@@ -545,14 +545,13 @@ class TestSyncExtruderMapTable:
         spool.afc.lanes = {"lane1": _make_lane("lane1")}
         spool.afc.tool_cmds = {"T0": "lane1"}
         spool.printer.update_snapmaker_config_file.side_effect = RuntimeError("boom")
-        spool.sync_extruder_map_table()
-        # The debug entry is traceback.format_exc(), whose exact text is
-        # environment-dependent, so only its level is checked here; the levels list
-        # itself still rules out an unexpected extra message after it.
-        levels = [lvl for lvl, _ in spool.logger.messages]
-        assert levels == ["error", "debug"]
-        assert spool.logger.messages[0] == (
-            "error", "Error when trying to update extruder_map_table for snapmaker print_task_config")
+        with patch("extras.AFC_spool.traceback.format_exc", return_value="fake traceback"):
+            spool.sync_extruder_map_table()
+        assert spool.logger.messages == [
+            ("error",
+             "Error when trying to update extruder_map_table for snapmaker print_task_config"),
+            ("debug", "fake traceback"),
+        ]
 
 
 # ── resync_afc_mapping_from_extruder_map_table ───────────────────────────────
@@ -1060,14 +1059,13 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool.afc.lanes = MagicMock()
         spool.afc.lanes.get.side_effect = RuntimeError("boom")
         spool.afc.tool_cmds = {"T0": "lane1"}
-        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
-        # The debug entry is traceback.format_exc(), whose exact text is
-        # environment-dependent, so only its level is checked here; the levels list
-        # itself still rules out an unexpected extra message after it.
-        levels = [lvl for lvl, _ in spool.logger.messages]
-        assert levels == ["error", "debug"]
-        assert spool.logger.messages[0] == (
-            "error", "Error when trying to resync AFC mapping from snapmaker print_task_config")
+        with patch("extras.AFC_spool.traceback.format_exc", return_value="fake traceback"):
+            spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        assert spool.logger.messages == [
+            ("error",
+             "Error when trying to resync AFC mapping from snapmaker print_task_config"),
+            ("debug", "fake traceback"),
+        ]
 
     def _make_many_changes(self, spool, count):
         """Build `count` independent T(n) mismatches, each resolving to a distinct

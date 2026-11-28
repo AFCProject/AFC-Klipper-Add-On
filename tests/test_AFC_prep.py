@@ -211,6 +211,11 @@ class TestPrepRestoreFilamentInfo:
         unit.lanes = _Lanes()
         unit.full_name = ["unit1"]
         unit.system_Test.return_value = True
+        # Fixed rather than left as a bare MagicMock, so the "Prepping lanes" and logo
+        # log messages are deterministic and assertable by tests that check the exact
+        # message list.
+        unit.type = "Box_Turtle"
+        unit.logo = "<logo>"
         lane = MagicMock()
         lane.name = "lane1"
         lane.unit = "unit1"
@@ -326,9 +331,18 @@ class TestPrepSyncsExtruderMapTable:
     def test_syncs_when_snapmaker_printer(self, tmp_path):
         _, afc = self._run_prep({}, tmp_path=tmp_path, snapmaker_printer=True)
         afc.spool.snapmaker_sync_cb.assert_called_once()
-        assert afc.logger.messages[0] == ("info", "Snapmaker Printer Detected")
+        assert afc.logger.messages == [
+            ("info", "Snapmaker Printer Detected"),
+            ("info", "Box_Turtle unit1 Prepping lanes"),
+            ("raw", "<logo>"),
+            ("info", "Filament loaded in bypass, toolchanges deactivated"),
+        ]
 
     def test_does_not_sync_when_not_snapmaker_printer(self, tmp_path):
         _, afc = self._run_prep({}, tmp_path=tmp_path, snapmaker_printer=False)
         afc.spool.snapmaker_sync_cb.assert_not_called()
-        assert ("info", "Snapmaker Printer Detected") not in afc.logger.messages
+        assert afc.logger.messages == [
+            ("info", "Box_Turtle unit1 Prepping lanes"),
+            ("raw", "<logo>"),
+            ("info", "Filament loaded in bypass, toolchanges deactivated"),
+        ]
