@@ -172,7 +172,7 @@ class TestTd1Prep:
 
 class TestPrepRestoreFilamentInfo:
     def _run_prep(self, lane_vars, spoolman=None, tmp_path=None, current_lane_obj=None,
-                  filament_id=""):
+                  filament_id="", snapmaker_printer=False):
         from tests.conftest import MockConfig, MockPrinter, MockAFC
 
         afc = MockAFC()
@@ -190,7 +190,7 @@ class TestPrepRestoreFilamentInfo:
         afc.spoolman = spoolman
         afc.tools = {}
         afc.buffers = {}
-        afc.snapmaker_printer = False
+        afc.snapmaker_printer = snapmaker_printer
         afc.current = "lane1"
         afc.bypass = MagicMock()
         afc.bypass.name = "bypass"
@@ -211,6 +211,11 @@ class TestPrepRestoreFilamentInfo:
         unit.lanes = _Lanes()
         unit.full_name = ["unit1"]
         unit.system_Test.return_value = True
+        # Fixed rather than left as a bare MagicMock, so the "Prepping lanes" and logo
+        # log messages are deterministic and assertable by tests that check the exact
+        # message list.
+        unit.type = "Box_Turtle"
+        unit.logo = "<logo>"
         lane = MagicMock()
         lane.name = "lane1"
         lane.unit = "unit1"
@@ -314,3 +319,30 @@ class TestPrepSelectCurrentLane(TestPrepRestoreFilamentInfo):
         lane, _ = self._run_prep({}, tmp_path=tmp_path, current_lane_obj=None)
 
         lane.unit_obj.select_lane.assert_not_called()
+
+
+class TestPrepSyncsExtruderMapTable:
+    """GH #824: PREP must push AFC's mapping into snapmaker's print_task_config
+    so the live extruder_map_table doesn't drift from AFC's own mapping."""
+
+    def _run_prep(self, *args, **kwargs):
+        return TestPrepRestoreFilamentInfo()._run_prep(*args, **kwargs)
+
+    def test_syncs_when_snapmaker_printer(self, tmp_path):
+        _, afc = self._run_prep({}, tmp_path=tmp_path, snapmaker_printer=True)
+        afc.spool.snapmaker_sync_cb.assert_called_once()
+        assert afc.logger.messages == [
+            ("info", "Snapmaker Printer Detected"),
+            ("info", "Box_Turtle unit1 Prepping lanes"),
+            ("raw", "<logo>"),
+            ("info", "Filament loaded in bypass, toolchanges deactivated"),
+        ]
+
+    def test_does_not_sync_when_not_snapmaker_printer(self, tmp_path):
+        _, afc = self._run_prep({}, tmp_path=tmp_path, snapmaker_printer=False)
+        afc.spool.snapmaker_sync_cb.assert_not_called()
+        assert afc.logger.messages == [
+            ("info", "Box_Turtle unit1 Prepping lanes"),
+            ("raw", "<logo>"),
+            ("info", "Filament loaded in bypass, toolchanges deactivated"),
+        ]

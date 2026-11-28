@@ -103,6 +103,25 @@
    as a required parameter it only ever passes through, never originates.
 - **Keep comments short and succinct** — Keep comments succinct and to the point.
    They should only be used when the code does not adequately explain itself.
+- **Avoid parentheticals in comments and docstrings** — write the aside as its
+   own clause instead of tucking it in parentheses. Use sparingly, only when a
+   true aside (a cross-reference, a unit, an acronym expansion) can't be
+   folded into the sentence without hurting readability.
+
+   ```python
+   # Bad
+   # Also resyncs AFC's T(n) mapping (a no-op on non-snapmaker printers).
+
+   # Good
+   # Also resyncs AFC's T(n) mapping, which does nothing on non-snapmaker printers.
+   ```
+- **Don't document where a method is called from** — a comment or docstring
+   should describe what the code does and why, not name its callers ("called
+   from PREP", "runs as X's callback", "shared by Y and Z"). Caller lists rot
+   as the codebase evolves and a new caller is added without updating the
+   comment; `grep`/an IDE's "find references" already answers that question
+   accurately. Explain non-obvious call-time constraints, such as needing to
+   run off the gcode mutex, without naming who happens to call it today.
 - **No decorative dashes on section-divider comments** — write `# Calibration
    commands` rather than `# ── Calibration commands ──`. The label alone is
    enough; drop the surrounding dashes/banner characters.

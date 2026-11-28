@@ -15,7 +15,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import pytest
 
-from extras.AFC_spool import AFCSpool, load_config
+from extras.AFC_spool import AFCSpool, MAX_UNATTENDED_MAPPING_CHANGES, load_config
 
 
 # ── Module-level import guard ────────────────────────────────────────────────
@@ -354,6 +354,872 @@ class TestSetMap:
         assert lane1.map == ["T0"]
 
 
+# ── _set_map ──────────────────────────────────────────────────────────────────
+
+class TestSetMapCore:
+    """Direct coverage of _set_map, independent of the cmd_SET_MAP entry point, which is
+    fully exercised above, and the extruder_map_table resync call site below."""
+
+    def test_swaps_mapping_between_lanes(self):
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = False
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T1"]
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0"]
+        lane2.current_map = "T0"
+        spool.afc.tool_cmds = {"T0": "lane2"}
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool._set_map(lane1, lane2, "T0")
+        assert lane1.current_map == "T0"
+        assert spool.afc.tool_cmds["T0"] == "lane1"
+        assert lane2.map == ["T1"]
+
+    def test_calls_sync_extruder_map_table(self):
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T1"]
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T0"]
+        spool.afc.tool_cmds = {"T0": "lane2"}
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.sync_extruder_map_table = MagicMock()
+        spool._set_map(lane1, lane2, "T0")
+        spool.sync_extruder_map_table.assert_called_once()
+
+
+# ── snapmaker_sync_cb ─────────────────────────────────────────────────────────
+
+class TestSnapmakerSyncCb:
+    def test_calls_sync_extruder_map_table_and_sync_toolhead_filament(self):
+        spool = _make_spool()
+        spool.sync_extruder_map_table = MagicMock()
+        spool.sync_toolhead_filament = MagicMock()
+        spool.snapmaker_sync_cb()
+        spool.sync_extruder_map_table.assert_called_once_with()
+        spool.sync_toolhead_filament.assert_called_once_with()
+
+    def test_calls_sync_extruder_map_table_before_sync_toolhead_filament(self):
+        spool = _make_spool()
+        call_order: list = []
+        spool.sync_extruder_map_table = MagicMock(
+            side_effect=lambda: call_order.append("extruder_map_table"))
+        spool.sync_toolhead_filament = MagicMock(
+            side_effect=lambda: call_order.append("toolhead_filament"))
+        spool.snapmaker_sync_cb()
+        assert call_order == ["extruder_map_table", "toolhead_filament"]
+
+
+# ── sync_toolhead_filament ────────────────────────────────────────────────────
+
+class TestSyncToolheadFilament:
+    def _make_extruder(self, lanes=None, lane_loaded=None, is_standalone=False, tc_lane=None):
+        extruder = MagicMock()
+        extruder.lanes = lanes if lanes is not None else {}
+        extruder.lane_loaded = lane_loaded
+        extruder.is_standalone.return_value = is_standalone
+        extruder.tc_lane = tc_lane
+        return extruder
+
+    def test_loaded_lane_found_is_passed_directly(self):
+        """Independent coverage of the `lane is None` operand: once a lane is
+        found via extruder.lanes, is_standalone() must not even be consulted."""
+        spool = _make_spool()
+        spool.set_snapmaker_filament_params = MagicMock()
+        lane1 = _make_lane("lane1")
+        extruder = self._make_extruder(
+            lanes={"lane1": lane1}, lane_loaded="lane1", is_standalone=True)
+        spool.afc.tools = {"extruder": extruder}
+        spool.sync_toolhead_filament()
+        extruder.is_standalone.assert_not_called()
+        spool.set_snapmaker_filament_params.assert_called_once_with(lane1)
+
+    def test_lane_not_found_and_standalone_uses_tc_lane(self):
+        """Independent coverage of the `extruder.is_standalone()` operand of
+        `lane is None and extruder.is_standalone()`: with no lane resolved via
+        extruder.lanes, a standalone extruder falls back to tc_lane."""
+        spool = _make_spool()
+        spool.set_snapmaker_filament_params = MagicMock()
+        tc_lane = _make_lane("tc_lane1")
+        extruder = self._make_extruder(
+            lanes={}, lane_loaded="ghost", is_standalone=True, tc_lane=tc_lane)
+        spool.afc.tools = {"extruder": extruder}
+        spool.sync_toolhead_filament()
+        spool.set_snapmaker_filament_params.assert_called_once_with(tc_lane)
+
+    def test_lane_not_found_and_not_standalone_skips_extruder(self):
+        """Independent coverage of the `extruder.is_standalone()` operand's
+        falsy side: a non-standalone extruder with nothing resolved must not
+        fall back to tc_lane, and with no lane resolved at all must not call
+        set_snapmaker_filament_params."""
+        spool = _make_spool()
+        spool.set_snapmaker_filament_params = MagicMock()
+        extruder = self._make_extruder(lanes={}, lane_loaded="ghost", is_standalone=False)
+        spool.afc.tools = {"extruder": extruder}
+        spool.sync_toolhead_filament()
+        spool.set_snapmaker_filament_params.assert_not_called()
+
+    def test_calls_once_per_extruder(self):
+        spool = _make_spool()
+        spool.set_snapmaker_filament_params = MagicMock()
+        lane1 = _make_lane("lane1")
+        lane2 = _make_lane("lane2")
+        extruder0 = self._make_extruder(lanes={"lane1": lane1}, lane_loaded="lane1")
+        extruder1 = self._make_extruder(lanes={"lane2": lane2}, lane_loaded="lane2")
+        spool.afc.tools = {"extruder": extruder0, "extruder1": extruder1}
+        spool.sync_toolhead_filament()
+        assert spool.set_snapmaker_filament_params.call_count == 2
+        spool.set_snapmaker_filament_params.assert_any_call(lane1)
+        spool.set_snapmaker_filament_params.assert_any_call(lane2)
+
+    def test_no_extruders_does_not_call_set_snapmaker_filament_params(self):
+        spool = _make_spool()
+        spool.set_snapmaker_filament_params = MagicMock()
+        spool.afc.tools = {}
+        spool.sync_toolhead_filament()
+        spool.set_snapmaker_filament_params.assert_not_called()
+
+
+# ── sync_extruder_map_table ──────────────────────────────────────────────────
+
+class TestSyncExtruderMapTable:
+    def _make(self):
+        from tests.conftest import _make_print_task_config
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = {"extruder_map_table": [0, 0, 0, 0]}
+        spool.print_task_config_obj.config_path = "fake_path"
+        spool.printer = MagicMock()
+        return spool
+
+    def test_not_snapmaker_printer_does_nothing(self):
+        spool = self._make()
+        spool.afc.snapmaker_printer = False
+        spool.sync_extruder_map_table()
+        spool.printer.update_snapmaker_config_file.assert_not_called()
+
+    def test_print_task_config_obj_none_does_nothing(self):
+        spool = self._make()
+        spool.print_task_config_obj = None
+        spool.sync_extruder_map_table()
+        spool.printer.update_snapmaker_config_file.assert_not_called()
+
+    def test_updates_table_from_tool_cmds(self):
+        spool = self._make()
+        lane = _make_lane("lane1", extruder_index=2)
+        spool.afc.lanes = {"lane1": lane}
+        spool.afc.tool_cmds = {"T1": "lane1"}
+        spool.sync_extruder_map_table()
+        assert spool.print_task_config_obj.print_task_config["extruder_map_table"][1] == 2
+        spool.printer.update_snapmaker_config_file.assert_called_once()
+
+    def test_skips_non_integer_t_suffix(self):
+        spool = self._make()
+        lane = _make_lane("lane1", extruder_index=3)
+        spool.afc.lanes = {"lane1": lane}
+        spool.afc.tool_cmds = {"TX": "lane1"}
+        spool.sync_extruder_map_table()
+        assert spool.print_task_config_obj.print_task_config["extruder_map_table"] == [0, 0, 0, 0]
+
+    def test_skips_logical_index_out_of_bounds(self):
+        spool = self._make()
+        lane = _make_lane("lane1", extruder_index=3)
+        spool.afc.lanes = {"lane1": lane}
+        spool.afc.tool_cmds = {"T99": "lane1"}
+        spool.sync_extruder_map_table()
+        assert spool.print_task_config_obj.print_task_config["extruder_map_table"] == [0, 0, 0, 0]
+
+    def test_skips_lane_not_in_lanes(self):
+        spool = self._make()
+        spool.afc.lanes = {}
+        spool.afc.tool_cmds = {"T0": "ghost"}
+        spool.sync_extruder_map_table()
+        assert spool.print_task_config_obj.print_task_config["extruder_map_table"] == [0, 0, 0, 0]
+
+    def test_exception_logs_error_and_debug(self):
+        spool = self._make()
+        spool.afc.lanes = {"lane1": _make_lane("lane1")}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.printer.update_snapmaker_config_file.side_effect = RuntimeError("boom")
+        with patch("extras.AFC_spool.traceback.format_exc", return_value="fake traceback"):
+            spool.sync_extruder_map_table()
+        assert spool.logger.messages == [
+            ("error",
+             "Error when trying to update extruder_map_table for snapmaker print_task_config"),
+            ("debug", "fake traceback"),
+        ]
+
+
+# ── resync_afc_mapping_from_extruder_map_table ───────────────────────────────
+
+class TestResyncAfcMappingFromExtruderMapTable:
+    def _make(self):
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.afc.run_script = MagicMock()
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = {"extruder_map_table": [0, 0, 0, 0]}
+        # All slots marked "used" by default so existing tests exercise the same
+        # mismatches they did before the used-slot filter was added.
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0] * 8, "filament_used_mm": [0.0] * 8}
+        spool._set_map = MagicMock()
+        return spool
+
+    def test_not_snapmaker_printer_does_nothing(self):
+        spool = self._make()
+        spool.afc.snapmaker_printer = False
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+
+    def test_print_task_config_obj_none_does_nothing(self):
+        spool = self._make()
+        spool.print_task_config_obj = None
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+
+    def test_skips_non_integer_t_suffix(self):
+        spool = self._make()
+        spool.afc.tool_cmds = {"TX": "lane1"}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+
+    def test_skips_logical_index_out_of_bounds(self):
+        spool = self._make()
+        spool.afc.tool_cmds = {"T99": "lane1"}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+
+    def test_skips_lane_not_in_lanes(self):
+        spool = self._make()
+        spool.afc.lanes = {}
+        spool.afc.tool_cmds = {"T0": "ghost"}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+
+    def test_skips_when_index_matches_and_no_tool_object_exists(self):
+        """No AFC tool object exists for this extruder at all (afc.tools is
+        empty), so there's nothing to resolve a specific lane through. Since
+        cur_lane's index already matches, this is treated as already correct
+        rather than unresolved."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 0
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_not_called()
+
+    def test_no_tool_object_and_index_mismatch_is_unresolved(self):
+        """Independent coverage of the `index_already_matches` operand for the
+        target_extruder-is-None branch: here the index does NOT already match,
+        so with no tool object to resolve through, this must be unresolved."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+
+    def test_unit_attached_extruder_with_nothing_loaded_and_index_matches_is_skipped(self):
+        """Independent coverage of the `index_already_matches` operand for the
+        unit-attached/lane_loaded-is-None branch: nothing is currently loaded to
+        disambiguate with, but cur_lane already sits on the right extruder, so
+        this is treated as already correct rather than unresolved."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=1)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = None
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_not_called()
+
+    def test_multiple_lanes_on_same_extruder_resolves_via_currently_loaded_lane(self):
+        """Regression test: lane2 and lane3 both feed extruder0. T2 already
+        points at lane2, whose index matches the screen's target extruder, but
+        lane3 is the one actually loaded there. An index match alone must not
+        be trusted to skip for a unit-attached extruder: the currently loaded
+        lane must still be resolved and compared."""
+        spool = self._make()
+        lane2 = _make_lane("lane2", extruder_index=0)
+        lane3 = _make_lane("lane3", extruder_index=0)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = "lane3"
+        spool.afc.lanes = {"lane2": lane2, "lane3": lane3}
+        spool.afc.tools = {"extruder": target_extruder}
+        spool.afc.tool_cmds = {"T2": "lane2"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][2] = 0
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_called_once_with(lane3, lane2, "T2")
+
+    def _make_mismatch(self, spool):
+        """Sets up T0 as a mismatch (lane1 -> extruder1 in AFC, but screen's table
+        says extruder 0) that would resolve to a real new_lane if not filtered out."""
+        lane1 = _make_lane("lane1", extruder_index=1)
+        lane_new = _make_lane("lane_new", extruder_index=0)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = "lane_new"
+        spool.afc.lanes = {"lane1": lane1, "lane_new": lane_new}
+        spool.afc.tools = {"extruder": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 0
+
+    def test_skips_slot_not_marked_used_by_filament_used_g_or_mm(self):
+        """SET_PRINT_TASK_PARAMETERS resets unused slots to the identity default;
+        a slot this print doesn't use must not be treated as a real remap."""
+        spool = self._make()
+        self._make_mismatch(spool)
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [0.0], "filament_used_mm": [0.0]}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+
+    def test_applies_slot_marked_used_via_filament_used_g_alone(self):
+        """Independent coverage of the `used_g` operand of `used_g or used_mm`:
+        filament_used_mm is zero here, so only filament_used_g being above the
+        threshold can mark this slot as used."""
+        spool = self._make()
+        self._make_mismatch(spool)
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0], "filament_used_mm": [0.0]}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_called_once()
+
+    def test_applies_slot_marked_used_via_filament_used_mm_alone(self):
+        """Independent coverage of the `used_mm` operand: filament_used_g is zero
+        here, so only filament_used_mm being above the threshold can mark this
+        slot as used."""
+        spool = self._make()
+        self._make_mismatch(spool)
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [0.0], "filament_used_mm": [1.0]}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_called_once()
+
+    def test_index_out_of_range_for_filament_used_g_still_applies_via_mm(self):
+        """Independent coverage of the `logical_index < len(...)` bounds-check operand for
+        filament_used_g: an empty filament_used_g list means the bounds check alone, not the
+        threshold check, makes used_g False, but filament_used_mm still covers this index and
+        marks the slot used."""
+        spool = self._make()
+        self._make_mismatch(spool)
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [], "filament_used_mm": [1.0]}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_called_once()
+
+    def test_index_out_of_range_for_filament_used_mm_still_applies_via_g(self):
+        """Independent coverage of the `logical_index < len(...)` bounds-check
+        operand for filament_used_mm: an empty filament_used_mm list means the
+        bounds check alone makes used_mm False, but filament_used_g still covers
+        this index and marks the slot used."""
+        spool = self._make()
+        self._make_mismatch(spool)
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0], "filament_used_mm": []}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_called_once()
+
+    def test_index_out_of_range_for_both_is_skipped(self):
+        spool = self._make()
+        self._make_mismatch(spool)
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [], "filament_used_mm": []}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        # A regressed bounds check would index the empty lists directly, raise
+        # IndexError, and get swallowed by the method's own except Exception --
+        # still leaving _set_map uncalled above, so that alone can't tell a
+        # clean skip apart from a crash. The valid skip logs nothing and
+        # never cancels the print.
+        spool.afc.run_script.assert_not_called()
+        assert spool.logger.messages == []
+
+    def test_missing_print_task_config_2_attribute_is_treated_as_unused(self):
+        """getattr's default {} applies when print_task_config_obj doesn't expose
+        print_task_config_2 at all, not just when the dict's keys are missing."""
+        spool = self._make()
+        self._make_mismatch(spool)
+
+        class _NoConfig2:
+            print_task_config = spool.print_task_config_obj.print_task_config
+
+        spool.print_task_config_obj = _NoConfig2()
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_not_called()
+        assert spool.logger.messages == []
+
+    def test_target_extruder_not_found_cancels_print(self):
+        """AFC has no lane-level signal besides what's currently loaded into the
+        target extruder, so an unresolvable target (no AFC tool object at all for
+        it) can't be guessed at: cancel rather than silently keep the stale map."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+        assert spool.logger.messages == [(
+            "error",
+            "T0 mapping was changed from the printer's screen or slicer to an extruder with no "
+            "lane currently loaded, so AFC can't tell which lane to use. Cancelling "
+            "this print, please load the correct filament into that extruder, then "
+            "restart the print from the printer's UI."
+        )]
+
+    def test_target_extruder_has_no_lane_loaded_cancels_print(self):
+        """Independent coverage of the `target_extruder.lane_loaded is None` operand: the target
+        extruder exists here, unlike the test above, but nothing is currently loaded into it,
+        so AFC still can't tell which lane to use."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = None
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+
+    def test_loaded_lane_not_found_cancels_print(self):
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = "ghost"
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+
+    def test_standalone_extruder_with_no_tc_lane_cancels_print(self):
+        """Standalone extruders have exactly one lane hardwired to them (no
+        ambiguity), but that lane object itself must still exist."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = True
+        target_extruder.tc_lane = None
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+
+    def test_standalone_extruder_not_prepped_or_loaded_cancels_print(self):
+        """Independent coverage of the `not (prep_state or load_state)` operand:
+        the tc_lane exists here, but neither prep_state nor load_state is set, so
+        AFC still can't trust it as the intended lane."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        tc_lane = _make_lane("tc_lane1", extruder_index=1)
+        tc_lane.prep_state = False
+        tc_lane.load_state = False
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = True
+        target_extruder.tc_lane = tc_lane
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+
+    def test_standalone_extruder_already_on_right_extruder_is_skipped(self):
+        """Index already matches for a standalone extruder, so it's trusted
+        outright: this must not even look at tc_lane's prep_state/load_state."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=1)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = True
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_not_called()
+
+    def test_standalone_extruder_prepped_applies_remap(self):
+        """Independent coverage of the `prep_state` operand of
+        `prep_state or load_state`: load_state is False here, so prep_state alone
+        must be what lets this resolve and apply."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        tc_lane = _make_lane("tc_lane1", extruder_index=1)
+        tc_lane.prep_state = True
+        tc_lane.load_state = False
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = True
+        target_extruder.tc_lane = tc_lane
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool.afc.run_script.assert_not_called()
+        spool._set_map.assert_called_once_with(tc_lane, lane1, "T0")
+
+    def test_standalone_extruder_loaded_applies_remap(self):
+        """Independent coverage of the `load_state` operand: prep_state is False
+        here, so load_state alone must be what lets this resolve and apply."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        tc_lane = _make_lane("tc_lane1", extruder_index=1)
+        tc_lane.prep_state = False
+        tc_lane.load_state = True
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = True
+        target_extruder.tc_lane = tc_lane
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool.afc.run_script.assert_not_called()
+        spool._set_map.assert_called_once_with(tc_lane, lane1, "T0")
+
+    def test_standalone_extruder_resolving_to_same_lane_is_skipped(self):
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        lane1.prep_state = True
+        lane1.load_state = False
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = True
+        target_extruder.tc_lane = lane1
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_not_called()
+
+    def test_multiple_unresolved_mappings_are_all_named_in_the_warning(self):
+        spool = self._make()
+        lane0 = _make_lane("lane0", extruder_index=0)
+        lane1 = _make_lane("lane1", extruder_index=1)
+        target_extruder0 = MagicMock()
+        target_extruder0.is_standalone.return_value = False
+        target_extruder0.lane_loaded = None
+        target_extruder1 = MagicMock()
+        target_extruder1.is_standalone.return_value = False
+        target_extruder1.lane_loaded = None
+        spool.afc.lanes = {"lane0": lane0, "lane1": lane1}
+        spool.afc.tools = {"extruder2": target_extruder0, "extruder3": target_extruder1}
+        spool.afc.tool_cmds = {"T0": "lane0", "T1": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"] = [2, 3, 0, 0]
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0, 1.0], "filament_used_mm": [0.0, 0.0]}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        assert spool.logger.messages == [(
+            "error",
+            "T0, T1 mapping was changed from the printer's screen or slicer to an extruder with "
+            "no lane currently loaded, so AFC can't tell which lane to use. Cancelling "
+            "this print, please load the correct filament into that extruder, then "
+            "restart the print from the printer's UI."
+        )]
+
+    def test_unresolved_mapping_takes_priority_over_max_changes_check(self):
+        """When both an unresolved mapping and more than MAX_UNATTENDED_MAPPING_CHANGES
+        resolved changes are present, the unresolved one is reported: it's the one
+        that can never be safely adopted, unlike the resolved changes."""
+        spool = self._make()
+        count = MAX_UNATTENDED_MAPPING_CHANGES + 1
+        self._make_many_changes(spool, count)
+        unresolved_lane = _make_lane("unresolved_lane", extruder_index=99)
+        spool.afc.lanes["unresolved_lane"] = unresolved_lane
+        spool.afc.tool_cmds[f"T{count}"] = "unresolved_lane"
+        spool.print_task_config_obj.print_task_config["extruder_map_table"].append(50)
+        spool.print_task_config_obj.print_task_config_2["filament_used_g"].append(1.0)
+        spool.print_task_config_obj.print_task_config_2["filament_used_mm"].append(0.0)
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        assert spool.logger.messages == [(
+            "error",
+            f"T{count} mapping was changed from the printer's screen or slicer to an extruder "
+            "with no lane currently loaded, so AFC can't tell which lane to use. "
+            "Cancelling this print, please load the correct filament into that "
+            "extruder, then restart the print from the printer's UI."
+        )]
+
+    def test_skips_when_new_lane_is_cur_lane(self):
+        """Defensive guard: if the resolved new_lane is the same object as
+        cur_lane despite the index mismatch, no swap is attempted."""
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = "lane1"
+        spool.afc.lanes = {"lane1": lane1}
+        spool.afc.tools = {"extruder1": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 1
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+
+    def test_calls_set_map_with_new_lane_when_extruder_0(self):
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=1)
+        lane_new = _make_lane("lane_new", extruder_index=0)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = "lane_new"
+        spool.afc.lanes = {"lane1": lane1, "lane_new": lane_new}
+        spool.afc.tools = {"extruder": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 0
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_called_once_with(lane_new, lane1, "T0")
+
+    def test_calls_set_map_with_new_lane_when_extruder_nonzero(self):
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        lane_new = _make_lane("lane_new", extruder_index=2)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = "lane_new"
+        spool.afc.lanes = {"lane1": lane1, "lane_new": lane_new}
+        spool.afc.tools = {"extruder2": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 2
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_called_once_with(lane_new, lane1, "T0")
+
+    def test_logs_warning_message_describing_the_change(self):
+        spool = self._make()
+        lane1 = _make_lane("lane1", extruder_index=0)
+        lane_new = _make_lane("lane_new", extruder_index=2)
+        target_extruder = MagicMock()
+        target_extruder.is_standalone.return_value = False
+        target_extruder.lane_loaded = "lane_new"
+        spool.afc.lanes = {"lane1": lane1, "lane_new": lane_new}
+        spool.afc.tools = {"extruder2": target_extruder}
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        spool.print_task_config_obj.print_task_config["extruder_map_table"][0] = 2
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        assert spool.logger.messages == [(
+            "warning",
+            "The following mappings were changed from the printer's screen or slicer:\n"
+            "T0 was lane1 (extruder 0), now lane_new (extruder 2).\n"
+            "AFC's mapping has been updated to match."
+        )]
+
+    def test_logs_one_warning_listing_all_changes_when_multiple_apply(self):
+        spool = self._make()
+        self._make_many_changes(spool, 2)
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        assert spool.logger.messages == [(
+            "warning",
+            "The following mappings were changed from the printer's screen or slicer:\n"
+            "T0 was lane0 (extruder 1), now lane_new0 (extruder 0).\n"
+            "T1 was lane1 (extruder 2), now lane_new1 (extruder 1).\n"
+            "AFC's mapping has been updated to match."
+        )]
+
+    def test_no_warning_logged_when_there_are_no_changes_to_apply(self):
+        spool = self._make()
+        spool.afc.tool_cmds = {}
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        assert spool.logger.messages == []
+
+    def test_exception_logs_error_and_debug(self):
+        spool = self._make()
+        spool.afc.lanes = MagicMock()
+        spool.afc.lanes.get.side_effect = RuntimeError("boom")
+        spool.afc.tool_cmds = {"T0": "lane1"}
+        with patch("extras.AFC_spool.traceback.format_exc", return_value="fake traceback"):
+            spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        assert spool.logger.messages == [
+            ("error",
+             "Error when trying to resync AFC mapping from snapmaker print_task_config"),
+            ("debug", "fake traceback"),
+        ]
+
+    def _make_many_changes(self, spool, count):
+        """Build `count` independent T(n) mismatches, each resolving to a distinct
+        new_lane, so every one of them lands in `changes`."""
+        extruder_map_table = [0] * count
+        lanes = {}
+        tools = {}
+        tool_cmds = {}
+        for i in range(count):
+            cur_lane = _make_lane(f"lane{i}", extruder_index=i + 1)
+            new_lane = _make_lane(f"lane_new{i}", extruder_index=0)
+            lanes[cur_lane.name] = cur_lane
+            lanes[new_lane.name] = new_lane
+            th_name = "extruder" if i == 0 else f"extruder{i}"
+            target_extruder = MagicMock()
+            target_extruder.is_standalone.return_value = False
+            target_extruder.lane_loaded = new_lane.name
+            tools[th_name] = target_extruder
+            tool_cmds[f"T{i}"] = cur_lane.name
+            extruder_map_table[i] = i
+        spool.print_task_config_obj.print_task_config = {"extruder_map_table": extruder_map_table}
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0] * count, "filament_used_mm": [0.0] * count}
+        spool.afc.lanes = lanes
+        spool.afc.tools = tools
+        spool.afc.tool_cmds = tool_cmds
+
+    def test_more_than_max_changes_warns_and_cancels_print_without_applying(self):
+        """count is a literal, independent of MAX_UNATTENDED_MAPPING_CHANGES, so a mistaken
+        change to that constant can't silently move this test's boundary along with it."""
+        spool = self._make()
+        count = 5
+        self._make_many_changes(spool, count)
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+        assert spool.logger.messages == [(
+            "error",
+            f"{count} T(n) mappings were changed from the printer's screen or slicer, more than "
+            f"the {MAX_UNATTENDED_MAPPING_CHANGES} AFC will adopt automatically. "
+            "Cancelling this print, please restart it from the printer's UI so the "
+            "new mapping is picked up correctly."
+        )]
+
+    def test_exactly_max_changes_applies_them_instead_of_cancelling(self):
+        """count is a literal, independent of MAX_UNATTENDED_MAPPING_CHANGES: the current
+        limit is still within the adopt-automatically range, only strictly more than that
+        cancels."""
+        spool = self._make()
+        count = 4
+        self._make_many_changes(spool, count)
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+        spool.afc.run_script.assert_not_called()
+        assert spool._set_map.call_count == count
+        for i in range(count):
+            spool._set_map.assert_any_call(
+                spool.afc.lanes[f"lane_new{i}"], spool.afc.lanes[f"lane{i}"], f"T{i}")
+
+    def test_two_tool_swap_uses_the_real_set_map_without_corrupting_either_lane(self):
+        """Regression test: screen swaps T0 and T1 between lane_a and lane_b in single-mapping
+        mode. The first real `_set_map` call already completes the full swap, so the second
+        entry's stale pre-batch owner must be re-read and skipped, not reapplied."""
+        spool = self._make()
+        del spool._set_map
+        spool.enable_multiple_mapping = False
+
+        lane_a = _make_lane("lane_a", extruder_name="extruder", extruder_index=0)
+        lane_a.map = ["T0"]
+        lane_a.current_map = "T0"
+        lane_b = _make_lane("lane_b", extruder_name="extruder1", extruder_index=1)
+        lane_b.map = ["T1"]
+        lane_b.current_map = "T1"
+        spool.afc.lanes = {"lane_a": lane_a, "lane_b": lane_b}
+        spool.afc.tool_cmds = {"T0": "lane_a", "T1": "lane_b"}
+
+        extruder_a = MagicMock()
+        extruder_a.is_standalone.return_value = False
+        extruder_a.lane_loaded = "lane_a"
+        extruder_b = MagicMock()
+        extruder_b.is_standalone.return_value = False
+        extruder_b.lane_loaded = "lane_b"
+        spool.afc.tools = {"extruder": extruder_a, "extruder1": extruder_b}
+
+        # The screen swapped both: T0 now targets extruder1 (lane_b's extruder), T1 now
+        # targets extruder (lane_a's extruder).
+        spool.print_task_config_obj.print_task_config = {"extruder_map_table": [1, 0]}
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0, 1.0], "filament_used_mm": [0.0, 0.0]}
+
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+
+        assert lane_a.map == ["T1"]
+        assert lane_a.current_map == "T1"
+        assert lane_b.map == ["T0"]
+        assert lane_b.current_map == "T0"
+        assert spool.afc.tool_cmds == {"T0": "lane_b", "T1": "lane_a"}
+
+    def test_two_used_commands_targeting_the_same_lane_cancels_in_single_mapping_mode(self):
+        """Regression test: T0 and T1 both used, screen table requests extruder 1 for both.
+        Single-mapping mode can't give the same lane to two commands at once, so applying
+        the one real change would displace T1 onto a lane the screen never requested."""
+        spool = self._make()
+        spool.enable_multiple_mapping = False
+
+        lane_a = _make_lane("lane_a", extruder_name="extruder", extruder_index=0)
+        lane_b = _make_lane("lane_b", extruder_name="extruder1", extruder_index=1)
+        spool.afc.lanes = {"lane_a": lane_a, "lane_b": lane_b}
+        spool.afc.tool_cmds = {"T0": "lane_a", "T1": "lane_b"}
+
+        extruder_b = MagicMock()
+        extruder_b.is_standalone.return_value = False
+        extruder_b.lane_loaded = "lane_b"
+        spool.afc.tools = {"extruder1": extruder_b}
+
+        spool.print_task_config_obj.print_task_config = {"extruder_map_table": [1, 1]}
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0, 1.0], "filament_used_mm": [0.0, 0.0]}
+
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+
+        spool._set_map.assert_not_called()
+        spool.afc.run_script.assert_called_once_with("CANCEL_PRINT", gcmd="callback")
+        assert spool.logger.messages == [(
+            "error",
+            "T0, T1 mappings were changed from the printer's screen or slicer to the same lane, "
+            "which single-mapping mode can't represent. Cancelling this print, please restart "
+            "it from the printer's UI so the new mapping is picked up correctly, or run "
+            "AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1 to allow multiple T(n) commands on one lane."
+        )]
+
+    def test_two_used_commands_targeting_the_same_lane_is_allowed_in_multiple_mapping_mode(self):
+        spool = self._make()
+        spool.enable_multiple_mapping = True
+
+        lane_a = _make_lane("lane_a", extruder_name="extruder", extruder_index=0)
+        lane_b = _make_lane("lane_b", extruder_name="extruder1", extruder_index=1)
+        spool.afc.lanes = {"lane_a": lane_a, "lane_b": lane_b}
+        spool.afc.tool_cmds = {"T0": "lane_a", "T1": "lane_b"}
+
+        extruder_b = MagicMock()
+        extruder_b.is_standalone.return_value = False
+        extruder_b.lane_loaded = "lane_b"
+        spool.afc.tools = {"extruder1": extruder_b}
+
+        spool.print_task_config_obj.print_task_config = {"extruder_map_table": [1, 1]}
+        spool.print_task_config_obj.print_task_config_2 = {
+            "filament_used_g": [1.0, 1.0], "filament_used_mm": [0.0, 0.0]}
+
+        spool.resync_afc_mapping_from_extruder_map_table(gcmd="callback")
+
+        spool.afc.run_script.assert_not_called()
+        spool._set_map.assert_called_once_with(lane_b, lane_a, "T0")
+
+
 # ── cmd_AFC_SWAP_MAPPING ────────────────────────────────────────────────────────
 
 class TestAfcSwapMapping:
@@ -455,6 +1321,18 @@ class TestAfcSwapMapping:
         spool.cmd_AFC_SWAP_MAPPING(gcmd)
         assert "NONE" not in spool.afc.tool_cmds
         assert spool.afc.tool_cmds["T1"] == "lane2"
+
+    def test_swap_calls_sync_extruder_map_table(self):
+        spool = _make_spool()
+        lane1 = _make_lane("lane1")
+        lane1.map = ["T0"]
+        lane2 = _make_lane("lane2")
+        lane2.map = ["T1"]
+        spool.afc.lanes = {"lane1": lane1, "lane2": lane2}
+        spool.sync_extruder_map_table = MagicMock()
+        gcmd = _make_gcmd(FROM="lane1", TO="lane2")
+        spool.cmd_AFC_SWAP_MAPPING(gcmd)
+        spool.sync_extruder_map_table.assert_called_once_with()
 
     def test_swap_sends_lane_data_for_both_lanes_and_saves(self):
         spool = _make_spool()
@@ -1503,6 +2381,17 @@ class TestHandleConnect:
         assert "AFC_RESET_MAPPING" in afc.gcode._commands
         assert "SET_NEXT_SPOOL_ID" in afc.gcode._commands
 
+    def test_handle_connect_registers_print_stats_stop_handler(self):
+        from tests.conftest import MockAFC, MockConfig, MockPrinter
+        afc = MockAFC()
+        printer = MockPrinter(afc=afc)
+        config = MockConfig(name="AFC_Spool", printer=printer)
+        spool = AFCSpool(config)
+        spool.register_commands(afc)
+        spool.handle_connect()
+        assert printer._event_handlers["print_stats:stop"] == [
+            spool.snapmaker_sync_cb]
+
 
 class TestRegisterLaneMacros:
     def test_registers_eight_mux_commands(self):
@@ -2502,37 +3391,150 @@ class TestSetSnapmakerFilamentParams:
         spool.printer.update_snapmaker_config_file.assert_not_called()
     
     def test_snapmaker_printer_tool_not_loaded(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
         spool.print_task_config_obj = MagicMock()
         lane = _make_lane("lane1")
         lane.tool_loaded = False
         lane.extruder_obj.lane_loaded = lane.name
+        lane.extruder_obj.is_standalone.return_value = False
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+        spool.printer.update_snapmaker_config_file.assert_not_called()
+
+    def test_standalone_lane_not_prepped_or_loaded_does_not_update(self):
+        """A standalone lane sitting idle, never prepped or loaded to the buffer, must not update
+        print_task_config: only prep_state/load_state being True opts a standalone lane in
+        without a full toolhead load."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        # A valid config here, rather than an unconfigured mock, means a regressed
+        # eligibility guard would actually update it instead of crashing on the mock
+        # and landing on assert_not_called() for the wrong reason.
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.tool_loaded = False
+        lane.extruder_obj.is_standalone.return_value = True
+        lane.prep_state = False
+        lane.load_state = False
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+        spool.printer.update_snapmaker_config_file.assert_not_called()
+        assert spool.logger.messages == []
+
+    def test_standalone_lane_prepped_updates_without_toolhead_load(self):
+        """Independent coverage of the `prep_state` operand of
+        `prep_state or load_state`: load_state is False here, so prep_state alone
+        must be what lets a standalone lane with no toolhead load through."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG, config_path
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        spool.print_task_config_obj.config_path = config_path
+        lane = _make_lane("lane1")
+        lane.tool_loaded = False
+        lane.extruder_obj.is_standalone.return_value = True
+        lane.prep_state = True
+        lane.load_state = False
+        lane.material = "PLA"
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+        payload = spool.printer.update_snapmaker_config_file.call_args[0][1]
+        assert payload["filament_type"][0] == "PLA"
+        assert spool.print_task_config_obj.print_task_config["filament_type"][0] == "PLA"
+        spool.printer.update_snapmaker_config_file.assert_called_with(
+            config_path,
+            spool.print_task_config_obj.print_task_config,
+            DEFAULT_PRINT_TASK_CONFIG
+        )
+
+    def test_standalone_lane_loaded_to_buffer_updates_without_toolhead_load(self):
+        """Independent coverage of the `load_state` operand: prep_state is False
+        here, so load_state alone must be what lets a standalone lane with no
+        toolhead load through."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG, config_path
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        spool.print_task_config_obj.config_path = config_path
+        lane = _make_lane("lane1")
+        lane.tool_loaded = False
+        lane.extruder_obj.is_standalone.return_value = True
+        lane.prep_state = False
+        lane.load_state = True
+        lane.material = "PETG"
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+        payload = spool.printer.update_snapmaker_config_file.call_args[0][1]
+        assert payload["filament_type"][0] == "PETG"
+        assert spool.print_task_config_obj.print_task_config["filament_type"][0] == "PETG"
+        spool.printer.update_snapmaker_config_file.assert_called_with(
+            config_path,
+            spool.print_task_config_obj.print_task_config,
+            DEFAULT_PRINT_TASK_CONFIG
+        )
+
+    def test_unit_attached_lane_prepped_but_not_loaded_does_not_update(self):
+        """Independent coverage of the `is_standalone()` operand: prep_state is
+        True here, but is_standalone() is False, so a unit-attached lane still
+        needs the full toolhead-load path. Prep/load alone isn't enough for it."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        lane = _make_lane("lane1")
+        lane.tool_loaded = False
+        lane.extruder_obj.is_standalone.return_value = False
+        lane.prep_state = True
+        lane.load_state = True
         spool.printer = MagicMock()
         spool.set_snapmaker_filament_params(lane)
         spool.printer.update_snapmaker_config_file.assert_not_called()
 
     def test_snapmaker_printer_lane_name_not_match(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
         spool.print_task_config_obj = MagicMock()
         lane = _make_lane("lane1")
         lane.tool_loaded = True
         lane.extruder_obj.lane_loaded = "lane2"
+        lane.extruder_obj.is_standalone.return_value = False
         spool.printer = MagicMock()
         spool.set_snapmaker_filament_params(lane)
         spool.printer.update_snapmaker_config_file.assert_not_called()
     
     def test_snapmaker_printer_exception(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG, config_path
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2557,9 +3559,10 @@ class TestSetSnapmakerFilamentParams:
         )
     
     def test_snapmaker_printer_extruder_update_called(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG, config_path
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2580,9 +3583,10 @@ class TestSetSnapmakerFilamentParams:
         )
 
     def test_snapmaker_printer_extruder_check_material(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2604,9 +3608,10 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_sub_type"][0] == "NONE"
     
     def test_snapmaker_printer_extruder_check_vendor(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2629,9 +3634,10 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_sub_type"][0] == "NONE"
 
     def test_snapmaker_printer_extruder_check_material_NONE(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2654,9 +3660,10 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_sub_type"][0] == "NONE"
 
     def test_snapmaker_printer_extruder_check_material_default(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2679,10 +3686,229 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_type"][0] == "ABS"
         assert print_task_config["filament_sub_type"][0] == "NONE"
 
-    def test_snapmaker_printer_extruder_check_single_color(self):
-        from tests.conftest import _make_print_task_config
+    def test_snapmaker_printer_extruder_recognized_type_with_dash_is_kept_as_is(self):
+        """A type that matches FILAMENT_PROTO_MAIN_TYPE_MAPPING, dash included,
+        is stored exactly as given: the dash must not be stripped."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "PETG-CF"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "PETG-CF"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_special_characters_and_digits_are_stripped_first(self):
+        """Special characters and digits, but not "-", are stripped before the mapping check,
+        so "PETG-CF+1" resolves to the recognized "PETG-CF" rather than warning."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "PETG-CF+1"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "PETG-CF"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_recognized_type_with_a_digit_is_kept_as_is(self):
+        """"PA6-CF" and "PA-CF" are distinct, recognized types. Normalizing an already
+        recognized value would strip the "6" and silently store the wrong one."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "PA6-CF"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "PA6-CF"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_recognized_type_with_suffix_keeps_its_digit(self):
+        """"PA6-CF+1" carries an extruder-variant suffix on a recognized type whose own
+        name has a digit. Stripping the suffix must not also strip the "6", or this
+        silently resolves to the different, also-recognized "PA-CF"."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "PA6-CF+1"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "PA6-CF"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_digits_alone_are_stripped(self):
+        """Independent coverage of the digit-stripping, separate from the
+        dash-preserving/special-character cases above: "PLA2" has no special
+        characters, only a trailing digit, which must still be stripped."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "PLA2"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "PLA"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_all_digit_material_falls_back_to_none(self):
+        """A material that's nothing but digits strips down to an empty string,
+        which must still fall back to NONE silently (NONE is the expected
+        sentinel, not an unrecognized type, so it must not warn)."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "123"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "NONE"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_unrecognized_type_warns_and_falls_back_to_none(self):
+        """A material that doesn't match any key in FILAMENT_PROTO_MAIN_TYPE_MAPPING,
+        even after stripping, must warn the user and fall back to NONE rather than
+        sending an unrecognized value to snapmaker."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = "XYZ123"
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "NONE"
+        assert spool.logger.messages == [(
+            "warning",
+            "Lane lane1: filament type 'XYZ' is not a snapmaker filament "
+            "type, setting filament_type to NONE for this toolhead."
+        )]
+
+    def test_snapmaker_printer_extruder_no_material_defaults_to_none_without_warning(self):
+        """An empty material, with no lane.material and no default_material_type, falls back to
+        NONE silently. NONE is the expected sentinel, not an unrecognized type, so it must not
+        warn."""
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
+        from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
+        spool = _make_spool()
+        spool.afc.snapmaker_printer = True
+        spool.afc.default_material_type = None
+        spool.print_task_config_obj = MagicMock()
+        spool.print_task_config_obj.print_task_config = DEFAULT_PRINT_TASK_CONFIG
+        lane = _make_lane("lane1")
+        lane.color = "#123456"
+        lane.material = ""
+        lane.tool_loaded = True
+        lane.extruder_obj.lane_loaded = lane.name
+        lane.multi_color = []
+        spool.printer = MagicMock()
+        spool.set_snapmaker_filament_params(lane)
+
+        print_task_config = spool.print_task_config_obj.print_task_config
+
+        assert print_task_config["filament_type"][0] == "NONE"
+        assert spool.logger.messages == []
+
+    def test_snapmaker_printer_extruder_check_single_color(self):
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
+        import sys
+        sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2706,9 +3932,10 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_color_multi"][0]["colors"] == ["123456"]
     
     def test_snapmaker_printer_extruder_check_no_color(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2732,9 +3959,10 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_color_multi"][0]["colors"] == ["FFFFFF"]
 
     def test_snapmaker_printer_extruder_check_multi_color(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True
@@ -2758,9 +3986,10 @@ class TestSetSnapmakerFilamentParams:
         assert print_task_config["filament_color_multi"][0]["colors"] == ["123456", "589465", "725893"]
 
     def test_snapmaker_printer_extruder3_check_multi_color(self):
-        from tests.conftest import _make_print_task_config
+        from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
+        sys.modules.setdefault("extras.filament_protocol", _make_filament_protocol_mock())
         from extras.print_task_config import DEFAULT_PRINT_TASK_CONFIG
         spool = _make_spool()
         spool.afc.snapmaker_printer = True

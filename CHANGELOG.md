@@ -75,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Fixed buffer not getting enabled when `SET_LANE_LOADED` macro is used.
+- Fixed Snapmaker U1/Snorca power-loss-resume potentially targeting the wrong toolhead or temperature after the lane mapping was changed from the printer's screen mid-print. AFC now pushes its T(n) mapping into snapmaker's print_task_config `extruder_map_table` during PREP and after a successful `SET_MAP` change, and resyncs AFC's own mapping from that table at the start of every print. (#824)
 
 ## [11-15-2026]
 ### Added
