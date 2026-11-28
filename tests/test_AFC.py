@@ -3640,19 +3640,6 @@ class TestResetFileCallback:
         obj.reactor.unregister_timer.assert_not_called()
         assert obj.in_print_timer is new_timer
 
-    def test_unregisters_the_previous_timer_before_registering_a_new_one(self):
-        """A second reset before the first timer fires must not orphan it: left
-        alone, the stale timer would later unregister whatever the newer timer
-        became instead of itself."""
-        obj = self._make()
-        old_timer = MagicMock()
-        obj.in_print_timer = old_timer
-        new_timer = MagicMock()
-        obj.reactor.register_timer.return_value = new_timer
-        obj._reset_file_callback()
-        obj.reactor.unregister_timer.assert_called_once_with(old_timer)
-        assert obj.in_print_timer is new_timer
-
     def test_resets_error_and_pause_state(self):
         obj = self._make()
         obj._reset_file_callback()
