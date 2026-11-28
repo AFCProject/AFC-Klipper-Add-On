@@ -18,7 +18,7 @@ from queue import Queue
 from configfile import error
 from klippy import Printer
 
-from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List, Literal
+from typing import Dict, TYPE_CHECKING, Union, Any, Optional, Tuple, List
 
 if TYPE_CHECKING:
     from configfile import ConfigWrapper

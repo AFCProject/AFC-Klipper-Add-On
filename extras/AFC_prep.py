@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from extras.AFC import afc
-    from extras.AFC_lane import AFCLane
     from extras.AFC_utils import AFCGcmd
 
 if TYPE_CHECKING:
