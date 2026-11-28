@@ -4120,6 +4120,228 @@ class TestLoadSequenceDefaultPathSuccess:
         assert not hasattr(lane.unit_obj, "unit_load_lane")
         lane.unit_obj.lane_tool_loaded_gears.assert_called_once_with(lane, gcmd=gcmd)
 
+    def test_tool_end_configured_delegates_to_load_to_tool_end(self):
+        gcmd = MagicMock()
+        afc, lane, hub, extruder = self._make()
+        extruder.tool_end = "PA2"
+        afc.move_e_pos = MagicMock()
+        afc.load_to_tool_end = MagicMock(return_value=True)
+
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
+
+        assert result is True
+        afc.load_to_tool_end.assert_called_once_with(lane, extruder, 0, gcmd=gcmd)
+        afc.move_e_pos.assert_called_once_with(extruder.tool_stn, extruder.tool_load_speed,
+                                               "tool stn")
+
+    def test_tool_end_failure_stops_before_tool_stn_move(self):
+        gcmd = MagicMock()
+        afc, lane, hub, extruder = self._make()
+        extruder.tool_end = "PA2"
+        afc.move_e_pos = MagicMock()
+        afc.load_to_tool_end = MagicMock(return_value=False)
+
+        result = afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
+
+        assert result is False
+        afc.move_e_pos.assert_not_called()
+        # set_tool_loaded() would advance this to TOOLED
+        assert lane.status == AFCLaneState.TOOL_LOADED
+
+    def test_load_to_gears_skips_load_to_tool_end(self):
+        # Calibration loads to the gears and runs the tool_end stage itself
+        gcmd = MagicMock()
+        afc, lane, hub, extruder = self._make()
+        extruder.tool_end = "PA2"
+        afc.move_e_pos = MagicMock()
+        afc.load_to_tool_end = MagicMock(return_value=True)
+
+        result = afc.load_sequence(lane, hub, extruder, load_to_gears=True, gcmd=gcmd)
+
+        assert result is True
+        afc.load_to_tool_end.assert_not_called()
+        afc.move_e_pos.assert_not_called()
+
+    def test_tool_end_not_configured_skips_load_to_tool_end(self):
+        gcmd = MagicMock()
+        afc, lane, hub, extruder = self._make()
+        afc.move_e_pos = MagicMock()
+        afc.load_to_tool_end = MagicMock(return_value=True)
+
+        afc.load_sequence(lane, hub, extruder, gcmd=gcmd)
+
+        afc.load_to_tool_end.assert_not_called()
+        afc.move_e_pos.assert_called_once_with(extruder.tool_stn, extruder.tool_load_speed,
+                                               "tool stn")
+
+
+class TestUsesStandardLoad:
+    """Whether a lane loads through `load_sequence`'s standard path."""
+
+    def _lane(self, custom_load_cmd=None, unit_loader=False):
+        """
+        Build a lane mock with the given loader setup.
+
+        :param custom_load_cmd: lane `custom_load_cmd`, None when not set
+        :param unit_loader: True when the lane's unit has its own `unit_load_lane`
+        :return MagicMock: lane mock
+        """
+        lane = MagicMock()
+        lane.custom_load_cmd = custom_load_cmd
+        spec = ["lane_loading", "unit_load_lane"] if unit_loader else ["lane_loading"]
+        lane.unit_obj = MagicMock(spec=spec)
+        return lane
+
+    def test_standard_lane_is_true(self):
+        afc = _make_afc()
+        assert afc.uses_standard_load(self._lane()) is True
+
+    def test_custom_load_cmd_is_false(self):
+        afc = _make_afc()
+        assert afc.uses_standard_load(self._lane(custom_load_cmd="MY_LOAD")) is False
+
+    def test_unit_load_lane_is_false(self):
+        afc = _make_afc()
+        assert afc.uses_standard_load(self._lane(unit_loader=True)) is False
+
+
+class TestToolStnStartsAtToolEnd:
+    """Whether a full load of a lane counts `tool_stn` from the `tool_end` sensor."""
+
+    def _lane(self, tool_end="PA2", custom_load_cmd=None, unit_loader=False):
+        """
+        Build a lane mock with the given toolhead and loader setup.
+
+        :param tool_end: `pin_tool_end` value, None when not configured
+        :param custom_load_cmd: lane `custom_load_cmd`, None when not set
+        :param unit_loader: True when the lane's unit has its own `unit_load_lane`
+        :return MagicMock: lane mock
+        """
+        lane = MagicMock()
+        lane.extruder_obj.tool_end = tool_end
+        lane.custom_load_cmd = custom_load_cmd
+        spec = ["lane_loading", "unit_load_lane"] if unit_loader else ["lane_loading"]
+        lane.unit_obj = MagicMock(spec=spec)
+        return lane
+
+    def test_standard_path_with_tool_end_is_true(self):
+        afc = _make_afc()
+        assert afc.tool_stn_starts_at_tool_end(self._lane()) is True
+
+    def test_no_tool_end_is_false(self):
+        afc = _make_afc()
+        assert afc.tool_stn_starts_at_tool_end(self._lane(tool_end=None)) is False
+
+    def test_custom_load_cmd_is_false(self):
+        afc = _make_afc()
+        lane = self._lane(custom_load_cmd="MY_LOAD")
+        assert afc.tool_stn_starts_at_tool_end(lane) is False
+
+    def test_unit_load_lane_is_false(self):
+        afc = _make_afc()
+        assert afc.tool_stn_starts_at_tool_end(self._lane(unit_loader=True)) is False
+
+
+class TestLoadToToolEnd:
+    """Short extruder moves until the post extruder gear sensor (`tool_end`) triggers."""
+
+    def _make(self, triggers_after=None):
+        """
+        Build an afc with a lane and extruder whose `tool_end` triggers after N moves.
+
+        :param triggers_after: number of moves before `tool_end` triggers, None for never
+        :return tuple: afc, lane and extruder
+        """
+        afc = _make_afc()
+        lane = MagicMock()
+        lane.name = "lane1"
+        lane.short_move_dis = 10.0
+        extruder = MagicMock()
+        extruder.tool_load_speed = 25.0
+        extruder.tool_end_state = triggers_after == 0
+        moves = []
+
+        def _move(*args, **kwargs):
+            moves.append((args, kwargs))
+            if (triggers_after is not None
+                and len(moves) >= triggers_after):
+                extruder.tool_end_state = True
+
+        afc.move_e_pos = MagicMock(side_effect=_move)
+        afc.function.in_print.return_value = False
+        return afc, lane, extruder
+
+    @staticmethod
+    def _failure_message(lane_name, in_print):
+        msg = ("filament failed to trigger post extruder gear toolhead sensor, CHECK FILAMENT PATH"
+               "\n||=====||====||==>--||\nTRG   LOAD   HUB   TOOL")
+        msg += (f"\nTo resolve set lane loaded with `SET_LANE_LOADED LANE={lane_name}` macro.")
+        msg += ("\nAlso might be a good idea to verify that post extruder gear toolhead sensor "
+                "is working.")
+        if in_print:
+            msg += "\nOnce issue is resolved click resume to continue printing"
+        return msg
+
+    def test_already_triggered_moves_nothing(self):
+        gcmd = MagicMock()
+        afc, lane, extruder = self._make(triggers_after=0)
+
+        result = afc.load_to_tool_end(lane, extruder, gcmd=gcmd)
+
+        assert result is True
+        afc.move_e_pos.assert_not_called()
+        afc.afcDeltaTime.log_with_time.assert_called_once_with("Filament loaded to post-sensor")
+        afc.error.handle_lane_failure.assert_not_called()
+        assert afc.logger.messages == []
+
+    def test_steps_short_moves_until_triggered(self):
+        gcmd = MagicMock()
+        afc, lane, extruder = self._make(triggers_after=3)
+
+        result = afc.load_to_tool_end(lane, extruder, gcmd=gcmd)
+
+        assert result is True
+        assert afc.move_e_pos.call_args_list == [call(10.0, 25.0, "Tool end", wait_tool=True)] * 3
+        assert extruder.tool_end_state is True
+        afc.afcDeltaTime.log_with_time.assert_called_once_with("Filament loaded to post-sensor")
+        afc.error.handle_lane_failure.assert_not_called()
+        assert afc.logger.messages == []
+
+    def test_fails_after_twenty_one_moves(self):
+        gcmd = MagicMock()
+        afc, lane, extruder = self._make(triggers_after=None)
+
+        result = afc.load_to_tool_end(lane, extruder, gcmd=gcmd)
+
+        assert result is False
+        assert afc.move_e_pos.call_count == 21
+        afc.error.handle_lane_failure.assert_called_once_with(
+            lane, self._failure_message("lane1", in_print=False), gcmd=gcmd)
+        afc.afcDeltaTime.log_with_time.assert_not_called()
+        assert afc.logger.messages == []
+
+    def test_prior_attempts_count_toward_the_limit(self):
+        gcmd = MagicMock()
+        afc, lane, extruder = self._make(triggers_after=None)
+
+        result = afc.load_to_tool_end(lane, extruder, 5, gcmd=gcmd)
+
+        assert result is False
+        assert afc.move_e_pos.call_count == 16
+        afc.error.handle_lane_failure.assert_called_once_with(
+            lane, self._failure_message("lane1", in_print=False), gcmd=gcmd)
+
+    def test_failure_in_print_adds_resume_hint(self):
+        gcmd = MagicMock()
+        afc, lane, extruder = self._make(triggers_after=None)
+        afc.function.in_print.return_value = True
+
+        result = afc.load_to_tool_end(lane, extruder, gcmd=gcmd)
+
+        assert result is False
+        afc.error.handle_lane_failure.assert_called_once_with(
+            lane, self._failure_message("lane1", in_print=True), gcmd=gcmd)
+
 
 class TestLoadSequenceToolStartVirtualSkip:
     """Covers the `cur_extruder.tool_start != "virtual"` guard on the pre-extruder

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [11-28-2026]
+### Fixed
+- `AFC_TOOL_STN_CALIBRATION` now starts measuring where the load stops after the `tool_end` sensor triggers when the lane's full load steps to it (standard load path with `pin_tool_end`), matching where that load starts `tool_stn`. It previously started at the `tool_start` sensor, so the saved `tool_stn` was too long by the `tool_end` load steps. (#935)
+- `AFC_TOOL_STN_CALIBRATION` now keeps the buffer off from the gear load until calibration ends, as a full load does until its `tool_stn` move is done. With the buffer on, its multiplier changed how far the lane pushed the tip before the extruder gears gripped it, so the measured `tool_stn` depended on the buffer's state (with `pin_tool_end`, the load could stop a step early; with `pin_tool_start` only, the first jog moves would overshoot). (#935)
+
 ## [11-27-2026]
 ### Added
 - Installer now support EMU-C boards.

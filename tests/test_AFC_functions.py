@@ -13,7 +13,7 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 from unittest.mock import ANY, MagicMock, patch, call
 import pytest
 
@@ -516,6 +516,8 @@ def _make_calibration_func() -> Tuple[afcFunction, MagicMock]:
     afc.tool_cut_cmd = "AFC_CUT"
     afc.move_e_pos = MagicMock()
     afc.toolhead = MagicMock()
+    afc.tool_stn_starts_at_tool_end = MagicMock(return_value=False)
+    afc.uses_standard_load = MagicMock(return_value=True)
 
     extruder = MagicMock()
     extruder.name = "extruder"
@@ -648,9 +650,16 @@ class TestResetStnCalibrationValues:
         func.stn_calibration_original = 34.0
         func.stn_calibration_extruder = "extruder"
         func.stn_calibration_lane = "lane1"
+        func.stn_calibration_buffer_off = True
+        lane = MagicMock()
+        lane.name = "lane1"
+        func.afc.lanes["lane1"] = lane
+        func.afc.current = "lane1"
 
         func._reset_stn_calibration_values()
 
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert func.stn_calibration_buffer_off is False
         assert func.stn_calibration_active is False
         assert func.stn_calibration_distance == 0.0
         assert func.stn_calibration_original == 0.0
@@ -3730,6 +3739,229 @@ class TestCmdAfcToolStnCalibration:
         assert any("Back 1mm" in message for message in raw_messages)
         assert any("Unload & Reload" in message for message in raw_messages)
         assert any("Moved 0.000mm" in message for message in raw_messages)
+
+    @staticmethod
+    def _start_messages(start: str) -> List[Tuple[str, str]]:
+        """
+        Logger messages for a calibration start on lane1: the loading prompt, then the jog
+        prompt at 0mm naming where the measurement starts.
+
+        :param start: reference named in the jog prompt
+        :return list: expected (level, message) tuples in order
+        """
+        command = "AFC_TOOL_STN_CALIBRATION EXTRUDER=extruder LANE=lane1"
+        lines = [
+            "prompt_begin Loading Lane",
+            "prompt_text Loading lane1 into toolhead",
+            "prompt_show",
+            "prompt_end",
+            "prompt_begin tool_stn Calibration",
+            f"prompt_text Moved 0.000mm from {start}.",
+            "prompt_text Move forward slowly until filament just reaches the nozzle without "
+            "extruding. Use Unload & Reload to test the value, then adjust or save it.",
+            "prompt_button_group_start",
+            f"prompt_button Back 5mm|{command} MOVE=-5|secondary",
+            f"prompt_button Back 1mm|{command} MOVE=-1|secondary",
+            "prompt_button_group_end",
+            "prompt_button_group_start",
+            f"prompt_button Forward 1mm|{command} MOVE=1|primary",
+            f"prompt_button Forward 5mm|{command} MOVE=5|primary",
+            "prompt_button_group_end",
+            f"prompt_footer_button Cancel|{command} CANCEL=1|secondary",
+            f"prompt_footer_button Unload & Reload|{command} TEST=1|info",
+            f"prompt_footer_button Save|{command} SAVE=1|primary",
+            "prompt_show",
+        ]
+        return [("raw", f"// action:{line}") for line in lines]
+
+    def test_tool_end_loads_to_tool_end_before_zeroing(self) -> None:
+        func, extruder = _make_calibration_func()
+        func.afc.tool_stn_starts_at_tool_end.return_value = True
+        func.afc.current = None
+        func.afc.TOOL_LOAD.side_effect = (
+            lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        state_at_call = {}
+
+        def _load_to_tool_end(lane, ext, **kwargs):
+            state_at_call["tool_stn"] = ext.tool_stn
+            state_at_call["active"] = func.stn_calibration_active
+            return True
+
+        func.afc.load_to_tool_end = MagicMock(side_effect=_load_to_tool_end)
+        gcmd = _make_gcmd(EXTRUDER="extruder", LANE="lane1")
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(gcmd)
+
+        func.afc.tool_stn_starts_at_tool_end.assert_called_with(func.afc.lanes["lane1"])
+        func.afc.load_to_tool_end.assert_called_once_with(
+            func.afc.lanes["lane1"], extruder, gcmd=gcmd)
+        assert state_at_call == {"tool_stn": 72.0, "active": False}
+        assert func.stn_calibration_active is True
+        assert func.stn_calibration_distance == 0.0
+        assert func.stn_calibration_original == 72.0
+        assert extruder.tool_stn == 0.0
+        assert func.logger.messages == self._start_messages(
+            "where the load stopped after tool_end triggered")
+
+    def test_load_without_tool_end_stage_skips_load_to_tool_end(self) -> None:
+        func, extruder = _make_calibration_func()
+        func.afc.current = None
+        func.afc.TOOL_LOAD.side_effect = (
+            lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        func.afc.load_to_tool_end = MagicMock(return_value=True)
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        func.afc.tool_stn_starts_at_tool_end.assert_called_with(func.afc.lanes["lane1"])
+        func.afc.load_to_tool_end.assert_not_called()
+        assert func.stn_calibration_active is True
+        assert extruder.tool_stn == 0.0
+        assert func.logger.messages == self._start_messages("the extruder gears or sensor")
+
+    def test_stops_when_tool_end_never_triggers(self) -> None:
+        func, extruder = _make_calibration_func()
+        func.afc.tool_stn_starts_at_tool_end.return_value = True
+        func.afc.current = None
+        func.afc.TOOL_LOAD.side_effect = (
+            lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        func.afc.load_to_tool_end = MagicMock(return_value=False)
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        assert func.stn_calibration_active is False
+        assert func.stn_calibration_lane is None
+        assert extruder.tool_stn == 72.0
+        func.afc.error.AFC_error.assert_not_called()
+        raw_messages = [message for level, message in func.logger.messages if level == "raw"]
+        assert not any("Forward 1mm" in message for message in raw_messages)
+
+    def test_buffer_off_before_tool_end_stage(self) -> None:
+        func, extruder = _make_calibration_func()
+        func.afc.tool_stn_starts_at_tool_end.return_value = True
+        func.afc.current = None
+        func.afc.TOOL_LOAD.side_effect = (
+            lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        lane = func.afc.lanes["lane1"]
+        order = []
+        lane.disable_buffer.side_effect = lambda: order.append("disable_buffer")
+        lane.enable_buffer.side_effect = lambda **kwargs: order.append("enable_buffer")
+        func.afc.load_to_tool_end = MagicMock(
+            side_effect=lambda *args, **kwargs: order.append("load_to_tool_end") or True)
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        func.afc.uses_standard_load.assert_called_once_with(lane)
+        assert order == ["disable_buffer", "load_to_tool_end"]
+        assert func.stn_calibration_active is True
+        assert func.stn_calibration_buffer_off is True
+
+    def test_buffer_back_on_when_tool_end_never_triggers(self) -> None:
+        func, extruder = _make_calibration_func()
+        func.afc.tool_stn_starts_at_tool_end.return_value = True
+        func.afc.current = None
+        func.afc.TOOL_LOAD.side_effect = (
+            lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        func.afc.load_to_tool_end = MagicMock(return_value=False)
+        lane = func.afc.lanes["lane1"]
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+
+        lane.disable_buffer.assert_called_once_with()
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert func.stn_calibration_active is False
+        assert func.stn_calibration_buffer_off is False
+
+    def test_unit_loader_lane_keeps_its_buffer(self) -> None:
+        func, extruder = _make_calibration_func()
+        func.afc.uses_standard_load.return_value = False
+        func.afc.current = None
+        func.afc.TOOL_LOAD.side_effect = (
+            lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        lane = func.afc.lanes["lane1"]
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1", CANCEL=1))
+
+        lane.disable_buffer.assert_not_called()
+        lane.enable_buffer.assert_not_called()
+        assert func.stn_calibration_buffer_off is False
+
+    def test_save_turns_buffer_back_on(self) -> None:
+        func, extruder = self._start()
+        lane = func.afc.lanes["lane1"]
+        lane.disable_buffer.assert_called_once_with()
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1", MOVE=5))
+        lane.enable_buffer.assert_not_called()
+        func.cmd_AFC_TOOL_STN_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1", SAVE=1))
+
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert func.stn_calibration_buffer_off is False
+        assert func.stn_calibration_active is False
+
+    def test_buffer_off_again_after_test_reload(self) -> None:
+        func, extruder = self._start()
+        lane = func.afc.lanes["lane1"]
+        func.afc.TOOL_UNLOAD.return_value = True
+        buffer_on = {"value": False}
+        lane.disable_buffer.side_effect = lambda: buffer_on.update(value=False)
+        lane.enable_buffer.side_effect = lambda **kwargs: buffer_on.update(value=True)
+
+        def _full_load(load_lane, **kwargs):
+            # A full load ends by enabling the buffer
+            load_lane.enable_buffer(disable_fault=True)
+            return True
+
+        func.afc.TOOL_LOAD.side_effect = _full_load
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1", TEST=1))
+
+        assert buffer_on["value"] is False
+        assert lane.disable_buffer.call_count == 2
+        assert func.stn_calibration_active is True
+        assert func.stn_calibration_buffer_off is True
+
+    def test_unit_loader_buffer_untouched_by_test_reload(self) -> None:
+        func, extruder = _make_calibration_func()
+        func.afc.uses_standard_load.return_value = False
+        func.afc.current = None
+        func.afc.TOOL_LOAD.side_effect = (
+            lambda lane, **kwargs: setattr(func.afc, "current", lane.name) or True)
+        func.afc.TOOL_UNLOAD.return_value = True
+        lane = func.afc.lanes["lane1"]
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(_make_gcmd(EXTRUDER="extruder", LANE="lane1"))
+        func.cmd_AFC_TOOL_STN_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1", TEST=1))
+
+        lane.disable_buffer.assert_not_called()
+
+    def test_cancel_turns_buffer_back_on(self) -> None:
+        func, extruder = self._start()
+        lane = func.afc.lanes["lane1"]
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1", CANCEL=1))
+
+        lane.enable_buffer.assert_called_once_with(disable_fault=True)
+        assert func.stn_calibration_buffer_off is False
+        assert extruder.tool_stn == 72.0
+
+    def test_buffer_left_off_when_lane_no_longer_loaded(self) -> None:
+        func, extruder = self._start()
+        lane = func.afc.lanes["lane1"]
+        func.afc.current = None
+
+        func.cmd_AFC_TOOL_STN_CALIBRATION(
+            _make_gcmd(EXTRUDER="extruder", LANE="lane1", MOVE=1))
+
+        lane.enable_buffer.assert_not_called()
+        assert func.stn_calibration_buffer_off is False
+        assert func.stn_calibration_active is False
 
     def test_moves_forward_slowly_and_saves_measured_distance(self) -> None:
         func, extruder = self._start()

@@ -174,6 +174,7 @@ class afcFunction:
         self.stn_calibration_original: float = 0.0
         self.stn_calibration_extruder: Optional[str] = None
         self.stn_calibration_lane: Optional[str] = None
+        self.stn_calibration_buffer_off: bool = False
         self.button_calibration_active: bool = False
         self.button_calibration_queue: List[AFCButton] = []
         self.button_calibration_stage: str = ""
@@ -1399,8 +1400,16 @@ class afcFunction:
     def _reset_stn_calibration_values(self) -> None:
         """
         Clears tool_stn calibration session state, ending the session so a
-        new AFC_TOOL_STN_CALIBRATION call starts fresh.
+        new AFC_TOOL_STN_CALIBRATION call starts fresh. Turns the buffer back on if
+        calibration turned it off and the lane is still loaded.
         """
+        if self.stn_calibration_buffer_off:
+            lane = (self.afc.lanes.get(self.stn_calibration_lane)
+                    if self.stn_calibration_lane is not None else None)
+            if (lane is not None
+                and self.afc.current == lane.name):
+                lane.enable_buffer(disable_fault=True)
+        self.stn_calibration_buffer_off = False
         self.stn_calibration_active = False
         self.stn_calibration_distance = 0.0
         self.stn_calibration_original = 0.0
@@ -2370,7 +2379,9 @@ class afcFunction:
     }
     def cmd_AFC_TOOL_STN_CALIBRATION(self, gcmd: GCodeCommand) -> None:
         """
-        Measure tool_stn from the extruder gears or sensor to the nozzle.
+        Measure tool_stn to the nozzle from where a full load starts it: where the load stops
+        after `tool_end` triggers when the lane's load steps to it, otherwise the extruder gears
+        or sensor.
 
         Usage
         -------
@@ -2434,8 +2445,22 @@ class afcFunction:
                     return
             finally:
                 prompt.p_end()
+            # A full load makes its tool_end and tool_stn moves with the buffer off and enables
+            # it afterwards. The buffer's multiplier changes how far the lane pushes the tip
+            # until the extruder gears grip it, so calibrate with the buffer off as well.
+            buffer_off = self.afc.uses_standard_load(lane)
+            if buffer_off:
+                lane.disable_buffer()
+            # Start where a full load of this lane starts its tool_stn move
+            if (self.afc.tool_stn_starts_at_tool_end(lane)
+                and not self.afc.load_to_tool_end(lane, extruder, gcmd=gcmd)):
+                # The lane stays loaded, so turn the buffer back on as other exits do
+                if buffer_off:
+                    lane.enable_buffer(disable_fault=True)
+                return
 
             self.stn_calibration_active = True
+            self.stn_calibration_buffer_off = buffer_off
             self.stn_calibration_distance = 0.0
             self.stn_calibration_original = extruder.tool_stn
             self.stn_calibration_extruder = extruder_name
@@ -2507,6 +2532,9 @@ class afcFunction:
                         f"Lane '{lane_name}' did not reload; the original tool_stn was restored.",
                         pause=False, gcmd=gcmd)
                     return
+                # The full load enabled the buffer; keep it off until calibration ends
+                if self.stn_calibration_buffer_off:
+                    lane.disable_buffer()
                 self.afc.restore_pos()
                 # Following command is needed just in case someone has AFC setup to restore temperature
                 # after loading/unloading
@@ -2537,7 +2565,10 @@ class afcFunction:
         footer = [("Cancel", command + " CANCEL=1", "secondary"),
                   ("Unload & Reload", command + " TEST=1", "info"),
                   ("Save", command + " SAVE=1", "primary")]
-        text = (f"{error_text}Moved {self.stn_calibration_distance:.3f}mm from the extruder gears or sensor.\n"
+        start = ("where the load stopped after tool_end triggered"
+                 if self.afc.tool_stn_starts_at_tool_end(lane)
+                 else "the extruder gears or sensor")
+        text = (f"{error_text}Moved {self.stn_calibration_distance:.3f}mm from {start}.\n"
                 "Move forward slowly until filament just reaches the nozzle without extruding. "
                 "Use Unload & Reload to test the value, then adjust or save it.")
         prompt.create_custom_p("tool_stn Calibration", text, None, False, groups, footer)
