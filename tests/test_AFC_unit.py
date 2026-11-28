@@ -441,6 +441,18 @@ class TestLaneStatusLeds:
         unit.afc.function.afc_led.assert_called_once_with(lane.led_fault, lane.led_index)
 
 
+# ── stop_feed_assist ─────────────────────────────────────────────────
+
+class TestStopFeedAssistForLane:
+    def test_base_implementation_is_a_noop(self):
+        """Most units have no hardware feed assist to stop; units that do
+        (e.g. AFC_ACE) override this."""
+        unit = _make_unit()
+        lane = _make_lane()
+        assert unit.stop_feed_assist(lane) is None
+        unit.afc.function.afc_led.assert_not_called()
+
+
 # ── _check_led_state ─────────────────────────────────────────────────────────
 
 class TestCheckLedState:

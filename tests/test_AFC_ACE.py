@@ -7018,11 +7018,45 @@ class TestAfcACECmdAFCACEFeedAssist:
         """
         return ace_p2_unit("lane1", "lane2", "lane3", **kwargs)
 
-    def test_feed_assist_cmd_requires_enable(self):
+    def test_feed_assist_cmd_without_enable_reports_inactive_status(self):
         unit = self._unit()
         gcmd = make_gcmd(LANE="lane1")
 
-        with pytest.raises(AceGcmd.error, match=r"^ENABLE is required \(0 or 1\)$"):
+        unit.cmd_AFC_ACE_FEED_ASSIST(gcmd)
+
+        assert unit._assist_suppressed == set()
+        assert unit._feed_assist_active == set()
+        assert unit._ace.commands == []
+        assert gcmd.messages == [("info", "Feed assist inactive on slot 0")]
+        assert unit.printer.logger.messages == []
+
+    def test_feed_assist_cmd_without_enable_reports_active_status(self):
+        unit = self._unit(feed_assist_active=[1])
+        gcmd = make_gcmd(LANE="lane2")
+
+        unit.cmd_AFC_ACE_FEED_ASSIST(gcmd)
+
+        assert unit._feed_assist_active == {1}
+        assert unit._ace.commands == []
+        assert gcmd.messages == [("info", "Feed assist active on slot 1")]
+        assert unit.printer.logger.messages == []
+
+    def test_feed_assist_cmd_without_enable_reports_suppressed_status(self):
+        unit = self._unit()
+        unit._assist_suppressed.add(0)
+        gcmd = make_gcmd(LANE="lane1")
+
+        unit.cmd_AFC_ACE_FEED_ASSIST(gcmd)
+
+        assert unit._ace.commands == []
+        assert gcmd.messages == [("info", "Feed assist inactive on slot 0, suppressed")]
+        assert unit.printer.logger.messages == []
+
+    def test_feed_assist_cmd_without_enable_still_requires_lane_or_slot(self):
+        unit = self._unit()
+        gcmd = make_gcmd()
+
+        with pytest.raises(AceGcmd.error, match=r"^LANE or SLOT is required$"):
             unit.cmd_AFC_ACE_FEED_ASSIST(gcmd)
 
         assert unit._assist_suppressed == set()
@@ -7417,6 +7451,28 @@ class TestAfcACEStopFeedAssist:
         assert unit._feed_assist_active == {0}
         assert unit.printer.logger.messages == [
             ("error", "Failed to stop feed assist slot 0: boom")]
+
+
+class TestAfcACEStopFeedAssistOverride:
+    def test_stops_assist_for_the_lanes_slot(self):
+        unit = ace_p2_unit("lane1", "lane2", feed_assist_active=[1])
+        lane = unit.lanes["lane2"]
+
+        unit.stop_feed_assist(lane)
+
+        assert unit._feed_assist_active == set()
+        assert unit._ace.commands == [("get_status", {}), ("stop_feed_assist", {"index": 1})]
+        assert unit.printer.logger.messages == []
+
+    def test_lane_without_active_assist_is_a_noop(self):
+        unit = ace_p2_unit("lane1", "lane2")
+        lane = unit.lanes["lane2"]
+
+        unit.stop_feed_assist(lane)
+
+        assert unit._feed_assist_active == set()
+        assert unit._ace.commands == []
+        assert unit.printer.logger.messages == []
 
 
 class TestAfcACEActiveAssistLane:

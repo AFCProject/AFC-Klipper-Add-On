@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Installer now support EMU-C boards.
 
+### Updated
+- `AFC_ACE_FEED_ASSIST` macro now does not require `ENABLE` and instead return the status of if the assist is active or not.
+
+### Fixed
+- When `UNSET_LANE_LOADED` is ran, ACE assist is now properly turned off.
+
 ## [11-26-2026]
 ### Added
 - Added Creality CFS to the installer. Additional CFS units join the first box's chain: the installer

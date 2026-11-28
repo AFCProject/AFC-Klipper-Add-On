@@ -668,6 +668,15 @@ class afcUnit:
         self._trigger_led_state(lane, static_color=lane.led_unloading, effect_suffix="unloading",
                                 gcmd=gcmd)
 
+    def stop_feed_assist(self, lane: AFCLane) -> None:
+        """
+        Stops feed assist for a lane. No-op by default; override on units
+        that have their own feed assist to stop it.
+
+        :param lane: Lane whose feed assist to stop.
+        """
+        pass
+
     def lane_unloaded(self, lane: AFCLane, gcmd: AFCGcmd) -> None:
         """
         Common function for setting a lanes led when lane is unloaded but prep state is still True

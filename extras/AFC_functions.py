@@ -782,6 +782,10 @@ class afcFunction:
         """
         cur_lane_loaded = self.get_current_lane_obj()
         if cur_lane_loaded is not None:
+            # ACE units track feed assist themselves; this correction path skips the
+            # normal unload sequence, which would otherwise stop it. A no-op for
+            # units with no hardware feed assist to stop.
+            cur_lane_loaded.unit_obj.stop_feed_assist(cur_lane_loaded)
             cur_lane_loaded.unsync_to_extruder(gcmd=gcmd)
             cur_lane_loaded.set_tool_unloaded(normal_toolchange=True, gcmd=gcmd)
             cur_lane_loaded.unit_obj.return_to_home(gcmd=gcmd)

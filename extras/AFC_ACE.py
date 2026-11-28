@@ -3627,30 +3627,30 @@ class afcACE(afcUnit):
         gcmd.respond_info(f"Lane {lane_name} reset")
 
     cmd_AFC_ACE_FEED_ASSIST_help = (
-        "Start/stop feed assist for a lane/slot (stop overrides watchdog until "
-        "started again)")
+        "Start/stop feed assist for a lane/slot, or report its tracked state "
+        "(stop overrides watchdog until started again)")
     def cmd_AFC_ACE_FEED_ASSIST(self, gcmd: GCodeCommand) -> None:
         """
-        Manually start/stop feed assist for a lane or slot.
+        Manually start/stop feed assist for a lane or slot, or report its status.
 
         ENABLE=0 stops assist and suppresses the assist watchdog for that slot
         so it stays off; ENABLE=1 (or any load/toolchange) starts assist and
-        clears the suppression. Either LANE or SLOT (0-based) is required.
+        clears the suppression. Omitting ENABLE reports the slot's current
+        tracked state without changing anything. Either LANE or SLOT (0-based)
+        is required.
 
         Usage
         -------
-        `AFC_ACE_FEED_ASSIST UNIT=<unit> ENABLE=<0|1> [LANE=<lane>] [SLOT=<n>]`
+        `AFC_ACE_FEED_ASSIST UNIT=<unit> [ENABLE=<0|1>] [LANE=<lane>] [SLOT=<n>]`
 
         Example
         -------
         ```
         AFC_ACE_FEED_ASSIST UNIT=Ace_1 LANE=lane1 ENABLE=0
+        AFC_ACE_FEED_ASSIST UNIT=Ace_1 LANE=lane1
         ```
         """
         enable = gcmd.get_int('ENABLE', None)
-        if enable is None:
-            error_str = "ENABLE is required (0 or 1)"
-            raise gcmd.error(error_str)
         lane_name = gcmd.get('LANE', None)
         slot = gcmd.get_int('SLOT', None)
         if lane_name is not None:
@@ -3661,6 +3661,11 @@ class afcACE(afcUnit):
         if slot is None:
             error_str = "LANE or SLOT is required"
             raise gcmd.error(error_str)
+        if enable is None:
+            state = "active" if slot in self._feed_assist_active else "inactive"
+            suppressed = ", suppressed" if slot in self._assist_suppressed else ""
+            gcmd.respond_info(f"Feed assist {state} on slot {slot}{suppressed}")
+            return
         if enable:
             # Stop other assisting slots first; the ACE assists one slot at a time
             # and refuses further starts with error_2.
@@ -3783,6 +3788,16 @@ class afcACE(afcUnit):
             except Exception as e:
                 self.logger.error(f"Failed to stop feed assist slot {slot}: {e}")
                 return
+
+    def stop_feed_assist(self, lane: AFCLane) -> None:
+        """
+        Stops feed assist for a lane's slot, if tracked active. For recovery paths
+        (e.g. UNSET_LANE_LOADED) that correct AFC's loaded-lane state without going
+        through the normal unload sequence, which stops assist itself.
+
+        :param lane: Lane whose feed assist to stop.
+        """
+        self._stop_feed_assist(self._get_slot(lane.name))
 
     def _active_assist_lane(self) -> Optional[str]:
         """
