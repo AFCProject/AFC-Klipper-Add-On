@@ -154,10 +154,16 @@ class AFCSpool:
                     or getattr(self.afc, "default_material_type", None)
                     or "NONE"
                 )
-                # Some recognized types carry a digit, like "PA6-CF", so only normalize an
-                # unrecognized value. Strips special characters and digits but keeps "-".
                 if material not in FILAMENT_PROTO_MAIN_TYPE_MAPPING:
-                    material = re.sub(r'[^A-Za-z-]', '', material) or "NONE"
+                    # A slicer preset can append a trailing "+<n>" extruder/variant suffix, like
+                    # "PETG-CF+1" or "PA6-CF+2". Strip only that suffix first, so a type whose own
+                    # name carries a digit, such as "PA6-CF", isn't collapsed by the broader strip
+                    # below into a different, also recognized type like "PA-CF".
+                    without_suffix = re.sub(r'\+\d+$', '', material)
+                    if without_suffix in FILAMENT_PROTO_MAIN_TYPE_MAPPING:
+                        material = without_suffix
+                    else:
+                        material = re.sub(r'[^A-Za-z-]', '', material) or "NONE"
                 # Only set a type snapmaker actually recognizes; warn and fall back to NONE
                 # otherwise, rather than sending an unrecognized value.
                 if (material == "NONE"
@@ -284,6 +290,10 @@ class AFCSpool:
 
             changes: list[tuple[str, AFCLane, AFCLane, int]] = []
             unresolved: list[str] = []
+            # Every used command's resolved target lane, including ones already matching, so
+            # two commands wanting the same lane in single-mapping mode can be caught below
+            # instead of one swap silently displacing the other onto an unrequested lane.
+            resolved_targets: dict[AFCLane, list[str]] = {}
             for map_cmd, lane_name in list(self.afc.tool_cmds.items()):
                 try:
                     logical_index = int(map_cmd.lstrip("T"))
@@ -336,11 +346,30 @@ class AFCSpool:
                     if new_lane is None:
                         unresolved.append(map_cmd)
                         continue
+                    if not self.enable_multiple_mapping:
+                        resolved_targets.setdefault(new_lane, []).append(map_cmd)
 
                 if new_lane is cur_lane:
                     continue
 
                 changes.append((map_cmd, cur_lane, new_lane, screen_extruder_index))
+
+            if not self.enable_multiple_mapping:
+                colliding_cmds = sorted(
+                    (cmd for cmds in resolved_targets.values() if len(cmds) > 1 for cmd in cmds),
+                    key=natural_sort_key)
+                if colliding_cmds:
+                    warn_str = (
+                        f"{', '.join(colliding_cmds)} mappings were changed from the printer's "
+                        "screen or slicer to the same lane, which single-mapping mode can't "
+                        "represent. Cancelling this print, please restart it from the printer's "
+                        "UI so the new mapping is picked up correctly, or run "
+                        "AFC_ENABLE_MULTIPLE_MAPPING ENABLE=1 to allow multiple T(n) commands "
+                        "on one lane."
+                    )
+                    self.logger.error(warn_str)
+                    self.afc.run_script("CANCEL_PRINT", gcmd=gcmd)
+                    return
 
             if unresolved:
                 warn_str = (
@@ -546,6 +575,7 @@ class AFCSpool:
         lane_from_obj.send_lane_data()
         lane_to_obj.send_lane_data()
         self.afc.save_vars()
+        self.sync_extruder_map_table()
         self.logger.info(f"Swapping mapping from({lane_from}) to({lane_to}) successful.")
 
     cmd_AFC_ADD_MAPPING_help = (

@@ -3619,6 +3619,73 @@ class TestRestorePos:
         obj.function.log_toolhead_pos.assert_called_once_with(expected)
 
 
+# _reset_file_callback
+
+class TestResetFileCallback:
+    def _make(self):
+        obj = _make_afc()
+        obj.error = MagicMock()
+        obj.run_script = MagicMock()
+        obj.print_data_metadata = None
+        obj.save_vars = MagicMock()
+        obj.in_print_timer = None
+        obj.reactor = MagicMock()
+        return obj
+
+    def test_registers_a_new_timer(self):
+        obj = self._make()
+        new_timer = MagicMock()
+        obj.reactor.register_timer.return_value = new_timer
+        obj._reset_file_callback()
+        obj.reactor.unregister_timer.assert_not_called()
+        assert obj.in_print_timer is new_timer
+
+    def test_unregisters_the_previous_timer_before_registering_a_new_one(self):
+        """A second reset before the first timer fires must not orphan it: left
+        alone, the stale timer would later unregister whatever the newer timer
+        became instead of itself."""
+        obj = self._make()
+        old_timer = MagicMock()
+        obj.in_print_timer = old_timer
+        new_timer = MagicMock()
+        obj.reactor.register_timer.return_value = new_timer
+        obj._reset_file_callback()
+        obj.reactor.unregister_timer.assert_called_once_with(old_timer)
+        assert obj.in_print_timer is new_timer
+
+    def test_resets_error_and_pause_state(self):
+        obj = self._make()
+        obj._reset_file_callback()
+        obj.error.reset_failure.assert_called_once()
+        obj.run_script.assert_called_once_with('CLEAR_PAUSE', gcmd="sub_command")
+
+    def test_resets_toolchange_counters(self):
+        obj = self._make()
+        obj.number_of_toolchanges = 5
+        obj.current_toolchange = 3
+        obj.print_tool_temperatures = [200]
+        obj._reset_file_callback()
+        assert obj.number_of_toolchanges == 0
+        assert obj.current_toolchange == -1
+        assert obj.print_tool_temperatures == []
+
+    def test_resets_print_data_metadata_when_present(self):
+        obj = self._make()
+        obj.print_data_metadata = MagicMock()
+        obj._reset_file_callback()
+        obj.print_data_metadata.reset.assert_called_once()
+
+    def test_skips_print_data_metadata_reset_when_none(self):
+        obj = self._make()
+        obj.print_data_metadata = None
+        obj._reset_file_callback()
+
+    def test_saves_vars(self):
+        obj = self._make()
+        obj._reset_file_callback()
+        obj.save_vars.assert_called_once()
+
+
 # in_print_reactor_timer: moonraker None guard
 
 class TestInPrintReactorTimer:
@@ -3630,6 +3697,18 @@ class TestInPrintReactorTimer:
 
     def _make(self):
         obj = _make_afc()
+        obj.in_print_timer = MagicMock()
+        obj.spool = MagicMock()
+        return obj
+
+    def _make_real(self):
+        """Built through the real `afc.__init__` with mocked dependencies, for the
+        resync tests, which also assert state and log output and so need a logger
+        that tracks messages instead of a bare mock."""
+        from tests.conftest import MockConfig, MockLogger, MockPrinter
+        config = MockConfig(name="AFC", printer=MockPrinter())
+        obj = afc(config)
+        obj.logger = MockLogger()
         obj.in_print_timer = MagicMock()
         obj.spool = MagicMock()
         return obj
@@ -3702,20 +3781,27 @@ class TestInPrintReactorTimer:
         resynced from snapmaker's print_task_config. This runs here, after the timer's delay,
         rather than off a print-start event, so the printer has had time to finish updating its
         own state first."""
-        obj = self._make()
+        obj = self._make_real()
         obj.moonraker = None
         obj.function.in_print.return_value = (True, "test.gcode")
         obj.function.get_current_lane_obj.return_value = None
         obj.in_print_reactor_timer(0.0)
         obj.spool.resync_afc_mapping_from_extruder_map_table.assert_called_once_with(
             gcmd="force_acquire")
+        assert obj.number_of_toolchanges == 0
+        assert obj.current_toolchange == -1
+        assert obj.logger.messages == [
+            ("debug", "In print: True, Filename: test.gcode"),
+            ("info", "Total number of toolchanges set to 0"),
+        ]
 
     def test_does_not_resync_extruder_map_table_when_not_in_print(self):
-        obj = self._make()
+        obj = self._make_real()
         obj.moonraker = None
         obj.function.in_print.return_value = (False, None)
         obj.in_print_reactor_timer(0.0)
         obj.spool.resync_afc_mapping_from_extruder_map_table.assert_not_called()
+        assert obj.logger.messages == [("debug", "In print: False, Filename: None")]
 
     def test_finish_print_start_skips_buffer_update_when_lane_has_no_buffer(self):
         """Covers current_lane truthy but buffer_obj falsy in _finish_print_start."""

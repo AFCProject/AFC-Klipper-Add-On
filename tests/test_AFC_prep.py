@@ -326,7 +326,9 @@ class TestPrepSyncsExtruderMapTable:
     def test_syncs_when_snapmaker_printer(self, tmp_path):
         _, afc = self._run_prep({}, tmp_path=tmp_path, snapmaker_printer=True)
         afc.spool.snapmaker_sync_cb.assert_called_once()
+        assert afc.logger.messages[0] == ("info", "Snapmaker Printer Detected")
 
     def test_does_not_sync_when_not_snapmaker_printer(self, tmp_path):
         _, afc = self._run_prep({}, tmp_path=tmp_path, snapmaker_printer=False)
         afc.spool.snapmaker_sync_cb.assert_not_called()
+        assert ("info", "Snapmaker Printer Detected") not in afc.logger.messages

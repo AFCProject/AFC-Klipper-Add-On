@@ -222,7 +222,8 @@ def _make_filament_protocol_mock():
     mod.FILAMENT_PROTO_MAIN_TYPE_MAPPING = {
         "PLA": 1, "PETG": 2, "ABS": 3, "TPU": 4, "PVA": 5, "ASA": 6, "PA": 9,
         "PA-CF": 10, "PA-GF": 11, "PC": 12, "PETG-CF": 17, "PLA-CF": 20,
-        "PEBA": 22, "TPE": 23, "Reserved": 0, "PA6-CF": 24,
+        "PEBA": 22, "TPE": 23, "PAHT-CF": 24, "PA6-CF": 25, "PA6-GF": 26,
+        "ASA-CF": 27, "Reserved": 0,
     }
     return mod
 

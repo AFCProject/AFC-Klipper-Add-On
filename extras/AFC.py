@@ -668,6 +668,12 @@ class afc:
 
         AFC errors are also reset as well as pause states are cleared in klipper's pause_resume module
         """
+        if self.in_print_timer is not None:
+            # Without this, a second reset arriving before the first timer fires
+            # would orphan it: the old timer would still fire later, unregistering
+            # whatever self.in_print_timer points to by then, cancelling the newer
+            # timer instead of the stale one.
+            self.reactor.unregister_timer(self.in_print_timer)
         self.in_print_timer = self.reactor.register_timer( self.in_print_reactor_timer, self.reactor.monotonic() + 5 )
         self.error.reset_failure()
         self.run_script('CLEAR_PAUSE', gcmd="sub_command")
