@@ -2108,6 +2108,8 @@ class TestSetSpoolID:
         _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color_mode == "coaxial"
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
 
     def test_multi_color_direction_longitudinal_is_gradient(self):
         gcmd = _make_gcmd()
@@ -2121,6 +2123,8 @@ class TestSetSpoolID:
         _stub_get_spool(spool, result)
         spool.set_spoolID(lane, 42, gcmd=gcmd)
         assert lane.color_mode == "gradient"
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
 
     def test_colorless_filament_publishes_no_colors(self):
         from tests.test_AFC_lane import _make_real_lane_for_colors
@@ -2138,6 +2142,8 @@ class TestSetSpoolID:
         assert payload["value"]["color"] == ""
         assert payload["value"]["colors"] == []
         assert payload["value"]["color_mode"] == ""
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
 
     def test_colorless_filament_leaves_lane_without_color(self):
         gcmd = _make_gcmd()
@@ -2153,6 +2159,8 @@ class TestSetSpoolID:
         assert lane.color == ""
         assert lane.multi_color == []
         assert lane.color_mode == ""
+        assert spool.afc.logger.messages == [
+            ("debug", "Weight remaining for SpoolID 42: 800.0")]
 
     def test_multi_color_is_none(self):
         gcmd = _make_gcmd()
