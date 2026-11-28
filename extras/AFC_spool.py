@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from extras.AFC import afc
     from extras.AFC_lane import AFCLane
 
-# Above this many lanes remapped from the printer's screen at once, the mapping
-# is more likely stale/unrelated (e.g. a different print_task_config entirely)
-# than a deliberate remap, so AFC cancels the print instead of adopting it.
+# Above this many lanes remapped from the printer's screen at once, the mapping is more likely
+# stale or unrelated to a different print_task_config than a deliberate remap, so AFC cancels
+# the print instead of adopting it.
 MAX_UNATTENDED_MAPPING_CHANGES = 4
 
 class AFCSpool:
@@ -89,9 +89,9 @@ class AFCSpool:
         # Registering stepper callback so that mux macro can be set properly with valid lane names
         self.printer.register_event_handler("afc_stepper:register_macros",self.register_lane_macros)
 
-        # snapmaker's print_stats fires this once for complete, error, and cancelled
-        # alike, right after it resets extruder_map_table to the identity default;
-        # push AFC's own mapping back in to replace that reset value.
+        # snapmaker's print_stats fires this once for complete, error, and cancelled alike, right
+        # after it resets extruder_map_table to the identity default; push AFC's own mapping back in
+        # to replace that reset value.
         self.printer.register_event_handler("print_stats:stop", self.snapmaker_sync_cb)
 
         self.gcode.register_command("AFC_RESET_MAPPING", self.cmd_AFC_RESET_MAPPING, desc=self.cmd_AFC_RESET_MAPPING_help)
@@ -126,9 +126,9 @@ class AFCSpool:
         Logic is based off this file in u1-klipper repo:
             https://github.com/Snapmaker/u1-klipper/blob/main/klippy/extras/print_task_config.py
 
-        A standalone lane also updates this while only prepped or loaded with feeders,
-        not fully loaded into the toolhead. Unlike a unit-attached lane, there's
-        no ambiguity about which lane this toolhead will use once the print starts.
+        A standalone lane also updates this while only prepped or loaded with feeders, not fully
+        loaded into the toolhead. Unlike a unit-attached lane, there's no ambiguity about which
+        lane this toolhead will use once the print starts.
 
         :param lane: AFC lane to update correct toolhead with color, material, vendor, etc information.
         """
@@ -154,11 +154,11 @@ class AFCSpool:
                     or getattr(self.afc, "default_material_type", None)
                     or "NONE"
                 )
-                # Strip special characters and digits (e.g. "PETG-CF+1"), but keep
-                # "-" since it appears in recognized types like "PA-CF"/"PETG-CF".
+                # Strip special characters and digits, like the "+1" in "PETG-CF+1", but keep "-"
+                # since it appears in recognized types like "PA-CF" and "PETG-CF".
                 material = re.sub(r'[^A-Za-z-]', '', material) or "NONE"
-                # Only set a type snapmaker actually recognizes; warn and fall back
-                # to NONE otherwise, rather than sending an unrecognized value.
+                # Only set a type snapmaker actually recognizes; warn and fall back to NONE
+                # otherwise, rather than sending an unrecognized value.
                 if (material == "NONE"
                     or material in FILAMENT_PROTO_MAIN_TYPE_MAPPING):
                     tmp_config['filament_type'][extruder_num] = material
@@ -198,9 +198,9 @@ class AFCSpool:
 
     def snapmaker_sync_cb(self) -> None:
         """
-        Pushes mapping and loaded filament info back into snapmaker's print_task_config.
-        Called on PREP and on `print_stats:stop`, since print_stats resets print_task_config to
-        its identity default on every print end (complete, error, or cancelled).
+        Pushes mapping and loaded filament info back into snapmaker's print_task_config. Needed
+        any time print_task_config may have reset to its identity default, which happens at the
+        end of every print whether it completed, errored, or was cancelled.
         """
         self.sync_extruder_map_table()
 
@@ -208,8 +208,8 @@ class AFCSpool:
 
     def sync_toolhead_filament(self) -> None:
         """
-        Pushes the currently loaded (or, for a standalone extruder, prepped) lane's filament info
-        into print_task_config for every toolhead.
+        Pushes the currently loaded lane's filament info into print_task_config for every
+        toolhead. For a standalone extruder, the prepped lane is used instead.
         """
         for extruder in self.afc.tools.values():
             lane: AFCLane = extruder.lanes.get(extruder.lane_loaded, None)
@@ -221,11 +221,10 @@ class AFCSpool:
 
     def sync_extruder_map_table(self) -> None:
         """
-        This method is only for snapmaker printers, pushes AFC's current T(n) -> lane
-        -> physical extruder mapping into snapmaker's print_task_config
-        extruder_map_table. Needed so the printer's own power-loss-resume logic
-        targets the same toolhead AFC would use for each T(n), instead of a stale
-        mapping left over from before a SET_MAP change or a fresh PREP.
+        This method is only for snapmaker printers, pushes AFC's current T(n) -> lane -> physical
+        extruder mapping into snapmaker's print_task_config extruder_map_table. Needed so the
+        printer's own power-loss-resume logic targets the same toolhead AFC would use for each
+        T(n), instead of a stale mapping left over from before a SET_MAP change or a fresh PREP.
 
         Logic is based off this file in u1-klipper repo:
             https://github.com/Snapmaker/u1-klipper/blob/main/klippy/extras/print_task_config.py
@@ -263,10 +262,10 @@ class AFCSpool:
     def resync_afc_mapping_from_extruder_map_table(self, gcmd: AFCGcmd) -> None:
         """
         Snapmaker-only: at print start, adopts any T(n) remap made from the screen by comparing
-        extruder_map_table against AFC's mapping. An index match alone isn't trusted for a
-        shared extruder: resolves via whichever lane is currently loaded instead. Cancels the print
-        rather than guessing on an unresolvable or oversized (`MAX_UNATTENDED_MAPPING_CHANGES`)
-        change set.
+        extruder_map_table against AFC's mapping. An index match alone isn't trusted for a shared
+        extruder: resolves via whichever lane is currently loaded instead. Cancels the print
+        rather than guessing on an unresolvable change set, or one larger than
+        MAX_UNATTENDED_MAPPING_CHANGES.
 
         :param gcmd: `AFCGcmd` context this was called from, passed through to `run_script`
         """
@@ -304,8 +303,8 @@ class AFCSpool:
                     continue
 
                 screen_extruder_index = extruder_map_table[logical_index]
-                # Only proves cur_lane's extruder is right, not that it's the
-                # specific lane in use (multiple lanes can share an extruder).
+                # Only proves cur_lane's extruder is right, not that it's the specific lane in use,
+                # since multiple lanes can share an extruder.
                 index_already_matches = (cur_lane.lane_extruder_index == screen_extruder_index)
 
                 th_extruder_name = ("extruder" if screen_extruder_index == 0
@@ -452,8 +451,7 @@ class AFCSpool:
 
     def _set_map(self, cur_lane: AFCLane, sw_lane: AFCLane, map_cmd: str) -> None:
         """
-        Core logic swapping `map_cmd`'s mapping from `sw_lane` to `cur_lane`. Shared
-        by `cmd_SET_MAP` and the extruder_map_table resync done at print start.
+        Core logic swapping `map_cmd`'s mapping from `sw_lane` to `cur_lane`.
 
         :param cur_lane: Lane to assign `map_cmd` to
         :param sw_lane: Lane that currently holds `map_cmd`, which receives

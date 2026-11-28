@@ -3698,10 +3698,10 @@ class TestInPrintReactorTimer:
         assert obj.number_of_toolchanges == 0
 
     def test_resyncs_extruder_map_table_when_in_print(self):
-        """GH #824: once the printer reports it's actually printing, AFC's
-        mapping must be resynced from snapmaker's print_task_config -- done
-        here (after the timer's delay) rather than off a print-start event,
-        so the printer has had time to finish updating its own state first."""
+        """GH #824: once the printer reports it's actually printing, AFC's mapping must be
+        resynced from snapmaker's print_task_config. This runs here, after the timer's delay,
+        rather than off a print-start event, so the printer has had time to finish updating its
+        own state first."""
         obj = self._make()
         obj.moonraker = None
         obj.function.in_print.return_value = (True, "test.gcode")

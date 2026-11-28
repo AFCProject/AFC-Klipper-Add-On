@@ -357,8 +357,8 @@ class TestSetMap:
 # ── _set_map ──────────────────────────────────────────────────────────────────
 
 class TestSetMapCore:
-    """Direct coverage of _set_map, independent of the cmd_SET_MAP entry point
-    (fully exercised above) and the extruder_map_table resync call site below."""
+    """Direct coverage of _set_map, independent of the cmd_SET_MAP entry point, which is
+    fully exercised above, and the extruder_map_table resync call site below."""
 
     def test_swaps_mapping_between_lanes(self):
         spool = _make_spool()
@@ -711,10 +711,10 @@ class TestResyncAfcMappingFromExtruderMapTable:
         spool._set_map.assert_called_once()
 
     def test_index_out_of_range_for_filament_used_g_still_applies_via_mm(self):
-        """Independent coverage of the `logical_index < len(...)` bounds-check
-        operand for filament_used_g: an empty filament_used_g list means the bounds
-        check alone (not the threshold check) makes used_g False, but filament_used_mm
-        still covers this index and marks the slot used."""
+        """Independent coverage of the `logical_index < len(...)` bounds-check operand for
+        filament_used_g: an empty filament_used_g list means the bounds check alone, not the
+        threshold check, makes used_g False, but filament_used_mm still covers this index and
+        marks the slot used."""
         spool = self._make()
         self._make_mismatch(spool)
         spool.print_task_config_obj.print_task_config_2 = {
@@ -777,9 +777,9 @@ class TestResyncAfcMappingFromExtruderMapTable:
         )]
 
     def test_target_extruder_has_no_lane_loaded_cancels_print(self):
-        """Independent coverage of the `target_extruder.lane_loaded is None` operand:
-        the target extruder exists here (unlike the test above), but nothing is
-        currently loaded into it, so AFC still can't tell which lane to use."""
+        """Independent coverage of the `target_extruder.lane_loaded is None` operand: the target
+        extruder exists here, unlike the test above, but nothing is currently loaded into it,
+        so AFC still can't tell which lane to use."""
         spool = self._make()
         lane1 = _make_lane("lane1", extruder_index=0)
         target_extruder = MagicMock()
@@ -3282,9 +3282,9 @@ class TestSetSnapmakerFilamentParams:
         spool.printer.update_snapmaker_config_file.assert_not_called()
 
     def test_standalone_lane_not_prepped_or_loaded_does_not_update(self):
-        """A standalone lane sitting idle (never prepped or loaded to the buffer)
-        must not update print_task_config: only prep_state/load_state being
-        True opts a standalone lane in without a full toolhead load."""
+        """A standalone lane sitting idle, never prepped or loaded to the buffer, must not update
+        print_task_config: only prep_state/load_state being True opts a standalone lane in
+        without a full toolhead load."""
         from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
@@ -3574,9 +3574,8 @@ class TestSetSnapmakerFilamentParams:
         assert spool.logger.messages == []
 
     def test_snapmaker_printer_extruder_special_characters_and_digits_are_stripped_first(self):
-        """Special characters and digits (but not "-") are stripped before the
-        mapping check, so "PETG-CF+1" resolves to the recognized "PETG-CF"
-        rather than warning."""
+        """Special characters and digits, but not "-", are stripped before the mapping check,
+        so "PETG-CF+1" resolves to the recognized "PETG-CF" rather than warning."""
         from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())
@@ -3686,9 +3685,9 @@ class TestSetSnapmakerFilamentParams:
         )]
 
     def test_snapmaker_printer_extruder_no_material_defaults_to_none_without_warning(self):
-        """An empty material (no lane.material, no default_material_type) falls
-        back to NONE silently. NONE is the expected sentinel, not an
-        unrecognized type, so it must not warn."""
+        """An empty material, with no lane.material and no default_material_type, falls back to
+        NONE silently. NONE is the expected sentinel, not an unrecognized type, so it must not
+        warn."""
         from tests.conftest import _make_print_task_config, _make_filament_protocol_mock
         import sys
         sys.modules.setdefault("extras.print_task_config", _make_print_task_config())

@@ -683,8 +683,8 @@ class afc:
         Print timer callback to check if printer is currently in a print. If printer is in a print,
         current filename is looked up and metadata is pulled from moonraker to get total filament change
         count and per-tool temperatures. Also resyncs AFC's T(n) mapping from snapmaker's
-        print_task_config (a no-op on non-snapmaker printers), run here rather than off a
-        print-start event so the printer has time to finish updating its own state first.
+        print_task_config, which does nothing on non-snapmaker printers. This runs here rather than
+        off a print-start event so the printer has time to finish updating its own state first.
 
         Metadata is fetched asynchronously since this reactor timer runs while printing and shouldn't
         block on the HTTP round trip to moonraker. _finish_print_start runs once it's ready
